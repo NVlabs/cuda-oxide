@@ -7075,10 +7075,6 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
         );
     }
-    for record in tma_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
@@ -9196,6 +9192,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(&record.dialect.op_type);
     }
     for record in mbarrier_extended(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
+    for record in tma_intrinsics(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
@@ -14346,7 +14346,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 327);
+        assert_eq!(catalog.intrinsics.len(), 342);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -15260,6 +15260,7 @@ mod tests {
         assert!(importer.contains("\"v1:i0328\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("CpAsyncBulkTensorG2sTile1dOp"));
         assert!(lowering.contains(
             "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}"
         ));

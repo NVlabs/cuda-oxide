@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "f7d3fb5fdc76ba70542d558c35311138063d51dfd77450dea521d001ae58751a",
-    "abi_ledger_sha256": "edccc79dee50ac016f2092bdcbe79d5c0ed4dc256c50eff9ca4d776903f7157b",
+    "overlay_sha256": "1d9705fcda57e774357e50a2de6b4da7d6414451633cfe78ffbc0130cc05f9c2",
+    "abi_ledger_sha256": "498e25ed6876af50562d7c015beb04b35c0637a2d3b75009b7d0c3a5ffac4ce9",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
@@ -42,6 +42,7 @@
       "cuda-13.3-libnvvm-13.3.33-special-registers.json:a662dd4fab997972c1961469c5405a54ef784e45b54d8ab4b50d3f775140dbe3",
       "cuda-13.3-libnvvm-13.3.33-stmatrix.json:b598335626f5d4f736c761535060c99bfa954166e24e366a0d4022d51e76638a",
       "cuda-13.3-libnvvm-13.3.33-threadfence.json:22af6e0b46e1898ef4958e0fb7d52af8e3670b8528e54895ca4d3faf0a15f7dc",
+      "cuda-13.3-libnvvm-13.3.33-tma.json:4234bdb8305a79abd0870ee1572d1be6910052ca23ef5e358aca1e74a0331496",
       "cuda-13.3-libnvvm-13.3.33-wgmma-control.json:6afe57cb717496e040ed81f12d28f1b8a3fe3603e98180626de4bfb265d02c61",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
       "rust-llvm-22.1.2-1cb4e383-clc.json:3cff4d4dbf0c505db87979c021de292395ef6383a72f610cb0d30196f644692f",
@@ -72,8 +73,9 @@
       "rust-llvm-22.1.2-1cb4e383-special-registers.json:25e9c6b3d16bcaf1e0de6e322a55255b2ca05c011097597a9f06bd5f7bdadf62",
       "rust-llvm-22.1.2-1cb4e383-stmatrix.json:2613b295a6baaf873eef8111b0a9a49699df238490bbf8b05aea49e79f332dcc",
       "rust-llvm-22.1.2-1cb4e383-threadfence.json:682055fd75b61cd6f86f92e5927cde6ed44091f461fb72569cee67e2e7b0783e",
+      "rust-llvm-22.1.2-1cb4e383-tma.json:f218df74abe72c0a072d926608ea76f5aedae93486ed5ed69a6538282bf7693e",
       "rust-llvm-22.1.2-1cb4e383-wgmma-control.json:5313c7c088b6489341c4b9e46038b773c4768a954b4b538d22f2aed470905027",
-      "rust-llvm-22.1.2-1cb4e383.json:b4212d105c92f8b5d5e82989045967ceaaa58b7a11648d46db015fd716640ee7"
+      "rust-llvm-22.1.2-1cb4e383.json:e59785fbee1209a1fb8628ba6cb3e09d6b28bc2c02b9e384fe62db2442a331e8"
     ]
   },
   "intrinsics": [
@@ -7517,6 +7519,4067 @@
         ]
       },
       "summary": "Returns the cluster's Z index within the grid."
+    },
+    {
+      "id": "cp_async_bulk_commit_group",
+      "operation_key": "memory.copy.async.bulk.group.commit",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_commit_group"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_BULK_COMMIT_GROUP",
+          "asm": "cp.async.bulk.commit_group;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0340",
+        "module": "tma",
+        "name": "cp_async_bulk_commit_group",
+        "arguments": [],
+        "result": "()",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "committing this thread's pending bulk-copy group has no Rust memory-safety precondition.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0340",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_commit_group",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_commit_group"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkCommitGroupOp",
+        "op_name": "nvvm.cp_async_bulk_commit_group",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.commit.group",
+        "arguments": [],
+        "results": [],
+        "properties": [],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "commit_group",
+        "adapter": "no_operands",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "commit_group"
+        ],
+        "operands": []
+      },
+      "summary": "Commits this thread's pending asynchronous bulk copies as one group."
+    },
+    {
+      "id": "cp_async_bulk_tensor_1d_g2s",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.1d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_1d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_CG0_1D",
+          "asm": "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0}}], [$mbar];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0328",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_1d_g2s",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0328",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_1d_g2s",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_1d_g2s"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile1dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_1d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.1d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg6>",
+          "ImmArg<arg7>",
+          "ImmArg<arg8>",
+          "IntrConvergent",
+          "Range<arg8,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile1d",
+        "adapter": "g2s_pointers_coordinates_barrier_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "1d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_1d_s2g",
+      "operation_key": "memory.copy.async.bulk.tensor.s2g.tile.1d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_1d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_TENSOR_S2G_TILE_1D",
+          "asm": "cp.async.bulk.tensor.1d.global.shared::cta.tile.bulk_group [$tmap, {{$d0}}], [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0335",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_1d_s2g",
+        "arguments": [
+          "*const u8",
+          "*const u8",
+          "i32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0335",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_1d_s2g",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_1d_s2g"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorS2gTile1dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_s2g_tile_1d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.1d",
+        "arguments": [
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i64",
+          "i1"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg4>",
+          "IntrConvergent",
+          "ReadOnly<arg0>",
+          "ReadOnly<arg1>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "s2g_tile1d",
+        "adapter": "s2g_pointers_coordinates_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "1d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from shared to global memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_g2s",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.2d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_CG0_2D",
+          "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0329",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_2d_g2s",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0329",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_2d_g2s",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_2d_g2s"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile2dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_2d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg7>",
+          "ImmArg<arg8>",
+          "ImmArg<arg9>",
+          "IntrConvergent",
+          "Range<arg9,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile2d",
+        "adapter": "g2s_pointers_coordinates_barrier_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_g2s_multicast",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.2d.multicast",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_CG0_2D_MC",
+          "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $mc;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0330",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_2d_g2s_multicast",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "*mut u64",
+          "u16"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0330",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_2d_g2s_multicast",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_2d_g2s_multicast"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile2dMulticastOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_2d_multicast",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg7>",
+          "ImmArg<arg8>",
+          "ImmArg<arg9>",
+          "IntrConvergent",
+          "Range<arg9,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile2d_multicast",
+        "adapter": "g2s_pointers_coordinates_barrier_mask_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes",
+          "multicast::cluster"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Starts a multicast TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_g2s_multicast_cg2",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.2d.multicast.cta_group_2",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_2D_MC",
+          "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $mc;",
+          "predicates": [
+            "Subtarget->hasTMABlackwellSupport()"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0331",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_2d_g2s_multicast_cg2",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "*mut u64",
+          "u16"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0331",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_2d_g2s_multicast_cg2",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_2d_g2s_multicast_cg2"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile2dMulticastCg2Op",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_2d_multicast_cg2",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg7>",
+          "ImmArg<arg8>",
+          "ImmArg<arg9>",
+          "IntrConvergent",
+          "Range<arg9,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "exact_architecture",
+              "sm": 100
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 101
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 103
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 110
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "sm_100a|sm_101a|sm_103a|sm_110a",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100a",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "exact_architecture",
+                  "sm": 100
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 101
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 103
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 110
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100a"
+              ],
+              "representation": "one LLVM module containing the CTA-pair TMA declaration and call",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 521-byte source had SHA-256 c8f988c762ae488faa6a7a31f1391a74b33918a088449f4ec2bfbdb1ca33a201; the 1,964-byte bitcode had SHA-256 dd23f8a1a678731e95b7e2283da19530bce758b7b55ded0c98d01e99c971b978.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx86"
+              ],
+              "representation": "typed LLVM CTA-pair TMA call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted the exact cta_group::2 instruction with no extern call. The 1,098-byte PTX hashes were 88d30f75f80d7603ec5852572942e3406db97d10a49bdb7b65c64fa1bcea2257 for sm_100a, ed24ee1e914179959d69b7b153d5d65bbead0c864bfeb624871f9c19f5cc17f3 for sm_101a, 451331c3b63021119d0e9ccdc7617e70b505943c69e1066d193ef1b74b54523e for sm_103a, and 13c7be98f933799fafa4055423395bc1d5d4c2f4303e70f27c38ded9a0e1ace8 for sm_110a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx86"
+              ],
+              "representation": "LLVM-produced PTX retaining the CTA-pair TMA instruction",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubins for sm_100a, sm_103a, and sm_110a with SHA-256 7c522a3420f9856b526e23c6e3dc4067d244b27095057b91ed1b4af27a8abbcf, b3e3934adc407c847b428d93936f7d8e170059f4004218774c8755f71d599419, and ef654bdc632b1887f8622e765f8f5a2d0571b97c28eb39f17fd355483d8b9d31. Separate probes rejected sm_120a and sm_121a because cta_group::2 is unsupported.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "exact_architecture",
+                  "sm": 100
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 101
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 103
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 110
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100a",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing the exact CTA-pair inline-PTX form",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact cta_group::2 instruction with no extern call. The 1,062-byte source had SHA-256 c4b4e3ebdd83592a3927b7d0aa33f405443183246c4091e6c3200a34b9f8a7ea. The sm_100a, sm_103a, and sm_110a LTOIR hashes were 57e7a5d7386ba7760dee9aefd523aa6a22730f063c98c7b4ea6a74d104db2c94, 2436e553fab093120a454fc54a968dd5b2604e93cfcba2ee22ad4623aa29f441, and 6463c275ec8e4db9a0caed537d488e5c49dfb92245a835bbfc4ec6908ee225cc. Their linked PTX hashes were a242c59c1a65e46362329274609e728e1cd3c0b075b0c8ab3c9c7a06ed483ff9, 4aaa395bec17ddd5ea2ec5c6931c904be6856df217eb5a91308ca927b9214703, and c68f16840f492a1dc03e50f1856d2a54906d1fa838e9fe13bf25d8bce0075bca.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the CTA-pair TMA instruction",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced sm_100a, sm_103a, and sm_110a cubins with SHA-256 4b33c265570fa38eaeafcb777ff7058dd0243c04e14360aad7f8f72dc85df300, 82859f08dbf85ee8dec86c1e19e3cabd2d609d182e26ba2003c677dbddd446d1, and 49fe6c95922fa8c9919aabf486503dcdabb45cec2acfe00. Separate probes rejected sm_120a and sm_121a because cta_group::2 is unsupported.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile2d_multicast_cg2",
+        "adapter": "g2s_pointers_coordinates_barrier_mask_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes",
+          "multicast::cluster",
+          "cta_group::2"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Starts a multicast TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_s2g",
+      "operation_key": "memory.copy.async.bulk.tensor.s2g.tile.2d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_2d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_TENSOR_S2G_TILE_2D",
+          "asm": "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1}}], [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0336",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_2d_s2g",
+        "arguments": [
+          "*const u8",
+          "*const u8",
+          "i32",
+          "i32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0336",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_2d_s2g",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_2d_s2g"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorS2gTile2dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_s2g_tile_2d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.2d",
+        "arguments": [
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i64",
+          "i1"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg5>",
+          "IntrConvergent",
+          "ReadOnly<arg0>",
+          "ReadOnly<arg1>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "s2g_tile2d",
+        "adapter": "s2g_pointers_coordinates_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from shared to global memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_3d_g2s",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.3d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_3d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_CG0_3D",
+          "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              },
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0332",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_3d_g2s",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "i32",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0332",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_3d_g2s",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_3d_g2s"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile3dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_3d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.3d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg10>",
+          "ImmArg<arg8>",
+          "ImmArg<arg9>",
+          "IntrConvergent",
+          "Range<arg10,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile3d",
+        "adapter": "g2s_pointers_coordinates_barrier_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "3d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_3d_s2g",
+      "operation_key": "memory.copy.async.bulk.tensor.s2g.tile.3d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_3d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_TENSOR_S2G_TILE_3D",
+          "asm": "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1, $d2}}], [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0337",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_3d_s2g",
+        "arguments": [
+          "*const u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0337",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_3d_s2g",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_3d_s2g"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorS2gTile3dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_s2g_tile_3d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.3d",
+        "arguments": [
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i64",
+          "i1"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg6>",
+          "IntrConvergent",
+          "ReadOnly<arg0>",
+          "ReadOnly<arg1>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "s2g_tile3d",
+        "adapter": "s2g_pointers_coordinates_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "3d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from shared to global memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_4d_g2s",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.4d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_4d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_CG0_4D",
+          "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0333",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_4d_g2s",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0333",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_4d_g2s",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_4d_g2s"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile4dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_4d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.4d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg10>",
+          "ImmArg<arg11>",
+          "ImmArg<arg9>",
+          "IntrConvergent",
+          "Range<arg11,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile4d",
+        "adapter": "g2s_pointers_coordinates_barrier_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "4d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_4d_s2g",
+      "operation_key": "memory.copy.async.bulk.tensor.s2g.tile.4d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_4d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_TENSOR_S2G_TILE_4D",
+          "asm": "cp.async.bulk.tensor.4d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1, $d2, $d3}}], [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0338",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_4d_s2g",
+        "arguments": [
+          "*const u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0338",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_4d_s2g",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_4d_s2g"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorS2gTile4dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_s2g_tile_4d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.4d",
+        "arguments": [
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i64",
+          "i1"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg7>",
+          "IntrConvergent",
+          "ReadOnly<arg0>",
+          "ReadOnly<arg1>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "s2g_tile4d",
+        "adapter": "s2g_pointers_coordinates_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "4d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from shared to global memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_5d_g2s",
+      "operation_key": "memory.copy.async.bulk.tensor.g2s.tile.5d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_5d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_G2S_TILE_CG0_5D",
+          "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0334",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_5d_g2s",
+        "arguments": [
+          "*mut u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0334",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_5d_g2s",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_5d_g2s"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorG2sTile5dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_g2s_tile_5d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i16",
+          "i64"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.5d",
+        "arguments": [
+          "shared_cluster_ptr",
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i16",
+          "i64",
+          "i1",
+          "i1",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg10>",
+          "ImmArg<arg11>",
+          "ImmArg<arg12>",
+          "IntrConvergent",
+          "Range<arg12,0,3>",
+          "ReadOnly<arg2>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "g2s_tile5d",
+        "adapter": "g2s_pointers_coordinates_barrier_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "5d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from global to cluster shared memory."
+    },
+    {
+      "id": "cp_async_bulk_tensor_5d_s2g",
+      "operation_key": "memory.copy.async.bulk.tensor.s2g.tile.5d",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_5d"
+      },
+      "selections": [
+        {
+          "source_record": "TMA_TENSOR_S2G_TILE_5D",
+          "asm": "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0339",
+        "module": "tma",
+        "name": "cp_async_bulk_tensor_5d_s2g",
+        "arguments": [
+          "*const u8",
+          "*const u8",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0339",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_tensor_5d_s2g",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_tensor_5d_s2g"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkTensorS2gTile5dOp",
+        "op_name": "nvvm.cp_async_bulk_tensor_s2g_tile_5d",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.5d",
+        "arguments": [
+          "shared_ptr",
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i64",
+          "i1"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg8>",
+          "IntrConvergent",
+          "ReadOnly<arg0>",
+          "ReadOnly<arg1>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "s2g_tile5d",
+        "adapter": "s2g_pointers_coordinates_inject_defaults",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "5d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Starts a TMA tile copy from shared to global memory."
+    },
+    {
+      "id": "cp_async_bulk_wait_group",
+      "operation_key": "memory.copy.async.bulk.group.wait_max_pending",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_wait_group"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_BULK_WAIT_GROUP",
+          "asm": "cp.async.bulk.wait_group \t$n;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0341",
+        "module": "tma",
+        "name": "cp_async_bulk_wait_group",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "waiting on this thread's bulk-copy groups has no Rust memory-safety precondition.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0341",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_wait_group",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_wait_group"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkWaitGroupOp",
+        "op_name": "nvvm.cp_async_bulk_wait_group",
+        "operands": [
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.wait.group",
+        "arguments": [
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "wait_group",
+        "adapter": "compile_time_constant_max_pending",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "wait_group"
+        ],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Waits until at most the requested bulk-copy groups remain pending."
+    },
+    {
+      "id": "cp_async_bulk_wait_group_read",
+      "operation_key": "memory.copy.async.bulk.group.wait_read_max_pending",
+      "family": "tma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_bulk_wait_group_read"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_BULK_WAIT_GROUP_READ",
+          "asm": "cp.async.bulk.wait_group.read \t$n;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0342",
+        "module": "tma",
+        "name": "cp_async_bulk_wait_group_read",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "waiting on this thread's bulk-copy groups has no Rust memory-safety precondition.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0342",
+        "public_path": "cuda_intrinsics::tma::cp_async_bulk_wait_group_read",
+        "compatibility_paths": [
+          "cuda_device::tma::cp_async_bulk_wait_group_read"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncBulkWaitGroupReadOp",
+        "op_name": "nvvm.cp_async_bulk_wait_group_read",
+        "operands": [
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.bulk.wait.group.read",
+        "arguments": [
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.5 Asynchronous bulk tensor copy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "one LLVM module containing the 14 Hopper TMA declarations and calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as canonicalized the intrinsic attributes. The 3,580-byte source had SHA-256 c87e60df3991da94c6997bfd9bb14b177031d3cf77567bebb569542c06866929; the 3,116-byte bitcode had SHA-256 00ce86db99146a468482d5471cdbb30bf092703bdb8e73d975b473e3e8db4d83.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM calls for every non-CTA-pair TMA operation",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM emitted all 14 exact instructions with no extern calls. The 2,495-byte PTX had SHA-256 451ccb2843bfc650cf19991aaed55bcb69468de996534cdfbdca5b3f7e83916a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining all 14 Hopper TMA instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 1,720-byte cubin with SHA-256 ea137713143ecca0ef1b76ebb161354034537ac05c89a34172f7b6e9c8be9f6c.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-tma",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one NVVM IR 2.0 module containing all 14 non-CTA-pair inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained every exact instruction with no extern calls. The 3,694-byte source had SHA-256 e714b61e22609390f23503ad3b88d094573c0667e2b65fc5c1364ffa8e1eb352; the 4,372-byte LTOIR had SHA-256 fe20a8c5dbddfbdf72a006c9c7931ece92a50bce6382f6cd7964e2eada452efa; the 3,068-byte linked PTX had SHA-256 a9a4f6446f5025ac4cfe191b4f1b7b09e7f431cffcb4873570e557a02493abfb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all 14 non-CTA-pair TMA instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,888-byte cubin with SHA-256 7fd9c40a4895662d96390f53951ca2f51fafff519ac327f30eaaaf5f55285352.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "tma": {
+        "operation": "wait_group_read",
+        "adapter": "compile_time_constant_max_pending",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_tma",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "wait_group",
+          "read"
+        ],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Waits for bulk-copy groups and completes their reads."
     },
     {
       "id": "cp_async_ca_16",

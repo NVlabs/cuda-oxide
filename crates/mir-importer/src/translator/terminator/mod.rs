@@ -2511,67 +2511,6 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
-        // TMA (from intrinsics::tma)
-        // =================================================================
-        "cuda_device::tma::cp_async_bulk_tensor_1d_g2s" => Ok(Some(intrinsics::tma::emit_tma_g2s(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 1, "v1:i0328",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_2d_g2s" => Ok(Some(intrinsics::tma::emit_tma_g2s(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 2, "v1:i0329",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_2d_g2s_multicast" => {
-            Ok(Some(intrinsics::tma::emit_tma_g2s_multicast(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, "v1:i0330",
-            )?))
-        }
-        "cuda_device::tma::cp_async_bulk_tensor_2d_g2s_multicast_cg2" => {
-            Ok(Some(intrinsics::tma::emit_tma_g2s_multicast_cg2(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, "v1:i0331",
-            )?))
-        }
-        "cuda_device::tma::cp_async_bulk_tensor_3d_g2s" => Ok(Some(intrinsics::tma::emit_tma_g2s(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 3, "v1:i0332",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_4d_g2s" => Ok(Some(intrinsics::tma::emit_tma_g2s(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 4, "v1:i0333",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_5d_g2s" => Ok(Some(intrinsics::tma::emit_tma_g2s(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 5, "v1:i0334",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_1d_s2g" => Ok(Some(intrinsics::tma::emit_tma_s2g(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 1, "v1:i0335",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_2d_s2g" => Ok(Some(intrinsics::tma::emit_tma_s2g(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 2, "v1:i0336",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_3d_s2g" => Ok(Some(intrinsics::tma::emit_tma_s2g(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 3, "v1:i0337",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_4d_s2g" => Ok(Some(intrinsics::tma::emit_tma_s2g(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 4, "v1:i0338",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_tensor_5d_s2g" => Ok(Some(intrinsics::tma::emit_tma_s2g(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, 5, "v1:i0339",
-        )?)),
-        "cuda_device::tma::cp_async_bulk_commit_group" => {
-            Ok(Some(intrinsics::tma::emit_tma_commit_group(
-                ctx, args, target, block_ptr, prev_op, block_map, loc, "v1:i0340",
-            )?))
-        }
-        "cuda_device::tma::cp_async_bulk_wait_group" => {
-            Ok(Some(intrinsics::tma::emit_tma_wait_group(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, false,
-                "v1:i0341",
-            )?))
-        }
-        "cuda_device::tma::cp_async_bulk_wait_group_read" => {
-            Ok(Some(intrinsics::tma::emit_tma_wait_group(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, true,
-                "v1:i0342",
-            )?))
-        }
-
-        // =================================================================
         // Tcgen05 (from intrinsics::tcgen05)
         // =================================================================
         "cuda_device::tcgen05::tcgen05_alloc" => Ok(Some(intrinsics::tcgen05::emit_tcgen05_alloc(

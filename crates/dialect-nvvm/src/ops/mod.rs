@@ -103,7 +103,6 @@ mod debug;
 mod generated;
 mod grid;
 mod tcgen05;
-mod tma;
 mod warp;
 mod wgmma;
 
@@ -116,7 +115,6 @@ pub use debug::*;
 pub use generated::*;
 pub use grid::*;
 pub use tcgen05::*;
-pub use tma::*;
 pub use warp::*;
 pub use wgmma::*;
 
@@ -130,7 +128,6 @@ pub fn register(ctx: &mut Context) {
     generated::register(ctx);
     warp::register(ctx);
     grid::register(ctx);
-    tma::register(ctx);
     wgmma::register(ctx);
     tcgen05::register(ctx);
     debug::register(ctx);

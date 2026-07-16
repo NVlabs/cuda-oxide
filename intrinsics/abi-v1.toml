@@ -2296,3 +2296,108 @@ status = "active"
 catalog_id = "clc_query_get_first_ctaid_z"
 operation_key = "cluster.launch_control.query.first_ctaid.z"
 raw_rust_signature = { safe = false, arguments = ["u64", "u64"], result = "u32" }
+
+[[entry]]
+abi_id = "i0328"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_1d_g2s"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0329"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_2d_g2s"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "i32", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0330"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_2d_g2s_multicast"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.2d.multicast"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "i32", "*mut u64", "u16"], result = "()" }
+
+[[entry]]
+abi_id = "i0331"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_2d_g2s_multicast_cg2"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.2d.multicast.cta_group_2"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "i32", "*mut u64", "u16"], result = "()" }
+
+[[entry]]
+abi_id = "i0332"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_3d_g2s"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "i32", "i32", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0333"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_4d_g2s"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "i32", "i32", "i32", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0334"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_5d_g2s"
+operation_key = "memory.copy.async.bulk.tensor.g2s.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8", "i32", "i32", "i32", "i32", "i32", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0335"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_1d_s2g"
+operation_key = "memory.copy.async.bulk.tensor.s2g.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0336"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_2d_s2g"
+operation_key = "memory.copy.async.bulk.tensor.s2g.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0337"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_3d_s2g"
+operation_key = "memory.copy.async.bulk.tensor.s2g.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0338"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_4d_s2g"
+operation_key = "memory.copy.async.bulk.tensor.s2g.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0339"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_5d_s2g"
+operation_key = "memory.copy.async.bulk.tensor.s2g.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0340"
+status = "active"
+catalog_id = "cp_async_bulk_commit_group"
+operation_key = "memory.copy.async.bulk.group.commit"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0341"
+status = "active"
+catalog_id = "cp_async_bulk_wait_group"
+operation_key = "memory.copy.async.bulk.group.wait_max_pending"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0342"
+status = "active"
+catalog_id = "cp_async_bulk_wait_group_read"
+operation_key = "memory.copy.async.bulk.group.wait_read_max_pending"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "()" }

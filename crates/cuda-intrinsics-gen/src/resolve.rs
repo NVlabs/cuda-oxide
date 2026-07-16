@@ -248,6 +248,15 @@ pub(crate) fn test_catalog_with_clc(repo_root: &Path) -> Result<CatalogFile> {
 #[cfg(test)]
 pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
     let mut catalog = resolve(repo_root)?;
+    if catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.tma.is_some())
+        .count()
+        == 15
+    {
+        return Ok(catalog);
+    }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
     let operations = [
@@ -930,6 +939,18 @@ fn append_overlay_hash_input(output: &mut Vec<u8>, path: &str, contents: &[u8]) 
     output.extend_from_slice(contents);
 }
 
+fn shares_tma_2d_g2s_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
+    symbol == "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d"
+        && record.tma.as_ref().is_some_and(|tma| {
+            matches!(
+                tma.operation,
+                TmaOperation::G2sTile2d
+                    | TmaOperation::G2sTile2dMulticast
+                    | TmaOperation::G2sTile2dMulticastCg2
+            )
+        })
+}
+
 fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> Result<()> {
     let mut ids = BTreeSet::new();
     let mut abi_ids = BTreeSet::new();
@@ -989,17 +1010,23 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
             let is_resolved = record.resolved_llvm_symbol.is_some();
-            if let Some(previous_was_resolved) = symbol_bases.insert(symbol, is_resolved) {
+            let shares_tma_symbol = shares_tma_2d_g2s_symbol(record, symbol);
+            if let Some((previous_was_resolved, previous_shared_tma_symbol)) =
+                symbol_bases.insert(symbol, (is_resolved, shares_tma_symbol))
+            {
                 ensure!(
-                    previous_was_resolved && is_resolved,
+                    (previous_was_resolved && is_resolved)
+                        || (previous_shared_tma_symbol && shares_tma_symbol),
                     "duplicate LLVM symbol {symbol} is reused without a resolved symbol"
                 );
             }
-            insert_unique(
-                &mut symbols,
-                record.resolved_llvm_symbol.as_ref().unwrap_or(symbol),
-                "resolved LLVM symbol",
-            )?;
+            if !shares_tma_symbol {
+                insert_unique(
+                    &mut symbols,
+                    record.resolved_llvm_symbol.as_ref().unwrap_or(symbol),
+                    "resolved LLVM symbol",
+                )?;
+            }
         }
         insert_unique(
             &mut rust_items,
@@ -3062,7 +3089,11 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
         convergent,
         minimum_ptx: if cg2 { "8.6" } else { "8.0" },
         minimum_sm: if cg2 { None } else { Some("sm_90") },
-        targets: if cg2 { "sm_100a|sm_101a" } else { "all" },
+        targets: if cg2 {
+            "sm_100a|sm_101a|sm_103a|sm_110a"
+        } else {
+            "all"
+        },
         modifiers,
         operands,
         summary,
@@ -5077,9 +5108,11 @@ fn validate_selected_target_predicates(
                             alternatives: vec![
                                 CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
                                 CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
                             ],
                         },
-                "{} Blackwell TMA predicate must map to the reviewed PTX 8.6/8.7 accelerated architectures",
+                "{} Blackwell TMA predicate must map to the reviewed exact architectures",
                 policy.id
             );
         } else {
@@ -18155,8 +18188,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 45);
-        assert_eq!(overlay.intrinsics.len(), 327);
+        assert_eq!(overlay.shards.len(), 46);
+        assert_eq!(overlay.intrinsics.len(), 342);
         assert_eq!(
             overlay
                 .intrinsics
@@ -19711,6 +19744,8 @@ scope = "system"
                 alternatives: vec![
                     CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
                     CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
                 ],
             }
         );

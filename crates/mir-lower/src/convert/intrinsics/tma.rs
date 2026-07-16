@@ -20,49 +20,6 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
-/// Convert TMA commit_group to inline PTX.
-pub(crate) fn convert_commit_group(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    inline_asm_convergent(
-        ctx,
-        rewriter,
-        void_ty.into(),
-        vec![],
-        "cp.async.bulk.commit_group;",
-        "~{memory}",
-    );
-    Ok(())
-}
-
-/// Convert TMA wait_group to inline PTX.
-pub(crate) fn convert_wait_group(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-    is_read: bool,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    let n = operands
-        .first()
-        .copied()
-        .unwrap_or_else(|| create_i32_const(ctx, rewriter, 0));
-
-    let asm = if is_read {
-        "cp.async.bulk.wait_group.read $0;"
-    } else {
-        "cp.async.bulk.wait_group $0;"
-    };
-    inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![n], asm, "n,~{memory}");
-    rewriter.erase_operation(ctx, op);
-    Ok(())
-}
-
 /// Convert TMA G2S (global to shared) operations using LLVM intrinsics.
 pub(crate) fn convert_g2s(
     ctx: &mut Context,
