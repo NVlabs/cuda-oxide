@@ -5,7 +5,12 @@
 
 //! Compile coverage for generated high-target intrinsics.
 
-use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_device::{
+    DisjointSlice,
+    barrier::Barrier,
+    cuda_module, kernel, thread,
+    tma::{self, TmaDescriptor},
+};
 use cuda_intrinsics::convert::{
     cvt_rn_satfinite_e4m3x2_f32, cvt_rn_satfinite_e5m2x2_f32,
     cvt_rn_satfinite_relu_e4m3x2_f32, cvt_rn_satfinite_relu_e5m2x2_f32,
@@ -107,6 +112,36 @@ mod kernels {
         if let Some((slot, _)) = output.get_mut_indexed() {
             *slot = value;
         }
+    }
+
+    /// Compile-only coverage for the TMA compatibility API.
+    #[kernel]
+    pub unsafe fn compile_tma_compatibility(
+        shared: *mut u8,
+        tensor_map: *const TmaDescriptor,
+        barrier: *mut Barrier,
+        cta_mask: u16,
+    ) {
+        // This kernel is never launched with these placeholder addresses.
+        unsafe {
+            tma::cp_async_bulk_tensor_1d_g2s(shared, tensor_map, 0, barrier);
+            tma::cp_async_bulk_tensor_2d_g2s(shared, tensor_map, 0, 0, barrier);
+            tma::cp_async_bulk_tensor_2d_g2s_multicast(
+                shared, tensor_map, 0, 0, barrier, cta_mask,
+            );
+            tma::cp_async_bulk_tensor_3d_g2s(shared, tensor_map, 0, 0, 0, barrier);
+            tma::cp_async_bulk_tensor_4d_g2s(shared, tensor_map, 0, 0, 0, 0, barrier);
+            tma::cp_async_bulk_tensor_5d_g2s(shared, tensor_map, 0, 0, 0, 0, 0, barrier);
+
+            tma::cp_async_bulk_tensor_1d_s2g(shared, tensor_map, 0);
+            tma::cp_async_bulk_tensor_2d_s2g(shared, tensor_map, 0, 0);
+            tma::cp_async_bulk_tensor_3d_s2g(shared, tensor_map, 0, 0, 0);
+            tma::cp_async_bulk_tensor_4d_s2g(shared, tensor_map, 0, 0, 0, 0);
+            tma::cp_async_bulk_tensor_5d_s2g(shared, tensor_map, 0, 0, 0, 0, 0);
+        }
+        tma::cp_async_bulk_commit_group();
+        tma::cp_async_bulk_wait_group(0);
+        tma::cp_async_bulk_wait_group_read(0);
     }
 }
 

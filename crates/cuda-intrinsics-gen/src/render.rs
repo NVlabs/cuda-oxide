@@ -8629,7 +8629,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             TmaOperation::WaitGroup | TmaOperation::WaitGroupRead
         ) {
             output.push_str(
-                "            if !matches!(&args[0], mir::Operand::Constant(_)) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"TMA wait-group count must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+                "            require_arity(name, args.len(), 1, &loc)?;\n            if !matches!(args.first(), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"TMA wait-group count must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
             );
         }
         let marker = intrinsic_marker(catalog, record);
@@ -8993,7 +8993,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if tma_intrinsics(catalog).next().is_some() {
         output = output.replace(
             "prmt::convert_generated_prmt, warp::{",
-            "prmt::convert_generated_prmt, tma::{convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
+            "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
         );
     }
     for (index, record) in sregs(catalog).enumerate() {
@@ -10207,27 +10207,18 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
                 .unwrap();
             }
             TmaOperation::CommitGroup | TmaOperation::WaitGroup | TmaOperation::WaitGroupRead => {
-                let arguments = if operation == TmaOperation::CommitGroup {
-                    "vec![]"
-                } else {
-                    "vec![IntegerType::get(ctx, 32, Signedness::Signless).into()]"
+                let operation_name = match operation {
+                    TmaOperation::CommitGroup => "commit_group",
+                    TmaOperation::WaitGroup => "wait_group",
+                    TmaOperation::WaitGroupRead => "wait_group_read",
+                    _ => unreachable!("TMA control operation was matched"),
                 };
-                output.push_str("        let op = self.get_operation();\n");
-                output.push_str(
-                    "        let void_ty = llvm_types::VoidType::get(ctx);\n        let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), ",
-                );
-                output.push_str(arguments);
-                output.push_str(", false);\n");
-                output.push_str("        let operands = op.deref(ctx).operands().collect();\n");
                 writeln!(
                     output,
-                    "        let call = call_intrinsic(ctx, rewriter, op, {:?}, function_ty, operands)?;",
+                    "        convert_control(ctx, rewriter, self.get_operation(), operands_info, {operation_name:?}, {:?})",
                     record.llvm_identifier()
                 )
                 .unwrap();
-                output.push_str(
-                    "        rewriter.replace_operation(ctx, op, call);\n        Ok(())\n",
-                );
             }
         }
         output.push_str("    }\n}\n\n");
@@ -15264,10 +15255,14 @@ mod tests {
         assert!(importer.contains("super::tma::emit_tma_g2s_multicast_cg2("));
         assert!(importer.contains("super::tma::emit_tma_s2g("));
         assert!(importer.contains("TMA wait-group count must be a compile-time constant"));
+        assert!(importer.contains("require_arity(name, args.len(), 1, &loc)?;"));
+        assert!(importer.contains("args.first(), Some(mir::Operand::Constant(_))"));
         assert!(importer.contains("\"v1:i0328\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
-        assert!(lowering.contains("tma::{convert_g2s, convert_g2s_multicast_cg2, convert_s2g}"));
+        assert!(lowering.contains(
+            "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}"
+        ));
         assert!(
             lowering.contains(
                 "convert_g2s(ctx, rewriter, self.get_operation(), operands_info, 5, false)"
@@ -15277,7 +15272,7 @@ mod tests {
             lowering.contains("convert_s2g(ctx, rewriter, self.get_operation(), operands_info, 5)")
         );
         assert!(lowering.contains(
-            "call_intrinsic(ctx, rewriter, op, \"llvm_nvvm_cp_async_bulk_commit_group\""
+            "convert_control(ctx, rewriter, self.get_operation(), operands_info, \"commit_group\", \"llvm_nvvm_cp_async_bulk_commit_group\")"
         ));
 
         let g2s = tma_intrinsics(&catalog)

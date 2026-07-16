@@ -3162,7 +3162,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                     },
                     OverlayBackendLowering {
                         backend: IntrinsicBackend::LibNvvm,
-                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
                         minimum_ptx: Some(recipe.minimum_ptx.into()),
                         minimum_sm: recipe.minimum_sm.map(Into::into),
@@ -3280,14 +3280,25 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
         "{} TMA target or PTX contract changed",
         policy.id
     );
+    let valid_route = |backend, mechanism| {
+        policy.backend_lowerings.iter().any(|route| {
+            route.backend == backend
+                && route.mechanism == mechanism
+                && route.minimum_ptx.as_deref() == Some(recipe.minimum_ptx)
+                && route.minimum_sm.as_deref() == recipe.minimum_sm
+                && !route.evidence_profile.trim().is_empty()
+        })
+    };
     ensure!(
         policy.backend_lowerings.len() == 2
-            && policy.backend_lowerings.iter().all(|route| {
-                route.mechanism == BackendLoweringMechanism::TypedNvvm
-                    && route.minimum_ptx.as_deref() == Some(recipe.minimum_ptx)
-                    && route.minimum_sm.as_deref() == recipe.minimum_sm
-                    && !route.evidence_profile.trim().is_empty()
-            }),
+            && valid_route(
+                IntrinsicBackend::LlvmNvptx,
+                BackendLoweringMechanism::TypedNvvm,
+            )
+            && valid_route(
+                IntrinsicBackend::LibNvvm,
+                BackendLoweringMechanism::InlinePtx,
+            ),
         "{} TMA backend route changed",
         policy.id
     );
@@ -19647,6 +19658,15 @@ scope = "system"
     fn compact_tma_admission_matches_llvm_and_fails_closed() {
         let records = expand_tma_admission(&test_tma_admission()).unwrap();
         assert_eq!(records.len(), 15);
+        assert!(records.iter().all(|record| {
+            record.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LlvmNvptx
+                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+            }) && record.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LibNvvm
+                    && route.mechanism == BackendLoweringMechanism::InlinePtx
+            })
+        }));
         assert_eq!(
             records
                 .iter()
