@@ -12018,9 +12018,10 @@ fn render_elect_probe(
             }
         }
         BackendLoweringMechanism::InlinePtx => {
-            for (suffix, parameters, mask) in
-                [("register", "i32 %mask", "%mask"), ("immediate", "", "-1")]
-            {
+            for (suffix, parameters, mask) in [
+                ("register", "i32 %mask", "%mask"),
+                ("constant_mask", "", "-1"),
+            ] {
                 writeln!(
                     output,
                     "define {{ i32, i1 }} @probe_{}_{}_{suffix}({parameters}) #0 {{",

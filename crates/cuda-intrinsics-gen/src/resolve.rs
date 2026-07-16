@@ -5623,7 +5623,7 @@ fn validate_elect_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
     ensure!(
         policy.ptx_isa_version == "9.3"
             && policy.ptx_isa_section
-                == "9.7.14.13 Parallel Synchronization and Communication Instructions: elect.sync"
+                == "9.7.14.15 Parallel Synchronization and Communication Instructions: elect.sync"
             && policy.ptx_isa_url
                 == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-elect-sync",
         "{} elect PTX provenance disagrees with the reviewed recipe",
