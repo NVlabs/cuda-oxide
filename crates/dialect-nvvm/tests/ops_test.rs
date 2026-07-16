@@ -693,6 +693,183 @@ fn generated_ldmatrix_verifier_rejects_zero_or_two_operands_without_panicking() 
 }
 
 #[test]
+fn blackwell_ldmatrix_verifier_accepts_only_reviewed_shapes() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let shared_u8 = MirPtrType::get_shared(&mut ctx, u8_ty.into(), false);
+    let generic_u8 = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let global_u8 = MirPtrType::get_global(&mut ctx, u8_ty.into(), false);
+    let shared_u32 = MirPtrType::get_shared(&mut ctx, u32_ty.into(), false);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            shared_u8.into(),
+            generic_u8.into(),
+            global_u8.into(),
+            shared_u32.into(),
+        ],
+    );
+    let shared_pointer = block.deref(&ctx).get_argument(0);
+
+    for pointer_index in [0, 1] {
+        let pointer = block.deref(&ctx).get_argument(pointer_index);
+        for (shape, multiplicity, layout, element, result_count) in [
+            (
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8,
+                2,
+            ),
+            (
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B4x16P64,
+                2,
+            ),
+            (
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B6x16P32,
+                2,
+            ),
+            (
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8,
+                4,
+            ),
+            (
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B4x16P64,
+                4,
+            ),
+            (
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B6x16P32,
+                4,
+            ),
+            (
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B4x16P64,
+                1,
+            ),
+            (
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B6x16P32,
+                1,
+            ),
+            (
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B4x16P64,
+                2,
+            ),
+            (
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B6x16P32,
+                2,
+            ),
+            (
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X4,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B4x16P64,
+                4,
+            ),
+            (
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X4,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B6x16P32,
+                4,
+            ),
+        ] {
+            let op = LdmatrixOp::build(
+                &mut ctx,
+                pointer,
+                shape,
+                multiplicity,
+                layout,
+                element,
+                LdmatrixStateSpaceAttr::Shared,
+            );
+            assert_eq!(op.deref(&ctx).get_num_results(), result_count);
+            assert!(LdmatrixOp::new(op).verify(&ctx).is_ok());
+        }
+    }
+
+    for (shape, multiplicity, layout, element) in [
+        (
+            LdmatrixShapeAttr::M16n16,
+            LdmatrixMultiplicityAttr::X4,
+            LdmatrixLayoutAttr::Transposed,
+            LdmatrixElementAttr::B8,
+        ),
+        (
+            LdmatrixShapeAttr::M16n16,
+            LdmatrixMultiplicityAttr::X1,
+            LdmatrixLayoutAttr::Normal,
+            LdmatrixElementAttr::B8,
+        ),
+        (
+            LdmatrixShapeAttr::M8n16,
+            LdmatrixMultiplicityAttr::X1,
+            LdmatrixLayoutAttr::Transposed,
+            LdmatrixElementAttr::B8x16B4x16P64,
+        ),
+        (
+            LdmatrixShapeAttr::M8n16,
+            LdmatrixMultiplicityAttr::X1,
+            LdmatrixLayoutAttr::Normal,
+            LdmatrixElementAttr::B8,
+        ),
+    ] {
+        let op = LdmatrixOp::build(
+            &mut ctx,
+            shared_pointer,
+            shape,
+            multiplicity,
+            layout,
+            element,
+            LdmatrixStateSpaceAttr::Shared,
+        );
+        assert!(LdmatrixOp::new(op).verify(&ctx).is_err());
+    }
+
+    for pointer_index in [2, 3] {
+        let pointer = block.deref(&ctx).get_argument(pointer_index);
+        let op = LdmatrixOp::build(
+            &mut ctx,
+            pointer,
+            LdmatrixShapeAttr::M16n16,
+            LdmatrixMultiplicityAttr::X1,
+            LdmatrixLayoutAttr::Transposed,
+            LdmatrixElementAttr::B8,
+            LdmatrixStateSpaceAttr::Shared,
+        );
+        assert!(LdmatrixOp::new(op).verify(&ctx).is_err());
+    }
+}
+
+#[test]
 fn classic_ldmatrix_compatibility_ops_keep_names_and_register_shapes() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);

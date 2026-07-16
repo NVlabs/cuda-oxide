@@ -2646,3 +2646,87 @@ status = "active"
 catalog_id = "cvt_rz_relu_satfinite_tf32_f32"
 operation_key = "convert.f32.tf32.rz.relu.satfinite"
 raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0378"
+status = "active"
+catalog_id = "ldmatrix_m16n16_x1_trans_b8"
+operation_key = "matrix.ldmatrix.m16n16.x1.transposed.b8.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0379"
+status = "active"
+catalog_id = "ldmatrix_m16n16_x1_trans_b8x16_b4x16_p64"
+operation_key = "matrix.ldmatrix.m16n16.x1.transposed.b8x16_b4x16_p64.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0380"
+status = "active"
+catalog_id = "ldmatrix_m16n16_x1_trans_b8x16_b6x16_p32"
+operation_key = "matrix.ldmatrix.m16n16.x1.transposed.b8x16_b6x16_p32.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0381"
+status = "active"
+catalog_id = "ldmatrix_m16n16_x2_trans_b8"
+operation_key = "matrix.ldmatrix.m16n16.x2.transposed.b8.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 4]" }
+
+[[entry]]
+abi_id = "i0382"
+status = "active"
+catalog_id = "ldmatrix_m16n16_x2_trans_b8x16_b4x16_p64"
+operation_key = "matrix.ldmatrix.m16n16.x2.transposed.b8x16_b4x16_p64.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 4]" }
+
+[[entry]]
+abi_id = "i0383"
+status = "active"
+catalog_id = "ldmatrix_m16n16_x2_trans_b8x16_b6x16_p32"
+operation_key = "matrix.ldmatrix.m16n16.x2.transposed.b8x16_b6x16_p32.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 4]" }
+
+[[entry]]
+abi_id = "i0384"
+status = "active"
+catalog_id = "ldmatrix_m8n16_x1_b8x16_b4x16_p64"
+operation_key = "matrix.ldmatrix.m8n16.x1.normal.b8x16_b4x16_p64.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "u32" }
+
+[[entry]]
+abi_id = "i0385"
+status = "active"
+catalog_id = "ldmatrix_m8n16_x1_b8x16_b6x16_p32"
+operation_key = "matrix.ldmatrix.m8n16.x1.normal.b8x16_b6x16_p32.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "u32" }
+
+[[entry]]
+abi_id = "i0386"
+status = "active"
+catalog_id = "ldmatrix_m8n16_x2_b8x16_b4x16_p64"
+operation_key = "matrix.ldmatrix.m8n16.x2.normal.b8x16_b4x16_p64.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0387"
+status = "active"
+catalog_id = "ldmatrix_m8n16_x2_b8x16_b6x16_p32"
+operation_key = "matrix.ldmatrix.m8n16.x2.normal.b8x16_b6x16_p32.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0388"
+status = "active"
+catalog_id = "ldmatrix_m8n16_x4_b8x16_b4x16_p64"
+operation_key = "matrix.ldmatrix.m8n16.x4.normal.b8x16_b4x16_p64.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 4]" }
+
+[[entry]]
+abi_id = "i0389"
+status = "active"
+catalog_id = "ldmatrix_m8n16_x4_b8x16_b6x16_p32"
+operation_key = "matrix.ldmatrix.m8n16.x4.normal.b8x16_b6x16_p32.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "[u32; 4]" }

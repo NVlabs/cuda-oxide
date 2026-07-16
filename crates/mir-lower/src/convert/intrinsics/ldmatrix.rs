@@ -25,16 +25,34 @@ use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 
+pub(crate) trait LdmatrixInstructionHead {
+    fn resolve(self, register_count: usize) -> String;
+}
+
+impl LdmatrixInstructionHead for &str {
+    fn resolve(self, _register_count: usize) -> String {
+        self.to_owned()
+    }
+}
+
+// Keep previously generated classic callers source-compatible.
+impl LdmatrixInstructionHead for bool {
+    fn resolve(self, register_count: usize) -> String {
+        let transposed = if self { ".trans" } else { "" };
+        format!("ldmatrix.sync.aligned.m8n8.x{register_count}{transposed}.shared.b16")
+    }
+}
+
 /// Lower one generated `ldmatrix` variant.
-pub(crate) fn convert_generated_ldmatrix(
+pub(crate) fn convert_generated_ldmatrix<I: LdmatrixInstructionHead>(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     register_count: usize,
-    transposed: bool,
+    instruction_head: I,
     typed_intrinsic_name: &str,
 ) -> Result<()> {
-    let name = ldmatrix_name(register_count, transposed);
+    let name = "ldmatrix";
     if !matches!(register_count, 1 | 2 | 4) {
         return pliron::input_err_noloc!(
             "{} requires an x1, x2, or x4 register shape, got x{}",
@@ -42,6 +60,7 @@ pub(crate) fn convert_generated_ldmatrix(
             register_count
         );
     }
+    let instruction_head = instruction_head.resolve(register_count);
 
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     if operands.len() != 1 {
@@ -73,23 +92,11 @@ pub(crate) fn convert_generated_ldmatrix(
             shared_pointer,
             result_ty,
             register_count,
-            transposed,
+            &instruction_head,
         ),
     };
 
     replace_with_register_results(ctx, rewriter, op, producer, register_count)
-}
-
-fn ldmatrix_name(register_count: usize, transposed: bool) -> &'static str {
-    match (register_count, transposed) {
-        (1, false) => "ldmatrix_x1",
-        (1, true) => "ldmatrix_x1_trans",
-        (2, false) => "ldmatrix_x2",
-        (2, true) => "ldmatrix_x2_trans",
-        (4, false) => "ldmatrix_x4",
-        (4, true) => "ldmatrix_x4_trans",
-        _ => "ldmatrix",
-    }
 }
 
 fn normalize_shared_pointer(
@@ -162,7 +169,7 @@ fn lower_with_inline_ptx(
     shared_pointer: Value,
     result_ty: TypeHandle,
     register_count: usize,
-    transposed: bool,
+    instruction_head: &str,
 ) -> Ptr<Operation> {
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let pointer_address = llvm::PtrToIntOp::new(ctx, shared_pointer, i32_ty.into());
@@ -174,10 +181,7 @@ fn lower_with_inline_ptx(
         .collect::<Vec<_>>()
         .join(", ");
     let pointer_operand = register_count;
-    let trans = if transposed { ".trans" } else { "" };
-    let template = format!(
-        "ldmatrix.sync.aligned.m8n8.x{register_count}{trans}.shared.b16 {{{outputs}}}, [${pointer_operand}];"
-    );
+    let template = format!("{instruction_head} {{{outputs}}}, [${pointer_operand}];");
     let constraints = (0..register_count)
         .map(|_| "=r")
         .chain(["r", "~{memory}"])

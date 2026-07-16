@@ -82,5 +82,11 @@ mod tests {
             decode_intrinsic_identifier("llvm__nvvm_dwgmma_dcommit_ugroup_dsync_daligned"),
             "llvm.nvvm.wgmma.commit_group.sync.aligned"
         );
+        assert_eq!(
+            decode_intrinsic_identifier(
+                "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx1_dtrans_db8x16_db4x16_up64_dp3"
+            ),
+            "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3"
+        );
     }
 }

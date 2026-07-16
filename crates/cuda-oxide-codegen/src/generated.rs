@@ -494,6 +494,241 @@ mod tests {
     }
 
     #[test]
+    fn blackwell_ldmatrix_variants_select_exact_markers_and_targets() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedHardwareAlternative, GeneratedHardwareTarget,
+        };
+        use dialect_mir::types::MirPtrType;
+        use dialect_nvvm::ops::{
+            LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
+            LdmatrixShapeAttr, LdmatrixStateSpaceAttr,
+        };
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+        let pointer_ty = MirPtrType::get_shared(&mut ctx, u8_ty.into(), false);
+        let block = BasicBlock::new(&mut ctx, None, vec![pointer_ty.into()]);
+        let pointer = block.deref(&ctx).get_argument(0);
+        let cases = [
+            (
+                "v1:i0378",
+                "ldmatrix_m16n16_x1_trans_b8",
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8,
+            ),
+            (
+                "v1:i0379",
+                "ldmatrix_m16n16_x1_trans_b8x16_b4x16_p64",
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B4x16P64,
+            ),
+            (
+                "v1:i0380",
+                "ldmatrix_m16n16_x1_trans_b8x16_b6x16_p32",
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B6x16P32,
+            ),
+            (
+                "v1:i0381",
+                "ldmatrix_m16n16_x2_trans_b8",
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8,
+            ),
+            (
+                "v1:i0382",
+                "ldmatrix_m16n16_x2_trans_b8x16_b4x16_p64",
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B4x16P64,
+            ),
+            (
+                "v1:i0383",
+                "ldmatrix_m16n16_x2_trans_b8x16_b6x16_p32",
+                LdmatrixShapeAttr::M16n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Transposed,
+                LdmatrixElementAttr::B8x16B6x16P32,
+            ),
+            (
+                "v1:i0384",
+                "ldmatrix_m8n16_x1_b8x16_b4x16_p64",
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B4x16P64,
+            ),
+            (
+                "v1:i0385",
+                "ldmatrix_m8n16_x1_b8x16_b6x16_p32",
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X1,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B6x16P32,
+            ),
+            (
+                "v1:i0386",
+                "ldmatrix_m8n16_x2_b8x16_b4x16_p64",
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B4x16P64,
+            ),
+            (
+                "v1:i0387",
+                "ldmatrix_m8n16_x2_b8x16_b6x16_p32",
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X2,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B6x16P32,
+            ),
+            (
+                "v1:i0388",
+                "ldmatrix_m8n16_x4_b8x16_b4x16_p64",
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X4,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B4x16P64,
+            ),
+            (
+                "v1:i0389",
+                "ldmatrix_m8n16_x4_b8x16_b6x16_p32",
+                LdmatrixShapeAttr::M8n16,
+                LdmatrixMultiplicityAttr::X4,
+                LdmatrixLayoutAttr::Normal,
+                LdmatrixElementAttr::B8x16B6x16P32,
+            ),
+        ];
+        let expected_hardware = [
+            GeneratedHardwareAlternative::ExactArchitecture(100),
+            GeneratedHardwareAlternative::FamilyTarget(100),
+            GeneratedHardwareAlternative::ExactArchitecture(103),
+            GeneratedHardwareAlternative::FamilyTarget(103),
+            GeneratedHardwareAlternative::ExactArchitecture(110),
+            GeneratedHardwareAlternative::FamilyTarget(110),
+            GeneratedHardwareAlternative::ExactArchitecture(120),
+            GeneratedHardwareAlternative::FamilyTarget(120),
+            GeneratedHardwareAlternative::ExactArchitecture(121),
+            GeneratedHardwareAlternative::FamilyTarget(121),
+        ];
+
+        for (marker, id, shape, multiplicity, layout, element) in cases {
+            let op = LdmatrixOp::build(
+                &mut ctx,
+                pointer,
+                shape,
+                multiplicity,
+                layout,
+                element,
+                LdmatrixStateSpaceAttr::Shared,
+            );
+            let structural =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Optional)
+                    .unwrap();
+            assert_eq!(structural.targets.len(), 1, "{id}");
+            assert_eq!(structural.targets[0].id, id);
+
+            op.deref_mut(&ctx).attributes.set(
+                Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                StringAttr::new(marker.to_string()),
+            );
+            let marked =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap();
+            assert_eq!(marked.targets[0].marker, marker);
+            for backend in [
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                GeneratedIntrinsicBackend::LibNvvm,
+            ] {
+                let requirement = marked
+                    .clone()
+                    .for_backend(backend)
+                    .requirement(marked.targets[0]);
+                assert_eq!(requirement.minimum_ptx.encoded(), 86, "{id} {backend:?}");
+                assert!(
+                    matches!(
+                        requirement.hardware,
+                        GeneratedHardwareTarget::AnyOf(alternatives)
+                            if alternatives == expected_hardware
+                    ),
+                    "{id} {backend:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blackwell_ldmatrix_rejects_wrong_marker_and_unsupported_shape() {
+        use dialect_mir::types::MirPtrType;
+        use dialect_nvvm::ops::{
+            LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
+            LdmatrixShapeAttr, LdmatrixStateSpaceAttr,
+        };
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+        let pointer_ty = MirPtrType::get_shared(&mut ctx, u8_ty.into(), false);
+        let block = BasicBlock::new(&mut ctx, None, vec![pointer_ty.into()]);
+        let pointer = block.deref(&ctx).get_argument(0);
+
+        let wrong_marker = LdmatrixOp::build(
+            &mut ctx,
+            pointer,
+            LdmatrixShapeAttr::M16n16,
+            LdmatrixMultiplicityAttr::X1,
+            LdmatrixLayoutAttr::Transposed,
+            LdmatrixElementAttr::B8,
+            LdmatrixStateSpaceAttr::Shared,
+        );
+        wrong_marker.deref_mut(&ctx).attributes.set(
+            Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+            StringAttr::new("v1:i0379".to_string()),
+        );
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            wrong_marker,
+            GeneratedMarkerPolicy::Required,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("does not match the exact variant attributes"),
+            "{error}"
+        );
+
+        let unsupported = LdmatrixOp::build(
+            &mut ctx,
+            pointer,
+            LdmatrixShapeAttr::M16n16,
+            LdmatrixMultiplicityAttr::X4,
+            LdmatrixLayoutAttr::Transposed,
+            LdmatrixElementAttr::B8,
+            LdmatrixStateSpaceAttr::Shared,
+        );
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            unsupported,
+            GeneratedMarkerPolicy::Optional,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("matches 0 generated catalog variants"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn classic_ldmatrix_compatibility_ops_keep_exact_target_requirements() {
         use crate::generated_intrinsic_targets::{
             GeneratedHardwareAlternative, GeneratedHardwareTarget,

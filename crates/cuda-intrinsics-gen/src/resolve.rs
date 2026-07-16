@@ -83,6 +83,9 @@ const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
 const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
 pub(crate) const CATALOG_SCHEMA: u32 = 39;
+const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
+    "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
+const BLACKWELL_LDMATRIX_LIBNVVM_TARGETS: &str = BLACKWELL_LDMATRIX_LLVM_TARGETS;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -2339,6 +2342,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("3.2".into()),
                         minimum_sm: Some("sm_20".into()),
                     },
@@ -2346,6 +2350,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("7.0".into()),
                         minimum_sm: Some("sm_80".into()),
                     },
@@ -2798,6 +2803,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("8.6".into()),
                         minimum_sm: recipe.minimum_sm.map(Into::into),
                     },
@@ -2805,6 +2811,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("8.6".into()),
                         minimum_sm: recipe.minimum_sm.map(Into::into),
                     },
@@ -3393,6 +3400,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some(recipe.minimum_ptx.into()),
                         minimum_sm: recipe.minimum_sm.map(Into::into),
                     },
@@ -3400,6 +3408,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some(recipe.minimum_ptx.into()),
                         minimum_sm: recipe.minimum_sm.map(Into::into),
                     },
@@ -4492,6 +4501,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("8.6".into()),
                         minimum_sm: None,
                     },
@@ -4499,6 +4509,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("8.6".into()),
                         minimum_sm: None,
                     },
@@ -6482,6 +6493,7 @@ fn validate_selected_target_predicates(
     let mut has_clc_multicast_support = false;
     let mut has_tma_blackwell_support = false;
     let mut has_tcgen05_support = false;
+    let mut has_ldstmatrix_blackwell_support = false;
     for predicate in &selection.predicates {
         if let Some(value) = predicate.strip_prefix("Subtarget->getPTXVersion() >= ") {
             ensure!(
@@ -6570,6 +6582,28 @@ fn validate_selected_target_predicates(
                 policy.id
             );
             has_tcgen05_support = true;
+        } else if predicate == "Subtarget->hasLdStmatrixBlackwellSupport()" {
+            ensure!(
+                policy.family == "ldmatrix"
+                    && policy.ldmatrix_variant.as_ref().is_some_and(|variant| {
+                        variant.shape != LdmatrixShape::M8n8
+                            && variant.element != LdmatrixElement::B16
+                    }),
+                "{} uses the Blackwell ld/stmatrix predicate outside a Blackwell ldmatrix variant",
+                policy.id
+            );
+            ensure!(
+                !has_ldstmatrix_blackwell_support
+                    && imported_ptx.is_none()
+                    && imported_sm.is_none()
+                    && !has_dot_instructions
+                    && !has_clc_multicast_support
+                    && !has_tma_blackwell_support
+                    && !has_tcgen05_support,
+                "{} has duplicate or conflicting Blackwell ldmatrix target predicates",
+                policy.id
+            );
+            has_ldstmatrix_blackwell_support = true;
         } else {
             bail!(
                 "{} selected instruction has unsupported target predicate {predicate:?}; target gates must fail closed",
@@ -6613,11 +6647,25 @@ fn validate_selected_target_predicates(
         }
     }
     if policy.family == "ldmatrix" {
-        ensure!(
-            imported_ptx.is_some() && imported_sm.is_some(),
-            "{} ldmatrix selection must carry both PTX and SM predicates",
-            policy.id
-        );
+        if policy
+            .ldmatrix_variant
+            .as_ref()
+            .is_some_and(|variant| variant.shape == LdmatrixShape::M8n8)
+        {
+            ensure!(
+                imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
+                "{} classic ldmatrix selection must carry exactly its PTX and SM predicates",
+                policy.id
+            );
+        } else {
+            ensure!(
+                has_ldstmatrix_blackwell_support
+                    && selection.predicates.len() == 1
+                    && policy.targets == BLACKWELL_LDMATRIX_LLVM_TARGETS,
+                "{} Blackwell ldmatrix selection must retain its helper predicate and reviewed exact targets",
+                policy.id
+            );
+        }
     } else if policy.family == "dotprod" {
         ensure!(
             has_dot_instructions && selection.predicates.len() == 1,
@@ -7251,6 +7299,7 @@ fn expand_special_register_admission(
                         backend,
                         mechanism,
                         evidence_profile: evidence_profile.clone(),
+                        targets: None,
                     },
                 )
                 .collect(),
@@ -8806,6 +8855,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("7.8".into()),
                         minimum_sm: Some("sm_90".into()),
                     },
@@ -8813,6 +8863,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("7.8".into()),
                         minimum_sm: Some("sm_90".into()),
                     },
@@ -9035,22 +9086,54 @@ fn validate_ldmatrix_policy(
         .ldmatrix_safety
         .as_ref()
         .with_context(|| format!("{} has no ldmatrix safety contract", policy.id))?;
+    let classic = variant.shape == LdmatrixShape::M8n8 && variant.element == LdmatrixElement::B16;
+    let blackwell = matches!(
+        (variant.shape, variant.layout, variant.element),
+        (
+            LdmatrixShape::M8n16,
+            LdmatrixLayout::Normal,
+            LdmatrixElement::B8x16B4x16P64 | LdmatrixElement::B8x16B6x16P32
+        ) | (
+            LdmatrixShape::M16n16,
+            LdmatrixLayout::Transposed,
+            LdmatrixElement::B8 | LdmatrixElement::B8x16B4x16P64 | LdmatrixElement::B8x16B6x16P32
+        )
+    );
     ensure!(
-        variant.shape == LdmatrixShape::M8n8
-            && variant.element == LdmatrixElement::B16
-            && variant.state_space == LdmatrixStateSpace::Shared,
+        variant.shape != LdmatrixShape::M16n16 || variant.multiplicity != LdmatrixMultiplicity::X4,
+        "{} requests unsupported m16n16.x4 ldmatrix",
+        policy.id
+    );
+    ensure!(
+        (classic || blackwell) && variant.state_space == LdmatrixStateSpace::Shared,
         "{} requests an unsupported ldmatrix shape, element, or state space",
         policy.id
     );
+    let expected_participation = if classic {
+        LdmatrixParticipation::AllWarpLanesSameInstruction
+    } else {
+        LdmatrixParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
+    };
+    let expected_address_contract = match variant.shape {
+        LdmatrixShape::M8n8 => {
+            LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadableWithSm75Replication
+        }
+        LdmatrixShape::M8n16 => {
+            LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadable
+        }
+        LdmatrixShape::M16n16 => {
+            LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedThirtyTwoBytesReadable
+        }
+    };
     ensure!(
-        safety.participation == LdmatrixParticipation::AllWarpLanesSameInstruction
-            && safety.address_contract
-                == LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadableWithSm75Replication
-            && safety.memory_order == LdmatrixMemoryOrder::Weak,
+        safety.participation == expected_participation
+            && safety.address_contract == expected_address_contract
+            && safety.memory_order == LdmatrixMemoryOrder::Weak
+            && safety.runtime_validation == RuntimeValidation::Unexecuted,
         "{} has an unsupported ldmatrix safety contract",
         policy.id
     );
-    let count = variant.multiplicity.register_count();
+    let count = variant.register_count();
     let count_name = match variant.multiplicity {
         LdmatrixMultiplicity::X1 => "x1",
         LdmatrixMultiplicity::X2 => "x2",
@@ -9068,11 +9151,25 @@ fn validate_ldmatrix_policy(
         LdmatrixLayout::Normal => "normal",
         LdmatrixLayout::Transposed => "transposed",
     };
-    let expected_source =
-        format!("int_nvvm_ldmatrix_sync_aligned_m8n8_{count_name}{trans_record}_b16");
-    let expected_symbol =
-        format!("llvm.nvvm.ldmatrix.sync.aligned.m8n8.{count_name}{trans_symbol}.b16");
-    let expected_name = format!("ldmatrix_m8n8_{count_name}{trans_record}_b16");
+    let shape_name = match variant.shape {
+        LdmatrixShape::M8n8 => "m8n8",
+        LdmatrixShape::M8n16 => "m8n16",
+        LdmatrixShape::M16n16 => "m16n16",
+    };
+    let (element_record, element_symbol) = match variant.element {
+        LdmatrixElement::B16 => ("b16", "b16"),
+        LdmatrixElement::B8 => ("b8", "b8"),
+        LdmatrixElement::B8x16B4x16P64 => ("b8x16_b4x16_p64", "b8x16.b4x16_p64"),
+        LdmatrixElement::B8x16B6x16P32 => ("b8x16_b6x16_p32", "b8x16.b6x16_p32"),
+    };
+    let expected_source = format!(
+        "int_nvvm_ldmatrix_sync_aligned_{shape_name}_{count_name}{trans_record}_{element_record}"
+    );
+    let expected_symbol = format!(
+        "llvm.nvvm.ldmatrix.sync.aligned.{shape_name}.{count_name}{trans_symbol}.{element_symbol}"
+    );
+    let expected_name =
+        format!("ldmatrix_{shape_name}_{count_name}{trans_record}_{element_record}");
     let expected_result = if count == 1 {
         "u32".to_owned()
     } else {
@@ -9095,7 +9192,7 @@ fn validate_ldmatrix_policy(
         policy.id
     );
     ensure!(
-        policy.rust_arguments == ["*const u32"]
+        policy.rust_arguments == [if classic { "*const u32" } else { "*const u8" }]
             && policy.rust_result == expected_result
             && policy.llvm_arguments == ["anyptr"]
             && policy.llvm_results == vec!["i32"; count]
@@ -9106,16 +9203,22 @@ fn validate_ldmatrix_policy(
     ensure!(
         policy.id == expected_name
             && policy.operation_key
-                == format!("matrix.ldmatrix.m8n8.{count_name}.{layout_name}.b16.shared")
+                == format!(
+                    "matrix.ldmatrix.{shape_name}.{count_name}.{layout_name}.{element_record}.shared"
+                )
             && policy.rust_module == "matrix"
             && policy.rust_name == expected_name
             && !policy.safe
-            && !policy.must_use
+            && policy.must_use == !classic
             && policy.safe_allowlist_reason.is_none()
-            && policy.compatibility_rust_paths
-                == [format!(
-                    "cuda_device::wmma::ldmatrix_{count_name}{trans_record}"
-                )]
+            && if classic {
+                policy.compatibility_rust_paths
+                    == [format!(
+                        "cuda_device::wmma::ldmatrix_{count_name}{trans_record}"
+                    )]
+            } else {
+                policy.compatibility_rust_paths.is_empty()
+            }
             && policy.lowering == "generated_ldmatrix"
             && policy.ldmatrix_adapter == Some(expected_adapter)
             && policy.selected_address_space == Some(ImportedAddressSpace::Shared),
@@ -9166,6 +9269,51 @@ fn validate_ldmatrix_policy(
         "{} backend lowering omits its evidence profile",
         policy.id
     );
+    if blackwell {
+        ensure!(
+            policy.minimum_ptx == "8.6"
+                && policy.minimum_sm.is_none()
+                && policy.targets == BLACKWELL_LDMATRIX_LLVM_TARGETS,
+            "{} must retain the reviewed PTX 8.6 floor and exact LLVM Blackwell target set",
+            policy.id
+        );
+        let llvm = policy
+            .backend_lowerings
+            .iter()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+            .expect("validated LLVM route");
+        let libnvvm = policy
+            .backend_lowerings
+            .iter()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .expect("validated libNVVM route");
+        ensure!(
+            llvm.targets.is_none()
+                && llvm.minimum_sm.is_none()
+                && backend_target_requirement(policy, llvm)?
+                    == CatalogTargetRequirement {
+                        minimum_ptx: parse_ptx_version("8.6", &policy.id)?,
+                        hardware: parse_hardware_target_fields(
+                            &policy.id,
+                            BLACKWELL_LDMATRIX_LLVM_TARGETS,
+                            None,
+                        )?,
+                    }
+                && libnvvm.targets.as_deref() == Some(BLACKWELL_LDMATRIX_LIBNVVM_TARGETS)
+                && libnvvm.minimum_sm.is_none()
+                && backend_target_requirement(policy, libnvvm)?
+                    == CatalogTargetRequirement {
+                        minimum_ptx: parse_ptx_version("8.6", &policy.id)?,
+                        hardware: parse_hardware_target_fields(
+                            &policy.id,
+                            BLACKWELL_LDMATRIX_LIBNVVM_TARGETS,
+                            None,
+                        )?,
+                    },
+            "{} backend routes do not preserve the reviewed LLVM/libNVVM Blackwell target split",
+            policy.id
+        );
+    }
     ensure!(
         policy.packed_atomic.is_none()
             && policy.redux.is_none()
@@ -11486,6 +11634,7 @@ fn packed_conversion_overlay_record(
             backend,
             mechanism: packed_conversion_backend_mechanism(&conversion, backend),
             evidence_profile: evidence_profile.into(),
+            targets: None,
             minimum_ptx: Some(minimum_ptx.into()),
             minimum_sm: Some(minimum_sm.into()),
         })
@@ -11967,6 +12116,7 @@ fn scalar_conversion_overlay_record(
                 IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
             },
             evidence_profile: evidence_profile.clone(),
+            targets: None,
             minimum_ptx: Some(recipe.minimum_ptx.into()),
             minimum_sm: Some(recipe.minimum_sm.into()),
         })
@@ -13212,6 +13362,7 @@ fn expand_register_mma_integer_admission(
                     backend: IntrinsicBackend::LlvmNvptx,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.llvm_evidence_profile.clone(),
+                    targets: None,
                     minimum_ptx: Some(recipe.minimum_ptx.into()),
                     minimum_sm: Some(recipe.minimum_sm.into()),
                 },
@@ -13219,6 +13370,7 @@ fn expand_register_mma_integer_admission(
                     backend: IntrinsicBackend::LibNvvm,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                    targets: None,
                     minimum_ptx: Some(recipe.minimum_ptx.into()),
                     minimum_sm: Some(recipe.minimum_sm.into()),
                 },
@@ -13397,6 +13549,7 @@ fn expand_register_mma_binary_admission(
                     backend: IntrinsicBackend::LlvmNvptx,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.llvm_evidence_profile.clone(),
+                    targets: None,
                     minimum_ptx: Some(recipe.minimum_ptx.into()),
                     minimum_sm: Some(recipe.minimum_sm.into()),
                 },
@@ -13404,6 +13557,7 @@ fn expand_register_mma_binary_admission(
                     backend: IntrinsicBackend::LibNvvm,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                    targets: None,
                     minimum_ptx: Some(recipe.minimum_ptx.into()),
                     minimum_sm: Some(recipe.minimum_sm.into()),
                 },
@@ -14053,6 +14207,7 @@ fn sparse_mma_overlay_record(
             backend,
             mechanism: BackendLoweringMechanism::InlinePtx,
             evidence_profile: evidence_profile.into(),
+            targets: None,
             minimum_ptx: Some(minimum_ptx.into()),
             minimum_sm: minimum_sm.map(str::to_owned),
         })
@@ -14491,6 +14646,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("3.2".into()),
                         minimum_sm: Some("sm_20".into()),
                     },
@@ -14498,6 +14654,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: None,
                         minimum_sm: Some("sm_75".into()),
                     },
@@ -14847,6 +15004,7 @@ fn expand_cluster_barrier_admission(
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some(recipe.minimum_ptx.into()),
                         minimum_sm: Some("sm_90".into()),
                     },
@@ -14854,6 +15012,7 @@ fn expand_cluster_barrier_admission(
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some(recipe.minimum_ptx.into()),
                         minimum_sm: Some("sm_90".into()),
                     },
@@ -15281,6 +15440,7 @@ fn expand_debug_control_admission(
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("3.2".into()),
                         minimum_sm: Some("sm_20".into()),
                     },
@@ -15288,6 +15448,7 @@ fn expand_debug_control_admission(
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("9.3".into()),
                         minimum_sm: Some("sm_75".into()),
                     },
@@ -15663,6 +15824,7 @@ fn expand_cluster_memory_admission(
                             IntrinsicBackend::LlvmNvptx => admission.llvm_evidence_profile.clone(),
                             IntrinsicBackend::LibNvvm => admission.libnvvm_evidence_profile.clone(),
                         },
+                        targets: None,
                         minimum_ptx: Some("7.8".into()),
                         minimum_sm: Some("sm_90".into()),
                     })
@@ -16489,6 +16651,7 @@ fn expand_mbarrier_extended_admission(
                                     admission.libnvvm_evidence_profile.clone()
                                 }
                             },
+                            targets: None,
                             minimum_ptx: Some(minimum_ptx.into()),
                             minimum_sm: Some(minimum_sm.into()),
                         }
@@ -16738,6 +16901,7 @@ fn expand_wgmma_control_admission(
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::TypedNvvm,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("8.0".into()),
                         minimum_sm: None,
                     },
@@ -16745,6 +16909,7 @@ fn expand_wgmma_control_admission(
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
                         minimum_ptx: Some("8.0".into()),
                         minimum_sm: None,
                     },
@@ -17205,13 +17370,17 @@ fn backend_target_requirement(
         .minimum_ptx
         .as_deref()
         .unwrap_or(&policy.minimum_ptx);
-    let minimum_sm = lowering
-        .minimum_sm
-        .as_deref()
-        .or(policy.minimum_sm.as_deref());
+    let targets = lowering.targets.as_deref().unwrap_or(&policy.targets);
+    let minimum_sm = lowering.minimum_sm.as_deref().or_else(|| {
+        if lowering.targets.is_none() {
+            policy.minimum_sm.as_deref()
+        } else {
+            None
+        }
+    });
     Ok(CatalogTargetRequirement {
         minimum_ptx: parse_ptx_version(minimum_ptx, &policy.id)?,
-        hardware: parse_hardware_target_fields(&policy.id, &policy.targets, minimum_sm)?,
+        hardware: parse_hardware_target_fields(&policy.id, targets, minimum_sm)?,
     })
 }
 
@@ -17736,16 +17905,17 @@ fn reject_disallowed_placeholder(value: &str, field: &str) -> Result<()> {
 }
 
 fn validate_stage_pairs(stages: &[EvidenceStage], id: &str) -> Result<()> {
-    let mut pairs = Vec::new();
+    let mut identities = Vec::new();
     for stage in stages {
-        let pair = (stage.stage, stage.mechanism);
+        let identity = (stage.stage, stage.mechanism, stage.targets.clone());
         ensure!(
-            !pairs.contains(&pair),
-            "expanded evidence {id} has conflicting duplicate {:?}/{:?} stages",
+            !identities.contains(&identity),
+            "expanded evidence {id} has conflicting duplicate {:?}/{:?} stage targets {:?}",
             stage.stage,
-            stage.mechanism
+            stage.mechanism,
+            stage.targets
         );
-        pairs.push(pair);
+        identities.push(identity);
     }
     Ok(())
 }
@@ -18131,6 +18301,27 @@ fn validate_selected_stage_targets(
     record: &EvidenceRecord,
     lowering: &crate::model::OverlayBackendLowering,
 ) -> Result<()> {
+    let blackwell_ldmatrix = policy.family == "ldmatrix"
+        && policy
+            .ldmatrix_variant
+            .as_ref()
+            .is_some_and(|variant| variant.shape != LdmatrixShape::M8n8);
+    if !blackwell_ldmatrix {
+        let mut pairs = Vec::new();
+        for stage in record.stages.iter().filter(|stage| {
+            stage.mechanism == Some(lowering.mechanism) && stage.outcome == "succeeded"
+        }) {
+            let pair = (stage.stage, stage.mechanism);
+            ensure!(
+                !pairs.contains(&pair),
+                "{} has multiple target-specific {:?}/{:?} stages outside Blackwell ldmatrix evidence",
+                policy.id,
+                stage.stage,
+                stage.mechanism
+            );
+            pairs.push(pair);
+        }
+    }
     for stage in &record.stages {
         ensure!(
             !stage.targets.is_empty(),
@@ -18151,6 +18342,25 @@ fn validate_selected_stage_targets(
         IntrinsicBackend::LlvmNvptx => EvidenceStageKind::PtxAssembly,
         IntrinsicBackend::LibNvvm => EvidenceStageKind::DeviceLink,
     };
+    let requirement = backend_target_requirement(policy, lowering)?;
+    let expected_ptx = requirement.minimum_ptx.encoded();
+    let expected_hardware = match requirement.hardware {
+        CatalogHardwareTarget::AnyOf { alternatives } if !alternatives.is_empty() => alternatives,
+        _ => bail!(
+            "{} selected backend stages require a hardware target",
+            policy.id
+        ),
+    };
+    if blackwell_ldmatrix {
+        return validate_blackwell_ldmatrix_stage_targets(
+            policy,
+            record,
+            lowering,
+            terminal_kind,
+            &expected_hardware,
+            expected_ptx,
+        );
+    }
     let backend = successful_stage(
         record,
         lowering.mechanism,
@@ -18162,15 +18372,6 @@ fn validate_selected_stage_targets(
             policy.id
         )
     })?;
-    let requirement = backend_target_requirement(policy, lowering)?;
-    let expected_ptx = requirement.minimum_ptx.encoded();
-    let expected_hardware = match requirement.hardware {
-        CatalogHardwareTarget::AnyOf { alternatives } if !alternatives.is_empty() => alternatives,
-        _ => bail!(
-            "{} selected backend stages require a hardware target",
-            policy.id
-        ),
-    };
     let mut required_stages = vec![backend];
     if matches!(record.status.as_str(), "validated" | "executed") {
         required_stages.push(
@@ -18229,6 +18430,117 @@ fn validate_selected_stage_targets(
         );
     }
     Ok(())
+}
+
+fn validate_blackwell_ldmatrix_stage_targets(
+    policy: &OverlayIntrinsic,
+    record: &EvidenceRecord,
+    lowering: &OverlayBackendLowering,
+    terminal_kind: EvidenceStageKind,
+    expected_hardware: &[CatalogHardwareAlternative],
+    minimum_ptx: u16,
+) -> Result<()> {
+    let mut required_kinds = vec![EvidenceStageKind::BackendCodegen];
+    if matches!(record.status.as_str(), "validated" | "executed") {
+        if lowering.backend == IntrinsicBackend::LibNvvm {
+            required_kinds.push(EvidenceStageKind::PtxAssembly);
+        }
+        required_kinds.push(terminal_kind);
+    }
+
+    for kind in required_kinds {
+        let stages = record
+            .stages
+            .iter()
+            .filter(|stage| {
+                stage.stage == kind
+                    && stage.mechanism == Some(lowering.mechanism)
+                    && stage.outcome == "succeeded"
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            stages.len() == expected_hardware.len(),
+            "{} Blackwell ldmatrix {:?} evidence must contain one structured stage for each of its {} reviewed targets",
+            policy.id,
+            kind,
+            expected_hardware.len()
+        );
+
+        let mut covered = Vec::new();
+        for stage in stages {
+            let (hardware, ptx) = selected_stage_floor(stage)?;
+            ensure!(
+                expected_hardware.contains(&hardware) && !covered.contains(&hardware),
+                "{} Blackwell ldmatrix {:?} evidence has an unexpected or duplicate target {}",
+                policy.id,
+                kind,
+                describe_stage_hardware(hardware)
+            );
+            covered.push(hardware);
+            let ptx_matches = match lowering.backend {
+                IntrinsicBackend::LlvmNvptx => ptx == blackwell_ldmatrix_llvm_ptx_floor(hardware)?,
+                IntrinsicBackend::LibNvvm => ptx >= minimum_ptx,
+            };
+            ensure!(
+                ptx_matches,
+                "{} Blackwell ldmatrix {:?} evidence records the wrong PTX floor for {}",
+                policy.id,
+                kind,
+                describe_stage_hardware(hardware)
+            );
+            if matches!(
+                kind,
+                EvidenceStageKind::PtxAssembly | EvidenceStageKind::DeviceLink
+            ) {
+                ensure!(
+                    stage
+                        .tool_path
+                        .as_deref()
+                        .is_some_and(|value| !value.is_empty())
+                        && stage
+                            .tool_version
+                            .as_deref()
+                            .is_some_and(|value| !value.is_empty())
+                        && stage
+                            .tool_sha256
+                            .as_deref()
+                            .is_some_and(|value| !value.is_empty()),
+                    "{} Blackwell ldmatrix {:?} evidence for {} does not identify its tool",
+                    policy.id,
+                    kind,
+                    describe_stage_hardware(hardware)
+                );
+            }
+            if kind == EvidenceStageKind::DeviceLink {
+                ensure!(
+                    stage.artifact_kind == Some(EvidenceArtifactKind::Cubin),
+                    "{} Blackwell ldmatrix device-link evidence for {} is not a cubin",
+                    policy.id,
+                    describe_stage_hardware(hardware)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn blackwell_ldmatrix_llvm_ptx_floor(hardware: CatalogHardwareAlternative) -> Result<u16> {
+    let floor = match hardware {
+        CatalogHardwareAlternative::ExactArchitecture { sm: 100 } => 86,
+        CatalogHardwareAlternative::ExactArchitecture { sm: 103 }
+        | CatalogHardwareAlternative::ExactArchitecture { sm: 121 }
+        | CatalogHardwareAlternative::FamilyTarget {
+            sm: 100 | 103 | 120 | 121,
+        } => 88,
+        CatalogHardwareAlternative::ExactArchitecture { sm: 110 }
+        | CatalogHardwareAlternative::FamilyTarget { sm: 110 } => 90,
+        CatalogHardwareAlternative::ExactArchitecture { sm: 120 } => 87,
+        _ => bail!(
+            "{} is not a reviewed Blackwell ldmatrix target",
+            describe_stage_hardware(hardware)
+        ),
+    };
+    Ok(floor)
 }
 
 fn successful_stage(
@@ -18953,6 +19265,7 @@ mod tests {
                     IntrinsicBackend::LibNvvm => "libnvvm-test",
                 }
                 .into(),
+                targets: None,
                 minimum_ptx: Some("7.8".into()),
                 minimum_sm: Some("sm_75".into()),
             })
@@ -19364,6 +19677,7 @@ mod tests {
                     backend,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: format!("{backend:?}-test"),
+                    targets: None,
                     minimum_ptx: Some(minimum_ptx.into()),
                     minimum_sm: Some(minimum_sm.into()),
                 }
@@ -19491,6 +19805,7 @@ mod tests {
                 backend,
                 mechanism: packed_conversion_backend_mechanism(&conversion, backend),
                 evidence_profile: "test".into(),
+                targets: None,
                 minimum_ptx: Some(minimum_ptx.into()),
                 minimum_sm: Some(minimum_sm.into()),
             })
@@ -19742,6 +20057,7 @@ mod tests {
                 backend: IntrinsicBackend::LlvmNvptx,
                 mechanism: recipe.backend_mechanism,
                 evidence_profile: "llvm-test".into(),
+                targets: None,
                 minimum_ptx: Some("6.0".into()),
                 minimum_sm: Some("sm_30".into()),
             },
@@ -19749,6 +20065,7 @@ mod tests {
                 backend: IntrinsicBackend::LibNvvm,
                 mechanism: recipe.backend_mechanism,
                 evidence_profile: "libnvvm-test".into(),
+                targets: None,
                 minimum_ptx: Some("6.0".into()),
                 minimum_sm: Some("sm_75".into()),
             },
@@ -19912,6 +20229,7 @@ mod tests {
                 backend: IntrinsicBackend::LlvmNvptx,
                 mechanism: BackendLoweringMechanism::TypedNvvm,
                 evidence_profile: "llvm-test".into(),
+                targets: None,
                 minimum_ptx: None,
                 minimum_sm: None,
             },
@@ -19919,6 +20237,7 @@ mod tests {
                 backend: IntrinsicBackend::LibNvvm,
                 mechanism: BackendLoweringMechanism::InlinePtx,
                 evidence_profile: "libnvvm-test".into(),
+                targets: None,
                 minimum_ptx: None,
                 minimum_sm: Some("sm_75".into()),
             },
@@ -20315,8 +20634,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 49);
-        assert_eq!(overlay.intrinsics.len(), 377);
+        assert_eq!(overlay.shards.len(), 50);
+        assert_eq!(overlay.intrinsics.len(), 389);
         assert_eq!(
             overlay
                 .intrinsics
@@ -20387,7 +20706,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "ldmatrix")
                 .count(),
-            6
+            18
         );
         assert_eq!(
             overlay
@@ -25681,6 +26000,7 @@ scope = "system"
             backend: IntrinsicBackend::LlvmNvptx,
             mechanism: BackendLoweringMechanism::TypedNvvm,
             evidence_profile: "test".into(),
+            targets: None,
             minimum_ptx: None,
             minimum_sm: None,
         };
@@ -25736,6 +26056,7 @@ scope = "system"
             backend: IntrinsicBackend::LlvmNvptx,
             mechanism: BackendLoweringMechanism::InlinePtx,
             evidence_profile: "test".into(),
+            targets: None,
             minimum_ptx: None,
             minimum_sm: None,
         };
@@ -25804,6 +26125,7 @@ scope = "system"
             backend: IntrinsicBackend::LibNvvm,
             mechanism: BackendLoweringMechanism::InlinePtx,
             evidence_profile: "test".into(),
+            targets: None,
             minimum_ptx: None,
             minimum_sm: Some("sm_75".into()),
         };
@@ -25827,6 +26149,7 @@ scope = "system"
             backend: IntrinsicBackend::LlvmNvptx,
             mechanism: BackendLoweringMechanism::TypedNvvm,
             evidence_profile: "test".into(),
+            targets: None,
             minimum_ptx: Some("3.2".into()),
             minimum_sm: Some("sm_20".into()),
         };
@@ -25900,6 +26223,40 @@ scope = "system"
                 .to_string()
                 .contains("fail closed")
         );
+    }
+
+    #[test]
+    fn blackwell_ldmatrix_predicate_requires_the_reviewed_exact_target_set() {
+        let mut record = policy();
+        record.family = "ldmatrix".into();
+        record.minimum_ptx = "8.6".into();
+        record.minimum_sm = None;
+        record.targets = BLACKWELL_LDMATRIX_LLVM_TARGETS.into();
+        record.ldmatrix_variant = Some(crate::model::LdmatrixVariant {
+            shape: LdmatrixShape::M16n16,
+            multiplicity: LdmatrixMultiplicity::X1,
+            layout: LdmatrixLayout::Transposed,
+            element: LdmatrixElement::B8,
+            state_space: LdmatrixStateSpace::Shared,
+        });
+        let selection = ImportedSelection {
+            source_record: "selection".into(),
+            asm: "ldmatrix.sync.aligned.m16n16.x1.trans.shared.b8 {{$r0, $r1}}, [$src];".into(),
+            predicates: vec!["Subtarget->hasLdStmatrixBlackwellSupport()".into()],
+            constraints: Default::default(),
+        };
+
+        validate_selected_target_predicates(&record, &selection).unwrap();
+
+        record.targets = "sm_100a|sm_101a".into();
+        assert!(validate_selected_target_predicates(&record, &selection).is_err());
+
+        record.targets = BLACKWELL_LDMATRIX_LLVM_TARGETS.into();
+        let mut conflicting = selection;
+        conflicting
+            .predicates
+            .push("Subtarget->getPTXVersion() >= 86".into());
+        assert!(validate_selected_target_predicates(&record, &conflicting).is_err());
     }
 
     #[test]
@@ -26072,6 +26429,7 @@ scope = "system"
                     backend,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: "test".into(),
+                    targets: None,
                     minimum_ptx: Some("8.7".into()),
                     minimum_sm: None,
                 })
@@ -26108,6 +26466,134 @@ scope = "system"
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn backend_route_target_override_is_exact_and_does_not_inherit_the_record_sm_floor() {
+        let mut record = policy();
+        record.minimum_ptx = "8.6".into();
+        record.minimum_sm = Some("sm_75".into());
+        record.targets = "all".into();
+        let lowering = crate::model::OverlayBackendLowering {
+            backend: IntrinsicBackend::LibNvvm,
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            evidence_profile: "test".into(),
+            targets: Some("sm_100a|sm_120a".into()),
+            minimum_ptx: None,
+            minimum_sm: None,
+        };
+
+        assert_eq!(
+            backend_target_requirement(&record, &lowering).unwrap(),
+            CatalogTargetRequirement {
+                minimum_ptx: parse_ptx_version("8.6", &record.id).unwrap(),
+                hardware: CatalogHardwareTarget::AnyOf {
+                    alternatives: vec![
+                        CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                        CatalogHardwareAlternative::ExactArchitecture { sm: 120 },
+                    ],
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn blackwell_ldmatrix_evidence_covers_every_target_with_its_effective_ptx_floor() {
+        let mut policy = policy();
+        policy.family = "ldmatrix".into();
+        policy.minimum_ptx = "8.6".into();
+        policy.minimum_sm = None;
+        policy.targets = BLACKWELL_LDMATRIX_LLVM_TARGETS.into();
+        policy.ldmatrix_variant = Some(crate::model::LdmatrixVariant {
+            shape: LdmatrixShape::M16n16,
+            multiplicity: LdmatrixMultiplicity::X1,
+            layout: LdmatrixLayout::Transposed,
+            element: LdmatrixElement::B8,
+            state_space: LdmatrixStateSpace::Shared,
+        });
+        let lowering = OverlayBackendLowering {
+            backend: IntrinsicBackend::LlvmNvptx,
+            mechanism: BackendLoweringMechanism::TypedNvvm,
+            evidence_profile: "test".into(),
+            targets: None,
+            minimum_ptx: None,
+            minimum_sm: None,
+        };
+        let mut record = evidence();
+        record.status = "validated".into();
+        record.stages.clear();
+        for (target, ptx) in [
+            ("sm_100a", "ptx86"),
+            ("sm_100f", "ptx88"),
+            ("sm_103a", "ptx88"),
+            ("sm_103f", "ptx88"),
+            ("sm_110a", "ptx90"),
+            ("sm_110f", "ptx90"),
+            ("sm_120a", "ptx87"),
+            ("sm_120f", "ptx88"),
+            ("sm_121a", "ptx88"),
+            ("sm_121f", "ptx88"),
+        ] {
+            record.stages.push(evidence_stage(
+                EvidenceStageKind::BackendCodegen,
+                BackendLoweringMechanism::TypedNvvm,
+                &[target, ptx],
+            ));
+            let mut assembly = evidence_stage(
+                EvidenceStageKind::PtxAssembly,
+                BackendLoweringMechanism::TypedNvvm,
+                &[target, ptx],
+            );
+            assembly.tool_path = Some("/tool/ptxas".into());
+            assembly.tool_version = Some("test".into());
+            assembly.tool_sha256 = Some("0".repeat(64));
+            record.stages.push(assembly);
+        }
+        validate_selected_stage_targets(&policy, &record, &lowering).unwrap();
+
+        record.stages.retain(|stage| {
+            !(stage.stage == EvidenceStageKind::PtxAssembly
+                && stage.targets.iter().any(|target| target == "sm_121f"))
+        });
+        assert!(
+            validate_selected_stage_targets(&policy, &record, &lowering)
+                .unwrap_err()
+                .to_string()
+                .contains("one structured stage for each")
+        );
+    }
+
+    #[test]
+    fn non_blackwell_evidence_rejects_multiple_target_specific_stage_pairs() {
+        let policy = policy();
+        let lowering = OverlayBackendLowering {
+            backend: IntrinsicBackend::LlvmNvptx,
+            mechanism: BackendLoweringMechanism::TypedNvvm,
+            evidence_profile: "test".into(),
+            targets: None,
+            minimum_ptx: None,
+            minimum_sm: None,
+        };
+        let mut record = evidence();
+        record.stages = vec![
+            evidence_stage(
+                EvidenceStageKind::BackendCodegen,
+                BackendLoweringMechanism::TypedNvvm,
+                &["sm_20", "ptx20"],
+            ),
+            evidence_stage(
+                EvidenceStageKind::BackendCodegen,
+                BackendLoweringMechanism::TypedNvvm,
+                &["sm_21", "ptx20"],
+            ),
+        ];
+
+        assert!(
+            validate_selected_stage_targets(&policy, &record, &lowering)
+                .unwrap_err()
+                .to_string()
+                .contains("outside Blackwell ldmatrix evidence")
+        );
     }
 
     #[test]

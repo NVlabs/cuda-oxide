@@ -1,0 +1,490 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; libNVVM/ptxas/nvJitLink V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": [
+      "anyptr"
+    ],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_100a",
+    "ptx_feature": "PTX ISA 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "blackwell_ldmatrix_libnvvm_inline_probe",
+      "coverage_count": 12,
+      "stages": [
+        {
+          "targets": [
+            "compute_100a",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_100a",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_100a.ptx -arch=compute_100a; output 1,934 bytes, 12 exact heads, SHA-256 28553861b94c55284b1433b2e845af2105ced419c56b961e4400863503e79abd. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_100a /tmp/audit-bw-lib-sm_100a.ltoir; output 4,216 bytes, SHA-256 38c17da342bf392a3b99f6300491c6fe0dabb5afbec7b5fe9fec20884ab463e1. Fresh PTX omits the API terminal NUL; the old 1,935-byte artifact matches its first 1,934 bytes. CUDA 13.3 rejects compute_101a and compute_101f as unsupported architecture options."
+        },
+        {
+          "targets": [
+            "compute_100f",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_100f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_100f.ptx -arch=compute_100f; output 1,934 bytes, 12 exact heads, SHA-256 37436e0ec8fc861b52dcad2feacc52fc2c3435e18eeb87ebbba4b029be215c9b. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_100f /tmp/audit-bw-lib-sm_100f.ltoir; output 4,212 bytes, SHA-256 e1c62c7c5e47d3438046de138b654bb16a8e1c6d49fbf89fd2b75ddfb572d400."
+        },
+        {
+          "targets": [
+            "compute_103a",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_103a",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_103a.ptx -arch=compute_103a; output 1,934 bytes, 12 exact heads, SHA-256 0b8f5626501ffb5e18e0cc711a41621fc9ebd54b2c58795958be9cf9159ad5cf. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_103a /tmp/audit-bw-lib-sm_103a.ltoir; output 4,216 bytes, SHA-256 9ef00a4c226a255e08b6446b295d05b384fced64119b0a66101e23cedfc16104."
+        },
+        {
+          "targets": [
+            "compute_103f",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_103f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_103f.ptx -arch=compute_103f; output 1,934 bytes, 12 exact heads, SHA-256 779dc883d6d5954280552deeb05470760c5877d1f18c1805d7eb83a2cf2080af. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_103f /tmp/audit-bw-lib-sm_103f.ltoir; output 4,212 bytes, SHA-256 3bd2a1c89419ccd234fc1d646aebaa729015a718543658f8052026dab1c65472."
+        },
+        {
+          "targets": [
+            "compute_110a",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_110a",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_110a.ptx -arch=compute_110a; output 1,934 bytes, 12 exact heads, SHA-256 7a6cfb92287bf91af44669a51cdf490ef77ac16f5c31b4d19f8112782e8cc732. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_110a /tmp/audit-bw-lib-sm_110a.ltoir; output 4,216 bytes, SHA-256 740138b3ab504f86e0f2c39c45511c96b045f4fdc660565dd04ca2649cabdee1."
+        },
+        {
+          "targets": [
+            "compute_110f",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_110f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_110f.ptx -arch=compute_110f; output 1,934 bytes, 12 exact heads, SHA-256 7ee1e5965b770eb169a6704bea70875c38ca62453012fb2c52583b829fd87998. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_110f /tmp/audit-bw-lib-sm_110f.ltoir; output 4,212 bytes, SHA-256 390fa98789cdf453d46262e799761c469f7624d11ae5c8598e6a4f6e5c344cca."
+        },
+        {
+          "targets": [
+            "compute_120a",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_120a",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_120a.ptx -arch=compute_120a; output 1,934 bytes, 12 exact heads, SHA-256 ad1bc739d27351c1d4295ba524069fe04664978abef45ece98dac15829635c38. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_120a /tmp/audit-bw-lib-sm_120a.ltoir; output 4,216 bytes, SHA-256 27b48ef6b2e5f4a5bc241518979e767d7751170ae85c1c0f64ad2dd962f6296a."
+        },
+        {
+          "targets": [
+            "compute_120f",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_120f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_120f.ptx -arch=compute_120f; output 1,934 bytes, 12 exact heads, SHA-256 7af1243c1990ab8cc39a629b5ef31696c1483bcc41b6e0c89c9314dc5db1d7fa. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_120f /tmp/audit-bw-lib-sm_120f.ltoir; output 4,212 bytes, SHA-256 c1bef0c062b71290d3293a50e551dc6f41bceb857bad7350b21e3582f6f7177d."
+        },
+        {
+          "targets": [
+            "compute_121a",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_121a",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_121a.ptx -arch=compute_121a; output 1,934 bytes, 12 exact heads, SHA-256 e88a31f1c4820a92683140ead80a20c29c3a3bd3d349bfc27c67f78a4619d2f9. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_121a /tmp/audit-bw-lib-sm_121a.ltoir; output 4,216 bytes, SHA-256 4716fbdb6a8a682161e35c77200023206bf529a9ee3fb3490347e63ab488be9f."
+        },
+        {
+          "targets": [
+            "compute_121f",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 and LTOIR retaining all 12 inline-PTX Blackwell ldmatrix heads for sm_121f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Fixture /tmp/blackwell-ldmatrix-libnvvm.ll is 2,456 bytes, SHA-256 20f944baaa677bed5e3cb3935ad108cd5994029650ef2e0f51568f9adda1b125. PTX command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/nvvm/lib64 /tmp/nvvm_compile_ptx FIXTURE /tmp/audit-bw-libnvvm-sm_121f.ptx -arch=compute_121f; output 1,934 bytes, 12 exact heads, SHA-256 1ac543fa2ee84a07928d4be4dc1ea7dc877a71bfdc05269656c8e962fb59f298. LTOIR command: CUDA_TOOLKIT_PATH=/usr/local/cuda-13.3 LIBNVVM_PATH=/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0 /tmp/compile_ltoir FIXTURE sm_121f /tmp/audit-bw-lib-sm_121f.ltoir; output 4,212 bytes, SHA-256 db186b6a97096d5dfa76c0ba6f7927ec6f02cba331ad4c30c8774da8834598d7."
+        },
+        {
+          "targets": [
+            "sm_100a",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_100a",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_100a /tmp/audit-bw-libnvvm-sm_100a.ptx -o /tmp/audit-bw-libnvvm-sm_100a.cubin. Output: 5,168 bytes, SHA-256 c1646a0a72d7555b7f26ec931fcefe663fd4304ab3c5b42586f7173c7fa0c3e3.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_100f",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_100f",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_100f /tmp/audit-bw-libnvvm-sm_100f.ptx -o /tmp/audit-bw-libnvvm-sm_100f.cubin. Output: 5,168 bytes, SHA-256 2dd23646cea4bf9a719fa5246f98156a3b6a50da08807bda35e18d1ef3e4705a.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_103a",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_103a",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_103a /tmp/audit-bw-libnvvm-sm_103a.ptx -o /tmp/audit-bw-libnvvm-sm_103a.cubin. Output: 5,168 bytes, SHA-256 b99f635677989b3cd524f6f5b0e3ee1973369bb39a03e1d84ad726cd34e70dce.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_103f",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_103f",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_103f /tmp/audit-bw-libnvvm-sm_103f.ptx -o /tmp/audit-bw-libnvvm-sm_103f.cubin. Output: 5,168 bytes, SHA-256 ba851a8adb43baa94f3dbf037e129891ab6d9ced8d7f2bc94072ef6716dd98e2.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_110a",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_110a",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_110a /tmp/audit-bw-libnvvm-sm_110a.ptx -o /tmp/audit-bw-libnvvm-sm_110a.cubin. Output: 5,472 bytes, SHA-256 1d083574b472af20c40fa3af6a40611cd23415cfff183bbd68686a18d88767cc.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_110f",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_110f",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_110f /tmp/audit-bw-libnvvm-sm_110f.ptx -o /tmp/audit-bw-libnvvm-sm_110f.cubin. Output: 5,472 bytes, SHA-256 b294af1a5a0fad631ec0994c29c03632a74607e64b2eed3256f96205783435b0.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_120a",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_120a",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_120a /tmp/audit-bw-libnvvm-sm_120a.ptx -o /tmp/audit-bw-libnvvm-sm_120a.cubin. Output: 5,168 bytes, SHA-256 e52cfda3312d329656daebf3101775d61f385bd0fb15df5aae6fc132bd05e052.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_120f",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_120f",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_120f /tmp/audit-bw-libnvvm-sm_120f.ptx -o /tmp/audit-bw-libnvvm-sm_120f.cubin. Output: 5,168 bytes, SHA-256 475e607c7fe4bab62e4b1463b76983b0e441aface666f259b248fa7902bc0137.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_121a",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_121a",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_121a /tmp/audit-bw-libnvvm-sm_121a.ptx -o /tmp/audit-bw-libnvvm-sm_121a.cubin. Output: 5,168 bytes, SHA-256 31c6f5859cacb07ebc495c2fe3d7a284514cc3a4bb50cd5dadf886699bdee451.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_121f",
+            "ptx93"
+          ],
+          "representation": "CUDA-assembled libNVVM PTX containing the combined 12-route fixture for sm_121f",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: /usr/local/cuda-13.3/bin/ptxas -arch=sm_121f /tmp/audit-bw-libnvvm-sm_121f.ptx -o /tmp/audit-bw-libnvvm-sm_121f.cubin. Output: 5,168 bytes, SHA-256 e3260d4e5337e04c43fbc2d4405c148dfd15dc819098660f19d25658ebf02734.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_100a",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_100a",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_100a -o /tmp/audit-bw-link-sm_100a.cubin /tmp/audit-bw-lib-sm_100a.ltoir. Output: 5,168 bytes, SHA-256 3ee5df3aa5632ee12657bf0a77bdfa875995d9861e325016f508a26dd86d3471.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_100f",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_100f",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_100f -o /tmp/audit-bw-link-sm_100f.cubin /tmp/audit-bw-lib-sm_100f.ltoir. Output: 5,168 bytes, SHA-256 f69c471b868918eca540bebb19ad2b6af67c2ab799a7fc763312b685714ca0b7.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_103a",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_103a",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_103a -o /tmp/audit-bw-link-sm_103a.cubin /tmp/audit-bw-lib-sm_103a.ltoir. Output: 5,168 bytes, SHA-256 c58edbc575ac4509f8ebd9781f2818b3c76f7fd3ec76fcd65e5b47b13a30e395.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_103f",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_103f",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_103f -o /tmp/audit-bw-link-sm_103f.cubin /tmp/audit-bw-lib-sm_103f.ltoir. Output: 5,168 bytes, SHA-256 4b7c6e26053e2b83a3624407938fdc0e3566e0123cf0556a11e7b889a42a9e73.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_110a",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_110a",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_110a -o /tmp/audit-bw-link-sm_110a.cubin /tmp/audit-bw-lib-sm_110a.ltoir. Output: 5,472 bytes, SHA-256 7fa2c52050d7672a6e33875e0e6c1e3bc5241db297306b29c2718e3cb8fd029c.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_110f",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_110f",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_110f -o /tmp/audit-bw-link-sm_110f.cubin /tmp/audit-bw-lib-sm_110f.ltoir. Output: 5,472 bytes, SHA-256 6be8070739c097abc9274838ca879a0db0e345f945acae96e2a19ce432cd9050.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_120a",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_120a",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_120a -o /tmp/audit-bw-link-sm_120a.cubin /tmp/audit-bw-lib-sm_120a.ltoir. Output: 5,168 bytes, SHA-256 faf5ee651400e276c2ca8601f913ceea77dcfa0199e8bb65223e4564f7ed3bc1.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_120f",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_120f",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_120f -o /tmp/audit-bw-link-sm_120f.cubin /tmp/audit-bw-lib-sm_120f.ltoir. Output: 5,168 bytes, SHA-256 15ee209b939ff5ac948e0a9019b1351b52eafce9de00aedccb45dffa4fbd793f.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_121a",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_121a",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_121a -o /tmp/audit-bw-link-sm_121a.cubin /tmp/audit-bw-lib-sm_121a.ltoir. Output: 5,168 bytes, SHA-256 d7c7973b285796198f6a33547a82817c12d168558de213d435c53fb41587eefd.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": [
+            "sm_121f",
+            "ptx93"
+          ],
+          "representation": "nvJitLink cubin retaining the combined 12-route Blackwell ldmatrix fixture for sm_121f",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "Command: LD_LIBRARY_PATH=/usr/local/cuda-13.3/targets/x86_64-linux/lib /tmp/elect_link_ltoir -arch=sm_121f -o /tmp/audit-bw-link-sm_121f.cubin /tmp/audit-bw-lib-sm_121f.ltoir. Output: 5,168 bytes, SHA-256 fb1e9dc5fd4c739c8efe7129ef00703d9099466905fcc0af613ec6c83080551c.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m16n16_x1_trans_b8"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m16n16", "x1", "trans", "shared", "b8"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m16n16_x1_trans_b8x16_b4x16_p64"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8x16_b4x16_p64", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m16n16", "x1", "trans", "shared", "b8x16", "b4x16_p64"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m16n16_x1_trans_b8x16_b6x16_p32"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8x16_b6x16_p32", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b6x16_p32", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m16n16", "x1", "trans", "shared", "b8x16", "b6x16_p32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m16n16_x2_trans_b8"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m16n16", "x2", "trans", "shared", "b8"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32", "i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m16n16_x2_trans_b8x16_b4x16_p64"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8x16_b4x16_p64", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b4x16_p64", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m16n16", "x2", "trans", "shared", "b8x16", "b4x16_p64"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32", "i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m16n16_x2_trans_b8x16_b6x16_p32"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8x16_b6x16_p32", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b6x16_p32", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m16n16", "x2", "trans", "shared", "b8x16", "b6x16_p32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32", "i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m8n16_x1_b8x16_b4x16_p64"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x1_b8x16_b4x16_p64", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m8n16", "x1", "shared", "b8x16", "b4x16_p64"], "operands": [{"kind": "register_list", "length": 1}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m8n16_x1_b8x16_b6x16_p32"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x1_b8x16_b6x16_p32", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b6x16_p32", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m8n16", "x1", "shared", "b8x16", "b6x16_p32"], "operands": [{"kind": "register_list", "length": 1}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m8n16_x2_b8x16_b4x16_p64"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x2_b8x16_b4x16_p64", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m8n16", "x2", "shared", "b8x16", "b4x16_p64"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m8n16_x2_b8x16_b6x16_p32"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x2_b8x16_b6x16_p32", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b6x16_p32", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m8n16", "x2", "shared", "b8x16", "b6x16_p32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m8n16_x4_b8x16_b4x16_p64"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x4_b8x16_b4x16_p64", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m8n16", "x4", "shared", "b8x16", "b4x16_p64"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32", "i32", "i32"]}}
+    },
+    {
+      "axes": [{"name": "id", "values": ["ldmatrix_m8n16_x4_b8x16_b6x16_p32"]}], "product_count": 1, "fixtures": ["blackwell_ldmatrix_libnvvm_inline_probe"],
+      "template": {"id": "${id}", "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x4_b8x16_b6x16_p32", "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32", "expected_ptx": {"mnemonic": "ldmatrix", "modifiers": ["sync", "aligned", "m8n16", "x4", "shared", "b8x16", "b6x16_p32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "address"}]}, "facts": {"llvm_results": ["i32", "i32", "i32", "i32"]}}
+    }
+  ]
+}

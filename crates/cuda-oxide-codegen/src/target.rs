@@ -1202,9 +1202,8 @@ fn arch_satisfies_feature(
         DetectedFeatures::BlackwellAccelerated => {
             supports_blackwell_accelerated_target(capability, suffix)
         }
-        DetectedFeatures::BlackwellFamily | DetectedFeatures::MatrixBlackwell => {
-            supports_blackwell_family_target(capability, suffix)
-        }
+        DetectedFeatures::BlackwellFamily => supports_blackwell_family_target(capability, suffix),
+        DetectedFeatures::MatrixBlackwell => supports_blackwell_matrix_target(capability, suffix),
         DetectedFeatures::ReduxF32 => supports_redux_f32_target(capability, suffix),
         DetectedFeatures::MultimemFp8 => supports_multimem_fp8_target(capability, suffix),
         // The PTX ISA requires only sm_90+. The suffixed targets are advised
@@ -1252,6 +1251,14 @@ fn supports_blackwell_family_target(capability: u32, suffix: Option<char>) -> bo
     match suffix {
         Some('a') => matches!(capability, 100 | 101 | 110 | 120),
         Some('f') => matches!(capability, 100 | 101 | 103 | 110 | 120 | 121),
+        _ => false,
+    }
+}
+
+fn supports_blackwell_matrix_target(capability: u32, suffix: Option<char>) -> bool {
+    // LLVM's sm_101 aliases stop selecting these instructions at PTX 9.0.
+    match suffix {
+        Some('a' | 'f') => matches!(capability, 100 | 103 | 110 | 120 | 121),
         _ => false,
     }
 }
@@ -1352,8 +1359,8 @@ pub(crate) fn resolve_ptx_target_with_generated(
 /// feature floor. Raise that ISA only when the selected CPU's default is too
 /// old; never force a newer target back to an older PTX version.
 pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<&'static str> {
-    let capability = arch_compute_capability(target)?;
-    let minimum = target_minimum_ptx_isa(capability)?;
+    let (capability, suffix) = arch_compute_capability_and_suffix(target)?;
+    let minimum = target_minimum_ptx_isa(capability, suffix)?;
     let requested = match requirement {
         PtxIsaRequirement::Default => return None,
         PtxIsaRequirement::Ptx62 => 62,
@@ -1384,22 +1391,25 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
 /// Minimum PTX ISA accepted by LLVM for each concrete target. Passing an
 /// older `+ptxNN` feature does not merely do nothing: LLVM aborts because that
 /// ISA cannot name the selected processor.
-fn target_minimum_ptx_isa(capability: u32) -> Option<u32> {
-    match capability {
-        70 => Some(60),
-        72 => Some(61),
-        75 => Some(63),
-        80 => Some(70),
-        86 => Some(71),
-        87 => Some(74),
-        88 => Some(90),
-        89 | 90 => Some(78),
-        100 | 101 => Some(86),
-        103 => Some(88),
-        110 => Some(90),
-        120 => Some(87),
-        121 => Some(88),
-        _ => None,
+fn target_minimum_ptx_isa(capability: u32, suffix: Option<char>) -> Option<u32> {
+    match (capability, suffix) {
+        (100 | 101 | 120, Some('f')) => Some(88),
+        (capability, _) => match capability {
+            70 => Some(60),
+            72 => Some(61),
+            75 => Some(63),
+            80 => Some(70),
+            86 => Some(71),
+            87 => Some(74),
+            88 => Some(90),
+            89 | 90 => Some(78),
+            100 | 101 => Some(86),
+            103 => Some(88),
+            110 => Some(90),
+            120 => Some(87),
+            121 => Some(88),
+            _ => None,
+        },
     }
 }
 
@@ -1501,6 +1511,14 @@ mod tests {
         );
         assert_eq!(
             required_ptx_feature("sm_120a", PtxIsaRequirement::Ptx87),
+            None
+        );
+        assert_eq!(
+            required_ptx_feature("sm_100f", PtxIsaRequirement::Ptx87),
+            None
+        );
+        assert_eq!(
+            required_ptx_feature("sm_120f", PtxIsaRequirement::Ptx87),
             None
         );
         assert_eq!(
@@ -3720,7 +3738,11 @@ mod tests {
                 "{target}"
             );
         }
-        assert_eq!(target_minimum_ptx_isa(121), Some(88));
+        assert_eq!(target_minimum_ptx_isa(100, Some('a')), Some(86));
+        assert_eq!(target_minimum_ptx_isa(100, Some('f')), Some(88));
+        assert_eq!(target_minimum_ptx_isa(120, Some('a')), Some(87));
+        assert_eq!(target_minimum_ptx_isa(120, Some('f')), Some(88));
+        assert_eq!(target_minimum_ptx_isa(121, Some('a')), Some(88));
     }
 
     #[test]
@@ -3784,16 +3806,28 @@ mod tests {
     #[test]
     fn test_arch_satisfies_blackwell_matrix_family_targets() {
         for arch in [
-            "sm_100a", "sm_101a", "sm_110a", "sm_120a", "sm_100f", "sm_103f", "sm_120f", "sm_121f",
+            "sm_100a", "sm_103a", "sm_110a", "sm_120a", "sm_121a", "sm_100f", "sm_103f", "sm_110f",
+            "sm_120f", "sm_121f",
         ] {
             assert!(
                 arch_satisfies(arch, DetectedFeatures::MatrixBlackwell),
                 "{arch}"
             );
+        }
+        for arch in [
+            "sm_100a", "sm_101a", "sm_110a", "sm_120a", "sm_100f", "sm_101f", "sm_103f", "sm_110f",
+            "sm_120f", "sm_121f",
+        ] {
             assert!(
                 arch_satisfies(arch, DetectedFeatures::BlackwellFamily),
                 "{arch}"
             );
+        }
+        for arch in ["sm_101a", "sm_101f"] {
+            assert!(!arch_satisfies(arch, DetectedFeatures::MatrixBlackwell));
+        }
+        for arch in ["sm_103a", "sm_121a"] {
+            assert!(!arch_satisfies(arch, DetectedFeatures::BlackwellFamily));
         }
         for arch in [
             "sm_100a", "sm_101a", "sm_103a", "sm_110a", "sm_100f", "sm_103f", "sm_110f",

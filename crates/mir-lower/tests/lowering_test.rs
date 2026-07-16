@@ -4988,6 +4988,90 @@ const LDMATRIX_PTX_CONSTRAINTS: [&str; 6] = [
     "=r,=r,=r,=r,r,~{memory}",
 ];
 
+const BLACKWELL_LDMATRIX_CASES: [(&str, &str, &str, usize); 12] = [
+    (
+        "llvm_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8_p3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8.p3",
+        "ldmatrix.sync.aligned.m16n16.x1.trans.shared.b8 {$0, $1}, [$2];",
+        2,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx1_dtrans_db8x16_db4x16_up64_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3",
+        "ldmatrix.sync.aligned.m16n16.x1.trans.shared.b8x16.b4x16_p64 {$0, $1}, [$2];",
+        2,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx1_dtrans_db8x16_db6x16_up32_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b6x16_p32.p3",
+        "ldmatrix.sync.aligned.m16n16.x1.trans.shared.b8x16.b6x16_p32 {$0, $1}, [$2];",
+        2,
+    ),
+    (
+        "llvm_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8_p3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8.p3",
+        "ldmatrix.sync.aligned.m16n16.x2.trans.shared.b8 {$0, $1, $2, $3}, [$4];",
+        4,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx2_dtrans_db8x16_db4x16_up64_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b4x16_p64.p3",
+        "ldmatrix.sync.aligned.m16n16.x2.trans.shared.b8x16.b4x16_p64 {$0, $1, $2, $3}, [$4];",
+        4,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx2_dtrans_db8x16_db6x16_up32_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b6x16_p32.p3",
+        "ldmatrix.sync.aligned.m16n16.x2.trans.shared.b8x16.b6x16_p32 {$0, $1, $2, $3}, [$4];",
+        4,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx1_db8x16_db4x16_up64_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64.p3",
+        "ldmatrix.sync.aligned.m8n16.x1.shared.b8x16.b4x16_p64 {$0}, [$1];",
+        1,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx1_db8x16_db6x16_up32_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b6x16_p32.p3",
+        "ldmatrix.sync.aligned.m8n16.x1.shared.b8x16.b6x16_p32 {$0}, [$1];",
+        1,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx2_db8x16_db4x16_up64_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64.p3",
+        "ldmatrix.sync.aligned.m8n16.x2.shared.b8x16.b4x16_p64 {$0, $1}, [$2];",
+        2,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx2_db8x16_db6x16_up32_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b6x16_p32.p3",
+        "ldmatrix.sync.aligned.m8n16.x2.shared.b8x16.b6x16_p32 {$0, $1}, [$2];",
+        2,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx4_db8x16_db4x16_up64_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64.p3",
+        "ldmatrix.sync.aligned.m8n16.x4.shared.b8x16.b4x16_p64 {$0, $1, $2, $3}, [$4];",
+        4,
+    ),
+    (
+        "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx4_db8x16_db6x16_up32_dp3",
+        "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32.p3",
+        "ldmatrix.sync.aligned.m8n16.x4.shared.b8x16.b6x16_p32 {$0, $1, $2, $3}, [$4];",
+        4,
+    ),
+];
+
+fn ldmatrix_constraints(register_count: usize) -> &'static str {
+    match register_count {
+        1 => "=r,r,~{memory}",
+        2 => "=r,=r,r,~{memory}",
+        4 => "=r,=r,=r,=r,r,~{memory}",
+        _ => unreachable!("closed ldmatrix register count"),
+    }
+}
+
 fn lower_all_ldmatrix_forms(
     address_space: u32,
     backend: mir_lower::IntrinsicBackend,
@@ -5075,6 +5159,119 @@ fn lower_all_ldmatrix_forms(
     Ok((ctx, module_ptr))
 }
 
+fn lower_all_blackwell_ldmatrix_forms(
+    address_space: u32,
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let ptr_ty = MirPtrType::get(&mut ctx, u8_ty.into(), true, address_space);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
+    let pointer = entry.deref(&ctx).get_argument(0);
+
+    for (shape, multiplicity, layout, element) in [
+        (
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8x16B4x16P64,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8x16B6x16P32,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8x16B4x16P64,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8x16B6x16P32,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M8n16,
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B8x16B4x16P64,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M8n16,
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B8x16B6x16P32,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M8n16,
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B8x16B4x16P64,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M8n16,
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B8x16B6x16P32,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M8n16,
+            nvvm::LdmatrixMultiplicityAttr::X4,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B8x16B4x16P64,
+        ),
+        (
+            nvvm::LdmatrixShapeAttr::M8n16,
+            nvvm::LdmatrixMultiplicityAttr::X4,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B8x16B6x16P32,
+        ),
+    ] {
+        nvvm::LdmatrixOp::build(
+            &mut ctx,
+            pointer,
+            shape,
+            multiplicity,
+            layout,
+            element,
+            nvvm::LdmatrixStateSpaceAttr::Shared,
+        )
+        .insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    Ok((ctx, module_ptr))
+}
+
 fn lowered_kernel_body(
     ctx: &Context,
     module_ptr: pliron::context::Ptr<Operation>,
@@ -5097,6 +5294,42 @@ fn lowered_kernel_body(
             .collect();
     }
     panic!("lowered kernel function not found")
+}
+
+fn assert_ldmatrix_producer_result_shape(
+    ctx: &Context,
+    op: pliron::context::Ptr<Operation>,
+    register_count: usize,
+) {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    let ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let ty = ty.deref(ctx);
+    if register_count == 1 {
+        assert_eq!(
+            ty.downcast_ref::<IntegerType>()
+                .expect("single-register ldmatrix returns i32")
+                .width(),
+            32
+        );
+    } else {
+        let ty = ty
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("multi-register ldmatrix returns an LLVM struct");
+        assert_eq!(ty.num_fields(), register_count);
+        for index in 0..register_count {
+            assert_eq!(
+                ty.field_type(index)
+                    .deref(ctx)
+                    .downcast_ref::<IntegerType>()
+                    .expect("ldmatrix fragment field is i32")
+                    .width(),
+                32
+            );
+        }
+    }
 }
 
 #[test]
@@ -5294,6 +5527,190 @@ fn test_ldmatrix_libnvvm_uses_exact_convergent_shared_ptx() -> Result<(), anyhow
         assert!(!ir.contains("@llvm.nvvm.ldmatrix"), "{ir}");
     }
     Ok(())
+}
+
+#[test]
+fn test_blackwell_ldmatrix_llvm_uses_all_exact_lossless_p3_intrinsics() -> Result<(), anyhow::Error>
+{
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
+    for address_space in [0, 3] {
+        let (ctx, module_ptr) = lower_all_blackwell_ldmatrix_forms(
+            address_space,
+            mir_lower::IntrinsicBackend::LlvmNvptx,
+        )?;
+        let mut seen = [0; 12];
+        let mut cast_count = 0;
+        let mut extract_count = 0;
+
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            assert!(Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none());
+            assert!(Operation::get_op::<llvm::PtrToIntOp>(op, &ctx).is_none());
+            cast_count +=
+                usize::from(Operation::get_op::<llvm::AddrSpaceCastOp>(op, &ctx).is_some());
+            extract_count +=
+                usize::from(Operation::get_op::<llvm::ExtractValueOp>(op, &ctx).is_some());
+
+            let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+                continue;
+            };
+            let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+                panic!("Blackwell ldmatrix intrinsic call must be direct");
+            };
+            let callee = callee.to_string();
+            let index = BLACKWELL_LDMATRIX_CASES
+                .iter()
+                .position(|(identifier, _, _, _)| *identifier == callee)
+                .expect("exact lossless Blackwell ldmatrix identifier");
+            seen[index] += 1;
+            let register_count = BLACKWELL_LDMATRIX_CASES[index].3;
+            assert_ldmatrix_producer_result_shape(&ctx, op, register_count);
+
+            let function_ty = call.callee_type(&ctx);
+            let function_ty = function_ty.deref(&ctx);
+            let function_ty = function_ty
+                .downcast_ref::<llvm_types::FuncType>()
+                .expect("Blackwell ldmatrix has an LLVM function type");
+            assert_eq!(function_ty.arg_types().len(), 1);
+            assert_eq!(
+                function_ty.arg_types()[0]
+                    .deref(&ctx)
+                    .downcast_ref::<llvm_types::PointerType>()
+                    .expect("Blackwell ldmatrix argument is a pointer")
+                    .address_space(),
+                3
+            );
+        }
+
+        assert_eq!(seen, [1; 12]);
+        assert_eq!(cast_count, if address_space == 0 { 12 } else { 0 });
+        assert_eq!(extract_count, 30, "all multi-register results are unpacked");
+
+        let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+            .expect("typed Blackwell ldmatrix module exports to LLVM IR");
+        for (identifier, symbol, _, _) in BLACKWELL_LDMATRIX_CASES {
+            assert!(
+                ir.contains(&format!("@{symbol}(ptr addrspace(3)")),
+                "missing exact intrinsic symbol {symbol}:\n{ir}"
+            );
+            assert!(
+                !ir.contains(&format!("@{identifier}(")),
+                "encoded Rust identifier leaked into LLVM IR: {identifier}"
+            );
+        }
+        assert!(ir.contains("b4x16_p64.p3"), "literal _p64 was lost: {ir}");
+        assert!(ir.contains("b6x16_p32.p3"), "literal _p32 was lost: {ir}");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_blackwell_ldmatrix_libnvvm_uses_all_exact_convergent_templates_without_externs()
+-> Result<(), anyhow::Error> {
+    for address_space in [0, 3] {
+        let (ctx, module_ptr) = lower_all_blackwell_ldmatrix_forms(
+            address_space,
+            mir_lower::IntrinsicBackend::LibNvvm,
+        )?;
+        let mut seen = [0; 12];
+        let mut cast_count = 0;
+        let mut ptrtoint_count = 0;
+        let mut extract_count = 0;
+
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            assert!(
+                Operation::get_op::<llvm::CallOp>(op, &ctx).is_none(),
+                "libNVVM Blackwell ldmatrix must not emit an extern call"
+            );
+            cast_count +=
+                usize::from(Operation::get_op::<llvm::AddrSpaceCastOp>(op, &ctx).is_some());
+            ptrtoint_count +=
+                usize::from(Operation::get_op::<llvm::PtrToIntOp>(op, &ctx).is_some());
+            extract_count +=
+                usize::from(Operation::get_op::<llvm::ExtractValueOp>(op, &ctx).is_some());
+
+            let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+                continue;
+            };
+            let template = asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap_or_default();
+            let index = BLACKWELL_LDMATRIX_CASES
+                .iter()
+                .position(|(_, _, expected, _)| *expected == template)
+                .expect("exact Blackwell ldmatrix inline-PTX template");
+            seen[index] += 1;
+            let register_count = BLACKWELL_LDMATRIX_CASES[index].3;
+            assert_eq!(
+                asm.get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .as_deref(),
+                Some(ldmatrix_constraints(register_count))
+            );
+            assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::Convergent);
+            assert_ldmatrix_producer_result_shape(&ctx, op, register_count);
+        }
+
+        assert_eq!(seen, [1; 12]);
+        assert_eq!(cast_count, if address_space == 0 { 12 } else { 0 });
+        assert_eq!(ptrtoint_count, 12);
+        assert_eq!(extract_count, 30, "all multi-register results are unpacked");
+
+        let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+            .expect("inline Blackwell ldmatrix module exports to LLVM IR");
+        assert_eq!(ir.matches("asm sideeffect").count(), 12, "{ir}");
+        assert_eq!(ir.matches("~{memory}").count(), 12, "{ir}");
+        assert!(!ir.contains("@llvm.nvvm.ldmatrix"), "{ir}");
+        assert!(!ir.contains("llvm__nvvm_dldmatrix"), "{ir}");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_blackwell_ldmatrix_rejects_unadmitted_m16n16_x4() {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let mut ctx = make_test_ctx();
+        let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_shared(&mut ctx, u8_ty.into(), false);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
+        let pointer = entry.deref(&ctx).get_argument(0);
+        nvvm::LdmatrixOp::build(
+            &mut ctx,
+            pointer,
+            nvvm::LdmatrixShapeAttr::M16n16,
+            nvvm::LdmatrixMultiplicityAttr::X4,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+            nvvm::LdmatrixElementAttr::B8,
+            nvvm::LdmatrixStateSpaceAttr::Shared,
+        )
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        let error = mir_lower::lower_mir_to_llvm_with_options(
+            &mut ctx,
+            module_ptr,
+            mir_lower::LoweringOptions {
+                intrinsic_backend: backend,
+                ..Default::default()
+            },
+        )
+        .expect_err("m16n16.x4 must fail closed")
+        .to_string();
+        assert!(
+            error.contains("variant has no generated lowering recipe"),
+            "{error}"
+        );
+    }
 }
 
 #[test]

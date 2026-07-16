@@ -1067,6 +1067,9 @@ pub struct OverlayBackendLowering {
     pub backend: IntrinsicBackend,
     pub mechanism: BackendLoweringMechanism,
     pub evidence_profile: String,
+    /// Optional exact target alternatives for this backend route.
+    #[serde(default)]
+    pub targets: Option<String>,
     /// Optional backend-profile floor. When absent, the intrinsic's native
     /// target requirement is used.
     #[serde(default)]
@@ -1109,10 +1112,22 @@ pub struct LdmatrixVariant {
     pub state_space: LdmatrixStateSpace,
 }
 
+impl LdmatrixVariant {
+    pub const fn register_count(&self) -> usize {
+        let matrices = self.multiplicity.register_count();
+        match self.shape {
+            LdmatrixShape::M8n8 | LdmatrixShape::M8n16 => matrices,
+            LdmatrixShape::M16n16 => matrices * 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LdmatrixShape {
     M8n8,
+    M8n16,
+    M16n16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1144,6 +1159,9 @@ pub enum LdmatrixLayout {
 #[serde(rename_all = "snake_case")]
 pub enum LdmatrixElement {
     B16,
+    B8,
+    B8x16B4x16P64,
+    B8x16B6x16P32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1165,12 +1183,15 @@ pub struct LdmatrixSafety {
 #[serde(rename_all = "snake_case")]
 pub enum LdmatrixParticipation {
     AllWarpLanesSameInstruction,
+    AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LdmatrixAddressContract {
     WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadableWithSm75Replication,
+    WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadable,
+    WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedThirtyTwoBytesReadable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2687,6 +2708,11 @@ impl CatalogIntrinsic {
     pub fn llvm_identifier(&self) -> String {
         llvm_symbol_to_identifier(&self.llvm.as_ref().expect("LLVM-backed intrinsic").symbol)
     }
+
+    pub fn resolved_llvm_identifier(&self) -> String {
+        let llvm = self.llvm.as_ref().expect("LLVM-backed intrinsic");
+        llvm_symbol_to_identifier(llvm.resolved_symbol.as_deref().unwrap_or(&llvm.symbol))
+    }
 }
 
 fn llvm_symbol_to_identifier(symbol: &str) -> String {
@@ -2722,6 +2748,60 @@ mod tests {
         assert_eq!(
             llvm_symbol_to_identifier("llvm.nvvm.wgmma.wait_group.sync.aligned"),
             "llvm__nvvm_dwgmma_dwait_ugroup_dsync_daligned"
+        );
+        assert_eq!(
+            llvm_symbol_to_identifier(
+                "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3"
+            ),
+            "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx1_dtrans_db8x16_db4x16_up64_dp3"
+        );
+        assert_eq!(
+            llvm_symbol_to_identifier(
+                "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32.p3"
+            ),
+            "llvm__nvvm_dldmatrix_dsync_daligned_dm8n16_dx4_db8x16_db6x16_up32_dp3"
+        );
+    }
+
+    #[test]
+    fn ldmatrix_register_count_includes_the_shape_width() {
+        let variant = |shape, multiplicity| LdmatrixVariant {
+            shape,
+            multiplicity,
+            layout: LdmatrixLayout::Normal,
+            element: LdmatrixElement::B8,
+            state_space: LdmatrixStateSpace::Shared,
+        };
+
+        assert_eq!(
+            variant(LdmatrixShape::M8n16, LdmatrixMultiplicity::X4).register_count(),
+            4
+        );
+        assert_eq!(
+            variant(LdmatrixShape::M16n16, LdmatrixMultiplicity::X1).register_count(),
+            2
+        );
+        assert_eq!(
+            variant(LdmatrixShape::M16n16, LdmatrixMultiplicity::X2).register_count(),
+            4
+        );
+    }
+
+    #[test]
+    fn blackwell_ldmatrix_address_contracts_keep_readable_widths_distinct() {
+        assert_eq!(
+            serde_json::from_str::<LdmatrixAddressContract>(
+                r#""warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable""#
+            )
+            .unwrap(),
+            LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadable
+        );
+        assert_eq!(
+            serde_json::from_str::<LdmatrixAddressContract>(
+                r#""warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_thirty_two_bytes_readable""#
+            )
+            .unwrap(),
+            LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedThirtyTwoBytesReadable
         );
     }
 

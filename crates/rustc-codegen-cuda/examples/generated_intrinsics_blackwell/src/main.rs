@@ -18,8 +18,8 @@ use cuda_device::{
     tma::{self, TmaDescriptor},
 };
 use cuda_intrinsics::convert::{
-    cvt_rn_satfinite_e4m3x2_f32, cvt_rn_satfinite_e5m2x2_f32,
-    cvt_rn_satfinite_relu_e4m3x2_f32, cvt_rn_satfinite_relu_e5m2x2_f32,
+    cvt_rn_satfinite_e4m3x2_f32, cvt_rn_satfinite_e5m2x2_f32, cvt_rn_satfinite_relu_e4m3x2_f32,
+    cvt_rn_satfinite_relu_e5m2x2_f32,
 };
 use cuda_intrinsics::matrix;
 
@@ -29,11 +29,7 @@ mod kernels {
 
     /// Keeps every generated packed-FP8 conversion in device code.
     #[kernel]
-    pub fn compile_fp8_conversions(
-        mut output: DisjointSlice<u16>,
-        low: f32,
-        high: f32,
-    ) {
+    pub fn compile_fp8_conversions(mut output: DisjointSlice<u16>, low: f32, high: f32) {
         let values = [
             cvt_rn_satfinite_e4m3x2_f32(low, high),
             cvt_rn_satfinite_relu_e4m3x2_f32(low, high),
@@ -146,6 +142,36 @@ mod kernels {
         }
     }
 
+    /// Keeps every Blackwell `ldmatrix` variant in device code.
+    ///
+    /// This kernel is compile-only and is never launched by the example.
+    #[kernel]
+    pub unsafe fn compile_blackwell_ldmatrix(input: *const u8, output: *mut u32) {
+        // SAFETY: every lane follows the same sequence. A real caller must
+        // provide 16-byte-aligned shared addresses with 32 readable bytes.
+        let values = unsafe {
+            [
+                matrix::ldmatrix_m16n16_x1_trans_b8(input)[0],
+                matrix::ldmatrix_m16n16_x1_trans_b8x16_b4x16_p64(input)[0],
+                matrix::ldmatrix_m16n16_x1_trans_b8x16_b6x16_p32(input)[0],
+                matrix::ldmatrix_m16n16_x2_trans_b8(input)[0],
+                matrix::ldmatrix_m16n16_x2_trans_b8x16_b4x16_p64(input)[0],
+                matrix::ldmatrix_m16n16_x2_trans_b8x16_b6x16_p32(input)[0],
+                matrix::ldmatrix_m8n16_x1_b8x16_b4x16_p64(input),
+                matrix::ldmatrix_m8n16_x1_b8x16_b6x16_p32(input),
+                matrix::ldmatrix_m8n16_x2_b8x16_b4x16_p64(input)[0],
+                matrix::ldmatrix_m8n16_x2_b8x16_b6x16_p32(input)[0],
+                matrix::ldmatrix_m8n16_x4_b8x16_b4x16_p64(input)[0],
+                matrix::ldmatrix_m8n16_x4_b8x16_b6x16_p32(input)[0],
+            ]
+        };
+
+        for (index, value) in values.into_iter().enumerate() {
+            // SAFETY: a real caller must provide space for all 12 results.
+            unsafe { output.add(index).write(value) };
+        }
+    }
+
     /// Compile-only coverage for the TMA compatibility API.
     #[kernel]
     pub unsafe fn compile_tma_compatibility(
@@ -158,9 +184,7 @@ mod kernels {
         unsafe {
             tma::cp_async_bulk_tensor_1d_g2s(shared, tensor_map, 0, barrier);
             tma::cp_async_bulk_tensor_2d_g2s(shared, tensor_map, 0, 0, barrier);
-            tma::cp_async_bulk_tensor_2d_g2s_multicast(
-                shared, tensor_map, 0, 0, barrier, cta_mask,
-            );
+            tma::cp_async_bulk_tensor_2d_g2s_multicast(shared, tensor_map, 0, 0, barrier, cta_mask);
             tma::cp_async_bulk_tensor_3d_g2s(shared, tensor_map, 0, 0, 0, barrier);
             tma::cp_async_bulk_tensor_4d_g2s(shared, tensor_map, 0, 0, 0, 0, barrier);
             tma::cp_async_bulk_tensor_5d_g2s(shared, tensor_map, 0, 0, 0, 0, 0, barrier);
