@@ -63,6 +63,7 @@ struct ResolutionBase {
 pub(crate) struct CandidateResolution {
     pub catalog: CatalogFile,
     pub mechanism: BackendLoweringMechanism,
+    pub requirement: CatalogTargetRequirement,
 }
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
@@ -310,6 +311,7 @@ pub(crate) fn resolve_candidate(
             intrinsics: vec![record],
         },
         mechanism,
+        requirement: target,
     })
 }
 
@@ -346,20 +348,23 @@ fn candidate_llvm_route(
     ))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CandidateGpuTargetKind {
-    Base,
-    ExactArchitecture,
-    FamilyTarget,
-}
-
 fn validate_candidate_target(
     requirement: &CatalogTargetRequirement,
     gpu_target: &str,
     ptx_feature: &str,
     intrinsic_id: &str,
 ) -> Result<()> {
-    let (sm, kind) = parse_candidate_gpu_target(gpu_target)?;
+    ensure!(
+        gpu_target.starts_with("sm_"),
+        "candidate GPU target {gpu_target:?} must use sm_NN, sm_NNa, or sm_NNf"
+    );
+    let hardware = parse_stage_hardware(gpu_target).with_context(|| {
+        format!("candidate GPU target {gpu_target:?} must use sm_NN, sm_NNa, or sm_NNf")
+    })?;
+    ensure!(
+        describe_stage_hardware(hardware) == gpu_target,
+        "candidate GPU target {gpu_target:?} is not canonical"
+    );
     let ptx = parse_candidate_ptx_feature(ptx_feature)?;
     ensure!(
         ptx >= requirement.minimum_ptx,
@@ -368,17 +373,9 @@ fn validate_candidate_target(
     );
     let hardware_matches = match &requirement.hardware {
         CatalogHardwareTarget::All => true,
-        CatalogHardwareTarget::AnyOf { alternatives } => {
-            alternatives.iter().any(|target| match target {
-                CatalogHardwareAlternative::MinimumSm { sm: minimum } => sm >= *minimum,
-                CatalogHardwareAlternative::ExactArchitecture { sm: exact } => {
-                    sm == *exact && kind == CandidateGpuTargetKind::ExactArchitecture
-                }
-                CatalogHardwareAlternative::FamilyTarget { sm: family } => {
-                    sm == *family && kind == CandidateGpuTargetKind::FamilyTarget
-                }
-            })
-        }
+        CatalogHardwareTarget::AnyOf { alternatives } => alternatives
+            .iter()
+            .any(|expected| selected_stage_hardware_matches(hardware, *expected, true)),
     };
     ensure!(
         hardware_matches,
@@ -386,40 +383,6 @@ fn validate_candidate_target(
         requirement.hardware
     );
     Ok(())
-}
-
-fn parse_candidate_gpu_target(value: &str) -> Result<(u16, CandidateGpuTargetKind)> {
-    let target = value.strip_prefix("sm_").with_context(|| {
-        format!("candidate GPU target {value:?} must use sm_NN, sm_NNa, or sm_NNf")
-    })?;
-    let (digits, kind) = match target.as_bytes().last().copied() {
-        Some(b'a') => (
-            &target[..target.len() - 1],
-            CandidateGpuTargetKind::ExactArchitecture,
-        ),
-        Some(b'f') => (
-            &target[..target.len() - 1],
-            CandidateGpuTargetKind::FamilyTarget,
-        ),
-        _ => (target, CandidateGpuTargetKind::Base),
-    };
-    ensure!(
-        matches!(digits.len(), 2 | 3) && digits.bytes().all(|byte| byte.is_ascii_digit()),
-        "candidate GPU target {value:?} must use sm_NN, sm_NNa, or sm_NNf"
-    );
-    let sm: u16 = digits
-        .parse()
-        .with_context(|| format!("candidate GPU target {value:?} is too large"))?;
-    let suffix = match kind {
-        CandidateGpuTargetKind::Base => "",
-        CandidateGpuTargetKind::ExactArchitecture => "a",
-        CandidateGpuTargetKind::FamilyTarget => "f",
-    };
-    ensure!(
-        sm > 0 && format!("sm_{sm}{suffix}") == value,
-        "candidate GPU target {value:?} is not canonical"
-    );
-    Ok((sm, kind))
 }
 
 fn parse_candidate_ptx_feature(value: &str) -> Result<PtxVersion> {
@@ -14677,14 +14640,24 @@ mod tests {
         }
 
         let exact = CatalogTargetRequirement {
-            minimum_ptx: "8.6".parse().unwrap(),
+            minimum_ptx: "8.7".parse().unwrap(),
             hardware: CatalogHardwareTarget::AnyOf {
-                alternatives: vec![CatalogHardwareAlternative::ExactArchitecture { sm: 100 }],
+                alternatives: vec![CatalogHardwareAlternative::ExactArchitecture { sm: 120 }],
             },
         };
-        validate_candidate_target(&exact, "sm_100a", "+ptx86", "test").unwrap();
-        assert!(validate_candidate_target(&exact, "sm_100", "+ptx86", "test").is_err());
-        assert!(validate_candidate_target(&exact, "sm_100f", "+ptx86", "test").is_err());
+        validate_candidate_target(&exact, "sm_120a", "+ptx87", "test").unwrap();
+        assert!(validate_candidate_target(&exact, "sm_120a", "+ptx86", "test").is_err());
+        assert!(validate_candidate_target(&exact, "sm_120", "+ptx87", "test").is_err());
+        assert!(validate_candidate_target(&exact, "sm_120f", "+ptx87", "test").is_err());
+
+        let family = CatalogTargetRequirement {
+            minimum_ptx: "8.7".parse().unwrap(),
+            hardware: CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::FamilyTarget { sm: 120 }],
+            },
+        };
+        validate_candidate_target(&family, "sm_120f", "+ptx87", "test").unwrap();
+        assert!(validate_candidate_target(&family, "sm_120a", "+ptx87", "test").is_err());
     }
 
     struct CandidateTestRepo(PathBuf);

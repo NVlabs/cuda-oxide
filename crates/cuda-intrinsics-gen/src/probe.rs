@@ -4,8 +4,9 @@
  */
 
 use crate::model::{
-    BackendLoweringMechanism, CatalogInputs, CatalogIntrinsic, CatalogLlvm, CpAsyncSourceSize,
-    EvidenceStageKind, IntrinsicBackend, IntrinsicSource, SparseMmaSelector, WarpShuffleAdapter,
+    BackendLoweringMechanism, CatalogInputs, CatalogIntrinsic, CatalogLlvm,
+    CatalogTargetRequirement, CpAsyncSourceSize, EvidenceStageKind, IntrinsicBackend,
+    IntrinsicSource, SparseMmaSelector, WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
@@ -15,8 +16,8 @@ use crate::resolve::{resolve, resolve_candidate};
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use std::fs;
-use std::io::ErrorKind;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -62,6 +63,7 @@ struct CandidateProbeDraft {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct CandidateTargetDraft {
+    requirement: CatalogTargetRequirement,
     target_triple: String,
     gpu_target: String,
     ptx_feature: String,
@@ -88,6 +90,17 @@ struct CandidateStageDraft {
     stage: String,
     outcome: String,
     detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CandidateArtifactPaths {
+    llvm_ir: PathBuf,
+    llvm_bitcode: PathBuf,
+    canonical_llvm_ir: PathBuf,
+    ptx: PathBuf,
+    cubin: PathBuf,
+    manifest: PathBuf,
+    manifest_temp: PathBuf,
 }
 
 pub fn run(
@@ -193,6 +206,12 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
         options.skip_terminal ^ options.ptxas.is_some(),
         "candidate probe requires either --ptxas FILE or explicit --skip-terminal"
     );
+    let output_dir = repo_root.join("target/intrinsics/probes");
+    fs::create_dir_all(&output_dir)?;
+    let stem = candidate_artifact_stem(&options.intrinsic_id)?;
+    let paths = candidate_artifact_paths(&output_dir, stem);
+    clear_candidate_artifacts(&paths)?;
+
     let backend_identity = llc_identity(&options.llc)?;
     let candidate = resolve_candidate(
         repo_root,
@@ -207,23 +226,18 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
         .intrinsics
         .first()
         .context("candidate resolver returned no intrinsic")?;
-    let output_dir = repo_root.join("target/intrinsics/probes");
-    fs::create_dir_all(&output_dir)?;
-    let stem = candidate_artifact_stem(&record.id)?;
-    let input = output_dir.join(format!("{stem}.candidate.ll"));
-    let output = output_dir.join(format!("{stem}.candidate.ptx"));
-    let cubin = output_dir.join(format!("{stem}.candidate.cubin"));
-    let manifest = output_dir.join(format!("{stem}.candidate.json"));
-    remove_if_present(&output)?;
-    remove_if_present(&cubin)?;
+    ensure!(
+        record.id == options.intrinsic_id,
+        "candidate resolver returned the wrong intrinsic"
+    );
 
     let catalog_json = pretty_json(&candidate.catalog)?;
     let catalog_hash = sha256_bytes(catalog_json.as_bytes());
-    fs::write(
-        &input,
+    write_new_file(
+        &paths.llvm_ir,
         render_probe(&candidate.catalog, record, &catalog_hash),
     )
-    .with_context(|| format!("write candidate probe {}", input.display()))?;
+    .with_context(|| format!("write candidate probe {}", paths.llvm_ir.display()))?;
 
     let mut tools = vec![candidate_tool("llc", &options.llc, &backend_identity)];
     let canonicalizes =
@@ -256,6 +270,7 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
         mechanism: candidate.mechanism,
         expected_ptx: record.expected_ptx.clone(),
         target: CandidateTargetDraft {
+            requirement: candidate.requirement,
             target_triple: record.backend.target_triple.clone(),
             gpu_target: options.gpu_target.clone(),
             ptx_feature: options.ptx_feature.clone(),
@@ -265,22 +280,12 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
         artifacts: Vec::new(),
         stages: Vec::new(),
     };
-    write_candidate_draft(
-        repo_root,
-        &output_dir,
-        &manifest,
-        &mut draft,
-        [
-            ("llvm_ir", input.as_path()),
-            ("ptx", output.as_path()),
-            ("cubin", cubin.as_path()),
-        ],
-    )?;
+    write_candidate_draft(repo_root, &output_dir, &paths, &mut draft)?;
 
     if canonicalizes {
         let result = assert_intrinsic_declaration_canonicalizes(
             &options.llc,
-            &input,
+            &paths.llvm_ir,
             &output_dir,
             &format!("{stem}.candidate"),
             record,
@@ -297,17 +302,7 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
                     "failed",
                     &format!("{error:#}"),
                 ));
-                write_candidate_draft(
-                    repo_root,
-                    &output_dir,
-                    &manifest,
-                    &mut draft,
-                    [
-                        ("llvm_ir", input.as_path()),
-                        ("ptx", output.as_path()),
-                        ("cubin", cubin.as_path()),
-                    ],
-                )?;
+                write_candidate_draft(repo_root, &output_dir, &paths, &mut draft)?;
                 return Err(error.context("candidate declaration canonicalization failed"));
             }
         }
@@ -318,53 +313,36 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
             "candidate route does not use a typed LLVM intrinsic",
         ));
     }
+    write_candidate_draft(repo_root, &output_dir, &paths, &mut draft)?;
 
-    let status = Command::new(&options.llc)
-        .arg(&input)
-        .arg("-march=nvptx64")
-        .arg(format!("-mcpu={}", options.gpu_target))
-        .arg(format!("-mattr={}", options.ptx_feature))
-        .arg("-o")
-        .arg(&output)
-        .status()
-        .with_context(|| format!("run {}", options.llc.display()))?;
-    if !status.success() {
-        draft.stages.push(candidate_stage(
-            "backend_codegen",
-            "failed",
-            &format!("llc exited with {status}"),
-        ));
-        write_candidate_draft(
-            repo_root,
-            &output_dir,
-            &manifest,
-            &mut draft,
-            [
-                ("llvm_ir", input.as_path()),
-                ("ptx", output.as_path()),
-                ("cubin", cubin.as_path()),
-            ],
-        )?;
-        anyhow::bail!("candidate LLVM probe failed with {status}");
-    }
-    let ptx = fs::read_to_string(&output)
-        .with_context(|| format!("read candidate PTX {}", output.display()))?;
+    let ptx = match lower_candidate_ptx(
+        &options.llc,
+        &paths.llvm_ir,
+        &options.gpu_target,
+        &options.ptx_feature,
+        &paths.ptx,
+    ) {
+        Ok(ptx) => ptx,
+        Err(error) => {
+            record_candidate_failure(
+                repo_root,
+                &output_dir,
+                &paths,
+                &mut draft,
+                "backend_codegen",
+                &error,
+            )?;
+            return Err(error.context("candidate LLVM probe failed"));
+        }
+    };
     if let Err(error) = validate_probe_instructions(record, &ptx) {
-        draft.stages.push(candidate_stage(
-            "backend_codegen",
-            "failed",
-            &format!("{error:#}"),
-        ));
-        write_candidate_draft(
+        record_candidate_failure(
             repo_root,
             &output_dir,
-            &manifest,
+            &paths,
             &mut draft,
-            [
-                ("llvm_ir", input.as_path()),
-                ("ptx", output.as_path()),
-                ("cubin", cubin.as_path()),
-            ],
+            "backend_codegen",
+            &error,
         )?;
         return Err(error.context("candidate PTX instruction validation failed"));
     }
@@ -373,6 +351,7 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
         "succeeded",
         "llc output matched the reviewed PTX instruction shape",
     ));
+    write_candidate_draft(repo_root, &output_dir, &paths, &mut draft)?;
 
     if options.skip_terminal {
         draft.stages.push(candidate_stage(
@@ -385,31 +364,18 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
             .ptxas
             .as_deref()
             .context("candidate terminal validation has no explicit ptxas")?;
-        let status = Command::new(ptxas)
-            .arg(format!("-arch={}", options.gpu_target))
-            .arg(&output)
-            .arg("-o")
-            .arg(&cubin)
-            .status()
-            .with_context(|| format!("run {}", ptxas.display()))?;
-        if !status.success() {
-            draft.stages.push(candidate_stage(
-                "ptx_assembly",
-                "failed",
-                &format!("ptxas exited with {status}"),
-            ));
-            write_candidate_draft(
+        if let Err(error) =
+            assemble_candidate_ptx(ptxas, &options.gpu_target, &paths.ptx, &paths.cubin)
+        {
+            record_candidate_failure(
                 repo_root,
                 &output_dir,
-                &manifest,
+                &paths,
                 &mut draft,
-                [
-                    ("llvm_ir", input.as_path()),
-                    ("ptx", output.as_path()),
-                    ("cubin", cubin.as_path()),
-                ],
+                "ptx_assembly",
+                &error,
             )?;
-            anyhow::bail!("candidate ptxas probe failed with {status}");
+            return Err(error.context("candidate PTX assembly failed"));
         }
         draft.stages.push(candidate_stage(
             "ptx_assembly",
@@ -417,22 +383,12 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
             "the explicit ptxas accepted the generated PTX",
         ));
     }
-    write_candidate_draft(
-        repo_root,
-        &output_dir,
-        &manifest,
-        &mut draft,
-        [
-            ("llvm_ir", input.as_path()),
-            ("ptx", output.as_path()),
-            ("cubin", cubin.as_path()),
-        ],
-    )?;
+    write_candidate_draft(repo_root, &output_dir, &paths, &mut draft)?;
     println!(
         "candidate comparison lowered {} to `{}` for {} {}; admitted=false",
         record.id, record.expected_ptx, options.gpu_target, options.ptx_feature
     );
-    println!("draft: {}", manifest.display());
+    println!("draft: {}", paths.manifest.display());
     Ok(())
 }
 
@@ -447,12 +403,161 @@ fn candidate_artifact_stem(intrinsic_id: &str) -> Result<&str> {
     Ok(intrinsic_id)
 }
 
+fn candidate_artifact_paths(output_dir: &Path, stem: &str) -> CandidateArtifactPaths {
+    CandidateArtifactPaths {
+        llvm_ir: output_dir.join(format!("{stem}.candidate.ll")),
+        llvm_bitcode: output_dir.join(format!("{stem}.candidate.bc")),
+        canonical_llvm_ir: output_dir.join(format!("{stem}.candidate.canonical.ll")),
+        ptx: output_dir.join(format!("{stem}.candidate.ptx")),
+        cubin: output_dir.join(format!("{stem}.candidate.cubin")),
+        manifest: output_dir.join(format!("{stem}.candidate.json")),
+        manifest_temp: output_dir.join(format!("{stem}.candidate.json.tmp")),
+    }
+}
+
+fn candidate_artifact_entries(paths: &CandidateArtifactPaths) -> [(&'static str, &Path); 5] {
+    [
+        ("llvm_ir", paths.llvm_ir.as_path()),
+        ("llvm_bitcode", paths.llvm_bitcode.as_path()),
+        ("canonical_llvm_ir", paths.canonical_llvm_ir.as_path()),
+        ("ptx", paths.ptx.as_path()),
+        ("cubin", paths.cubin.as_path()),
+    ]
+}
+
+fn clear_candidate_artifacts(paths: &CandidateArtifactPaths) -> Result<()> {
+    for path in [
+        &paths.llvm_ir,
+        &paths.llvm_bitcode,
+        &paths.canonical_llvm_ir,
+        &paths.ptx,
+        &paths.cubin,
+        &paths.manifest,
+        &paths.manifest_temp,
+    ] {
+        remove_if_present(path)?;
+    }
+    Ok(())
+}
+
 fn remove_if_present(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error).with_context(|| format!("remove stale {}", path.display())),
     }
+}
+
+fn write_new_file(path: &Path, contents: impl AsRef<str>) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("create {}", path.display()))?;
+    file.write_all(contents.as_ref().as_bytes())
+        .with_context(|| format!("write {}", path.display()))
+}
+
+fn lower_candidate_ptx(
+    llc: &Path,
+    input: &Path,
+    gpu_target: &str,
+    ptx_feature: &str,
+    output: &Path,
+) -> Result<String> {
+    let status = Command::new(llc)
+        .arg(input)
+        .arg("-march=nvptx64")
+        .arg(format!("-mcpu={gpu_target}"))
+        .arg(format!("-mattr={ptx_feature}"))
+        .arg("-o")
+        .arg(output)
+        .status()
+        .with_context(|| format!("run {}", llc.display()))?;
+    ensure!(status.success(), "llc exited with {status}");
+    ensure_regular_artifact(output, "candidate PTX")?;
+    fs::read_to_string(output).with_context(|| format!("read candidate PTX {}", output.display()))
+}
+
+fn assemble_candidate_ptx(ptxas: &Path, gpu_target: &str, ptx: &Path, cubin: &Path) -> Result<()> {
+    remove_if_present(cubin)?;
+    let status = Command::new(ptxas)
+        .arg(format!("-arch={gpu_target}"))
+        .arg(ptx)
+        .arg("-o")
+        .arg(cubin)
+        .status()
+        .with_context(|| format!("run {}", ptxas.display()))?;
+    ensure!(status.success(), "ptxas exited with {status}");
+    validate_candidate_cubin(cubin)
+}
+
+fn ensure_regular_artifact(path: &Path, kind: &str) -> Result<fs::Metadata> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("{kind} was not produced at {}", path.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "{kind} at {} is not a regular file",
+        path.display()
+    );
+    Ok(metadata)
+}
+
+fn validate_candidate_cubin(cubin: &Path) -> Result<()> {
+    const ELF64_HEADER_LEN: usize = 64;
+    let metadata = ensure_regular_artifact(cubin, "candidate cubin")?;
+    ensure!(
+        metadata.len() >= ELF64_HEADER_LEN as u64,
+        "candidate cubin at {} is too small to be an ELF file",
+        cubin.display()
+    );
+    let mut header = [0_u8; ELF64_HEADER_LEN];
+    fs::File::open(cubin)
+        .with_context(|| format!("open candidate cubin {}", cubin.display()))?
+        .read_exact(&mut header)
+        .with_context(|| format!("read candidate cubin {}", cubin.display()))?;
+    ensure!(
+        header[..7] == [0x7f, b'E', b'L', b'F', 2, 1, 1]
+            && header[16..18] == [2, 0]
+            && header[18..20] == [0xbe, 0],
+        "candidate cubin at {} is not an ELF64 NVIDIA CUDA executable",
+        cubin.display()
+    );
+    ensure!(
+        u32::from_le_bytes(header[20..24].try_into().unwrap()) == 1
+            && u16::from_le_bytes(header[52..54].try_into().unwrap()) == ELF64_HEADER_LEN as u16,
+        "candidate cubin at {} has a malformed ELF64 header",
+        cubin.display()
+    );
+    let program_offset = u64::from_le_bytes(header[32..40].try_into().unwrap());
+    let section_offset = u64::from_le_bytes(header[40..48].try_into().unwrap());
+    let program_entry_size = u16::from_le_bytes(header[54..56].try_into().unwrap()) as u64;
+    let program_count = u16::from_le_bytes(header[56..58].try_into().unwrap()) as u64;
+    let section_entry_size = u16::from_le_bytes(header[58..60].try_into().unwrap()) as u64;
+    let section_count = u16::from_le_bytes(header[60..62].try_into().unwrap()) as u64;
+    ensure!(
+        program_offset >= ELF64_HEADER_LEN as u64
+            && program_entry_size == 56
+            && program_count > 0
+            && section_offset >= ELF64_HEADER_LEN as u64
+            && section_entry_size == 64
+            && section_count > 0,
+        "candidate cubin at {} has malformed ELF64 tables",
+        cubin.display()
+    );
+    let program_end = program_entry_size
+        .checked_mul(program_count)
+        .and_then(|size| program_offset.checked_add(size));
+    let section_end = section_entry_size
+        .checked_mul(section_count)
+        .and_then(|size| section_offset.checked_add(size));
+    ensure!(
+        program_end.is_some_and(|end| end <= metadata.len())
+            && section_end.is_some_and(|end| end <= metadata.len()),
+        "candidate cubin at {} has ELF64 tables outside the file",
+        cubin.display()
+    );
+    Ok(())
 }
 
 fn candidate_tool(role: &str, path: &Path, identity: &LlcIdentity) -> CandidateToolDraft {
@@ -472,20 +577,48 @@ fn candidate_stage(stage: &str, outcome: &str, detail: &str) -> CandidateStageDr
     }
 }
 
-fn write_candidate_draft<'a>(
+fn record_candidate_failure(
     repo_root: &Path,
     output_dir: &Path,
-    manifest: &Path,
+    paths: &CandidateArtifactPaths,
     draft: &mut CandidateProbeDraft,
-    artifacts: impl IntoIterator<Item = (&'a str, &'a Path)>,
+    stage: &str,
+    error: &anyhow::Error,
 ) -> Result<()> {
-    draft.artifacts = artifacts
-        .into_iter()
-        .filter(|(_, path)| path.is_file())
-        .map(|(kind, path)| candidate_artifact(repo_root, output_dir, kind, path))
-        .collect::<Result<Vec<_>>>()?;
-    fs::write(manifest, pretty_json(draft)?)
-        .with_context(|| format!("write candidate draft {}", manifest.display()))
+    draft
+        .stages
+        .push(candidate_stage(stage, "failed", &format!("{error:#}")));
+    write_candidate_draft(repo_root, output_dir, paths, draft)
+}
+
+fn write_candidate_draft(
+    repo_root: &Path,
+    output_dir: &Path,
+    paths: &CandidateArtifactPaths,
+    draft: &mut CandidateProbeDraft,
+) -> Result<()> {
+    let mut artifacts = Vec::new();
+    for (kind, path) in candidate_artifact_entries(paths) {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.file_type().is_file(),
+                    "candidate artifact {} is not a regular file",
+                    path.display()
+                );
+                artifacts.push(candidate_artifact(repo_root, output_dir, kind, path)?);
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("inspect artifact {}", path.display()));
+            }
+        }
+    }
+    draft.artifacts = artifacts;
+    remove_if_present(&paths.manifest_temp)?;
+    write_new_file(&paths.manifest_temp, pretty_json(draft)?)?;
+    fs::rename(&paths.manifest_temp, &paths.manifest)
+        .with_context(|| format!("write candidate draft {}", paths.manifest.display()))
 }
 
 fn candidate_artifact(
@@ -1304,23 +1437,30 @@ fn ptxas_identity(ptxas: &Path) -> Result<LlcIdentity> {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let version = parse_ptxas_version(&stdout, &stderr)?;
+    Ok(LlcIdentity {
+        version,
+        sha256: sha256_file(ptxas)?,
+    })
+}
+
+fn parse_ptxas_version(stdout: &str, stderr: &str) -> Result<String> {
     let lines = stdout
         .lines()
         .chain(stderr.lines())
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
+    ensure!(
+        lines.contains(&"ptxas: NVIDIA (R) Ptx optimizing assembler"),
+        "ptxas --version did not report the NVIDIA PTX optimizing assembler banner"
+    );
     let version = lines
         .iter()
         .copied()
-        .find(|line| line.contains("release") || line.contains(", V"))
-        .or_else(|| lines.first().copied())
-        .context("ptxas --version did not report a version")?
-        .to_owned();
-    Ok(LlcIdentity {
-        version,
-        sha256: sha256_file(ptxas)?,
-    })
+        .find(|line| line.starts_with("Cuda compilation tools, release ") && line.contains(", V"))
+        .context("ptxas --version did not report a CUDA release and version")?;
+    Ok(version.to_owned())
 }
 
 fn validate_backend_identity(
@@ -1376,7 +1516,46 @@ fn rust_toolchain_llc() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CatalogHalfOpenRange, CatalogLlvmResultFacts};
+    use crate::model::{
+        CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget,
+        CatalogLlvmResultFacts,
+    };
+
+    #[cfg(unix)]
+    struct CandidateToolTestDir(PathBuf);
+
+    #[cfg(unix)]
+    impl Drop for CandidateToolTestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    fn candidate_tool_test_dir() -> CandidateToolTestDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "cuda-intrinsics-probe-tool-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).unwrap();
+        CandidateToolTestDir(path)
+    }
+
+    #[cfg(unix)]
+    fn write_fake_tool(root: &Path, name: &str, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = root.join(name);
+        fs::write(&path, script).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
 
     #[test]
     fn vote_probe_requires_register_and_negative_one_mask_forms() {
@@ -2092,6 +2271,103 @@ attributes #0 = { nounwind }
     }
 
     #[test]
+    fn ptxas_version_requires_the_nvidia_banner_and_cuda_release() {
+        let valid = "ptxas: NVIDIA (R) Ptx optimizing assembler\n\
+                     Copyright (c) 2005-2026 NVIDIA Corporation\n\
+                     Cuda compilation tools, release 13.3, V13.3.33\n";
+        assert_eq!(
+            parse_ptxas_version(valid, "").unwrap(),
+            "Cuda compilation tools, release 13.3, V13.3.33"
+        );
+        for invalid in [
+            "printf (GNU coreutils) 9.4\n",
+            "Cuda compilation tools, release 13.3, V13.3.33\n",
+            "ptxas: NVIDIA (R) Ptx optimizing assembler\n",
+        ] {
+            assert!(parse_ptxas_version(invalid, "").is_err(), "{invalid}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_fake_ptxas_without_a_real_cubin_is_rejected() {
+        const BANNER: &str = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' 'ptxas: NVIDIA (R) Ptx optimizing assembler' 'Cuda compilation tools, release 13.3, V13.3.33'
+fi
+exit 0
+"#;
+        const NON_ELF: &str = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' 'ptxas: NVIDIA (R) Ptx optimizing assembler' 'Cuda compilation tools, release 13.3, V13.3.33'
+else
+  printf '%s' 'this is definitely not an ELF cubin; padding keeps it longer than one ELF64 header' > "$4"
+fi
+exit 0
+"#;
+        let temp = candidate_tool_test_dir();
+        let ptx = temp.0.join("probe.ptx");
+        fs::write(&ptx, ".version 7.0\n.target sm_80\n").unwrap();
+
+        let no_output = write_fake_tool(&temp.0, "no-output-ptxas", BANNER);
+        assert_eq!(
+            ptxas_identity(&no_output).unwrap().version,
+            "Cuda compilation tools, release 13.3, V13.3.33"
+        );
+        let cubin = temp.0.join("missing.cubin");
+        let error = assemble_candidate_ptx(&no_output, "sm_80", &ptx, &cubin).unwrap_err();
+        assert!(error.to_string().contains("was not produced"), "{error:#}");
+
+        let non_elf = write_fake_tool(&temp.0, "non-elf-ptxas", NON_ELF);
+        let cubin = temp.0.join("non-elf.cubin");
+        let error = assemble_candidate_ptx(&non_elf, "sm_80", &ptx, &cubin).unwrap_err();
+        assert!(error.to_string().contains("not an ELF64"), "{error:#}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fake_non_nvidia_ptxas_banner_is_rejected() {
+        let temp = candidate_tool_test_dir();
+        let tool = write_fake_tool(
+            &temp.0,
+            "not-ptxas",
+            "#!/bin/sh\nprintf '%s\\n' 'printf (GNU coreutils) 9.4'\n",
+        );
+        let error = ptxas_identity(&tool).unwrap_err();
+        assert!(error.to_string().contains("NVIDIA PTX"), "{error:#}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidate_artifact_cleanup_removes_stale_drafts() {
+        let temp = candidate_tool_test_dir();
+        let paths = candidate_artifact_paths(&temp.0, "test");
+        for path in [
+            &paths.llvm_ir,
+            &paths.llvm_bitcode,
+            &paths.canonical_llvm_ir,
+            &paths.ptx,
+            &paths.cubin,
+            &paths.manifest,
+            &paths.manifest_temp,
+        ] {
+            fs::write(path, "stale").unwrap();
+        }
+        clear_candidate_artifacts(&paths).unwrap();
+        for path in [
+            &paths.llvm_ir,
+            &paths.llvm_bitcode,
+            &paths.canonical_llvm_ir,
+            &paths.ptx,
+            &paths.cubin,
+            &paths.manifest,
+            &paths.manifest_temp,
+        ] {
+            assert!(!path.exists(), "{}", path.display());
+        }
+    }
+
+    #[test]
     fn candidate_manifest_is_deterministic_and_never_claims_admission() {
         let draft = CandidateProbeDraft {
             schema: 1,
@@ -2106,6 +2382,12 @@ attributes #0 = { nounwind }
             mechanism: BackendLoweringMechanism::InlinePtx,
             expected_ptx: InstructionPattern::new("test", &[], vec![]),
             target: CandidateTargetDraft {
+                requirement: CatalogTargetRequirement {
+                    minimum_ptx: "7.0".parse().unwrap(),
+                    hardware: CatalogHardwareTarget::AnyOf {
+                        alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm: 80 }],
+                    },
+                },
                 target_triple: "nvptx64-nvidia-cuda".into(),
                 gpu_target: "sm_80".into(),
                 ptx_feature: "+ptx70".into(),
