@@ -264,6 +264,9 @@ pub(crate) fn convert_commit_shared_cluster(
 // MMA operations
 // ============================================================================
 
+/// BF16 descriptors use the PTX f16 instruction class.
+pub(crate) const TCGEN05_MMA_WS_BF16_PTX_KIND: &str = "f16";
+
 /// Convert nvvm.tcgen05_mma_ws_* to inline PTX.
 ///
 /// Matrix multiply-accumulate: D = A × B + D (or D = A × B if enable_d is false)
@@ -272,8 +275,7 @@ pub(crate) fn convert_commit_shared_cluster(
 ///
 /// PTX: `tcgen05.mma.ws.cta_group::1.kind::<kind> [d_tmem], [a_tmem], a_desc, b_desc, idesc, enable_d;`
 ///
-/// Parameters:
-/// - kind: f16, bf16, or tf32
+/// `kind` is f16 (including BF16 descriptors) or tf32.
 pub(crate) fn convert_mma_ws(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -317,6 +319,17 @@ pub(crate) fn convert_mma_ws(
     rewriter.erase_operation(ctx, op);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TCGEN05_MMA_WS_BF16_PTX_KIND;
+
+    #[test]
+    fn bf16_uses_the_f16_instruction_class() {
+        assert_eq!(TCGEN05_MMA_WS_BF16_PTX_KIND, "f16");
+        assert_ne!(TCGEN05_MMA_WS_BF16_PTX_KIND, "bf16");
+    }
 }
 
 /// Convert nvvm.tcgen05_mma_f16 (non-ws) to inline PTX.

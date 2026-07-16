@@ -23,10 +23,10 @@ use crate::model::{
     SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
     SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
     SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
-    StmatrixLayout, StmatrixMultiplicity, TmaAdapter, TmaOperation, VoteAdapter, VoteMode,
-    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode,
-    WgmmaControlParticipation,
+    StmatrixLayout, StmatrixMultiplicity, Tcgen05Adapter, Tcgen05Operation, Tcgen05SourceContract,
+    TmaAdapter, TmaOperation, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter,
+    WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
+    WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode, WgmmaControlParticipation,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -195,6 +195,16 @@ pub fn all_outputs(
         outputs.insert(
             "crates/dialect-nvvm/src/ops/generated/tma.rs".into(),
             render_dialect_tma(catalog, catalog_sha256),
+        );
+    }
+    if tcgen05_intrinsics(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/tcgen05.rs".into(),
+            render_compat_tcgen05(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/tcgen05.rs".into(),
+            render_dialect_tcgen05(catalog, catalog_sha256),
         );
     }
     outputs.insert(
@@ -373,6 +383,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "clc" && record.clc.is_some())
                     || (record.family == "wgmma_control" && record.wgmma_control.is_some())
                     || (record.family == "tma" && record.tma.is_some())
+                    || (record.family == "tcgen05" && record.tcgen05.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -1024,6 +1035,11 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated TMA recipe",
                 record.id
             ),
+            "tcgen05" => ensure!(
+                tcgen05_render_contract(record),
+                "{} is outside the closed generated tcgen05 recipe",
+                record.id
+            ),
             "cp_async_copy" => ensure!(
                 record.rust.module == "async_copy"
                     && record.rust.result == "()"
@@ -1645,6 +1661,171 @@ fn wgmma_control_template(record: &CatalogIntrinsic) -> String {
         record.expected_ptx.mnemonic,
         record.expected_ptx.modifiers.join(".")
     )
+}
+
+fn tcgen05_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "tcgen05")
+}
+
+fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
+    let Some(tcgen05) = &record.tcgen05 else {
+        return false;
+    };
+    if record.rust.module != "tcgen05"
+        || record.rust.must_use
+        || record.lowering != "generated_tcgen05"
+        || !record.semantics.convergent
+        || record.target.minimum_ptx.to_string() != "8.6"
+        || record.target.targets != "sm_100a|sm_101a"
+        || record.backend_lowerings.len() != 2
+        || !record
+            .backend_lowerings
+            .iter()
+            .all(|route| route.mechanism == BackendLoweringMechanism::InlinePtx)
+        || tcgen05.runtime_validation != RuntimeValidation::Unexecuted
+    {
+        return false;
+    }
+    let llvm = llvm(record);
+    match (tcgen05.operation, tcgen05.adapter) {
+        (
+            Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2,
+            Tcgen05Adapter::SharedPointerColumnsToVoid,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["*mut u32", "u32"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["ptr", "i32"]
+                && record.dialect.results.is_empty()
+                && llvm.arguments == ["shared_ptr", "i32"]
+                && llvm.results.is_empty()
+                && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+        }
+        (
+            Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2,
+            Tcgen05Adapter::TmemAddressColumnsToVoid,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32", "u32"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["i32", "i32"]
+                && llvm.arguments == ["tmem_ptr", "i32"]
+                && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+        }
+        (
+            Tcgen05Operation::RelinquishAllocPermit
+            | Tcgen05Operation::RelinquishAllocPermitCg2
+            | Tcgen05Operation::FenceBeforeThreadSync
+            | Tcgen05Operation::FenceAfterThreadSync
+            | Tcgen05Operation::LoadWait
+            | Tcgen05Operation::StoreWait,
+            Tcgen05Adapter::NoOperands,
+        ) => {
+            record.rust.safe
+                && record.rust.arguments.is_empty()
+                && record.rust.result == "()"
+                && record.dialect.operands.is_empty()
+                && llvm.arguments.is_empty()
+                && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+        }
+        (
+            Tcgen05Operation::Commit
+            | Tcgen05Operation::CommitCg2
+            | Tcgen05Operation::CommitSharedCluster
+            | Tcgen05Operation::CommitSharedClusterCg2,
+            Tcgen05Adapter::BarrierPointerToVoid,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["*mut u64"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["ptr"]
+                && llvm.arguments.len() == 1
+                && if matches!(
+                    tcgen05.operation,
+                    Tcgen05Operation::Commit | Tcgen05Operation::CommitCg2
+                ) {
+                    tcgen05.source_contract == Tcgen05SourceContract::TablegenSelectionChangesPtx
+                        && llvm.arguments == ["ptr"]
+                } else {
+                    tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+                        && llvm.arguments == ["shared_ptr"]
+                }
+        }
+        (
+            Tcgen05Operation::MmaWsF16 | Tcgen05Operation::MmaWsBf16 | Tcgen05Operation::MmaWsTf32,
+            Tcgen05Adapter::MmaWsDropLegacyADescriptor,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32", "u32", "u64", "u64", "u32", "bool"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["i32", "i32", "i64", "i64", "i32", "i1"]
+                && llvm.arguments
+                    == [
+                        "tmem_ptr", "tmem_ptr", "i64", "i32", "i1", "i32", "i32", "i32",
+                    ]
+                && tcgen05.source_contract == Tcgen05SourceContract::TablegenSelectionChangesPtx
+                && (tcgen05.operation != Tcgen05Operation::MmaWsBf16
+                    || (record.expected_ptx.modifiers.contains(&"kind::f16".into())
+                        && !record.expected_ptx.modifiers.contains(&"kind::bf16".into())))
+        }
+        (
+            Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2,
+            Tcgen05Adapter::MmaInjectZeroDisableLanes,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32", "u64", "u64", "u32", "bool"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["i32", "i64", "i64", "i32", "i1"]
+                && llvm.arguments.len() == 8
+                && tcgen05.source_contract
+                    == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+        }
+        (
+            Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2,
+            Tcgen05Adapter::TmemDescriptorToVoid,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32", "u64"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["i32", "i64"]
+                && llvm.arguments == ["tmem_ptr", "i64"]
+                && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+        }
+        (Tcgen05Operation::Ld16x256bX8Pure, Tcgen05Adapter::TmemToF32x32) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32"]
+                && record.rust.result == "[f32; 32]"
+                && record.dialect.operands == ["i32"]
+                && record.dialect.results == vec!["f32"; 32]
+                && llvm.arguments == ["tmem_ptr", "i1"]
+                && llvm.results == ["v32i32"]
+                && tcgen05.source_contract
+                    == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+        }
+        (Tcgen05Operation::Ld16x256bPure, Tcgen05Adapter::TmemToF32x4) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32"]
+                && record.rust.result == "[f32; 4]"
+                && record.dialect.operands == ["i32"]
+                && record.dialect.results == ["f32", "f32", "f32", "f32"]
+                && llvm.arguments == ["tmem_ptr", "i1"]
+                && llvm.results == ["v4i32"]
+                && tcgen05.source_contract
+                    == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+        }
+        (Tcgen05Operation::CommitMulticastCg2, Tcgen05Adapter::BarrierPointerMaskToVoid) => {
+            !record.rust.safe
+                && record.rust.arguments == ["*mut u64", "u16"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["ptr", "i16"]
+                && llvm.arguments == ["shared_ptr", "i16"]
+                && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+        }
+        _ => false,
+    }
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -3634,6 +3815,86 @@ pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
     output
 }
 
+fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 24);
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
+    for record in tcgen05_intrinsics(catalog) {
+        let operation = record.tcgen05.as_ref().unwrap().operation;
+        let (arguments, values, result) = match operation {
+            Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
+                ("dst_smem: *mut u32, n_cols: u32", "dst_smem, n_cols", "()")
+            }
+            Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => {
+                ("tmem_addr: u32, n_cols: u32", "tmem_addr, n_cols", "()")
+            }
+            Tcgen05Operation::RelinquishAllocPermit
+            | Tcgen05Operation::FenceBeforeThreadSync
+            | Tcgen05Operation::FenceAfterThreadSync
+            | Tcgen05Operation::LoadWait
+            | Tcgen05Operation::StoreWait
+            | Tcgen05Operation::RelinquishAllocPermitCg2 => ("", "", "()"),
+            Tcgen05Operation::Commit
+            | Tcgen05Operation::CommitSharedCluster
+            | Tcgen05Operation::CommitCg2
+            | Tcgen05Operation::CommitSharedClusterCg2 => ("mbar: *mut u64", "mbar", "()"),
+            Tcgen05Operation::MmaWsF16
+            | Tcgen05Operation::MmaWsBf16
+            | Tcgen05Operation::MmaWsTf32 => (
+                "d_tmem: u32, a_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool",
+                "d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d",
+                "()",
+            ),
+            Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => (
+                "d_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool",
+                "d_tmem, a_desc, b_desc, idesc, enable_d",
+                "()",
+            ),
+            Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => (
+                "tmem_addr: u32, smem_desc: u64",
+                "tmem_addr, smem_desc",
+                "()",
+            ),
+            Tcgen05Operation::Ld16x256bX8Pure => ("tmem_addr: u32", "tmem_addr", "TmemF32x32"),
+            Tcgen05Operation::Ld16x256bPure => ("tmem_addr: u32", "tmem_addr", "TmemF32x4"),
+            Tcgen05Operation::CommitMulticastCg2 => {
+                ("mbar: *mut u64, cta_mask: u16", "mbar, cta_mask", "()")
+            }
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        if !record.rust.safe {
+            output.push_str("///\n/// # Safety\n");
+            output.push_str("/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n");
+        }
+        output.push_str("#[inline(never)]\n");
+        if record.rust.arguments.len() > 5 {
+            output.push_str("#[allow(clippy::too_many_arguments)]\n");
+        }
+        let safety = if record.rust.safe { "" } else { "unsafe " };
+        writeln!(
+            output,
+            "pub {safety}fn {}({arguments}) -> {result} {{",
+            record.rust.name
+        )
+        .unwrap();
+        if !values.is_empty() {
+            if values.contains(',') {
+                writeln!(output, "    let _ = ({values});").unwrap();
+            } else {
+                writeln!(output, "    let _ = {values};").unwrap();
+            }
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -4232,6 +4493,15 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    sync::register(ctx);",
                 "    sync::register(ctx);\n    tma::register(ctx);",
+            );
+    }
+    if tcgen05_intrinsics(catalog).next().is_some() {
+        output = output
+            .replace("mod sync;", "mod sync;\nmod tcgen05;")
+            .replace("pub use sync::*;", "pub use sync::*;\npub use tcgen05::*;")
+            .replace(
+                "    sync::register(ctx);",
+                "    sync::register(ctx);\n    tcgen05::register(ctx);",
             );
     }
     output
@@ -6973,6 +7243,34 @@ fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 24);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated Tensor Core Generation 5 operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+    );
+    for record in tcgen05_intrinsics(catalog) {
+        let operand_count = record.dialect.operands.len();
+        let result_count = record.dialect.results.len();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in tcgen05_intrinsics(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -8686,6 +8984,44 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    for record in tcgen05_intrinsics(catalog) {
+        let operation = record.tcgen05.as_ref().unwrap().operation;
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        let helper = format!("emit_{}", record.rust.name);
+        match operation {
+            Tcgen05Operation::RelinquishAllocPermit
+            | Tcgen05Operation::FenceBeforeThreadSync
+            | Tcgen05Operation::FenceAfterThreadSync
+            | Tcgen05Operation::LoadWait
+            | Tcgen05Operation::StoreWait
+            | Tcgen05Operation::RelinquishAllocPermitCg2 => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tcgen05::{helper}(\n                ctx, args, target, block_ptr, prev_op, block_map, loc,\n            )?))"
+                )
+                .unwrap();
+            }
+            Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tcgen05::{helper}(\n                ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,\n            )?))"
+                )
+                .unwrap();
+            }
+            _ => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tcgen05::{helper}(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,\n            )?))"
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("        }\n");
+    }
     output.push_str("        _ => Ok(None),\n    }\n}\n\n");
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
@@ -8992,6 +9328,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
         );
     }
+    if tcgen05_intrinsics(catalog).next().is_some() {
+        output = output.replace(
+            "use dialect_nvvm::ops::{",
+            "use crate::convert::intrinsics::tcgen05;\nuse dialect_nvvm::ops::{",
+        );
+    }
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
             output.push_str(", ");
@@ -9037,6 +9379,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
         );
+    }
+    for record in tcgen05_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -10223,6 +10569,72 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("    }\n}\n\n");
     }
+    for record in tcgen05_intrinsics(catalog) {
+        let operation = record.tcgen05.as_ref().unwrap().operation;
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        match operation {
+            Tcgen05Operation::MmaWsF16 | Tcgen05Operation::MmaWsBf16 => output.push_str(
+                "        tcgen05::convert_mma_ws(ctx, rewriter, self.get_operation(), operands_info, \"f16\")\n",
+            ),
+            Tcgen05Operation::MmaWsTf32 => output.push_str(
+                "        tcgen05::convert_mma_ws(ctx, rewriter, self.get_operation(), operands_info, \"tf32\")\n",
+            ),
+            _ => {
+                let helper = match operation {
+                    Tcgen05Operation::Alloc => "convert_alloc",
+                    Tcgen05Operation::Dealloc => "convert_dealloc",
+                    Tcgen05Operation::RelinquishAllocPermit => {
+                        "convert_relinquish_alloc_permit"
+                    }
+                    Tcgen05Operation::FenceBeforeThreadSync => {
+                        "convert_fence_before_thread_sync"
+                    }
+                    Tcgen05Operation::FenceAfterThreadSync => {
+                        "convert_fence_after_thread_sync"
+                    }
+                    Tcgen05Operation::Commit => "convert_commit",
+                    Tcgen05Operation::CommitSharedCluster => "convert_commit_shared_cluster",
+                    Tcgen05Operation::MmaF16 => "convert_mma_f16",
+                    Tcgen05Operation::CpSmemToTmem => "convert_cp_smem_to_tmem",
+                    Tcgen05Operation::Ld16x256bX8Pure => "convert_ld_16x256b_x8_pure",
+                    Tcgen05Operation::Ld16x256bPure => "convert_ld_16x256b_pure",
+                    Tcgen05Operation::LoadWait => "convert_load_wait",
+                    Tcgen05Operation::StoreWait => "convert_store_wait",
+                    Tcgen05Operation::AllocCg2 => "convert_alloc_cg2",
+                    Tcgen05Operation::DeallocCg2 => "convert_dealloc_cg2",
+                    Tcgen05Operation::RelinquishAllocPermitCg2 => {
+                        "convert_relinquish_alloc_permit_cg2"
+                    }
+                    Tcgen05Operation::MmaF16Cg2 => "convert_mma_f16_cg2",
+                    Tcgen05Operation::CommitCg2 => "convert_commit_cg2",
+                    Tcgen05Operation::CommitSharedClusterCg2 => {
+                        "convert_commit_shared_cluster_cg2"
+                    }
+                    Tcgen05Operation::CommitMulticastCg2 => {
+                        "convert_commit_multicast_cg2"
+                    }
+                    Tcgen05Operation::CpSmemToTmemCg2 => "convert_cp_smem_to_tmem_cg2",
+                    Tcgen05Operation::MmaWsF16
+                    | Tcgen05Operation::MmaWsBf16
+                    | Tcgen05Operation::MmaWsTf32 => unreachable!(),
+                };
+                writeln!(
+                    output,
+                    "        tcgen05::{helper}(ctx, rewriter, self.get_operation(), operands_info)"
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("    }\n}\n\n");
+    }
     for record in debug_controls(catalog) {
         writeln!(
             output,
@@ -10935,12 +11347,183 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
     output
 }
 
+fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
+    let operation = record.tcgen05.as_ref().expect("tcgen05 contract").operation;
+    let mut output = llvm_header(catalog, hash);
+    output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+    writeln!(
+        output,
+        "; LLVM source: {}; route: inline PTX; source contract: {:?}",
+        llvm(record).symbol,
+        record.tcgen05.as_ref().unwrap().source_contract
+    )
+    .unwrap();
+    let (parameters, result_ty, template, constraints, arguments) = match operation {
+        Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
+            let group = if operation == Tcgen05Operation::AllocCg2 { "2" } else { "1" };
+            (
+                "ptr %dst, i32 %ncols".into(),
+                "void".into(),
+                format!("{{ .reg .u64 %shared64; .reg .u32 %shared32; cvta.to.shared.u64 %shared64, $0; cvt.u32.u64 %shared32, %shared64; tcgen05.alloc.cta_group::{group}.sync.aligned.shared::cta.b32 [%shared32], $1; }}"),
+                "l,r,~{memory}".into(),
+                "ptr %dst, i32 %ncols".into(),
+            )
+        }
+        Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => {
+            let group = if operation == Tcgen05Operation::DeallocCg2 { "2" } else { "1" };
+            (
+                "i32 %tmem, i32 %ncols".into(),
+                "void".into(),
+                format!("tcgen05.dealloc.cta_group::{group}.sync.aligned.b32 $0, $1;"),
+                "r,r,~{memory}".into(),
+                "i32 %tmem, i32 %ncols".into(),
+            )
+        }
+        Tcgen05Operation::RelinquishAllocPermit
+        | Tcgen05Operation::RelinquishAllocPermitCg2 => {
+            let group = if operation == Tcgen05Operation::RelinquishAllocPermitCg2 { "2" } else { "1" };
+            (
+                String::new(),
+                "void".into(),
+                format!("tcgen05.relinquish_alloc_permit.cta_group::{group}.sync.aligned;"),
+                "~{memory}".into(),
+                String::new(),
+            )
+        }
+        Tcgen05Operation::FenceBeforeThreadSync | Tcgen05Operation::FenceAfterThreadSync => {
+            let modifier = if operation == Tcgen05Operation::FenceBeforeThreadSync {
+                "before_thread_sync"
+            } else {
+                "after_thread_sync"
+            };
+            (
+                String::new(),
+                "void".into(),
+                format!("tcgen05.fence::{modifier};"),
+                "~{memory}".into(),
+                String::new(),
+            )
+        }
+        Tcgen05Operation::Commit
+        | Tcgen05Operation::CommitSharedCluster
+        | Tcgen05Operation::CommitCg2
+        | Tcgen05Operation::CommitSharedClusterCg2 => {
+            let group = if matches!(operation, Tcgen05Operation::CommitCg2 | Tcgen05Operation::CommitSharedClusterCg2) { "2" } else { "1" };
+            let shared = matches!(operation, Tcgen05Operation::CommitSharedCluster | Tcgen05Operation::CommitSharedClusterCg2);
+            (
+                "i32 %mbar".into(),
+                "void".into(),
+                format!(
+                    "tcgen05.commit.cta_group::{group}.mbarrier::arrive::one{}.b64 [$0];",
+                    if shared { ".shared::cluster" } else { "" }
+                ),
+                "r,~{memory}".into(),
+                "i32 %mbar".into(),
+            )
+        }
+        Tcgen05Operation::MmaWsF16
+        | Tcgen05Operation::MmaWsBf16
+        | Tcgen05Operation::MmaWsTf32 => {
+            let kind = if operation == Tcgen05Operation::MmaWsTf32 { "tf32" } else { "f16" };
+            (
+                "i32 %d, i32 %a, i64 %legacy_a_desc, i64 %b, i32 %idesc, i1 %enable".into(),
+                "void".into(),
+                format!("{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $5, 0; tcgen05.mma.ws.cta_group::1.kind::{kind} [$0], [$1], $3, $4, %enable_pred; }}"),
+                "r,r,l,l,r,r,~{memory}".into(),
+                "i32 %d, i32 %a, i64 %legacy_a_desc, i64 %b, i32 %idesc, i1 %enable".into(),
+            )
+        }
+        Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => {
+            let group = if operation == Tcgen05Operation::MmaF16Cg2 { "2" } else { "1" };
+            let zeros = if operation == Tcgen05Operation::MmaF16Cg2 {
+                "%z, %z, %z, %z, %z, %z, %z, %z"
+            } else {
+                "%z, %z, %z, %z"
+            };
+            (
+                "i32 %d, i64 %a, i64 %b, i32 %idesc, i1 %enable".into(),
+                "void".into(),
+                format!("{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $4, 0; .reg .u32 %z; mov.u32 %z, 0; tcgen05.mma.cta_group::{group}.kind::f16 [$0], $1, $2, $3, {{{zeros}}}, %enable_pred; }}"),
+                "r,l,l,r,r,~{memory}".into(),
+                "i32 %d, i64 %a, i64 %b, i32 %idesc, i1 %enable".into(),
+            )
+        }
+        Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
+            let group = if operation == Tcgen05Operation::CpSmemToTmemCg2 { "2" } else { "1" };
+            (
+                "i32 %tmem, i64 %desc".into(),
+                "void".into(),
+                format!("tcgen05.cp.cta_group::{group}.128x256b [$0], $1;"),
+                "r,l,~{memory}".into(),
+                "i32 %tmem, i64 %desc".into(),
+            )
+        }
+        Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
+            let count = if operation == Tcgen05Operation::Ld16x256bX8Pure { 32 } else { 4 };
+            let registers = (0..count).map(|index| format!("${index}")).collect::<Vec<_>>().join(",");
+            let constraints = std::iter::repeat_n("=f", count)
+                .chain(std::iter::once("r"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let fields = std::iter::repeat_n("float", count).collect::<Vec<_>>().join(", ");
+            (
+                "i32 %tmem".into(),
+                format!("{{ {fields} }}"),
+                format!("tcgen05.ld.sync.aligned.16x256b.{}.b32 {{{registers}}}, [${count}];", if count == 32 { "x8" } else { "x1" }),
+                constraints,
+                "i32 %tmem".into(),
+            )
+        }
+        Tcgen05Operation::LoadWait | Tcgen05Operation::StoreWait => {
+            let kind = if operation == Tcgen05Operation::LoadWait { "ld" } else { "st" };
+            (
+                String::new(),
+                "void".into(),
+                format!("tcgen05.wait::{kind}.sync.aligned;"),
+                "~{memory}".into(),
+                String::new(),
+            )
+        }
+        Tcgen05Operation::CommitMulticastCg2 => (
+            "i32 %mbar, i16 %mask".into(),
+            "void".into(),
+            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;".into(),
+            "r,h,~{memory}".into(),
+            "i32 %mbar, i16 %mask".into(),
+        ),
+    };
+    writeln!(
+        output,
+        "define void @probe_{}({parameters}) #0 {{",
+        record.id
+    )
+    .unwrap();
+    if result_ty == "void" {
+        writeln!(
+            output,
+            "  call void asm sideeffect {template:?}, {constraints:?}({arguments}) #0"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            output,
+            "  %result = call {result_ty} asm sideeffect {template:?}, {constraints:?}({arguments}) #0"
+        )
+        .unwrap();
+    }
+    output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+    output
+}
+
 pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
     if record.special_register.is_some() {
         return render_special_register_probe(catalog, record, hash, IntrinsicBackend::LlvmNvptx);
     }
     if record.tma.is_some() {
         return render_tma_probe(catalog, record, hash);
+    }
+    if record.tcgen05.is_some() {
+        return render_tcgen05_probe(catalog, record, hash);
     }
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
@@ -12844,6 +13427,13 @@ mod tests {
         )));
         let reference = render_reference(&catalog, "test-hash");
         assert!(reference.contains("## WGMMA-control contracts"));
+    }
+
+    fn catalog_with_tcgen05() -> CatalogFile {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 24);
+        catalog
     }
 
     #[test]
@@ -15305,6 +15895,106 @@ mod tests {
             .as_mut()
             .unwrap()
             .adapter = TmaAdapter::NoOperands;
+        assert!(validate_renderable(&wrong_adapter).is_err());
+    }
+
+    #[test]
+    fn tcgen05_rendering_preserves_api_and_inline_ptx_routes() {
+        let catalog = catalog_with_tcgen05();
+        validate_renderable(&catalog).unwrap();
+
+        let compatibility = render_compat_tcgen05(&catalog, "test-hash");
+        assert!(
+            compatibility
+                .contains("pub unsafe fn tcgen05_alloc(dst_smem: *mut u32, n_cols: u32) -> ()")
+        );
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_mma_ws_f16(d_tmem: u32, a_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool) -> ()"
+        ));
+        assert!(
+            compatibility
+                .contains("pub unsafe fn tcgen05_ld_16x256b_x8_pure(tmem_addr: u32) -> TmemF32x32")
+        );
+        assert!(compatibility.contains("pub fn tcgen05_load_wait() -> ()"));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_commit_multicast_cg2(mbar: *mut u64, cta_mask: u16) -> ()"
+        ));
+        assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
+
+        let dialect = render_dialect_tcgen05(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 24);
+        assert_eq!(dialect.matches("::register(ctx)").count(), 24);
+        assert!(dialect.contains("NResultsInterface<32>"));
+        assert!(dialect.contains("NResultsInterface<4>"));
+        assert!(dialect.contains("NOpdsInterface<6>"));
+
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod tcgen05;"));
+        assert!(dialect_mod.contains("pub use tcgen05::*;"));
+        assert!(dialect_mod.contains("tcgen05::register(ctx);"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::tcgen05::tcgen05_alloc"));
+        assert!(importer.contains("super::tcgen05::emit_tcgen05_alloc("));
+        assert!(importer.contains("super::tcgen05::emit_tcgen05_ld_16x256b_x8_pure("));
+        assert!(importer.contains("destination, target"));
+        assert!(importer.contains("\"v1:i0343\""));
+        assert!(importer.contains("\"v1:i0366\""));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("use crate::convert::intrinsics::tcgen05;"));
+        assert!(lowering.contains("impl MirToLlvmConversion for Tcgen05AllocOp"));
+        assert!(lowering.contains(
+            "tcgen05::convert_mma_ws(ctx, rewriter, self.get_operation(), operands_info, \"f16\")"
+        ));
+        assert!(!lowering.contains("operands_info, \"bf16\""));
+        assert!(lowering.contains("tcgen05::convert_ld_16x256b_x8_pure("));
+
+        let bf16 = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_mma_ws_bf16")
+            .unwrap();
+        let bf16_probe = render_probe(&catalog, bf16, "test-hash");
+        assert!(bf16_probe.contains("route: inline PTX"));
+        assert!(bf16_probe.contains(".kind::f16 [$0]"));
+        assert!(!bf16_probe.contains(".kind::bf16"));
+
+        let base_commit = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_commit")
+            .unwrap();
+        let base_commit_probe = render_probe(&catalog, base_commit, "test-hash");
+        assert!(base_commit_probe.contains("mbarrier::arrive::one.b64"));
+        assert!(!base_commit_probe.contains("one.shared::cluster.b64"));
+
+        let shared_commit = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_commit_shared_cluster")
+            .unwrap();
+        let shared_commit_probe = render_probe(&catalog, shared_commit, "test-hash");
+        assert!(shared_commit_probe.contains("one.shared::cluster.b64"));
+
+        let target = render_targets(&catalog, "test-hash");
+        assert!(target.contains("\"v1:i0343\""));
+        assert!(target.contains(
+            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101)])"
+        ));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/tcgen05.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/tcgen05.rs"
+        )));
+
+        let mut wrong_adapter = catalog;
+        wrong_adapter
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "tcgen05_alloc")
+            .unwrap()
+            .tcgen05
+            .as_mut()
+            .unwrap()
+            .adapter = Tcgen05Adapter::NoOperands;
         assert!(validate_renderable(&wrong_adapter).is_err());
     }
 

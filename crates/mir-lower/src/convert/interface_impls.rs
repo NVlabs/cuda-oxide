@@ -1130,7 +1130,7 @@ impl MirToLlvmConversion for Tcgen05MmaWsBf16Op {
             rewriter,
             self.get_operation(),
             operands_info,
-            "bf16",
+            super::intrinsics::tcgen05::TCGEN05_MMA_WS_BF16_PTX_KIND,
         )
     }
 }

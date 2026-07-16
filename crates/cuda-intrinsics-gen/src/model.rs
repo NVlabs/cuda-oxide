@@ -185,6 +185,8 @@ pub struct OverlayShardFile {
     pub wgmma_controls: Option<WgmmaControlAdmission>,
     #[serde(default)]
     pub tma: Option<TmaAdmission>,
+    #[serde(default)]
+    pub tcgen05: Option<Tcgen05Admission>,
 }
 
 /// Compact admission for the four existing `stmatrix` stores.
@@ -486,6 +488,25 @@ pub struct TmaAdmissionVariant {
     pub operation: TmaOperation,
 }
 
+/// Compact admission for the existing Tensor Core Generation 5 operations.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<Tcgen05AdmissionVariant>,
+}
+
+/// One reviewed tcgen05 operation and its reserved ABI ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05AdmissionVariant {
+    pub abi_id: String,
+    pub operation: Tcgen05Operation,
+}
+
 /// Compact admission for the closed `prmt` family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -698,6 +719,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub tma: Option<Tma>,
     #[serde(default)]
+    pub tcgen05: Option<Tcgen05>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -863,6 +886,69 @@ pub enum TmaAdapter {
     S2gPointersCoordinatesInjectDefaults,
     NoOperands,
     CompileTimeConstantMaxPending,
+}
+
+/// Closed semantic contract for one tcgen05 operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05 {
+    pub operation: Tcgen05Operation,
+    pub adapter: Tcgen05Adapter,
+    pub source_contract: Tcgen05SourceContract,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05Operation {
+    Alloc,
+    Dealloc,
+    RelinquishAllocPermit,
+    FenceBeforeThreadSync,
+    FenceAfterThreadSync,
+    Commit,
+    CommitSharedCluster,
+    MmaWsF16,
+    MmaF16,
+    MmaWsBf16,
+    MmaWsTf32,
+    CpSmemToTmem,
+    Ld16x256bX8Pure,
+    Ld16x256bPure,
+    LoadWait,
+    StoreWait,
+    AllocCg2,
+    DeallocCg2,
+    RelinquishAllocPermitCg2,
+    MmaF16Cg2,
+    CommitCg2,
+    CommitSharedClusterCg2,
+    CommitMulticastCg2,
+    CpSmemToTmemCg2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05Adapter {
+    SharedPointerColumnsToVoid,
+    TmemAddressColumnsToVoid,
+    NoOperands,
+    BarrierPointerToVoid,
+    MmaWsDropLegacyADescriptor,
+    MmaInjectZeroDisableLanes,
+    TmemDescriptorToVoid,
+    TmemToF32x32,
+    TmemToF32x4,
+    BarrierPointerMaskToVoid,
+}
+
+/// Relationship between the public operation and LLVM's NVPTX selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05SourceContract {
+    ExactTablegenSelection,
+    TablegenSelectionChangesPtx,
+    LlvmCustomLoweringWithoutSelection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2287,6 +2373,8 @@ pub struct CatalogIntrinsic {
     pub clc: Option<Clc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tma: Option<Tma>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcgen05: Option<Tcgen05>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,

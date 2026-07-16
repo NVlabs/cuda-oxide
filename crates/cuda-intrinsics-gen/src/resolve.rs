@@ -44,7 +44,8 @@ use crate::model::{
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
     SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
-    StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, ThreadfenceAdmission,
+    StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05Adapter,
+    Tcgen05Admission, Tcgen05Operation, Tcgen05SourceContract, ThreadfenceAdmission,
     ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation, VoteAdapter, VoteMode,
     VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
     WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
@@ -61,7 +62,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 39;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 41;
+const OVERLAY_SHARD_SCHEMA: u32 = 42;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -76,6 +77,7 @@ const CLC_SHARD_SCHEMA: u32 = 40;
 const TMA_SHARD_SCHEMA: u32 = 41;
 const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
+const TCGEN05_SHARD_SCHEMA: u32 = 42;
 pub(crate) const CATALOG_SCHEMA: u32 = 38;
 
 struct ResolutionBase {
@@ -322,6 +324,94 @@ pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
                 target_triple: "nvptx64-nvidia-cuda".into(),
                 gpu_target: "sm_90".into(),
                 ptx_feature: "+ptx80".into(),
+            },
+            backend_lowerings,
+            catalog.intrinsic_abi,
+        )?);
+    }
+    catalog
+        .intrinsics
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(catalog)
+}
+
+#[cfg(test)]
+pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile> {
+    let mut catalog = resolve(repo_root)?;
+    let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
+    let imported_by_record = index_imported_intrinsics(&imported)?;
+    let operations = [
+        Tcgen05Operation::Alloc,
+        Tcgen05Operation::Dealloc,
+        Tcgen05Operation::RelinquishAllocPermit,
+        Tcgen05Operation::FenceBeforeThreadSync,
+        Tcgen05Operation::FenceAfterThreadSync,
+        Tcgen05Operation::Commit,
+        Tcgen05Operation::CommitSharedCluster,
+        Tcgen05Operation::MmaWsF16,
+        Tcgen05Operation::MmaF16,
+        Tcgen05Operation::MmaWsBf16,
+        Tcgen05Operation::MmaWsTf32,
+        Tcgen05Operation::CpSmemToTmem,
+        Tcgen05Operation::Ld16x256bX8Pure,
+        Tcgen05Operation::Ld16x256bPure,
+        Tcgen05Operation::LoadWait,
+        Tcgen05Operation::StoreWait,
+        Tcgen05Operation::AllocCg2,
+        Tcgen05Operation::DeallocCg2,
+        Tcgen05Operation::RelinquishAllocPermitCg2,
+        Tcgen05Operation::MmaF16Cg2,
+        Tcgen05Operation::CommitCg2,
+        Tcgen05Operation::CommitSharedClusterCg2,
+        Tcgen05Operation::CommitMulticastCg2,
+        Tcgen05Operation::CpSmemToTmemCg2,
+    ];
+    let admission = Tcgen05Admission {
+        llvm_evidence_profile: "llvm-tcgen05-test".into(),
+        libnvvm_evidence_profile: "libnvvm-tcgen05-test".into(),
+        runtime_validation: RuntimeValidation::Unexecuted,
+        variants: operations
+            .into_iter()
+            .map(|operation| crate::model::Tcgen05AdmissionVariant {
+                abi_id: tcgen05_recipe(operation).abi_id.into(),
+                operation,
+            })
+            .collect(),
+    };
+    for policy in expand_tcgen05_admission(&admission)? {
+        let source = resolve_policy_source(&policy)?;
+        let declaration = resolve_imported_declaration(&policy, &source, &imported_by_record)?;
+        validate_policy(&policy, &source, declaration, catalog.intrinsic_abi)?;
+        let backend_lowerings = policy
+            .backend_lowerings
+            .iter()
+            .map(|lowering| {
+                Ok(CatalogBackendLowering {
+                    backend: lowering.backend,
+                    mechanism: lowering.mechanism,
+                    evidence_profile: lowering.evidence_profile.clone(),
+                    target: backend_target_requirement(&policy, lowering)?,
+                    version: "test".into(),
+                    sha256: "0".repeat(64),
+                    artifact_path: None,
+                    build_id_prefix: None,
+                    status: "validated".into(),
+                    stages: vec![],
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        catalog.intrinsics.push(materialize_record(
+            &policy,
+            source,
+            declaration,
+            CatalogBackend {
+                profile: "tcgen05-test".into(),
+                version: "test".into(),
+                sha256: "0".repeat(64),
+                status: "validated".into(),
+                target_triple: "nvptx64-nvidia-cuda".into(),
+                gpu_target: "sm_100a".into(),
+                ptx_feature: "+ptx86".into(),
             },
             backend_lowerings,
             catalog.intrinsic_abi,
@@ -658,6 +748,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let clc_admission = shard.clc.take();
         let wgmma_control_admission = shard.wgmma_controls.take();
         let tma_admission = shard.tma.take();
+        let tcgen05_admission = shard.tcgen05.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -792,6 +883,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_tma_admission(&admission)?;
         }
+        if let Some(admission) = tcgen05_admission {
+            ensure!(
+                shard.family == "tcgen05" && shard.intrinsics.is_empty(),
+                "compact tcgen05 admission must be the only content of a tcgen05 shard"
+            );
+            shard.intrinsics = expand_tcgen05_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -905,6 +1003,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.wgmma_controls.is_none() || shard.schema >= WGMMA_CONTROL_SHARD_SCHEMA,
         "compact WGMMA-control admission requires overlay shard schema {}",
         WGMMA_CONTROL_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.tcgen05.is_none() || shard.schema >= TCGEN05_SHARD_SCHEMA,
+        "compact tcgen05 admission requires overlay shard schema {}",
+        TCGEN05_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1451,6 +1554,10 @@ fn validate_policy(
             policy,
             declaration.context("tma requires imported LLVM declaration")?,
         )?,
+        "tcgen05" => validate_tcgen05_policy(
+            policy,
+            declaration.context("tcgen05 requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1516,6 +1623,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "tma") == policy.tma.is_some(),
         "{} mixes the TMA contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "tcgen05") == policy.tcgen05.is_some(),
+        "{} mixes the tcgen05 contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1588,6 +1700,11 @@ fn validate_policy(
                     && policy.mbarrier_extended.is_some()
                     && policy.backend_lowerings.iter().all(|lowering| {
                         lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    }))
+                || (policy.family == "tcgen05"
+                    && policy.tcgen05.is_some()
+                    && policy.backend_lowerings.iter().all(|lowering| {
+                        lowering.mechanism == BackendLoweringMechanism::InlinePtx
                     })))
                 && policy.convergent
                 && !imported_convergent;
@@ -1620,7 +1737,12 @@ fn validate_policy(
                         SpecialRegisterKind::Envreg1 | SpecialRegisterKind::Envreg2
                     )
                 }))
-            || policy.family == "stmatrix";
+            || policy.family == "stmatrix"
+            || (policy.family == "tcgen05"
+                && policy.tcgen05.as_ref().is_some_and(|tcgen05| {
+                    tcgen05.source_contract
+                        == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+                }));
         ensure!(
             !declaration.selections.is_empty() || selectionless_closed_family,
             "{} has a declaration but no NVPTX TableGen selection record",
@@ -1636,6 +1758,13 @@ fn validate_policy(
             "warp_match" => 4,
             "warp_shuffle" => 8,
             "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" | "stmatrix" => 0,
+            "tcgen05"
+                if policy.tcgen05.as_ref().is_some_and(|tcgen05| {
+                    tcgen05.source_contract != Tcgen05SourceContract::ExactTablegenSelection
+                }) =>
+            {
+                0
+            }
             "clc"
                 if policy.clc.as_ref().is_some_and(|clc| {
                     matches!(
@@ -1720,7 +1849,18 @@ fn selection_matches_policy(
     if policy.family == "tma" {
         return selection_matches_tma_policy(policy, selection);
     }
-
+    if policy.family == "tcgen05" {
+        let Some(tcgen05) = &policy.tcgen05 else {
+            return false;
+        };
+        if tcgen05.source_contract != Tcgen05SourceContract::ExactTablegenSelection {
+            return false;
+        }
+        let recipe = tcgen05_recipe(tcgen05.operation);
+        return recipe.selection_record == Some(selection.source_record.as_str())
+            && recipe.selection_asm == Some(selection.asm.as_str())
+            && selection.constraints.is_empty();
+    }
     if policy.family == "sync" {
         if policy.id == "sync_threads" {
             return selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
@@ -2175,6 +2315,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -2636,6 +2777,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                     runtime_validation: admission.runtime_validation,
                 }),
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -3229,6 +3371,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                     adapter: recipe.adapter,
                     runtime_validation: admission.runtime_validation,
                 }),
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -3340,6 +3483,1191 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
         policy.id
     );
     ensure_no_other_family_contract(policy, "TMA")?;
+    Ok(())
+}
+
+struct Tcgen05Recipe {
+    operation: Tcgen05Operation,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_arguments: &'static [&'static str],
+    rust_result: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    dialect_results: &'static [&'static str],
+    llvm_arguments: &'static [&'static str],
+    llvm_results: &'static [&'static str],
+    imported_classes: &'static [&'static str],
+    imported_properties: &'static [&'static str],
+    adapter: Tcgen05Adapter,
+    source_contract: Tcgen05SourceContract,
+    safe: bool,
+    safe_reason: Option<&'static str>,
+    memory: &'static str,
+    modifiers: Vec<String>,
+    operands: Vec<OperandPattern>,
+    selection_record: Option<&'static str>,
+    selection_asm: Option<&'static str>,
+    summary: &'static str,
+}
+
+fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
+    const EMPTY: &[&str] = &[];
+    const F32_X4: &[&str] = &["f32", "f32", "f32", "f32"];
+    const F32_X32: &[&str] = &["f32"; 32];
+    const BASE_CLASSES: &[&str] = &["SDPatternOperator", "Intrinsic"];
+    const MMA_CLASSES: &[&str] = &[
+        "SDPatternOperator",
+        "Intrinsic",
+        "DefaultAttrsIntrinsic",
+        "DefaultAttrsIntrinsicFlags",
+    ];
+    const LOAD_CLASSES: &[&str] = &["SDPatternOperator", "Intrinsic", "NVVM_TCGEN05_LD"];
+    const CONVERGENT_ARG_MEMORY: &[&str] = &["IntrArgMemOnly", "IntrConvergent", "NoCapture<arg0>"];
+    const CONVERGENT_INACCESSIBLE_ARG_MEMORY: &[&str] = &[
+        "IntrConvergent",
+        "IntrInaccessibleMemOrArgMemOnly",
+        "NoCapture<arg0>",
+    ];
+    const CONVERGENT_INACCESSIBLE_MEMORY: &[&str] = &["IntrConvergent", "IntrInaccessibleMemOnly"];
+    const ALLOC_PROPERTIES: &[&str] = &[
+        "IntrConvergent",
+        "IntrInaccessibleMemOrArgMemOnly",
+        "NoCapture<arg0>",
+        "WriteOnly<arg0>",
+    ];
+    const FENCE_PROPERTIES: &[&str] = &["IntrHasSideEffects", "IntrNoMem"];
+    const MMA_WS_PROPERTIES: &[&str] = &[
+        "ImmArg<arg5>",
+        "ImmArg<arg6>",
+        "ImmArg<arg7>",
+        "IntrArgMemOnly",
+        "Range<arg5,0,4>",
+        "Range<arg6,0,4>",
+        "Range<arg7,0,4>",
+        "ReadOnly<arg1>",
+        "WriteOnly<arg0>",
+    ];
+    const MMA_CG1_PROPERTIES: &[&str] = &[
+        "ImmArg<arg6>",
+        "ImmArg<arg7>",
+        "IntrArgMemOnly",
+        "Range<arg6,0,4>",
+        "Range<arg7,0,4>",
+        "WriteOnly<arg0>",
+    ];
+    const LOAD_PROPERTIES: &[&str] = &[
+        "ImmArg<arg1>",
+        "IntrArgMemOnly",
+        "IntrConvergent",
+        "NoCapture<arg0>",
+    ];
+
+    let (
+        abi_id,
+        id,
+        operation_key,
+        source_record,
+        llvm_symbol,
+        dialect_op_type,
+        dialect_op_name,
+        adapter,
+        source_contract,
+    ) = match operation {
+        Tcgen05Operation::Alloc => (
+            "i0343",
+            "tcgen05_alloc",
+            "tcgen05.alloc.cg1",
+            "int_nvvm_tcgen05_alloc_shared_cg1",
+            "llvm.nvvm.tcgen05.alloc.shared.cg1",
+            "Tcgen05AllocOp",
+            "nvvm.tcgen05_alloc",
+            Tcgen05Adapter::SharedPointerColumnsToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::Dealloc => (
+            "i0344",
+            "tcgen05_dealloc",
+            "tcgen05.dealloc.cg1",
+            "int_nvvm_tcgen05_dealloc_cg1",
+            "llvm.nvvm.tcgen05.dealloc.cg1",
+            "Tcgen05DeallocOp",
+            "nvvm.tcgen05_dealloc",
+            Tcgen05Adapter::TmemAddressColumnsToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::RelinquishAllocPermit => (
+            "i0345",
+            "tcgen05_relinquish_alloc_permit",
+            "tcgen05.relinquish_alloc_permit.cg1",
+            "int_nvvm_tcgen05_relinq_alloc_permit_cg1",
+            "llvm.nvvm.tcgen05.relinq.alloc.permit.cg1",
+            "Tcgen05RelinquishAllocPermitOp",
+            "nvvm.tcgen05_relinquish_alloc_permit",
+            Tcgen05Adapter::NoOperands,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::FenceBeforeThreadSync => (
+            "i0346",
+            "tcgen05_fence_before_thread_sync",
+            "tcgen05.fence.before_thread_sync",
+            "int_nvvm_tcgen05_fence_before_thread_sync",
+            "llvm.nvvm.tcgen05.fence.before.thread.sync",
+            "Tcgen05FenceBeforeThreadSyncOp",
+            "nvvm.tcgen05_fence_before_thread_sync",
+            Tcgen05Adapter::NoOperands,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::FenceAfterThreadSync => (
+            "i0347",
+            "tcgen05_fence_after_thread_sync",
+            "tcgen05.fence.after.thread.sync",
+            "int_nvvm_tcgen05_fence_after_thread_sync",
+            "llvm.nvvm.tcgen05.fence.after.thread.sync",
+            "Tcgen05FenceAfterThreadSyncOp",
+            "nvvm.tcgen05_fence_after_thread_sync",
+            Tcgen05Adapter::NoOperands,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::Commit => (
+            "i0348",
+            "tcgen05_commit",
+            "tcgen05.commit.cg1",
+            "int_nvvm_tcgen05_commit_cg1",
+            "llvm.nvvm.tcgen05.commit.cg1",
+            "Tcgen05CommitOp",
+            "nvvm.tcgen05_commit",
+            Tcgen05Adapter::BarrierPointerToVoid,
+            Tcgen05SourceContract::TablegenSelectionChangesPtx,
+        ),
+        Tcgen05Operation::CommitSharedCluster => (
+            "i0349",
+            "tcgen05_commit_shared_cluster",
+            "tcgen05.commit.shared_cluster.cg1",
+            "int_nvvm_tcgen05_commit_shared_cg1",
+            "llvm.nvvm.tcgen05.commit.shared.cg1",
+            "Tcgen05CommitSharedClusterOp",
+            "nvvm.tcgen05_commit_shared_cluster",
+            Tcgen05Adapter::BarrierPointerToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::MmaWsF16 => (
+            "i0350",
+            "tcgen05_mma_ws_f16",
+            "tcgen05.mma.ws.f16.cg1",
+            "int_nvvm_tcgen05_mma_ws_tensor",
+            "llvm.nvvm.tcgen05.mma.ws.tensor",
+            "Tcgen05MmaWsF16Op",
+            "nvvm.tcgen05_mma_ws_f16",
+            Tcgen05Adapter::MmaWsDropLegacyADescriptor,
+            Tcgen05SourceContract::TablegenSelectionChangesPtx,
+        ),
+        Tcgen05Operation::MmaF16 => (
+            "i0351",
+            "tcgen05_mma_f16",
+            "tcgen05.mma.f16.cg1",
+            "int_nvvm_tcgen05_mma_shared_disable_output_lane_cg1",
+            "llvm.nvvm.tcgen05.mma.shared.disable_output_lane.cg1",
+            "Tcgen05MmaF16Op",
+            "nvvm.tcgen05_mma_f16",
+            Tcgen05Adapter::MmaInjectZeroDisableLanes,
+            Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
+        ),
+        Tcgen05Operation::MmaWsBf16 => (
+            "i0352",
+            "tcgen05_mma_ws_bf16",
+            "tcgen05.mma.ws.bf16.cg1",
+            "int_nvvm_tcgen05_mma_ws_tensor",
+            "llvm.nvvm.tcgen05.mma.ws.tensor",
+            "Tcgen05MmaWsBf16Op",
+            "nvvm.tcgen05_mma_ws_bf16",
+            Tcgen05Adapter::MmaWsDropLegacyADescriptor,
+            Tcgen05SourceContract::TablegenSelectionChangesPtx,
+        ),
+        Tcgen05Operation::MmaWsTf32 => (
+            "i0353",
+            "tcgen05_mma_ws_tf32",
+            "tcgen05.mma.ws.tf32.cg1",
+            "int_nvvm_tcgen05_mma_ws_tensor",
+            "llvm.nvvm.tcgen05.mma.ws.tensor",
+            "Tcgen05MmaWsTf32Op",
+            "nvvm.tcgen05_mma_ws_tf32",
+            Tcgen05Adapter::MmaWsDropLegacyADescriptor,
+            Tcgen05SourceContract::TablegenSelectionChangesPtx,
+        ),
+        Tcgen05Operation::CpSmemToTmem => (
+            "i0354",
+            "tcgen05_cp_smem_to_tmem",
+            "tcgen05.cp.128x256b.cg1",
+            "int_nvvm_tcgen05_cp_128x256b_cg1",
+            "llvm.nvvm.tcgen05.cp.128x256b.cg1",
+            "Tcgen05CpSmemToTmemOp",
+            "nvvm.tcgen05_cp_smem_to_tmem",
+            Tcgen05Adapter::TmemDescriptorToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::Ld16x256bX8Pure => (
+            "i0355",
+            "tcgen05_ld_16x256b_x8_pure",
+            "tcgen05.ld.16x256b.x8",
+            "int_nvvm_tcgen05_ld_16x256b_x8",
+            "llvm.nvvm.tcgen05.ld.16x256b.x8",
+            "Tcgen05Ld16x256bX8PureOp",
+            "nvvm.tcgen05_ld_16x256b_x8_pure",
+            Tcgen05Adapter::TmemToF32x32,
+            Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
+        ),
+        Tcgen05Operation::Ld16x256bPure => (
+            "i0356",
+            "tcgen05_ld_16x256b_pure",
+            "tcgen05.ld.16x256b.x1",
+            "int_nvvm_tcgen05_ld_16x256b_x1",
+            "llvm.nvvm.tcgen05.ld.16x256b.x1",
+            "Tcgen05Ld16x256bPureOp",
+            "nvvm.tcgen05_ld_16x256b_pure",
+            Tcgen05Adapter::TmemToF32x4,
+            Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
+        ),
+        Tcgen05Operation::LoadWait => (
+            "i0357",
+            "tcgen05_load_wait",
+            "tcgen05.wait.ld",
+            "int_nvvm_tcgen05_wait_ld",
+            "llvm.nvvm.tcgen05.wait.ld",
+            "Tcgen05LoadWaitOp",
+            "nvvm.tcgen05_load_wait",
+            Tcgen05Adapter::NoOperands,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::StoreWait => (
+            "i0358",
+            "tcgen05_store_wait",
+            "tcgen05.wait.st",
+            "int_nvvm_tcgen05_wait_st",
+            "llvm.nvvm.tcgen05.wait.st",
+            "Tcgen05StoreWaitOp",
+            "nvvm.tcgen05_store_wait",
+            Tcgen05Adapter::NoOperands,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::AllocCg2 => (
+            "i0359",
+            "tcgen05_alloc_cg2",
+            "tcgen05.alloc.cg2",
+            "int_nvvm_tcgen05_alloc_shared_cg2",
+            "llvm.nvvm.tcgen05.alloc.shared.cg2",
+            "Tcgen05AllocCg2Op",
+            "nvvm.tcgen05_alloc_cg2",
+            Tcgen05Adapter::SharedPointerColumnsToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::DeallocCg2 => (
+            "i0360",
+            "tcgen05_dealloc_cg2",
+            "tcgen05.dealloc.cg2",
+            "int_nvvm_tcgen05_dealloc_cg2",
+            "llvm.nvvm.tcgen05.dealloc.cg2",
+            "Tcgen05DeallocCg2Op",
+            "nvvm.tcgen05_dealloc_cg2",
+            Tcgen05Adapter::TmemAddressColumnsToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::RelinquishAllocPermitCg2 => (
+            "i0361",
+            "tcgen05_relinquish_alloc_permit_cg2",
+            "tcgen05.relinquish_alloc_permit.cg2",
+            "int_nvvm_tcgen05_relinq_alloc_permit_cg2",
+            "llvm.nvvm.tcgen05.relinq.alloc.permit.cg2",
+            "Tcgen05RelinquishAllocPermitCg2Op",
+            "nvvm.tcgen05_relinquish_alloc_permit_cg2",
+            Tcgen05Adapter::NoOperands,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::MmaF16Cg2 => (
+            "i0362",
+            "tcgen05_mma_f16_cg2",
+            "tcgen05.mma.f16.cg2",
+            "int_nvvm_tcgen05_mma_shared_disable_output_lane_cg2",
+            "llvm.nvvm.tcgen05.mma.shared.disable_output_lane.cg2",
+            "Tcgen05MmaF16Cg2Op",
+            "nvvm.tcgen05_mma_f16_cg2",
+            Tcgen05Adapter::MmaInjectZeroDisableLanes,
+            Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
+        ),
+        Tcgen05Operation::CommitCg2 => (
+            "i0363",
+            "tcgen05_commit_cg2",
+            "tcgen05.commit.cg2",
+            "int_nvvm_tcgen05_commit_cg2",
+            "llvm.nvvm.tcgen05.commit.cg2",
+            "Tcgen05CommitCg2Op",
+            "nvvm.tcgen05_commit_cg2",
+            Tcgen05Adapter::BarrierPointerToVoid,
+            Tcgen05SourceContract::TablegenSelectionChangesPtx,
+        ),
+        Tcgen05Operation::CommitSharedClusterCg2 => (
+            "i0364",
+            "tcgen05_commit_shared_cluster_cg2",
+            "tcgen05.commit.shared_cluster.cg2",
+            "int_nvvm_tcgen05_commit_shared_cg2",
+            "llvm.nvvm.tcgen05.commit.shared.cg2",
+            "Tcgen05CommitSharedClusterCg2Op",
+            "nvvm.tcgen05_commit_shared_cluster_cg2",
+            Tcgen05Adapter::BarrierPointerToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::CommitMulticastCg2 => (
+            "i0365",
+            "tcgen05_commit_multicast_cg2",
+            "tcgen05.commit.multicast.cg2",
+            "int_nvvm_tcgen05_commit_mc_shared_cg2",
+            "llvm.nvvm.tcgen05.commit.mc.shared.cg2",
+            "Tcgen05CommitMulticastCg2Op",
+            "nvvm.tcgen05_commit_multicast_cg2",
+            Tcgen05Adapter::BarrierPointerMaskToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::CpSmemToTmemCg2 => (
+            "i0366",
+            "tcgen05_cp_smem_to_tmem_cg2",
+            "tcgen05.cp.128x256b.cg2",
+            "int_nvvm_tcgen05_cp_128x256b_cg2",
+            "llvm.nvvm.tcgen05.cp.128x256b.cg2",
+            "Tcgen05CpSmemToTmemCg2Op",
+            "nvvm.tcgen05_cp_smem_to_tmem_cg2",
+            Tcgen05Adapter::TmemDescriptorToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+    };
+
+    let cg2 = matches!(
+        operation,
+        Tcgen05Operation::AllocCg2
+            | Tcgen05Operation::DeallocCg2
+            | Tcgen05Operation::RelinquishAllocPermitCg2
+            | Tcgen05Operation::MmaF16Cg2
+            | Tcgen05Operation::CommitCg2
+            | Tcgen05Operation::CommitSharedClusterCg2
+            | Tcgen05Operation::CommitMulticastCg2
+            | Tcgen05Operation::CpSmemToTmemCg2
+    );
+    let group = if cg2 { "cta_group::2" } else { "cta_group::1" };
+    let (
+        rust_arguments,
+        rust_result,
+        dialect_operands,
+        dialect_results,
+        llvm_arguments,
+        llvm_results,
+        imported_classes,
+        imported_properties,
+        safe,
+        safe_reason,
+        memory,
+        modifiers,
+        operands,
+        selection_record,
+        selection_asm,
+        summary,
+    ) = match operation {
+        Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => (
+            &["*mut u32", "u32"] as &[_],
+            "()",
+            &["ptr", "i32"] as &[_],
+            EMPTY,
+            &["shared_ptr", "i32"] as &[_],
+            EMPTY,
+            BASE_CLASSES,
+            ALLOC_PROPERTIES,
+            false,
+            None,
+            "write",
+            vec![
+                "alloc".into(),
+                group.into(),
+                "sync".into(),
+                "aligned".into(),
+                "shared::cta".into(),
+                "b32".into(),
+            ],
+            vec![OperandPattern::Address, OperandPattern::Register],
+            Some(if cg2 {
+                "TCGEN05_ALLOC_S64_CG2"
+            } else {
+                "TCGEN05_ALLOC_S64_CG1"
+            }),
+            Some(if cg2 {
+                "tcgen05.alloc.cta_group::2.sync.aligned.shared::cta.b32 \t[$dst], $ncols;"
+            } else {
+                "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 \t[$dst], $ncols;"
+            }),
+            "Allocates tensor-memory columns and writes their address to shared memory.",
+        ),
+        Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => (
+            &["u32", "u32"] as &[_],
+            "()",
+            &["i32", "i32"] as &[_],
+            EMPTY,
+            &["tmem_ptr", "i32"] as &[_],
+            EMPTY,
+            BASE_CLASSES,
+            CONVERGENT_ARG_MEMORY,
+            false,
+            None,
+            "read_write",
+            vec![
+                "dealloc".into(),
+                group.into(),
+                "sync".into(),
+                "aligned".into(),
+                "b32".into(),
+            ],
+            vec![OperandPattern::Register, OperandPattern::Register],
+            Some(if cg2 {
+                "TCGEN05_DEALLOC_CG2"
+            } else {
+                "TCGEN05_DEALLOC_CG1"
+            }),
+            Some(if cg2 {
+                "tcgen05.dealloc.cta_group::2.sync.aligned.b32 \t$tmem_addr, $ncols;"
+            } else {
+                "tcgen05.dealloc.cta_group::1.sync.aligned.b32 \t$tmem_addr, $ncols;"
+            }),
+            "Releases tensor-memory columns allocated to the CTA group.",
+        ),
+        Tcgen05Operation::RelinquishAllocPermit | Tcgen05Operation::RelinquishAllocPermitCg2 => (
+            EMPTY,
+            "()",
+            EMPTY,
+            EMPTY,
+            EMPTY,
+            EMPTY,
+            BASE_CLASSES,
+            CONVERGENT_INACCESSIBLE_MEMORY,
+            true,
+            Some(
+                "The operation has no Rust memory operand and only releases this CTA group's allocation permit.",
+            ),
+            "read_write",
+            vec![
+                "relinquish_alloc_permit".into(),
+                group.into(),
+                "sync".into(),
+                "aligned".into(),
+            ],
+            vec![],
+            Some(if cg2 {
+                "TCGEN05_RELINQ_CG2"
+            } else {
+                "TCGEN05_RELINQ_CG1"
+            }),
+            Some(if cg2 {
+                "tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;"
+            } else {
+                "tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;"
+            }),
+            "Releases the CTA group's tensor-memory allocation permit.",
+        ),
+        Tcgen05Operation::FenceBeforeThreadSync | Tcgen05Operation::FenceAfterThreadSync => {
+            let before = operation == Tcgen05Operation::FenceBeforeThreadSync;
+            (
+                EMPTY,
+                "()",
+                EMPTY,
+                EMPTY,
+                EMPTY,
+                EMPTY,
+                BASE_CLASSES,
+                FENCE_PROPERTIES,
+                true,
+                Some("The operation only orders the calling thread's tcgen05 accesses."),
+                "none",
+                vec![if before {
+                    "fence::before_thread_sync".into()
+                } else {
+                    "fence::after_thread_sync".into()
+                }],
+                vec![],
+                Some(if before {
+                    "tcgen05_fence_before_thread_sync"
+                } else {
+                    "tcgen05_fence_after_thread_sync"
+                }),
+                Some(if before {
+                    "tcgen05.fence::before_thread_sync;"
+                } else {
+                    "tcgen05.fence::after_thread_sync;"
+                }),
+                if before {
+                    "Orders prior tcgen05 accesses before thread synchronization."
+                } else {
+                    "Orders later tcgen05 accesses after thread synchronization."
+                },
+            )
+        }
+        Tcgen05Operation::Commit
+        | Tcgen05Operation::CommitCg2
+        | Tcgen05Operation::CommitSharedCluster
+        | Tcgen05Operation::CommitSharedClusterCg2 => {
+            let shared = matches!(
+                operation,
+                Tcgen05Operation::CommitSharedCluster | Tcgen05Operation::CommitSharedClusterCg2
+            );
+            let llvm_args = if shared {
+                &["shared_ptr"] as &[_]
+            } else {
+                &["ptr"] as &[_]
+            };
+            let record = match (cg2, shared) {
+                (false, false) => "TCGEN05_COMMIT_CG1",
+                (true, false) => "TCGEN05_COMMIT_CG2",
+                (false, true) => "TCGEN05_COMMIT_S64_CG1",
+                (true, true) => "TCGEN05_COMMIT_S64_CG2",
+            };
+            let asm = match cg2 {
+                false => {
+                    "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 \t[$mbar];"
+                }
+                true => {
+                    "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.b64 \t[$mbar];"
+                }
+            };
+            let mut modifiers = vec![
+                "commit".into(),
+                group.into(),
+                "mbarrier::arrive::one".into(),
+            ];
+            if shared {
+                modifiers.push("shared::cluster".into());
+            }
+            modifiers.push("b64".into());
+            (
+                &["*mut u64"] as &[_],
+                "()",
+                &["ptr"] as &[_],
+                EMPTY,
+                llvm_args,
+                EMPTY,
+                BASE_CLASSES,
+                CONVERGENT_INACCESSIBLE_ARG_MEMORY,
+                false,
+                None,
+                "read_write",
+                modifiers,
+                vec![OperandPattern::Address],
+                Some(record),
+                Some(asm),
+                if shared {
+                    "Commits tcgen05 completion to a cluster-shared mbarrier."
+                } else {
+                    "Commits tcgen05 completion to an mbarrier."
+                },
+            )
+        }
+        Tcgen05Operation::MmaWsF16 | Tcgen05Operation::MmaWsBf16 | Tcgen05Operation::MmaWsTf32 => {
+            let kind = if operation == Tcgen05Operation::MmaWsTf32 {
+                "kind::tf32"
+            } else {
+                "kind::f16"
+            };
+            (
+                &["u32", "u32", "u64", "u64", "u32", "bool"] as &[_],
+                "()",
+                &["i32", "i32", "i64", "i64", "i32", "i1"] as &[_],
+                EMPTY,
+                &[
+                    "tmem_ptr", "tmem_ptr", "i64", "i32", "i1", "i32", "i32", "i32",
+                ] as &[_],
+                EMPTY,
+                MMA_CLASSES,
+                MMA_WS_PROPERTIES,
+                false,
+                None,
+                "read_write",
+                vec![
+                    "mma".into(),
+                    "ws".into(),
+                    "cta_group::1".into(),
+                    kind.into(),
+                ],
+                vec![
+                    OperandPattern::Address,
+                    OperandPattern::Address,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                ],
+                None,
+                None,
+                match operation {
+                    Tcgen05Operation::MmaWsF16 => "Issues warp-specialized f16 tensor-memory MMA.",
+                    Tcgen05Operation::MmaWsBf16 => {
+                        "Issues warp-specialized bf16 tensor-memory MMA using the f16 instruction class."
+                    }
+                    _ => "Issues warp-specialized tf32 tensor-memory MMA.",
+                },
+            )
+        }
+        Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => (
+            &["u32", "u64", "u64", "u32", "bool"] as &[_],
+            "()",
+            &["i32", "i64", "i64", "i32", "i1"] as &[_],
+            EMPTY,
+            if cg2 {
+                &["tmem_ptr", "i64", "i64", "i32", "i1", "v8i32", "i32", "i32"] as &[_]
+            } else {
+                &["tmem_ptr", "i64", "i64", "i32", "i1", "v4i32", "i32", "i32"] as &[_]
+            },
+            EMPTY,
+            MMA_CLASSES,
+            MMA_CG1_PROPERTIES,
+            false,
+            None,
+            "write",
+            vec!["mma".into(), group.into(), "kind::f16".into()],
+            vec![
+                OperandPattern::Address,
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterList {
+                    length: if cg2 { 8 } else { 4 },
+                },
+                OperandPattern::Register,
+            ],
+            None,
+            None,
+            "Issues f16 tensor-memory MMA with zeroed disable-output-lane controls.",
+        ),
+        Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => (
+            &["u32", "u64"] as &[_],
+            "()",
+            &["i32", "i64"] as &[_],
+            EMPTY,
+            &["tmem_ptr", "i64"] as &[_],
+            EMPTY,
+            BASE_CLASSES,
+            CONVERGENT_INACCESSIBLE_ARG_MEMORY,
+            false,
+            None,
+            "read_write",
+            vec!["cp".into(), group.into(), "128x256b".into()],
+            vec![OperandPattern::Address, OperandPattern::Register],
+            Some(if cg2 {
+                "TCGEN05_CP_128x256b_cg2"
+            } else {
+                "TCGEN05_CP_128x256b_cg1"
+            }),
+            Some(if cg2 {
+                "tcgen05.cp.cta_group::2.128x256b \t[$tmem_addr], $sdesc;"
+            } else {
+                "tcgen05.cp.cta_group::1.128x256b \t[$tmem_addr], $sdesc;"
+            }),
+            "Copies one 128x256-bit tile from shared memory to tensor memory.",
+        ),
+        Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
+            let x8 = operation == Tcgen05Operation::Ld16x256bX8Pure;
+            (
+                &["u32"] as &[_],
+                if x8 { "[f32; 32]" } else { "[f32; 4]" },
+                &["i32"] as &[_],
+                if x8 { F32_X32 } else { F32_X4 },
+                &["tmem_ptr", "i1"] as &[_],
+                if x8 {
+                    &["v32i32"] as &[_]
+                } else {
+                    &["v4i32"] as &[_]
+                },
+                LOAD_CLASSES,
+                LOAD_PROPERTIES,
+                false,
+                None,
+                "read",
+                vec![
+                    "ld".into(),
+                    "sync".into(),
+                    "aligned".into(),
+                    "16x256b".into(),
+                    if x8 { "x8".into() } else { "x1".into() },
+                    "b32".into(),
+                ],
+                vec![
+                    OperandPattern::RegisterList {
+                        length: if x8 { 32 } else { 4 },
+                    },
+                    OperandPattern::Address,
+                ],
+                None,
+                None,
+                if x8 {
+                    "Loads 32 f32 register values from tensor memory."
+                } else {
+                    "Loads four f32 register values from tensor memory."
+                },
+            )
+        }
+        Tcgen05Operation::LoadWait | Tcgen05Operation::StoreWait => {
+            let load = operation == Tcgen05Operation::LoadWait;
+            (
+                EMPTY,
+                "()",
+                EMPTY,
+                EMPTY,
+                EMPTY,
+                EMPTY,
+                BASE_CLASSES,
+                CONVERGENT_INACCESSIBLE_MEMORY,
+                true,
+                Some("The operation only waits for the calling thread's prior tcgen05 access."),
+                "read_write",
+                vec![
+                    if load {
+                        "wait::ld".into()
+                    } else {
+                        "wait::st".into()
+                    },
+                    "sync".into(),
+                    "aligned".into(),
+                ],
+                vec![],
+                Some(if load {
+                    "tcgen05_wait_ld"
+                } else {
+                    "tcgen05_wait_st"
+                }),
+                Some(if load {
+                    "tcgen05.wait::ld.sync.aligned;"
+                } else {
+                    "tcgen05.wait::st.sync.aligned;"
+                }),
+                if load {
+                    "Waits for prior tensor-memory loads to complete."
+                } else {
+                    "Waits for prior tensor-memory stores to complete."
+                },
+            )
+        }
+        Tcgen05Operation::CommitMulticastCg2 => (
+            &["*mut u64", "u16"] as &[_],
+            "()",
+            &["ptr", "i16"] as &[_],
+            EMPTY,
+            &["shared_ptr", "i16"] as &[_],
+            EMPTY,
+            BASE_CLASSES,
+            CONVERGENT_INACCESSIBLE_ARG_MEMORY,
+            false,
+            None,
+            "read_write",
+            vec![
+                "commit".into(),
+                "cta_group::2".into(),
+                "mbarrier::arrive::one".into(),
+                "shared::cluster".into(),
+                "multicast::cluster".into(),
+                "b64".into(),
+            ],
+            vec![OperandPattern::Address, OperandPattern::Register],
+            Some("TCGEN05_COMMIT_S64_CG2_MC"),
+            Some(
+                "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 \t[$mbar], $mc;",
+            ),
+            "Commits tcgen05 completion to the selected cluster mbarriers.",
+        ),
+    };
+
+    Tcgen05Recipe {
+        operation,
+        abi_id,
+        id,
+        operation_key,
+        source_record,
+        llvm_symbol,
+        rust_arguments,
+        rust_result,
+        dialect_op_type,
+        dialect_op_name,
+        dialect_operands,
+        dialect_results,
+        llvm_arguments,
+        llvm_results,
+        imported_classes,
+        imported_properties,
+        adapter,
+        source_contract,
+        safe,
+        safe_reason,
+        memory,
+        modifiers,
+        operands,
+        selection_record,
+        selection_asm,
+        summary,
+    }
+}
+
+fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "tcgen05 runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact tcgen05 admission requires both backend evidence profiles"
+    );
+    let expected = [
+        Tcgen05Operation::Alloc,
+        Tcgen05Operation::Dealloc,
+        Tcgen05Operation::RelinquishAllocPermit,
+        Tcgen05Operation::FenceBeforeThreadSync,
+        Tcgen05Operation::FenceAfterThreadSync,
+        Tcgen05Operation::Commit,
+        Tcgen05Operation::CommitSharedCluster,
+        Tcgen05Operation::MmaWsF16,
+        Tcgen05Operation::MmaF16,
+        Tcgen05Operation::MmaWsBf16,
+        Tcgen05Operation::MmaWsTf32,
+        Tcgen05Operation::CpSmemToTmem,
+        Tcgen05Operation::Ld16x256bX8Pure,
+        Tcgen05Operation::Ld16x256bPure,
+        Tcgen05Operation::LoadWait,
+        Tcgen05Operation::StoreWait,
+        Tcgen05Operation::AllocCg2,
+        Tcgen05Operation::DeallocCg2,
+        Tcgen05Operation::RelinquishAllocPermitCg2,
+        Tcgen05Operation::MmaF16Cg2,
+        Tcgen05Operation::CommitCg2,
+        Tcgen05Operation::CommitSharedClusterCg2,
+        Tcgen05Operation::CommitMulticastCg2,
+        Tcgen05Operation::CpSmemToTmemCg2,
+    ];
+    ensure!(
+        admission
+            .variants
+            .iter()
+            .map(|variant| variant.operation)
+            .eq(expected),
+        "compact tcgen05 admission must list all 24 operations in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = tcgen05_recipe(variant.operation);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "tcgen05".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "tcgen05".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: recipe
+                    .rust_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                rust_result: recipe.rust_result.into(),
+                safe: recipe.safe,
+                must_use: false,
+                safe_allowlist_reason: recipe.safe_reason.map(Into::into),
+                public_rust_path: format!("cuda_intrinsics::tcgen05::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::tcgen05::{}", recipe.id)],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: recipe
+                    .dialect_operands
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                dialect_results: recipe
+                    .dialect_results
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments: recipe
+                    .llvm_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                llvm_results: recipe
+                    .llvm_results
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                pure: false,
+                memory: recipe.memory.into(),
+                convergent: true,
+                execution_scope: "thread".into(),
+                minimum_ptx: "8.6".into(),
+                minimum_sm: None,
+                ptx_result: recipe.rust_result.into(),
+                targets: "sm_100a|sm_101a".into(),
+                ptx_isa_version: "8.6".into(),
+                ptx_isa_section: "Tensor Memory tcgen05 instructions".into(),
+                ptx_isa_url:
+                    "https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory".into(),
+                lowering: "generated_tcgen05".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("8.6".into()),
+                        minimum_sm: None,
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some("8.6".into()),
+                        minimum_sm: None,
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: None,
+                tma: None,
+                tcgen05: Some(Tcgen05 {
+                    operation: recipe.operation,
+                    adapter: recipe.adapter,
+                    source_contract: recipe.source_contract,
+                    runtime_validation: admission.runtime_validation,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "tcgen05".into(),
+                    modifiers: recipe.modifiers,
+                    operands: recipe.operands,
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_tcgen05_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let tcgen05 = policy
+        .tcgen05
+        .as_ref()
+        .with_context(|| format!("{} has no closed tcgen05 contract", policy.id))?;
+    let recipe = tcgen05_recipe(tcgen05.operation);
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == recipe.source_record
+            && declaration.llvm_name == recipe.llvm_symbol,
+        "{} tcgen05 identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "tcgen05"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == recipe.rust_result
+            && policy.safe == recipe.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.as_deref() == recipe.safe_reason
+            && policy.public_rust_path == format!("cuda_intrinsics::tcgen05::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::tcgen05::{}", recipe.id)],
+        "{} tcgen05 Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results == recipe.dialect_results
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results == recipe.llvm_results
+            && declaration.arguments == recipe.llvm_arguments
+            && declaration.results == recipe.llvm_results
+            && declaration.classes == recipe.imported_classes
+            && declaration.properties == recipe.imported_properties
+            && policy.lowering == "generated_tcgen05",
+        "{} tcgen05 carrier or imported declaration changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == recipe.memory
+            && policy.convergent
+            && policy.execution_scope == "thread"
+            && tcgen05.adapter == recipe.adapter
+            && tcgen05.source_contract == recipe.source_contract
+            && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} tcgen05 semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "8.6"
+            && policy.minimum_sm.is_none()
+            && policy.targets == "sm_100a|sm_101a"
+            && policy.ptx_isa_version == "8.6"
+            && policy.ptx_result == recipe.rust_result
+            && policy.expected_ptx.mnemonic == "tcgen05"
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands == recipe.operands,
+        "{} tcgen05 target or PTX contract changed",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings[0].backend == IntrinsicBackend::LlvmNvptx
+            && policy.backend_lowerings[1].backend == IntrinsicBackend::LibNvvm
+            && policy.backend_lowerings.iter().all(|route| {
+                route.mechanism == BackendLoweringMechanism::InlinePtx
+                    && route.minimum_ptx.as_deref() == Some("8.6")
+                    && route.minimum_sm.is_none()
+                    && !route.evidence_profile.trim().is_empty()
+            }),
+        "{} tcgen05 backend route changed",
+        policy.id
+    );
+    validate_tcgen05_source_contract(&recipe, declaration)?;
+    ensure_no_other_family_contract(policy, "tcgen05")?;
+    Ok(())
+}
+
+fn validate_tcgen05_source_contract(
+    recipe: &Tcgen05Recipe,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    match recipe.source_contract {
+        Tcgen05SourceContract::ExactTablegenSelection => {
+            ensure!(
+                declaration.selections.len() == 1,
+                "{} must keep one exact tcgen05 selection",
+                recipe.id
+            );
+            let selection = &declaration.selections[0];
+            ensure!(
+                recipe.selection_record == Some(selection.source_record.as_str())
+                    && recipe.selection_asm == Some(selection.asm.as_str())
+                    && selection.predicates == ["Subtarget->hasTcgen05InstSupport()"]
+                    && selection.constraints.is_empty(),
+                "{} exact tcgen05 selection changed",
+                recipe.id
+            );
+        }
+        Tcgen05SourceContract::TablegenSelectionChangesPtx
+            if matches!(
+                recipe.operation,
+                Tcgen05Operation::Commit | Tcgen05Operation::CommitCg2
+            ) =>
+        {
+            ensure!(
+                declaration.selections.len() == 1,
+                "{} must keep one canonical commit selection",
+                recipe.id
+            );
+            let selection = &declaration.selections[0];
+            ensure!(
+                recipe.selection_record == Some(selection.source_record.as_str())
+                    && recipe.selection_asm == Some(selection.asm.as_str())
+                    && selection.predicates == ["Subtarget->hasTcgen05InstSupport()"]
+                    && selection.constraints.is_empty()
+                    && !recipe.operands.is_empty(),
+                "{} canonical commit selection changed",
+                recipe.id
+            );
+        }
+        Tcgen05SourceContract::TablegenSelectionChangesPtx => {
+            ensure!(
+                declaration.selections.len() == 64,
+                "{} must keep the 64 collector selections",
+                recipe.id
+            );
+            let actual = declaration
+                .selections
+                .iter()
+                .map(|selection| {
+                    ensure!(
+                        selection.constraints.is_empty(),
+                        "{} collector selection gained constraints",
+                        recipe.id
+                    );
+                    let predicate = if selection.asm.contains(".kind::i8.") {
+                        "Subtarget->hasTcgen05MMAI8Kind()"
+                    } else {
+                        "Subtarget->hasTcgen05InstSupport()"
+                    };
+                    ensure!(
+                        selection.predicates == [predicate],
+                        "{} collector predicate changed",
+                        recipe.id
+                    );
+                    Ok(selection.asm.clone())
+                })
+                .collect::<Result<BTreeSet<_>>>()?;
+            let expected = ["f16", "tf32", "f8f6f4", "i8"]
+                .into_iter()
+                .flat_map(|kind| {
+                    ["b0", "b1", "b2", "b3"].into_iter().flat_map(move |collector| {
+                        ["discard", "fill", "use", "lastuse"].into_iter().map(move |action| {
+                            format!("tcgen05.mma.ws.cta_group::1.kind::{kind}.collector::{collector}::{action} [$dtmem], [$a], $b, $idesc, $enable_inp_d;")
+                        })
+                    })
+                })
+                .collect::<BTreeSet<_>>();
+            ensure!(
+                actual == expected,
+                "{} collector selection matrix changed",
+                recipe.id
+            );
+        }
+        Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection => ensure!(
+            declaration.selections.is_empty(),
+            "{} unexpectedly gained a TableGen selection; review the backend route",
+            recipe.id
+        ),
+    }
     Ok(())
 }
 
@@ -4940,6 +6268,7 @@ fn validate_selected_target_predicates(
     let mut has_dot_instructions = false;
     let mut has_clc_multicast_support = false;
     let mut has_tma_blackwell_support = false;
+    let mut has_tcgen05_support = false;
     for predicate in &selection.predicates {
         if let Some(value) = predicate.strip_prefix("Subtarget->getPTXVersion() >= ") {
             ensure!(
@@ -5011,6 +6340,23 @@ fn validate_selected_target_predicates(
                 policy.id
             );
             has_tma_blackwell_support = true;
+        } else if predicate == "Subtarget->hasTcgen05InstSupport()" {
+            ensure!(
+                policy.family == "tcgen05" && policy.tcgen05.is_some(),
+                "{} uses the tcgen05 target predicate outside that family",
+                policy.id
+            );
+            ensure!(
+                !has_tcgen05_support
+                    && imported_ptx.is_none()
+                    && imported_sm.is_none()
+                    && !has_dot_instructions
+                    && !has_clc_multicast_support
+                    && !has_tma_blackwell_support,
+                "{} has duplicate or conflicting tcgen05 target predicates",
+                policy.id
+            );
+            has_tcgen05_support = true;
         } else {
             bail!(
                 "{} selected instruction has unsupported target predicate {predicate:?}; target gates must fail closed",
@@ -5122,6 +6468,20 @@ fn validate_selected_target_predicates(
                 policy.id
             );
         }
+    } else if policy.family == "tcgen05" {
+        ensure!(
+            has_tcgen05_support
+                && selection.predicates.len() == 1
+                && parse_hardware_target(policy)?
+                    == CatalogHardwareTarget::AnyOf {
+                        alternatives: vec![
+                            CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                            CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                        ],
+                    },
+            "{} tcgen05 selection must use the reviewed PTX 8.6 accelerated architectures",
+            policy.id
+        );
     } else if matches!(
         policy.family.as_str(),
         "vote"
@@ -5703,6 +7063,7 @@ fn expand_special_register_admission(
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -6334,6 +7695,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         cluster_memory: None,
         clc: None,
         tma: None,
+        tcgen05: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -7262,6 +8624,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -9933,6 +11296,7 @@ fn packed_conversion_overlay_record(
         cluster_memory: None,
         clc: None,
         tma: None,
+        tcgen05: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -11196,6 +12560,7 @@ fn expand_register_mma_integer_admission(
             cluster_memory: None,
             clc: None,
             tma: None,
+            tcgen05: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -11379,6 +12744,7 @@ fn expand_register_mma_binary_admission(
             cluster_memory: None,
             clc: None,
             tma: None,
+            tcgen05: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -12026,6 +13392,7 @@ fn sparse_mma_overlay_record(
         cluster_memory: None,
         clc: None,
         tma: None,
+        tcgen05: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -12472,6 +13839,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -12827,6 +14195,7 @@ fn expand_cluster_barrier_admission(
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -13259,6 +14628,7 @@ fn expand_debug_control_admission(
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -13633,6 +15003,7 @@ fn expand_cluster_memory_admission(
                 }),
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -14992,7 +16363,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "debug_control") == policy.debug_control.is_some()
             && (policy.family == "cluster_memory") == policy.cluster_memory.is_some()
             && (policy.family == "clc") == policy.clc.is_some()
-            && (policy.family == "tma") == policy.tma.is_some(),
+            && (policy.family == "tma") == policy.tma.is_some()
+            && (policy.family == "tcgen05") == policy.tcgen05.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -16625,6 +17997,7 @@ fn materialize_record(
         cluster_memory: policy.cluster_memory.clone(),
         clc: policy.clc.clone(),
         tma: policy.tma.clone(),
+        tcgen05: policy.tcgen05.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -16753,6 +18126,7 @@ mod tests {
             cluster_memory: None,
             clc: None,
             tma: None,
+            tcgen05: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -18549,6 +19923,47 @@ mod tests {
         }
     }
 
+    fn test_tcgen05_admission() -> Tcgen05Admission {
+        let operations = [
+            Tcgen05Operation::Alloc,
+            Tcgen05Operation::Dealloc,
+            Tcgen05Operation::RelinquishAllocPermit,
+            Tcgen05Operation::FenceBeforeThreadSync,
+            Tcgen05Operation::FenceAfterThreadSync,
+            Tcgen05Operation::Commit,
+            Tcgen05Operation::CommitSharedCluster,
+            Tcgen05Operation::MmaWsF16,
+            Tcgen05Operation::MmaF16,
+            Tcgen05Operation::MmaWsBf16,
+            Tcgen05Operation::MmaWsTf32,
+            Tcgen05Operation::CpSmemToTmem,
+            Tcgen05Operation::Ld16x256bX8Pure,
+            Tcgen05Operation::Ld16x256bPure,
+            Tcgen05Operation::LoadWait,
+            Tcgen05Operation::StoreWait,
+            Tcgen05Operation::AllocCg2,
+            Tcgen05Operation::DeallocCg2,
+            Tcgen05Operation::RelinquishAllocPermitCg2,
+            Tcgen05Operation::MmaF16Cg2,
+            Tcgen05Operation::CommitCg2,
+            Tcgen05Operation::CommitSharedClusterCg2,
+            Tcgen05Operation::CommitMulticastCg2,
+            Tcgen05Operation::CpSmemToTmemCg2,
+        ];
+        Tcgen05Admission {
+            llvm_evidence_profile: "llvm-tcgen05-test".into(),
+            libnvvm_evidence_profile: "libnvvm-tcgen05-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: operations
+                .into_iter()
+                .map(|operation| crate::model::Tcgen05AdmissionVariant {
+                    abi_id: tcgen05_recipe(operation).abi_id.into(),
+                    operation,
+                })
+                .collect(),
+        }
+    }
+
     fn test_threadfence_admission() -> ThreadfenceAdmission {
         ThreadfenceAdmission {
             llvm_evidence_profile: "llvm-test".into(),
@@ -18671,6 +20086,7 @@ mod tests {
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -18746,6 +20162,7 @@ mod tests {
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -18778,6 +20195,7 @@ mod tests {
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -19044,6 +20462,7 @@ record_count = 14
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -19672,6 +21091,7 @@ scope = "system"
             clc: Some(test_clc_admission()),
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/clc.toml");
         validate_overlay_shard_schema_with_max(&shard(CLC_SHARD_SCHEMA), path, CLC_SHARD_SCHEMA)
@@ -19796,6 +21216,7 @@ scope = "system"
             clc: None,
             wgmma_controls: None,
             tma: Some(test_tma_admission()),
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/tma.toml");
         validate_overlay_shard_schema_with_max(&shard(TMA_SHARD_SCHEMA), path, TMA_SHARD_SCHEMA)
@@ -19809,6 +21230,150 @@ scope = "system"
             .unwrap_err()
             .to_string()
             .contains("requires overlay shard schema 41")
+        );
+    }
+
+    #[test]
+    fn compact_tcgen05_admission_matches_llvm_and_fails_closed() {
+        let records = expand_tcgen05_admission(&test_tcgen05_admission()).unwrap();
+        assert_eq!(records.len(), 24);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0343", "tcgen05_alloc"),
+                ("i0344", "tcgen05_dealloc"),
+                ("i0345", "tcgen05_relinquish_alloc_permit"),
+                ("i0346", "tcgen05_fence_before_thread_sync"),
+                ("i0347", "tcgen05_fence_after_thread_sync"),
+                ("i0348", "tcgen05_commit"),
+                ("i0349", "tcgen05_commit_shared_cluster"),
+                ("i0350", "tcgen05_mma_ws_f16"),
+                ("i0351", "tcgen05_mma_f16"),
+                ("i0352", "tcgen05_mma_ws_bf16"),
+                ("i0353", "tcgen05_mma_ws_tf32"),
+                ("i0354", "tcgen05_cp_smem_to_tmem"),
+                ("i0355", "tcgen05_ld_16x256b_x8_pure"),
+                ("i0356", "tcgen05_ld_16x256b_pure"),
+                ("i0357", "tcgen05_load_wait"),
+                ("i0358", "tcgen05_store_wait"),
+                ("i0359", "tcgen05_alloc_cg2"),
+                ("i0360", "tcgen05_dealloc_cg2"),
+                ("i0361", "tcgen05_relinquish_alloc_permit_cg2"),
+                ("i0362", "tcgen05_mma_f16_cg2"),
+                ("i0363", "tcgen05_commit_cg2"),
+                ("i0364", "tcgen05_commit_shared_cluster_cg2"),
+                ("i0365", "tcgen05_commit_multicast_cg2"),
+                ("i0366", "tcgen05_cp_smem_to_tmem_cg2"),
+            ]
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+        }
+
+        let bf16 = records
+            .iter()
+            .find(|record| record.id == "tcgen05_mma_ws_bf16")
+            .unwrap();
+        assert!(bf16.expected_ptx.modifiers.contains(&"kind::f16".into()));
+        assert!(!bf16.expected_ptx.modifiers.contains(&"kind::bf16".into()));
+        assert_eq!(
+            bf16.tcgen05.as_ref().unwrap().source_contract,
+            Tcgen05SourceContract::TablegenSelectionChangesPtx
+        );
+        assert!(
+            !records
+                .iter()
+                .any(|record| { record.rust_name == "tcgen05_mma_ws_f16_with_collector" })
+        );
+        assert_eq!(
+            parse_hardware_target(&records[0]).unwrap(),
+            CatalogHardwareTarget::AnyOf {
+                alternatives: vec![
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                ],
+            }
+        );
+
+        let mut missing = test_tcgen05_admission();
+        missing.variants.pop();
+        assert!(expand_tcgen05_admission(&missing).is_err());
+
+        let mut reordered = test_tcgen05_admission();
+        reordered.variants.swap(0, 1);
+        assert!(expand_tcgen05_admission(&reordered).is_err());
+
+        let mut wrong_abi = test_tcgen05_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+
+        let mut executed = test_tcgen05_admission();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_tcgen05_admission(&executed).is_err());
+
+        let declaration = declarations[records[0].source_record.as_deref().unwrap()];
+        let mut wrong_adapter = records[0].clone();
+        wrong_adapter.tcgen05.as_mut().unwrap().adapter = Tcgen05Adapter::NoOperands;
+        assert!(validate_imported_policy(&wrong_adapter, declaration).is_err());
+
+        let mut changed_declaration = declaration.clone();
+        changed_declaration.properties.pop();
+        assert!(validate_imported_policy(&records[0], &changed_declaration).is_err());
+    }
+
+    #[test]
+    fn tcgen05_compact_schema_is_reserved_for_aggregation() {
+        let shard = |schema| OverlayShardFile {
+            schema,
+            family: "tcgen05".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            special_registers: None,
+            debug_control: None,
+            threadfence: None,
+            cluster_memory: None,
+            stmatrix: None,
+            clc: None,
+            tma: None,
+            tcgen05: Some(test_tcgen05_admission()),
+        };
+        let path = Path::new("intrinsics/overlay/tcgen05.toml");
+        validate_overlay_shard_schema_with_max(
+            &shard(TCGEN05_SHARD_SCHEMA),
+            path,
+            TCGEN05_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(TCGEN05_SHARD_SCHEMA - 1),
+                path,
+                TCGEN05_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 42")
         );
     }
 
@@ -19836,6 +21401,7 @@ scope = "system"
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
@@ -19872,6 +21438,7 @@ scope = "system"
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/cluster_memory.toml");
         validate_overlay_shard_schema_with_max(
