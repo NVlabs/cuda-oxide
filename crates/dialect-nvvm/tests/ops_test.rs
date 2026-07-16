@@ -4105,6 +4105,51 @@ fn handwritten_atomic_carriers_reject_malformed_ir() {
 }
 
 #[test]
+fn atomic_cmpxchg_accepts_exactly_llvm_ordering_pairs() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let pointer_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), false);
+    let block = BasicBlock::new(&mut ctx, None, vec![pointer_ty.into(), u32_ty.into()]);
+    let pointer = block.deref(&ctx).get_argument(0);
+    let value = block.deref(&ctx).get_argument(1);
+
+    let orderings = [
+        AtomicOrdering::Relaxed,
+        AtomicOrdering::Acquire,
+        AtomicOrdering::Release,
+        AtomicOrdering::AcqRel,
+        AtomicOrdering::SeqCst,
+    ];
+    for success in &orderings {
+        for failure in &orderings {
+            let expected = matches!(
+                failure,
+                AtomicOrdering::Relaxed | AtomicOrdering::Acquire | AtomicOrdering::SeqCst
+            );
+            let actual = NvvmAtomicCmpxchgOp::build(
+                &mut ctx,
+                pointer,
+                value,
+                value,
+                u32_ty.into(),
+                success.clone(),
+                failure.clone(),
+                AtomicScope::Device,
+            )
+            .verify(&ctx)
+            .is_ok();
+            assert_eq!(
+                actual, expected,
+                "unexpected cmpxchg ordering result for success={success:?}, failure={failure:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
