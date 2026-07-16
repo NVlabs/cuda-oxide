@@ -51,10 +51,10 @@ use pliron_derive::pliron_op;
 
 /// Create a shared memory descriptor for WGMMA.
 ///
-/// Converts a generic pointer to shared memory into a 64-bit WGMMA descriptor
-/// that encodes base address, stride information, and swizzle mode.
-///
-/// Uses inline PTX: `cvta.shared.u32` + bit manipulation
+/// Converts a generic pointer into the fixed-layout descriptor used by the
+/// current WGMMA lowering. It converts with `cvta.to.shared.u64`, shifts the
+/// address right by 4, masks it with `0x3fff`, and ORs
+/// `0xC000000800080000`.
 ///
 /// # Operands
 ///

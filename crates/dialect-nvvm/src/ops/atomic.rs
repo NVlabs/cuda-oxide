@@ -118,7 +118,9 @@ pub trait NvvmAtomicOpInterface {
     /// The scope (which threads observe the atomic).
     fn scope(&self, ctx: &Context) -> AtomicScope;
 
-    /// The pointer operand (always the first operand).
+    /// The pointer operand.
+    ///
+    /// This is operand 1 for stores and operand 0 for the other atomic ops.
     fn ptr_operand(&self, ctx: &Context) -> Value;
 
     fn verify(_op: &dyn Op, _ctx: &Context) -> pliron::result::Result<()>

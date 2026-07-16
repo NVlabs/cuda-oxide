@@ -76,12 +76,9 @@ include!("generated/wgmma_control.rs");
 
 /// Create a 64-bit shared memory descriptor for WGMMA input matrices.
 ///
-/// This descriptor tells the tensor core hardware how to interpret the
-/// matrix data in shared memory. It encodes:
-/// - Base address in shared memory
-/// - Leading dimension (stride between rows/columns)
-/// - Overall stride
-/// - Swizzling mode (128-byte swizzle for bank conflict avoidance)
+/// This helper creates the fixed-layout descriptor used by the current
+/// lowering. It combines the shared-memory address with fixed stride and
+/// swizzle fields.
 ///
 /// # Parameters
 ///
@@ -91,13 +88,10 @@ include!("generated/wgmma_control.rs");
 ///
 /// A 64-bit descriptor suitable for WGMMA instructions.
 ///
-/// # Descriptor Layout
+/// # Encoding
 ///
-/// ```text
-/// Bits [0:17]   - Base address (shifted right by 4)
-/// Bits [16:33]  - Leading dimension (shifted right by 4)
-/// Bits [32:49]  - Stride (shifted right by 4)
-/// Bit  [62]     - 128-byte swizzle enable
+/// ```rust,ignore
+/// ((shared_address >> 4) & 0x3fff) | 0xC000000800080000
 /// ```
 ///
 /// # Safety
@@ -107,27 +101,25 @@ include!("generated/wgmma_control.rs");
 ///
 /// # PTX
 ///
-/// Uses `cvta.shared.u32` to convert generic pointer to shared memory address.
+/// Uses `cvta.to.shared.u64` to convert the generic pointer.
 #[inline(never)]
 pub unsafe fn make_smem_desc(ptr: *const u8) -> u64 {
     let _ = ptr;
     // Lowered to inline PTX:
     // {
-    //   .reg .u32 addr;
-    //   .reg .u64 desc;
-    //   cvta.shared.u32 addr, %ptr;
-    //   shr.u32 addr, addr, 4;
-    //   and.b32 addr, addr, 0x3FFFF;
-    //   cvt.u64.u32 desc, addr;
-    //   ... (encode leading dim, stride, swizzle)
-    //   mov.u64 %result, desc;
+    //   .reg .u64 addr;
+    //   cvta.to.shared.u64 addr, %ptr;
+    //   shr.u64 addr, addr, 4;
+    //   and.b64 addr, addr, 0x3fff;
+    //   or.b64 %result, addr, 0xC000000800080000;
     // }
     unreachable!("make_smem_desc called outside CUDA kernel context")
 }
 
-/// Create an SMEM descriptor with custom leading dimension and stride.
+/// Compatibility entry point for a custom SMEM descriptor.
 ///
-/// For advanced use cases where the default layout doesn't apply.
+/// This function does not have an importer or lowering path yet. It remains
+/// public to avoid breaking existing source code.
 ///
 /// # Parameters
 ///

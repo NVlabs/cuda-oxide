@@ -5,93 +5,15 @@
 
 //! NVVM dialect operations.
 //!
-//! This module defines Pliron IR operations for the NVVM (NVIDIA Virtual Machine) dialect,
-//! which maps directly to LLVM's NVPTX backend intrinsics for GPU execution.
+//! `mir-importer` creates these operations from recognized device intrinsic
+//! calls. `mir-lower` then selects the reviewed backend route: a typed LLVM
+//! NVVM intrinsic or inline PTX.
 //!
-//! # Module Organization
+//! Most leaf operations are generated under [`generated`]. The top-level
+//! handwritten modules are limited to compiler infrastructure, composite
+//! lowerings, and public compatibility types.
 //!
-//! Operations are organized by functional category:
-//!
-//! ```text
-//! ┌─────────────┬────────────────────────────────────┬────────────┬──────┐
-//! │ Module      │ Description                        │ GPU Arch   │ Ops  │
-//! ├─────────────┼────────────────────────────────────┼────────────┼──────┤
-//! │ atomic      │ Atomic load/store/RMW/CAS          │ sm_70+     │ 4    │
-//! │ thread      │ Thread/block/grid indexing         │ All        │ 7    │
-//! │ warp        │ Warp shuffle and vote operations   │ All        │ 12   │
-//! │ cluster     │ Thread Block Cluster ops + DSMEM   │ Hopper+    │ 10   │
-//! │ mbarrier    │ Async barrier (mbarrier) ops       │ Ampere+    │ 15   │
-//! │ tma         │ Tensor Memory Accelerator ops      │ Hopper+    │ 13   │
-//! │ wgmma       │ Warpgroup Matrix Multiply-Acc      │ Hopper+    │ 5    │
-//! │ tcgen05     │ Tensor Core Gen 5 operations       │ Blackwell+ │ 25+  │
-//! │ stmatrix    │ Shared memory matrix store         │ Hopper+    │ 5    │
-//! └─────────────┴────────────────────────────────────┴────────────┴──────┘
-//! ```
-//!
-//! # Architecture Requirements
-//!
-//! - **All GPUs**: `thread`, basic `warp` operations
-//! - **Ampere+ (sm_80+)**: Basic `mbarrier` operations
-//! - **Hopper+ (sm_90+)**: `cluster`, extended `mbarrier`, `tma`, `wgmma`
-//! - **Blackwell+ (sm_100+)**: `tcgen05`
-//!
-//! # Verification Strategy
-//!
-//! Most handwritten NVVM operations use minimal structural verification.
-//! Generated operations can enforce reviewed type and address-space contracts.
-//!
-//! ## Why Minimal Verification?
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────────────────────┐
-//! │ Data Flow: User Rust Code → rustc → MIR → mir-importer → mir-lower → NVVM  │
-//! │                               ↑                            ↑          ↓    │
-//! │                          Type-safe                    Our code    LLVM     │
-//! │                                                                  verifies  │
-//! └─────────────────────────────────────────────────────────────────────────────┘
-//! ```
-//!
-//! 1. **NVVM ops are machine-generated**: All NVVM ops are produced by `mir-lower`,
-//!    not written by users. Type errors in user code are caught by `rustc` before
-//!    we ever see them.
-//!
-//! 2. **LLVM provides downstream verification**: These ops are thin wrappers around
-//!    LLVM intrinsics. When lowered to LLVM IR, the LLVM verifier catches type
-//!    mismatches with acceptable error messages.
-//!
-//! 3. **Operand count is the common error**: The most likely bug in code generation
-//!    is passing the wrong number of arguments. This is already verified.
-//!
-//! 4. **Avoids 1500+ lines of boilerplate**: Full type verification for 70+ ops
-//!    would add significant code with marginal benefit.
-//!
-//! ## What IS Verified
-//!
-//! - **Operand count**: Each op verifies it has the correct number of operands.
-//! - **Result count**: Each op verifies it produces the correct number of results.
-//! - **Thread indexing ops**: Verify result is `i32` (these are the simplest and
-//!   most commonly used, so the extra check is worthwhile).
-//! - **Tcgen05 pure loads**: Verify exact result count (32 or 4 results).
-//! - **Generated families**: Verify the exact shapes defined by their closed recipes.
-//!
-//! ## What is NOT Verified (by design)
-//!
-//! - Operand types for handwritten operations without a type verifier
-//! - Pointer address spaces for handwritten operations without an address verifier
-//! - Descriptor types (e.g., that TMA descriptor is i64)
-//!
-//! These are validated at LLVM lowering time when the intrinsic calls are generated.
-//!
-//! ## When to Add Type Verification
-//!
-//! Consider adding type verification if:
-//! - NVVM ops become user-constructible (e.g., via a DSL)
-//! - Error messages from LLVM lowering prove inadequate in practice
-//! - A specific op is frequently misused and earlier detection is valuable
-//!
-//! # Usage
-//!
-//! All operations are re-exported at this module level for convenience:
+//! All operations are re-exported here for convenience:
 //!
 //! ```ignore
 //! use dialect_nvvm::ops::{ReadPtxSregTidXOp, Barrier0Op, ShflSyncBflyI32Op};
