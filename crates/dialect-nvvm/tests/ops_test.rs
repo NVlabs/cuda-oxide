@@ -10,25 +10,26 @@ use dialect_nvvm::ops::{
     CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp, CpAsyncMbarrierArriveSharedOp,
     CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
     LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
-    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
+    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op,
+    LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
     MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp,
     MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
     MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
     NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
     PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr,
     PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr,
-    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
-    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
-    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr,
-    RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr,
-    RegisterMmaShapeAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op,
-    SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr,
-    SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr,
-    StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp,
-    VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
+    ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
+    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNclusterIdOp, ReadPtxSregNsmIdOp,
+    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
+    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
+    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr,
+    RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr,
+    RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op,
+    ShflSyncIdxI64Op, ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr,
+    SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr,
+    SparseMmaSelectorAttr, SparseMmaShapeAttr, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp,
+    ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
 
 #[test]
@@ -69,6 +70,8 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("atomic.rs", "NvvmAtomicStoreOp"),
         ("atomic.rs", "NvvmAtomicRmwOp"),
         ("atomic.rs", "NvvmAtomicCmpxchgOp"),
+        ("cluster.rs", "ReadPtxSregClusterIdxOp"),
+        ("cluster.rs", "ReadPtxSregNclusterIdOp"),
         ("debug.rs", "VprintfOp"),
         ("grid.rs", "GridSyncOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
@@ -82,6 +85,35 @@ fn handwritten_ops_match_reviewed_allowlist() {
         expected.map(|(file, op)| (file.to_owned(), op.to_owned())),
         "top-level handwritten NVVM ops changed; generate leaf ops or review this allowlist"
     );
+}
+
+#[test]
+fn cluster_grid_compatibility_ops_keep_names_and_i32_shape() {
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::common_traits::Verify;
+    use pliron::context::Context;
+    use pliron::op::Op;
+    use pliron::operation::Operation;
+
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+    assert_eq!(
+        ReadPtxSregClusterIdxOp::get_opid_static().to_string(),
+        "nvvm.read_ptx_sreg_cluster_idx"
+    );
+    assert_eq!(
+        ReadPtxSregNclusterIdOp::get_opid_static().to_string(),
+        "nvvm.read_ptx_sreg_nclusterid"
+    );
+
+    let i32_type = IntegerType::get(&ctx, 32, Signedness::Signless);
+    for op_info in [
+        ReadPtxSregClusterIdxOp::get_concrete_op_info(),
+        ReadPtxSregNclusterIdOp::get_concrete_op_info(),
+    ] {
+        let op = Operation::new(&mut ctx, op_info, vec![i32_type.into()], vec![], vec![], 0);
+        assert!(op.deref(&ctx).verify(&ctx).is_ok());
+    }
 }
 
 #[test]
@@ -559,6 +591,48 @@ fn generated_ldmatrix_verifier_rejects_zero_or_two_operands_without_panicking() 
         LdmatrixStateSpaceAttr::Shared,
     );
     assert!(LdmatrixOp::new(valid).verify(&ctx).is_ok());
+}
+
+#[test]
+fn classic_ldmatrix_compatibility_ops_keep_names_and_register_shapes() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let pointer_ty = MirPtrType::get_shared(&mut ctx, u32_ty.into(), false);
+    let block = BasicBlock::new(&mut ctx, None, vec![pointer_ty.into()]);
+    let pointer = block.deref(&ctx).get_argument(0);
+
+    macro_rules! check_compat {
+        ($op:ty, $name:literal, $results:literal) => {{
+            assert_eq!(<$op>::get_opid_static().to_string(), $name);
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![u32_ty.into(); $results],
+                vec![pointer],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
+
+            let wrong_shape = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![u32_ty.into(); $results + 1],
+                vec![pointer],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_shape), &ctx).is_err());
+        }};
+    }
+
+    check_compat!(LdmatrixX1Op, "nvvm.ldmatrix_x1", 1);
+    check_compat!(LdmatrixX1TransOp, "nvvm.ldmatrix_x1_trans", 1);
+    check_compat!(LdmatrixX2Op, "nvvm.ldmatrix_x2", 2);
+    check_compat!(LdmatrixX2TransOp, "nvvm.ldmatrix_x2_trans", 2);
+    check_compat!(LdmatrixX4Op, "nvvm.ldmatrix_x4", 4);
+    check_compat!(LdmatrixX4TransOp, "nvvm.ldmatrix_x4_trans", 4);
 }
 
 #[test]

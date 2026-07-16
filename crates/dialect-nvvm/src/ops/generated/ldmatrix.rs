@@ -7,13 +7,13 @@
 // Catalog schema/version: 38/0.1.0; intrinsic ABI: v1; catalog SHA-256: 49c4dcd11bfc3ccbbb7972c0039248d8c26e5998b4ee9cf426a3bd27b934aefe.
 // LLVM source: 1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e.
 
-//! One structural operation for the closed generated `ldmatrix` family.
+//! Structural operation and compatibility carriers for generated `ldmatrix`.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
     attribute::Attribute,
     builtin::{
-        op_interfaces::NOpdsInterface,
+        op_interfaces::{NOpdsInterface, NResultsInterface},
         types::{IntegerType, Signedness},
     },
     common_traits::Verify,
@@ -192,6 +192,166 @@ impl Verify for LdmatrixOp {
     }
 }
 
+fn verify_compat_ldmatrix(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    op_name: &str,
+    result_count: usize,
+) -> Result<(), Error> {
+    let op = op.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != 1 {
+        return verify_err!(op.loc(), "{} requires one shared-memory pointer", op_name);
+    }
+    if operands[0]
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .is_none()
+    {
+        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    }
+    if op.get_num_results() != result_count {
+        return verify_err!(
+            op.loc(),
+            "{} requires {} register results",
+            op_name,
+            result_count
+        );
+    }
+    for index in 0..result_count {
+        let ty = op.get_result(index).get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(integer) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "{} result {} must be an integer", op_name, index);
+        };
+        if integer.width() != 32 {
+            return verify_err!(op.loc(), "{} result {} must be 32 bits", op_name, index);
+        }
+    }
+    Ok(())
+}
+
+/// Compatibility carrier for `nvvm.ldmatrix_x1`.
+#[pliron_op(
+    name = "nvvm.ldmatrix_x1",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct LdmatrixX1Op;
+
+impl LdmatrixX1Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for LdmatrixX1Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_ldmatrix(ctx, self.get_operation(), "nvvm.ldmatrix_x1", 1)
+    }
+}
+
+/// Compatibility carrier for `nvvm.ldmatrix_x1_trans`.
+#[pliron_op(
+    name = "nvvm.ldmatrix_x1_trans",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct LdmatrixX1TransOp;
+
+impl LdmatrixX1TransOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for LdmatrixX1TransOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_ldmatrix(ctx, self.get_operation(), "nvvm.ldmatrix_x1_trans", 1)
+    }
+}
+
+/// Compatibility carrier for `nvvm.ldmatrix_x2`.
+#[pliron_op(
+    name = "nvvm.ldmatrix_x2",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<2>],
+)]
+pub struct LdmatrixX2Op;
+
+impl LdmatrixX2Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for LdmatrixX2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_ldmatrix(ctx, self.get_operation(), "nvvm.ldmatrix_x2", 2)
+    }
+}
+
+/// Compatibility carrier for `nvvm.ldmatrix_x2_trans`.
+#[pliron_op(
+    name = "nvvm.ldmatrix_x2_trans",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<2>],
+)]
+pub struct LdmatrixX2TransOp;
+
+impl LdmatrixX2TransOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for LdmatrixX2TransOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_ldmatrix(ctx, self.get_operation(), "nvvm.ldmatrix_x2_trans", 2)
+    }
+}
+
+/// Compatibility carrier for `nvvm.ldmatrix_x4`.
+#[pliron_op(
+    name = "nvvm.ldmatrix_x4",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<4>],
+)]
+pub struct LdmatrixX4Op;
+
+impl LdmatrixX4Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for LdmatrixX4Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_ldmatrix(ctx, self.get_operation(), "nvvm.ldmatrix_x4", 4)
+    }
+}
+
+/// Compatibility carrier for `nvvm.ldmatrix_x4_trans`.
+#[pliron_op(
+    name = "nvvm.ldmatrix_x4_trans",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<4>],
+)]
+pub struct LdmatrixX4TransOp;
+
+impl LdmatrixX4TransOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for LdmatrixX4TransOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_ldmatrix(ctx, self.get_operation(), "nvvm.ldmatrix_x4_trans", 4)
+    }
+}
+
 pub(super) fn register(ctx: &mut Context) {
     LdmatrixShapeAttr::register(ctx);
     LdmatrixMultiplicityAttr::register(ctx);
@@ -199,4 +359,10 @@ pub(super) fn register(ctx: &mut Context) {
     LdmatrixElementAttr::register(ctx);
     LdmatrixStateSpaceAttr::register(ctx);
     LdmatrixOp::register(ctx);
+    LdmatrixX1Op::register(ctx);
+    LdmatrixX1TransOp::register(ctx);
+    LdmatrixX2Op::register(ctx);
+    LdmatrixX2TransOp::register(ctx);
+    LdmatrixX4Op::register(ctx);
+    LdmatrixX4TransOp::register(ctx);
 }

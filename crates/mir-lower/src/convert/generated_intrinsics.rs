@@ -56,7 +56,8 @@ use dialect_nvvm::ops::{
     FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, FmaBf16x2Op,
     FmaF16x2Op, FmaReluBf16x2Op, FmaReluF16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr,
-    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr,
+    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op,
+    LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp,
     MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
     MatchAnySyncI64Op, MaxBf16x2Op, MaxF16x2Op, MbarrierArriveClusterOp,
     MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
@@ -1301,6 +1302,120 @@ impl MirToLlvmConversion for LdmatrixOp {
             recipe.0,
             recipe.1,
             recipe.2,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX1Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_ldmatrix(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            1,
+            false,
+            "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x1_b16_p3",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX1TransOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_ldmatrix(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            1,
+            true,
+            "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x1_trans_b16_p3",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_ldmatrix(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            2,
+            false,
+            "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_b16_p3",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX2TransOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_ldmatrix(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            2,
+            true,
+            "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16_p3",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX4Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_ldmatrix(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            4,
+            false,
+            "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x4_b16_p3",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX4TransOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_ldmatrix(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            4,
+            true,
+            "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x4_trans_b16_p3",
         )
     }
 }

@@ -19043,6 +19043,18 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
     },
 ];
 
+fn generated_intrinsic_compatibility_marker_by_op_name(op_name: &str) -> Option<&'static str> {
+    match op_name {
+        "nvvm.ldmatrix_x1" => Some("v1:i0025"),
+        "nvvm.ldmatrix_x1_trans" => Some("v1:i0026"),
+        "nvvm.ldmatrix_x2" => Some("v1:i0027"),
+        "nvvm.ldmatrix_x2_trans" => Some("v1:i0028"),
+        "nvvm.ldmatrix_x4" => Some("v1:i0013"),
+        "nvvm.ldmatrix_x4_trans" => Some("v1:i0029"),
+        _ => None,
+    }
+}
+
 pub fn generated_intrinsic_target_by_marker(
     marker: &str,
 ) -> Option<&'static GeneratedIntrinsicTarget> {
@@ -19054,9 +19066,10 @@ pub fn generated_intrinsic_target_by_marker(
 pub fn generated_intrinsic_targets_by_op_name(
     op_name: &str,
 ) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {
-    GENERATED_INTRINSIC_TARGETS
-        .iter()
-        .filter(move |target| target.dialect_op == op_name)
+    let compatibility_marker = generated_intrinsic_compatibility_marker_by_op_name(op_name);
+    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| {
+        target.dialect_op == op_name || compatibility_marker == Some(target.marker)
+    })
 }
 
 pub fn generated_intrinsic_target_by_op_name(
@@ -19081,6 +19094,12 @@ pub fn generated_intrinsic_operation_matches(
             multiplicity,
             layout,
         } => {
+            let operation_name = Operation::get_opid(operation, ctx).to_string();
+            if let Some(marker) =
+                generated_intrinsic_compatibility_marker_by_op_name(&operation_name)
+            {
+                return marker == target.marker;
+            }
             let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else {
                 return false;
             };

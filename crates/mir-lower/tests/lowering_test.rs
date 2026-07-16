@@ -2525,6 +2525,57 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
     Ok(())
 }
 
+#[test]
+fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_type = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    for op_info in [
+        nvvm::ReadPtxSregClusterIdxOp::get_concrete_op_info(),
+        nvvm::ReadPtxSregNclusterIdOp::get_concrete_op_info(),
+    ] {
+        Operation::new(&mut ctx, op_info, vec![i32_type.into()], vec![], vec![], 0)
+            .insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let lowered = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
+        .filter_map(|asm| {
+            let template = asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))?;
+            (template.contains("%clusterid") || template.contains("%nclusterid"))
+                .then(|| (template, asm))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lowered.len(), 2);
+    assert!(lowered.iter().any(|(template, _)| {
+        template
+            == "{ .reg .u32 %cx, %cy, %cz, %nx, %ny, %nxy, %xy; mov.u32 %cx, %clusterid.x; mov.u32 %cy, %clusterid.y; mov.u32 %cz, %clusterid.z; mov.u32 %nx, %nclusterid.x; mov.u32 %ny, %nclusterid.y; mul.lo.u32 %nxy, %nx, %ny; mad.lo.u32 %xy, %cy, %nx, %cx; mad.lo.u32 $0, %cz, %nxy, %xy; }"
+    }));
+    assert!(lowered.iter().any(|(template, _)| {
+        template
+            == "{ .reg .u32 %nx, %ny, %nz, %nxy; mov.u32 %nx, %nclusterid.x; mov.u32 %ny, %nclusterid.y; mov.u32 %nz, %nclusterid.z; mul.lo.u32 %nxy, %nx, %ny; mul.lo.u32 $0, %nxy, %nz; }"
+    }));
+    for (_, asm) in lowered {
+        assert_eq!(
+            asm.get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("=r")
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::Convergent);
+    }
+    Ok(())
+}
+
 /// Regression cover for PR #141: comparisons whose operand is a bool phi.
 ///
 /// Bools are signless i1, which `can_convert_type` rejects (signless is
@@ -4660,6 +4711,7 @@ const LDMATRIX_PTX_CONSTRAINTS: [&str; 6] = [
 fn lower_all_ldmatrix_forms(
     address_space: u32,
     backend: mir_lower::IntrinsicBackend,
+    compatibility: bool,
 ) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};
@@ -4669,44 +4721,64 @@ fn lower_all_ldmatrix_forms(
     let ptr_ty = MirPtrType::get(&mut ctx, i8_ty.into(), true, address_space);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
     let pointer = entry.deref(&ctx).get_argument(0);
-    let cases = [
-        (
-            nvvm::LdmatrixMultiplicityAttr::X1,
-            nvvm::LdmatrixLayoutAttr::Normal,
-        ),
-        (
-            nvvm::LdmatrixMultiplicityAttr::X1,
-            nvvm::LdmatrixLayoutAttr::Transposed,
-        ),
-        (
-            nvvm::LdmatrixMultiplicityAttr::X2,
-            nvvm::LdmatrixLayoutAttr::Normal,
-        ),
-        (
-            nvvm::LdmatrixMultiplicityAttr::X2,
-            nvvm::LdmatrixLayoutAttr::Transposed,
-        ),
-        (
-            nvvm::LdmatrixMultiplicityAttr::X4,
-            nvvm::LdmatrixLayoutAttr::Normal,
-        ),
-        (
-            nvvm::LdmatrixMultiplicityAttr::X4,
-            nvvm::LdmatrixLayoutAttr::Transposed,
-        ),
-    ];
-
-    for (multiplicity, layout) in cases {
-        nvvm::LdmatrixOp::build(
-            &mut ctx,
-            pointer,
-            nvvm::LdmatrixShapeAttr::M8n8,
-            multiplicity,
-            layout,
-            nvvm::LdmatrixElementAttr::B16,
-            nvvm::LdmatrixStateSpaceAttr::Shared,
-        )
-        .insert_at_back(entry, &ctx);
+    if compatibility {
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        for (op_info, result_count) in [
+            (nvvm::LdmatrixX1Op::get_concrete_op_info(), 1),
+            (nvvm::LdmatrixX1TransOp::get_concrete_op_info(), 1),
+            (nvvm::LdmatrixX2Op::get_concrete_op_info(), 2),
+            (nvvm::LdmatrixX2TransOp::get_concrete_op_info(), 2),
+            (nvvm::LdmatrixX4Op::get_concrete_op_info(), 4),
+            (nvvm::LdmatrixX4TransOp::get_concrete_op_info(), 4),
+        ] {
+            Operation::new(
+                &mut ctx,
+                op_info,
+                vec![u32_ty.into(); result_count],
+                vec![pointer],
+                vec![],
+                0,
+            )
+            .insert_at_back(entry, &ctx);
+        }
+    } else {
+        for (multiplicity, layout) in [
+            (
+                nvvm::LdmatrixMultiplicityAttr::X1,
+                nvvm::LdmatrixLayoutAttr::Normal,
+            ),
+            (
+                nvvm::LdmatrixMultiplicityAttr::X1,
+                nvvm::LdmatrixLayoutAttr::Transposed,
+            ),
+            (
+                nvvm::LdmatrixMultiplicityAttr::X2,
+                nvvm::LdmatrixLayoutAttr::Normal,
+            ),
+            (
+                nvvm::LdmatrixMultiplicityAttr::X2,
+                nvvm::LdmatrixLayoutAttr::Transposed,
+            ),
+            (
+                nvvm::LdmatrixMultiplicityAttr::X4,
+                nvvm::LdmatrixLayoutAttr::Normal,
+            ),
+            (
+                nvvm::LdmatrixMultiplicityAttr::X4,
+                nvvm::LdmatrixLayoutAttr::Transposed,
+            ),
+        ] {
+            nvvm::LdmatrixOp::build(
+                &mut ctx,
+                pointer,
+                nvvm::LdmatrixShapeAttr::M8n8,
+                multiplicity,
+                layout,
+                nvvm::LdmatrixElementAttr::B16,
+                nvvm::LdmatrixStateSpaceAttr::Shared,
+            )
+            .insert_at_back(entry, &ctx);
+        }
     }
     append_return(&mut ctx, entry);
 
@@ -4756,7 +4828,7 @@ fn test_ldmatrix_llvm_nvptx_uses_exact_typed_p3_intrinsics() -> Result<(), anyho
 
     for address_space in [0, 3] {
         let (ctx, module_ptr) =
-            lower_all_ldmatrix_forms(address_space, mir_lower::IntrinsicBackend::LlvmNvptx)?;
+            lower_all_ldmatrix_forms(address_space, mir_lower::IntrinsicBackend::LlvmNvptx, false)?;
         let body = lowered_kernel_body(&ctx, module_ptr);
         let mut callees = Vec::new();
         let mut cast_count = 0;
@@ -4874,7 +4946,7 @@ fn test_ldmatrix_libnvvm_uses_exact_convergent_shared_ptx() -> Result<(), anyhow
 
     for address_space in [0, 3] {
         let (ctx, module_ptr) =
-            lower_all_ldmatrix_forms(address_space, mir_lower::IntrinsicBackend::LibNvvm)?;
+            lower_all_ldmatrix_forms(address_space, mir_lower::IntrinsicBackend::LibNvvm, false)?;
         let body = lowered_kernel_body(&ctx, module_ptr);
         let mut lowered = Vec::new();
         let mut cast_count = 0;
@@ -4940,6 +5012,105 @@ fn test_ldmatrix_libnvvm_uses_exact_convergent_shared_ptx() -> Result<(), anyhow
         assert_eq!(ir.matches("~{memory}").count(), 6, "{ir}");
         assert!(ir.contains("attributes #0 = { convergent }"), "{ir}");
         assert!(!ir.contains("@llvm.nvvm.ldmatrix"), "{ir}");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_classic_ldmatrix_compatibility_ops_keep_exact_lowering() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    fn assert_result_shape(
+        ctx: &Context,
+        op: pliron::context::Ptr<Operation>,
+        register_count: usize,
+    ) {
+        let operation = op.deref(ctx);
+        assert_eq!(operation.get_num_operands(), 1);
+        assert_eq!(operation.get_num_results(), 1);
+        let result_ty = operation.get_result(0).get_type(ctx);
+        let result_ty = result_ty.deref(ctx);
+        if register_count == 1 {
+            let result_ty = result_ty
+                .downcast_ref::<IntegerType>()
+                .expect("x1 returns i32");
+            assert_eq!(result_ty.width(), 32);
+        } else {
+            let result_ty = result_ty
+                .downcast_ref::<llvm_types::StructType>()
+                .expect("x2/x4 return an LLVM struct");
+            assert_eq!(result_ty.num_fields(), register_count);
+            for index in 0..result_ty.num_fields() {
+                let field = result_ty.field_type(index);
+                let field = field.deref(ctx);
+                let field = field
+                    .downcast_ref::<IntegerType>()
+                    .expect("fragment register is i32");
+                assert_eq!(field.width(), 32);
+            }
+        }
+    }
+
+    let register_counts = [1, 1, 2, 2, 4, 4];
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let (ctx, module_ptr) = lower_all_ldmatrix_forms(3, backend, true)?;
+        let mut seen = [0; 6];
+        let mut extract_count = 0;
+
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            extract_count +=
+                usize::from(Operation::get_op::<llvm::ExtractValueOp>(op, &ctx).is_some());
+            match backend {
+                mir_lower::IntrinsicBackend::LlvmNvptx => {
+                    assert!(Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none());
+                    let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+                        continue;
+                    };
+                    let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+                        panic!("ldmatrix intrinsic call must be direct");
+                    };
+                    let callee = callee.to_string();
+                    let index = LDMATRIX_TYPED_INTRINSICS
+                        .iter()
+                        .position(|expected| *expected == callee)
+                        .expect("exact typed ldmatrix intrinsic");
+                    seen[index] += 1;
+                    assert_result_shape(&ctx, op, register_counts[index]);
+                }
+                mir_lower::IntrinsicBackend::LibNvvm => {
+                    assert!(Operation::get_op::<llvm::CallOp>(op, &ctx).is_none());
+                    let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+                        continue;
+                    };
+                    let template = inline_asm
+                        .get_attr_inline_asm_template(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .unwrap_or_default();
+                    let index = LDMATRIX_PTX_TEMPLATES
+                        .iter()
+                        .position(|expected| *expected == template)
+                        .expect("exact ldmatrix PTX template");
+                    seen[index] += 1;
+                    assert_eq!(
+                        inline_asm
+                            .get_attr_inline_asm_constraints(&ctx)
+                            .map(|value| String::from((*value).clone()))
+                            .as_deref(),
+                        Some(LDMATRIX_PTX_CONSTRAINTS[index])
+                    );
+                    assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Convergent);
+                    assert_result_shape(&ctx, op, register_counts[index]);
+                }
+            }
+        }
+
+        assert_eq!(seen, [1; 6]);
+        assert_eq!(extract_count, 12, "x2/x4 results keep their order");
     }
     Ok(())
 }

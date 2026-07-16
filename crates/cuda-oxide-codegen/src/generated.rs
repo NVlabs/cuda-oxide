@@ -120,7 +120,7 @@ pub(crate) fn collect_generated_intrinsic_requirements(
                         ),
                     )
                 })?;
-                if target.dialect_op != op_name {
+                if !candidates.contains(&target) {
                     return Err(generated_requirement_error(
                         ctx,
                         op_ptr,
@@ -371,6 +371,87 @@ mod tests {
             error.contains("does not match the exact variant attributes"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn classic_ldmatrix_compatibility_ops_keep_exact_target_requirements() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedHardwareAlternative, GeneratedHardwareTarget,
+        };
+        use dialect_mir::types::MirPtrType;
+        use dialect_nvvm::ops::{
+            LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op,
+            LdmatrixX4TransOp,
+        };
+        use pliron::basic_block::BasicBlock;
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let pointer_ty = MirPtrType::get_shared(&mut ctx, u32_ty.into(), false);
+        let block = BasicBlock::new(&mut ctx, None, vec![pointer_ty.into()]);
+        let pointer = block.deref(&ctx).get_argument(0);
+        let cases = [
+            (
+                LdmatrixX1Op::get_concrete_op_info(),
+                1,
+                "ldmatrix_m8n8_x1_b16",
+            ),
+            (
+                LdmatrixX1TransOp::get_concrete_op_info(),
+                1,
+                "ldmatrix_m8n8_x1_trans_b16",
+            ),
+            (
+                LdmatrixX2Op::get_concrete_op_info(),
+                2,
+                "ldmatrix_m8n8_x2_b16",
+            ),
+            (
+                LdmatrixX2TransOp::get_concrete_op_info(),
+                2,
+                "ldmatrix_m8n8_x2_trans_b16",
+            ),
+            (
+                LdmatrixX4Op::get_concrete_op_info(),
+                4,
+                "ldmatrix_m8n8_x4_b16",
+            ),
+            (
+                LdmatrixX4TransOp::get_concrete_op_info(),
+                4,
+                "ldmatrix_m8n8_x4_trans_b16",
+            ),
+        ];
+
+        for (op_info, result_count, expected_id) in cases {
+            let op = Operation::new(
+                &mut ctx,
+                op_info,
+                vec![u32_ty.into(); result_count],
+                vec![pointer],
+                vec![],
+                0,
+            );
+            let requirements =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Optional)
+                    .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            assert_eq!(requirements.targets[0].id, expected_id);
+            let requirement = requirements.requirement(requirements.targets[0]);
+            assert_eq!(requirement.minimum_ptx.encoded(), 65);
+            assert!(matches!(
+                requirement.hardware,
+                GeneratedHardwareTarget::AnyOf(alternatives)
+                    if alternatives == [GeneratedHardwareAlternative::MinimumSm(75)]
+            ));
+
+            let error =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.contains("missing its exact ABI marker"), "{error}");
+        }
     }
 
     #[test]

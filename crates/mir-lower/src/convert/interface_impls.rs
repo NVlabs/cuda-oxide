@@ -37,7 +37,8 @@ use dialect_mir::ops::{
 };
 use dialect_nvvm::ops::{
     InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
-    VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
+    ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp, VprintfOp, WgmmaMakeSmemDescOp,
+    WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -911,6 +912,40 @@ impl MirToLlvmConversion for VprintfOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::debug::convert_vprintf(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReadPtxSregClusterIdxOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::cluster::convert_cluster_idx(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReadPtxSregNclusterIdOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::cluster::convert_num_clusters(
             ctx,
             rewriter,
             self.get_operation(),

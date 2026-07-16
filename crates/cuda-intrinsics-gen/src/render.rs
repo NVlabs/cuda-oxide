@@ -1514,6 +1514,18 @@ fn ldmatrix(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
         .filter(|record| record.family == "ldmatrix")
 }
 
+fn ldmatrix_compat_op(record: &CatalogIntrinsic) -> Option<(&'static str, &'static str)> {
+    match record.id.as_str() {
+        "ldmatrix_m8n8_x1_b16" => Some(("LdmatrixX1Op", "nvvm.ldmatrix_x1")),
+        "ldmatrix_m8n8_x1_trans_b16" => Some(("LdmatrixX1TransOp", "nvvm.ldmatrix_x1_trans")),
+        "ldmatrix_m8n8_x2_b16" => Some(("LdmatrixX2Op", "nvvm.ldmatrix_x2")),
+        "ldmatrix_m8n8_x2_trans_b16" => Some(("LdmatrixX2TransOp", "nvvm.ldmatrix_x2_trans")),
+        "ldmatrix_m8n8_x4_b16" => Some(("LdmatrixX4Op", "nvvm.ldmatrix_x4")),
+        "ldmatrix_m8n8_x4_trans_b16" => Some(("LdmatrixX4TransOp", "nvvm.ldmatrix_x4_trans")),
+        _ => None,
+    }
+}
+
 fn stmatrices(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
     catalog
         .intrinsics
@@ -5680,13 +5692,13 @@ fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_ldmatrix(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        r##"//! One structural operation for the closed generated `ldmatrix` family.
+        r##"//! Structural operation and compatibility carriers for generated `ldmatrix`.
 
 use dialect_mir::types::{address_space, MirPtrType};
 use pliron::{
     attribute::Attribute,
     builtin::{
-        op_interfaces::NOpdsInterface,
+        op_interfaces::{NOpdsInterface, NResultsInterface},
         types::{IntegerType, Signedness},
     },
     common_traits::Verify,
@@ -5865,6 +5877,80 @@ pub(super) fn register(ctx: &mut Context) {
 }
 "##,
     );
+
+    let compatibility = ldmatrix(catalog)
+        .filter_map(|record| ldmatrix_compat_op(record).map(|compat| (record, compat)))
+        .collect::<Vec<_>>();
+    assert_eq!(compatibility.len(), 6);
+
+    let mut definitions = String::from(
+        r#"
+fn verify_compat_ldmatrix(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    op_name: &str,
+    result_count: usize,
+) -> Result<(), Error> {
+    let op = op.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != 1 {
+        return verify_err!(op.loc(), "{} requires one shared-memory pointer", op_name);
+    }
+    if operands[0]
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .is_none()
+    {
+        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    }
+    if op.get_num_results() != result_count {
+        return verify_err!(
+            op.loc(),
+            "{} requires {} register results",
+            op_name,
+            result_count
+        );
+    }
+    for index in 0..result_count {
+        let ty = op.get_result(index).get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(integer) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "{} result {} must be an integer", op_name, index);
+        };
+        if integer.width() != 32 {
+            return verify_err!(op.loc(), "{} result {} must be 32 bits", op_name, index);
+        }
+    }
+    Ok(())
+}
+
+"#,
+    );
+    for (record, (op_type, op_name)) in &compatibility {
+        let result_count = record
+            .ldmatrix
+            .as_ref()
+            .expect("ldmatrix compatibility record")
+            .variant
+            .multiplicity
+            .register_count();
+        writeln!(
+            definitions,
+            "/// Compatibility carrier for `{op_name}`.\n#[pliron_op(\n    name = {op_name:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<{result_count}>],\n)]\npub struct {op_type};\n\nimpl {op_type} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n}}\n\nimpl Verify for {op_type} {{\n    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_compat_ldmatrix(ctx, self.get_operation(), {op_name:?}, {result_count})\n    }}\n}}\n"
+        )
+        .unwrap();
+    }
+    let register_start = output
+        .find("pub(super) fn register(ctx: &mut Context) {")
+        .expect("ldmatrix register function");
+    output.insert_str(register_start, &definitions);
+    let register_anchor = "    LdmatrixOp::register(ctx);\n";
+    let mut registrations = String::from(register_anchor);
+    for (_, (op_type, _)) in compatibility {
+        writeln!(registrations, "    {op_type}::register(ctx);").unwrap();
+    }
+    output = output.replacen(register_anchor, &registrations, 1);
     output
 }
 
@@ -9714,6 +9800,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
+        for record in ldmatrix(catalog) {
+            if let Some((op_type, _)) = ldmatrix_compat_op(record) {
+                output.push_str(", ");
+                output.push_str(op_type);
+            }
+        }
     }
     if let Some(record) = movmatrix(catalog).next() {
         output.push_str(", ");
@@ -10218,6 +10310,31 @@ fn convert_generated_tcgen05_load(
         output.push_str(
             "                _ => return pliron::input_err!(\n                    self.get_operation().deref(ctx).loc(),\n                    \"nvvm.ldmatrix variant has no generated lowering recipe\",\n                ),\n            }\n        };\n        convert_generated_ldmatrix(ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2)\n    }\n}\n\n",
         );
+        for record in ldmatrix(catalog) {
+            let Some((op_type, _)) = ldmatrix_compat_op(record) else {
+                continue;
+            };
+            let variant = &record
+                .ldmatrix
+                .as_ref()
+                .expect("ldmatrix compatibility record")
+                .variant;
+            let register_count = variant.multiplicity.register_count();
+            let transposed = variant.layout == LdmatrixLayout::Transposed;
+            let intrinsic_name = record
+                .llvm
+                .as_ref()
+                .expect("ldmatrix LLVM facts")
+                .resolved_symbol
+                .as_ref()
+                .expect("ldmatrix resolved symbol")
+                .replace('.', "_");
+            writeln!(
+                output,
+                "#[op_interface_impl]\nimpl MirToLlvmConversion for {op_type} {{\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_ldmatrix(\n            ctx, rewriter, self.get_operation(), {register_count}, {transposed}, {intrinsic_name:?},\n        )\n    }}\n}}\n"
+            )
+            .unwrap();
+        }
     }
     for record in stmatrices(catalog) {
         let (multiplicity, layout) = stmatrix_variant(record).expect("stmatrix variant");
@@ -11527,6 +11644,41 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str(
         "];\n\npub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGETS.iter().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n        GeneratedIntrinsicVariant::RegisterMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow } => {\n            let Some(op) = Operation::get_op::<RegisterMmaOp>(operation, ctx) else { return false; };\n            let shape_matches = match shape {\n                GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k8),\n                GeneratedRegisterMmaShape::M16n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k16),\n                GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F32),\n                GeneratedRegisterMmaAccumulator::F64 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F64),\n                GeneratedRegisterMmaAccumulator::S32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::S32),\n            };\n            let element_matches = |expected, actual: Option<&RegisterMmaElementAttr>| match expected {\n                GeneratedRegisterMmaElement::Bf16 => actual == Some(&RegisterMmaElementAttr::Bf16),\n                GeneratedRegisterMmaElement::F16 => actual == Some(&RegisterMmaElementAttr::F16),\n                GeneratedRegisterMmaElement::Tf32 => actual == Some(&RegisterMmaElementAttr::Tf32),\n                GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8 => actual == Some(&RegisterMmaElementAttr::S8),\n                GeneratedRegisterMmaElement::U8 => actual == Some(&RegisterMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&RegisterMmaLayoutAttr>| match expected {\n                GeneratedRegisterMmaLayout::Row => actual == Some(&RegisterMmaLayoutAttr::Row),\n                GeneratedRegisterMmaLayout::Col => actual == Some(&RegisterMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedRegisterMmaOverflow::NotApplicable => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::NotApplicable),\n                GeneratedRegisterMmaOverflow::Wrapping => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Wrapping),\n                GeneratedRegisterMmaOverflow::Satfinite => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Satfinite),\n            };\n            shape_matches && accumulator_matches\n                && element_matches(a_element, op.get_attr_nvvm_register_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_register_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_register_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_register_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n        }\n    }\n}\n",
+    );
+    let mut compatibility_aliases = String::from(
+        "fn generated_intrinsic_compatibility_marker_by_op_name(op_name: &str) -> Option<&'static str> {\n    match op_name {\n",
+    );
+    let mut compatibility_count = 0;
+    for record in ldmatrix(catalog) {
+        let Some((_, op_name)) = ldmatrix_compat_op(record) else {
+            continue;
+        };
+        compatibility_count += 1;
+        writeln!(
+            compatibility_aliases,
+            "        {op_name:?} => Some({:?}),",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+    }
+    assert_eq!(compatibility_count, 6);
+    compatibility_aliases.push_str("        _ => None,\n    }\n}\n\n");
+    replace_exact_render_fragment(
+        &mut output,
+        "pub fn generated_intrinsic_target_by_marker(marker: &str)",
+        &format!(
+            "{compatibility_aliases}pub fn generated_intrinsic_target_by_marker(marker: &str)"
+        ),
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n",
+        "    let compatibility_marker = generated_intrinsic_compatibility_marker_by_op_name(op_name);\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| {\n        target.dialect_op == op_name || compatibility_marker == Some(target.marker)\n    })\n",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };",
+        "        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let operation_name = Operation::get_opid(operation, ctx).to_string();\n            if let Some(marker) = generated_intrinsic_compatibility_marker_by_op_name(&operation_name) {\n                return marker == target.marker;\n            }\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -14351,6 +14503,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
 
+        let dialect = render_dialect_ldmatrix(&catalog, "test-hash");
         let rendered = render_lowering(&catalog, "test-hash");
         assert_eq!(
             rendered
@@ -14363,6 +14516,74 @@ mod tests {
         assert!(rendered.contains("LdmatrixMultiplicityAttr::X1"));
         assert!(rendered.contains("LdmatrixLayoutAttr::Transposed"));
         assert!(rendered.contains("llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16_p3"));
+        for (op_type, op_name, count, intrinsic) in [
+            (
+                "LdmatrixX1Op",
+                "nvvm.ldmatrix_x1",
+                1,
+                "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x1_b16_p3",
+            ),
+            (
+                "LdmatrixX1TransOp",
+                "nvvm.ldmatrix_x1_trans",
+                1,
+                "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x1_trans_b16_p3",
+            ),
+            (
+                "LdmatrixX2Op",
+                "nvvm.ldmatrix_x2",
+                2,
+                "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_b16_p3",
+            ),
+            (
+                "LdmatrixX2TransOp",
+                "nvvm.ldmatrix_x2_trans",
+                2,
+                "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16_p3",
+            ),
+            (
+                "LdmatrixX4Op",
+                "nvvm.ldmatrix_x4",
+                4,
+                "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x4_b16_p3",
+            ),
+            (
+                "LdmatrixX4TransOp",
+                "nvvm.ldmatrix_x4_trans",
+                4,
+                "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x4_trans_b16_p3",
+            ),
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op_type};")));
+            assert!(dialect.contains(&format!("name = {op_name:?}")));
+            assert!(dialect.contains(&format!("NResultsInterface<{count}>")));
+            assert!(dialect.contains(&format!("{op_type}::register(ctx);")));
+            assert_eq!(
+                rendered
+                    .matches(&format!("impl MirToLlvmConversion for {op_type}"))
+                    .count(),
+                1
+            );
+            assert!(rendered.contains(&format!(
+                "self.get_operation(), {count}, {}, {intrinsic:?}",
+                op_name.ends_with("_trans")
+            )));
+        }
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(!importer.contains("LdmatrixX1Op"));
+        assert!(!importer.contains("LdmatrixX4TransOp"));
+        let targets = render_targets(&catalog, "test-hash");
+        for op_name in [
+            "nvvm.ldmatrix_x1",
+            "nvvm.ldmatrix_x1_trans",
+            "nvvm.ldmatrix_x2",
+            "nvvm.ldmatrix_x2_trans",
+            "nvvm.ldmatrix_x4",
+            "nvvm.ldmatrix_x4_trans",
+        ] {
+            assert!(targets.contains(&format!("{op_name:?} => Some(")));
+        }
     }
 
     #[test]

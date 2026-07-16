@@ -21,6 +21,7 @@
 
 mod asm;
 pub mod atomic;
+mod cluster;
 mod debug;
 mod generated;
 mod grid;
@@ -31,6 +32,7 @@ use pliron::context::Context;
 // Re-export all operations for public API
 pub use asm::*;
 pub use atomic::*;
+pub use cluster::*;
 pub use debug::*;
 pub use generated::*;
 pub use grid::*;
@@ -43,6 +45,7 @@ pub use wgmma::*;
 pub fn register(ctx: &mut Context) {
     atomic::register(ctx);
     asm::register(ctx);
+    cluster::register(ctx);
     generated::register(ctx);
     grid::register(ctx);
     wgmma::register(ctx);
