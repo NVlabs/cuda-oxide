@@ -23,21 +23,22 @@ use crate::model::{
     IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
     LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
     LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierStateSpace, MovmatrixAdapter, MovmatrixParticipation,
-    OverlayBackendLowering, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
-    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
-    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
-    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
-    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
-    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
-    PackedConversionFp8Admission, PackedConversionRounding, PackedConversionSaturation,
-    PackedConversionSourceFormat, PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission,
-    PrmtMode, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaBinaryAdmission,
-    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaIntegerAdmission,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation,
-    RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    MbarrierBasicOperation, MbarrierExtended, MbarrierExtendedAdapter, MbarrierExtendedAdmission,
+    MbarrierExtendedOperation, MbarrierExtendedSourceContract, MbarrierStateSpace,
+    MovmatrixAdapter, MovmatrixParticipation, OverlayBackendLowering, OverlayFile,
+    OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
+    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
+    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
+    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
+    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
+    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionFp8Admission,
+    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
+    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
+    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
+    RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaIntegerAdmission, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator,
+    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
@@ -71,6 +72,7 @@ const THREADFENCE_SHARD_SCHEMA: u32 = 34;
 const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
 const CLC_SHARD_SCHEMA: u32 = 40;
+const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 pub(crate) const CATALOG_SCHEMA: u32 = 38;
 
 struct ResolutionBase {
@@ -544,6 +546,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
         let cluster_sreg_admission = shard.cluster_sreg.take();
         let cluster_barrier_admission = shard.cluster_barrier.take();
+        let mbarrier_extended_admission = shard.mbarrier_extended.take();
         let special_register_admission = shard.special_registers.take();
         let debug_control_admission = shard.debug_control.take();
         let threadfence_admission = shard.threadfence.take();
@@ -620,6 +623,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact cluster-barrier admission must be the only content of its shard"
             );
             shard.intrinsics = expand_cluster_barrier_admission(&admission)?;
+        }
+        if let Some(admission) = mbarrier_extended_admission {
+            ensure!(
+                shard.family == "mbarrier_extended" && shard.intrinsics.is_empty(),
+                "compact extended-mbarrier admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_mbarrier_extended_admission(&admission)?;
         }
         if let Some(admission) = special_register_admission {
             ensure!(
@@ -762,6 +772,11 @@ fn validate_overlay_shard_schema_with_max(
         "compact CLC admission requires overlay shard schema {}",
         CLC_SHARD_SCHEMA
     );
+    ensure!(
+        shard.mbarrier_extended.is_none() || shard.schema >= MBARRIER_EXTENDED_SHARD_SCHEMA,
+        "compact extended-mbarrier admission requires overlay shard schema {}",
+        MBARRIER_EXTENDED_SHARD_SCHEMA
+    );
     Ok(())
 }
 
@@ -828,7 +843,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -844,6 +859,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.cp_async_mbarrier,
             record.mbarrier_basic,
             record.movmatrix,
+            record.mbarrier_extended,
             record.register_mma,
             record.sparse_mma,
             record.prmt,
@@ -1257,6 +1273,7 @@ fn validate_policy(
             declaration.context("mbarrier_basic requires imported LLVM declaration")?,
         )?,
         "movmatrix" => validate_movmatrix_policy(policy, source)?,
+        "mbarrier_extended" => validate_mbarrier_extended_policy(policy, source, declaration)?,
         "register_mma" => validate_register_mma_policy(
             policy,
             declaration.context("register_mma requires imported LLVM declaration")?,
@@ -1284,6 +1301,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "movmatrix") == policy.movmatrix.is_some(),
         "{} mixes the movmatrix contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "mbarrier_extended") == policy.mbarrier_extended.is_some(),
+        "{} mixes the extended-mbarrier contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1391,6 +1413,11 @@ fn validate_policy(
                     && policy.cluster_memory.is_some()
                     && policy.backend_lowerings.iter().all(|lowering| {
                         lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    }))
+                || (policy.family == "mbarrier_extended"
+                    && policy.mbarrier_extended.is_some()
+                    && policy.backend_lowerings.iter().all(|lowering| {
+                        lowering.mechanism == BackendLoweringMechanism::InlinePtx
                     })))
                 && policy.convergent
                 && !imported_convergent;
@@ -1462,6 +1489,20 @@ fn validate_policy(
             {
                 0
             }
+            "mbarrier_extended"
+                if policy.mbarrier_extended.as_ref().is_some_and(|mbarrier| {
+                    matches!(
+                        mbarrier.operation,
+                        MbarrierExtendedOperation::ArriveExpectTxCta
+                            | MbarrierExtendedOperation::ArriveExpectTxCluster
+                            | MbarrierExtendedOperation::TryWaitParityCta
+                            | MbarrierExtendedOperation::TryWaitParityCluster
+                    )
+                }) =>
+            {
+                0
+            }
+            "mbarrier_extended" if policy.id == "nanosleep" => 2,
             "cp_async_copy"
                 if policy
                     .cp_async_copy
@@ -1818,6 +1859,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -2271,6 +2313,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -4644,6 +4687,7 @@ fn expand_special_register_admission(
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -5272,6 +5316,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         cp_async_mbarrier: None,
         mbarrier_basic: None,
         movmatrix: None,
+        mbarrier_extended: None,
         register_mma: None,
         sparse_mma: None,
         prmt: None,
@@ -6197,6 +6242,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -8865,6 +8911,7 @@ fn packed_conversion_overlay_record(
         cp_async_mbarrier: None,
         mbarrier_basic: None,
         movmatrix: None,
+        mbarrier_extended: None,
         register_mma: None,
         sparse_mma: None,
         prmt: None,
@@ -10125,6 +10172,7 @@ fn expand_register_mma_integer_admission(
             cp_async_mbarrier: None,
             mbarrier_basic: None,
             movmatrix: None,
+            mbarrier_extended: None,
             register_mma: Some(mma),
             sparse_mma: None,
             prmt: None,
@@ -10305,6 +10353,7 @@ fn expand_register_mma_binary_admission(
             cp_async_mbarrier: None,
             mbarrier_basic: None,
             movmatrix: None,
+            mbarrier_extended: None,
             register_mma: Some(mma),
             sparse_mma: None,
             prmt: None,
@@ -10949,6 +10998,7 @@ fn sparse_mma_overlay_record(
         cp_async_mbarrier: None,
         mbarrier_basic: None,
         movmatrix: None,
+        mbarrier_extended: None,
         register_mma: None,
         sparse_mma: Some(mma),
         prmt: None,
@@ -11389,6 +11439,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: Some(Prmt {
@@ -11740,6 +11791,7 @@ fn expand_cluster_barrier_admission(
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -12102,6 +12154,7 @@ fn expand_debug_control_admission(
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -12613,6 +12666,7 @@ fn expand_cluster_memory_admission(
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -12771,6 +12825,814 @@ fn validate_cluster_memory_policy(
     Ok(())
 }
 
+#[derive(Clone)]
+struct MbarrierExtendedRecipe {
+    operation: MbarrierExtendedOperation,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: Option<&'static str>,
+    llvm_symbol: Option<&'static str>,
+    ptx_native_instruction: Option<&'static str>,
+    rust_arguments: &'static [&'static str],
+    rust_result: &'static str,
+    must_use: bool,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    dialect_results: &'static [&'static str],
+    llvm_arguments: &'static [&'static str],
+    llvm_results: &'static [&'static str],
+    llvm_properties: &'static [&'static str],
+    adapter: MbarrierExtendedAdapter,
+    source_contract: MbarrierExtendedSourceContract,
+    execution_scope: &'static str,
+    minimum_ptx: &'static str,
+    minimum_sm: &'static str,
+    ptx_result: &'static str,
+    expected_ptx: InstructionPattern,
+    inline_ptx: &'static str,
+    inline_constraints: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+    summary: &'static str,
+}
+
+fn mbarrier_extended_recipe(operation: MbarrierExtendedOperation) -> MbarrierExtendedRecipe {
+    let instruction = |modifiers: &[&str], operands| InstructionPattern {
+        mnemonic: if modifiers.first() == Some(&"nanosleep") {
+            "nanosleep".into()
+        } else if modifiers.first() == Some(&"fence") {
+            "fence".into()
+        } else {
+            "mbarrier".into()
+        },
+        modifiers: modifiers[1..].iter().map(|value| (*value).into()).collect(),
+        operands,
+    };
+    match operation {
+        MbarrierExtendedOperation::ArriveExpectTxCta => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0306",
+            id: "mbarrier_arrive_expect_tx",
+            operation_key: "barrier.mbarrier.arrive.expect_tx.shared.cta.release.cta",
+            source_record: Some("int_nvvm_mbarrier_arrive_expect_tx_scope_cta_space_cta"),
+            llvm_symbol: Some("llvm.nvvm.mbarrier.arrive.expect.tx.scope.cta.space.cta"),
+            ptx_native_instruction: None,
+            rust_arguments: &["*const u64", "u32", "u32"],
+            rust_result: "u64",
+            must_use: true,
+            dialect_op_type: "MbarrierArriveExpectTxSharedOp",
+            dialect_op_name: "nvvm.mbarrier_arrive_expect_tx_shared",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["i64"],
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &["i64"],
+            llvm_properties: &["IntrConvergent", "IntrNoCallback"],
+            adapter: MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cta",
+            minimum_ptx: "8.0",
+            minimum_sm: "sm_90",
+            ptx_result: "u64",
+            expected_ptx: instruction(
+                &[
+                    "mbarrier",
+                    "arrive",
+                    "expect_tx",
+                    "release",
+                    "cta",
+                    "shared::cta",
+                    "b64",
+                ],
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Address,
+                    OperandPattern::Register,
+                ],
+            ),
+            inline_ptx: "mbarrier.arrive.expect_tx.release.cta.shared::cta.b64 $0, [$1], $2;",
+            inline_constraints: "=l,l,r,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive",
+            summary: "Arrives at a CTA-shared barrier and adds expected transaction bytes.",
+        },
+        MbarrierExtendedOperation::ArriveExpectTxCluster => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0307",
+            id: "mbarrier_arrive_expect_tx_cluster",
+            operation_key: "barrier.mbarrier.arrive.expect_tx.shared.cta.relaxed.cluster",
+            source_record: Some(
+                "int_nvvm_mbarrier_arrive_expect_tx_relaxed_scope_cluster_space_cta",
+            ),
+            llvm_symbol: Some(
+                "llvm.nvvm.mbarrier.arrive.expect.tx.relaxed.scope.cluster.space.cta",
+            ),
+            ptx_native_instruction: None,
+            rust_arguments: &["*const u64", "u32", "u32"],
+            rust_result: "u64",
+            must_use: true,
+            dialect_op_type: "MbarrierArriveExpectTxClusterOp",
+            dialect_op_name: "nvvm.mbarrier_arrive_expect_tx_cluster",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["i64"],
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &["i64"],
+            llvm_properties: &["IntrArgMemOnly", "IntrConvergent", "IntrNoCallback"],
+            adapter: MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cluster",
+            minimum_ptx: "8.6",
+            minimum_sm: "sm_90",
+            ptx_result: "u64",
+            expected_ptx: instruction(
+                &[
+                    "mbarrier",
+                    "arrive",
+                    "expect_tx",
+                    "relaxed",
+                    "cluster",
+                    "shared::cta",
+                    "b64",
+                ],
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Address,
+                    OperandPattern::Register,
+                ],
+            ),
+            inline_ptx: "mbarrier.arrive.expect_tx.relaxed.cluster.shared::cta.b64 $0, [$1], $2;",
+            inline_constraints: "=l,l,r,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive",
+            summary: "Arrives at a CTA-shared barrier with cluster-scope transaction tracking.",
+        },
+        MbarrierExtendedOperation::ArriveRemoteCluster => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0308",
+            id: "mbarrier_arrive_cluster",
+            operation_key: "barrier.mbarrier.arrive.shared.cluster.release.cluster.raw_address",
+            source_record: None,
+            llvm_symbol: None,
+            ptx_native_instruction: Some("mbarrier.arrive.release.cluster.shared::cluster.b64"),
+            rust_arguments: &["u64"],
+            rust_result: "()",
+            must_use: false,
+            dialect_op_type: "MbarrierArriveClusterOp",
+            dialect_op_name: "nvvm.mbarrier_arrive_cluster",
+            dialect_operands: &["i64"],
+            dialect_results: &[],
+            llvm_arguments: &[],
+            llvm_results: &[],
+            llvm_properties: &[],
+            adapter: MbarrierExtendedAdapter::RawClusterAddressToVoid,
+            source_contract: MbarrierExtendedSourceContract::PtxNativeRawClusterAddress,
+            execution_scope: "cluster",
+            minimum_ptx: "8.0",
+            minimum_sm: "sm_90",
+            ptx_result: "()",
+            expected_ptx: instruction(
+                &[
+                    "mbarrier",
+                    "arrive",
+                    "release",
+                    "cluster",
+                    "shared::cluster",
+                    "b64",
+                ],
+                vec![
+                    OperandPattern::Exact { value: "_".into() },
+                    OperandPattern::Address,
+                ],
+            ),
+            inline_ptx: "mbarrier.arrive.release.cluster.shared::cluster.b64 _, [$0];",
+            inline_constraints: "l,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive",
+            summary: "Arrives at a remote cluster-shared barrier through its raw address.",
+        },
+        MbarrierExtendedOperation::TryWaitTokenCta => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0309",
+            id: "mbarrier_try_wait",
+            operation_key: "barrier.mbarrier.try_wait.shared.cta.token",
+            source_record: Some("int_nvvm_mbarrier_try_wait_scope_cta_space_cta"),
+            llvm_symbol: Some("llvm.nvvm.mbarrier.try.wait.scope.cta.space.cta"),
+            ptx_native_instruction: None,
+            rust_arguments: &["*const u64", "u64"],
+            rust_result: "bool",
+            must_use: true,
+            dialect_op_type: "MbarrierTryWaitSharedOp",
+            dialect_op_name: "nvvm.mbarrier_try_wait_shared",
+            dialect_operands: &["ptr", "i64"],
+            dialect_results: &["i1"],
+            llvm_arguments: &["shared_ptr", "i64"],
+            llvm_results: &["i1"],
+            llvm_properties: &["IntrConvergent", "IntrNoCallback", "NoCapture<arg0>"],
+            adapter: MbarrierExtendedAdapter::PointerTokenToPredicate,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cta",
+            minimum_ptx: "7.8",
+            minimum_sm: "sm_90",
+            ptx_result: "bool",
+            expected_ptx: instruction(
+                &["mbarrier", "try_wait", "shared", "b64"],
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Address,
+                    OperandPattern::Register,
+                ],
+            ),
+            inline_ptx: "{ .reg .pred %p0; mbarrier.try_wait.shared.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
+            inline_constraints: "=r,l,l,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait",
+            summary: "Tests a CTA-shared barrier token with a scheduling hint.",
+        },
+        MbarrierExtendedOperation::TryWaitParityCta => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0310",
+            id: "mbarrier_try_wait_parity",
+            operation_key: "barrier.mbarrier.try_wait.parity.shared.cta",
+            source_record: Some("int_nvvm_mbarrier_try_wait_parity_scope_cta_space_cta"),
+            llvm_symbol: Some("llvm.nvvm.mbarrier.try.wait.parity.scope.cta.space.cta"),
+            ptx_native_instruction: None,
+            rust_arguments: &["*const u64", "u32"],
+            rust_result: "bool",
+            must_use: true,
+            dialect_op_type: "MbarrierTryWaitParitySharedOp",
+            dialect_op_name: "nvvm.mbarrier_try_wait_parity_shared",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["i1"],
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &["i1"],
+            llvm_properties: &["IntrConvergent", "IntrNoCallback", "NoCapture<arg0>"],
+            adapter: MbarrierExtendedAdapter::PointerParityToPredicate,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cta",
+            minimum_ptx: "7.8",
+            minimum_sm: "sm_90",
+            ptx_result: "bool",
+            expected_ptx: instruction(
+                &["mbarrier", "try_wait", "parity", "shared::cta", "b64"],
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Address,
+                    OperandPattern::Register,
+                ],
+            ),
+            inline_ptx: "{ .reg .pred %p0; mbarrier.try_wait.parity.shared::cta.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
+            inline_constraints: "=r,l,r,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait",
+            summary: "Tests a CTA-shared barrier phase by parity.",
+        },
+        MbarrierExtendedOperation::TryWaitParityCluster => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0311",
+            id: "mbarrier_try_wait_parity_cluster",
+            operation_key: "barrier.mbarrier.try_wait.parity.shared.cta.acquire.cluster",
+            source_record: Some("int_nvvm_mbarrier_try_wait_parity_scope_cluster_space_cta"),
+            llvm_symbol: Some("llvm.nvvm.mbarrier.try.wait.parity.scope.cluster.space.cta"),
+            ptx_native_instruction: None,
+            rust_arguments: &["*const u64", "u32"],
+            rust_result: "bool",
+            must_use: true,
+            dialect_op_type: "MbarrierTryWaitParityClusterOp",
+            dialect_op_name: "nvvm.mbarrier_try_wait_parity_cluster",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["i1"],
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &["i1"],
+            llvm_properties: &["IntrConvergent", "IntrNoCallback", "NoCapture<arg0>"],
+            adapter: MbarrierExtendedAdapter::PointerParityToPredicate,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cluster",
+            minimum_ptx: "8.0",
+            minimum_sm: "sm_90",
+            ptx_result: "bool",
+            expected_ptx: instruction(
+                &[
+                    "mbarrier",
+                    "try_wait",
+                    "parity",
+                    "acquire",
+                    "cluster",
+                    "shared::cta",
+                    "b64",
+                ],
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Address,
+                    OperandPattern::Register,
+                ],
+            ),
+            inline_ptx: "{ .reg .pred %p0; mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
+            inline_constraints: "=r,l,r,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait",
+            summary: "Tests barrier parity with cluster-scope acquire ordering.",
+        },
+        MbarrierExtendedOperation::FenceProxyAsyncSharedCta => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0312",
+            id: "fence_proxy_async_shared_cta",
+            operation_key: "fence.proxy.async.shared.cta",
+            source_record: Some("int_nvvm_fence_proxy_async_shared_cta"),
+            llvm_symbol: Some("llvm.nvvm.fence.proxy.async.shared_cta"),
+            ptx_native_instruction: None,
+            rust_arguments: &[],
+            rust_result: "()",
+            must_use: false,
+            dialect_op_type: "FenceProxyAsyncSharedCtaOp",
+            dialect_op_name: "nvvm.fence_proxy_async_shared_cta",
+            dialect_operands: &[],
+            dialect_results: &[],
+            llvm_arguments: &[],
+            llvm_results: &[],
+            llvm_properties: &["IntrNoCallback"],
+            adapter: MbarrierExtendedAdapter::ZeroOperandsToVoid,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cta",
+            minimum_ptx: "8.0",
+            minimum_sm: "sm_90",
+            ptx_result: "()",
+            expected_ptx: instruction(&["fence", "proxy", "async", "shared::cta"], vec![]),
+            inline_ptx: "fence.proxy.async.shared::cta;",
+            inline_constraints: "~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: fence.proxy",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-proxy",
+            summary: "Makes CTA-shared generic-proxy writes visible to the async proxy.",
+        },
+        MbarrierExtendedOperation::FenceMbarrierInitReleaseCluster => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0313",
+            id: "fence_mbarrier_init_release_cluster",
+            operation_key: "fence.mbarrier_init.release.cluster",
+            source_record: Some("int_nvvm_fence_mbarrier_init_release_cluster"),
+            llvm_symbol: Some("llvm.nvvm.fence.mbarrier_init.release.cluster"),
+            ptx_native_instruction: None,
+            rust_arguments: &[],
+            rust_result: "()",
+            must_use: false,
+            dialect_op_type: "FenceMbarrierInitReleaseClusterOp",
+            dialect_op_name: "nvvm.fence_mbarrier_init_release_cluster",
+            dialect_operands: &[],
+            dialect_results: &[],
+            llvm_arguments: &[],
+            llvm_results: &[],
+            llvm_properties: &["IntrNoCallback"],
+            adapter: MbarrierExtendedAdapter::ZeroOperandsToVoid,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "cluster",
+            minimum_ptx: "8.0",
+            minimum_sm: "sm_90",
+            ptx_result: "()",
+            expected_ptx: instruction(&["fence", "mbarrier_init", "release", "cluster"], vec![]),
+            inline_ptx: "fence.mbarrier_init.release.cluster;",
+            inline_constraints: "~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: fence.mbarrier_init",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-mbarrier-init",
+            summary: "Releases mbarrier initialization at cluster scope.",
+        },
+        MbarrierExtendedOperation::FenceProxyAsyncGenericReleaseSharedCtaCluster => {
+            MbarrierExtendedRecipe {
+                operation,
+                abi_id: "i0314",
+                id: "fence_proxy_async_generic_release_shared_cta_cluster",
+                operation_key: "fence.proxy.async_generic.release.sync_restrict.shared_cta.cluster",
+                source_record: Some(
+                    "int_nvvm_fence_proxy_async_generic_release_sync_restrict_space_cta_scope_cluster",
+                ),
+                llvm_symbol: Some(
+                    "llvm.nvvm.fence.proxy.async_generic.release.sync_restrict.space.cta.scope.cluster",
+                ),
+                ptx_native_instruction: None,
+                rust_arguments: &[],
+                rust_result: "()",
+                must_use: false,
+                dialect_op_type: "FenceProxyAsyncGenericReleaseSharedCtaClusterOp",
+                dialect_op_name: "nvvm.fence_proxy_async_generic_release_shared_cta_cluster",
+                dialect_operands: &[],
+                dialect_results: &[],
+                llvm_arguments: &[],
+                llvm_results: &[],
+                llvm_properties: &["IntrNoCallback"],
+                adapter: MbarrierExtendedAdapter::ZeroOperandsToVoid,
+                source_contract: MbarrierExtendedSourceContract::LlvmImported,
+                execution_scope: "cluster",
+                minimum_ptx: "8.6",
+                minimum_sm: "sm_90",
+                ptx_result: "()",
+                expected_ptx: instruction(
+                    &[
+                        "fence",
+                        "proxy",
+                        "async::generic",
+                        "release",
+                        "sync_restrict::shared::cta",
+                        "cluster",
+                    ],
+                    vec![],
+                ),
+                inline_ptx: "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;",
+                inline_constraints: "~{memory}",
+                ptx_isa_section: "Parallel Synchronization and Communication Instructions: fence.proxy",
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-proxy",
+                summary: "Releases CTA-shared generic-proxy writes to the async proxy at cluster scope.",
+            }
+        }
+        MbarrierExtendedOperation::FenceProxyAsyncGenericAcquireSharedClusterCluster => {
+            MbarrierExtendedRecipe {
+                operation,
+                abi_id: "i0315",
+                id: "fence_proxy_async_generic_acquire_shared_cluster_cluster",
+                operation_key: "fence.proxy.async_generic.acquire.sync_restrict.shared_cluster.cluster",
+                source_record: Some(
+                    "int_nvvm_fence_proxy_async_generic_acquire_sync_restrict_space_cluster_scope_cluster",
+                ),
+                llvm_symbol: Some(
+                    "llvm.nvvm.fence.proxy.async_generic.acquire.sync_restrict.space.cluster.scope.cluster",
+                ),
+                ptx_native_instruction: None,
+                rust_arguments: &[],
+                rust_result: "()",
+                must_use: false,
+                dialect_op_type: "FenceProxyAsyncGenericAcquireSharedClusterClusterOp",
+                dialect_op_name: "nvvm.fence_proxy_async_generic_acquire_shared_cluster_cluster",
+                dialect_operands: &[],
+                dialect_results: &[],
+                llvm_arguments: &[],
+                llvm_results: &[],
+                llvm_properties: &["IntrNoCallback"],
+                adapter: MbarrierExtendedAdapter::ZeroOperandsToVoid,
+                source_contract: MbarrierExtendedSourceContract::LlvmImported,
+                execution_scope: "cluster",
+                minimum_ptx: "8.6",
+                minimum_sm: "sm_90",
+                ptx_result: "()",
+                expected_ptx: instruction(
+                    &[
+                        "fence",
+                        "proxy",
+                        "async::generic",
+                        "acquire",
+                        "sync_restrict::shared::cluster",
+                        "cluster",
+                    ],
+                    vec![],
+                ),
+                inline_ptx: "fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;",
+                inline_constraints: "~{memory}",
+                ptx_isa_section: "Parallel Synchronization and Communication Instructions: fence.proxy",
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-proxy",
+                summary: "Acquires cluster-shared async-proxy writes through the generic proxy.",
+            }
+        }
+        MbarrierExtendedOperation::Nanosleep => MbarrierExtendedRecipe {
+            operation,
+            abi_id: "i0316",
+            id: "nanosleep",
+            operation_key: "thread.nanosleep.u32",
+            source_record: Some("int_nvvm_nanosleep"),
+            llvm_symbol: Some("llvm.nvvm.nanosleep"),
+            ptx_native_instruction: None,
+            rust_arguments: &["u32"],
+            rust_result: "()",
+            must_use: false,
+            dialect_op_type: "NanosleepOp",
+            dialect_op_name: "nvvm.nanosleep",
+            dialect_operands: &["i32"],
+            dialect_results: &[],
+            llvm_arguments: &["i32"],
+            llvm_results: &[],
+            llvm_properties: &["IntrConvergent", "IntrHasSideEffects", "IntrNoMem"],
+            adapter: MbarrierExtendedAdapter::NanosecondsToVoid,
+            source_contract: MbarrierExtendedSourceContract::LlvmImported,
+            execution_scope: "thread",
+            minimum_ptx: "6.3",
+            minimum_sm: "sm_70",
+            ptx_result: "()",
+            expected_ptx: instruction(
+                &["nanosleep", "u32"],
+                vec![OperandPattern::RegisterOrImmediate],
+            ),
+            inline_ptx: "nanosleep.u32 $0;",
+            inline_constraints: "r,~{memory}",
+            ptx_isa_section: "Parallel Synchronization and Communication Instructions: nanosleep",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-nanosleep",
+            summary: "Suspends the executing thread for approximately the requested nanoseconds.",
+        },
+    }
+}
+
+pub(crate) fn mbarrier_extended_inline_recipe(
+    operation: MbarrierExtendedOperation,
+) -> (&'static str, &'static str) {
+    let recipe = mbarrier_extended_recipe(operation);
+    (recipe.inline_ptx, recipe.inline_constraints)
+}
+
+fn mbarrier_extended_backend_floor(
+    operation: MbarrierExtendedOperation,
+    backend: IntrinsicBackend,
+) -> (&'static str, &'static str) {
+    let recipe = mbarrier_extended_recipe(operation);
+    match (operation, backend) {
+        (MbarrierExtendedOperation::Nanosleep, IntrinsicBackend::LibNvvm) => ("6.3", "sm_75"),
+        _ => (recipe.minimum_ptx, recipe.minimum_sm),
+    }
+}
+
+fn expand_mbarrier_extended_admission(
+    admission: &MbarrierExtendedAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "extended-mbarrier runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact extended-mbarrier admission requires both backend evidence profiles"
+    );
+    let expected_operations = BTreeSet::from([
+        MbarrierExtendedOperation::ArriveExpectTxCta,
+        MbarrierExtendedOperation::ArriveExpectTxCluster,
+        MbarrierExtendedOperation::ArriveRemoteCluster,
+        MbarrierExtendedOperation::TryWaitTokenCta,
+        MbarrierExtendedOperation::TryWaitParityCta,
+        MbarrierExtendedOperation::TryWaitParityCluster,
+        MbarrierExtendedOperation::FenceProxyAsyncSharedCta,
+        MbarrierExtendedOperation::FenceMbarrierInitReleaseCluster,
+        MbarrierExtendedOperation::FenceProxyAsyncGenericReleaseSharedCtaCluster,
+        MbarrierExtendedOperation::FenceProxyAsyncGenericAcquireSharedClusterCluster,
+        MbarrierExtendedOperation::Nanosleep,
+    ]);
+    let actual_operations = admission
+        .variants
+        .iter()
+        .map(|variant| variant.operation)
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        admission.variants.len() == expected_operations.len()
+            && actual_operations == expected_operations,
+        "compact extended-mbarrier admission must contain each reviewed operation exactly once"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = mbarrier_extended_recipe(variant.operation);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let source =
+                recipe
+                    .ptx_native_instruction
+                    .map(|instruction| IntrinsicSource::PtxNative {
+                        instruction: instruction.into(),
+                    });
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "mbarrier_extended".into(),
+                source,
+                source_record: recipe.source_record.map(str::to_owned),
+                rust_module: "barrier".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: recipe
+                    .rust_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                rust_result: recipe.rust_result.into(),
+                safe: false,
+                must_use: recipe.must_use,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::barrier::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::barrier::{}", recipe.id)],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: recipe
+                    .dialect_operands
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                dialect_results: recipe
+                    .dialect_results
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                llvm_symbol: recipe.llvm_symbol.map(str::to_owned),
+                resolved_llvm_symbol: None,
+                llvm_arguments: recipe
+                    .llvm_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                llvm_results: recipe
+                    .llvm_results
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                pure: false,
+                memory: "read_write".into(),
+                convergent: true,
+                execution_scope: recipe.execution_scope.into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: Some(recipe.minimum_sm.into()),
+                ptx_result: recipe.ptx_result.into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: recipe.ptx_isa_section.into(),
+                ptx_isa_url: recipe.ptx_isa_url.into(),
+                lowering: "generated_mbarrier_extended_inline_ptx".into(),
+                backend_lowerings: [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm]
+                    .into_iter()
+                    .map(|backend| {
+                        let (minimum_ptx, minimum_sm) =
+                            mbarrier_extended_backend_floor(recipe.operation, backend);
+                        OverlayBackendLowering {
+                            backend,
+                            mechanism: BackendLoweringMechanism::InlinePtx,
+                            evidence_profile: match backend {
+                                IntrinsicBackend::LlvmNvptx => {
+                                    admission.llvm_evidence_profile.clone()
+                                }
+                                IntrinsicBackend::LibNvvm => {
+                                    admission.libnvvm_evidence_profile.clone()
+                                }
+                            },
+                            minimum_ptx: Some(minimum_ptx.into()),
+                            minimum_sm: Some(minimum_sm.into()),
+                        }
+                    })
+                    .collect(),
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                mbarrier_extended: Some(MbarrierExtended {
+                    operation: recipe.operation,
+                    adapter: recipe.adapter,
+                    source_contract: recipe.source_contract,
+                    runtime_validation: admission.runtime_validation,
+                }),
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: None,
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: recipe.expected_ptx,
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_mbarrier_extended_policy(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+    declaration: Option<&ImportedIntrinsic>,
+) -> Result<()> {
+    let contract = policy
+        .mbarrier_extended
+        .as_ref()
+        .with_context(|| format!("{} has no closed extended-mbarrier contract", policy.id))?;
+    let recipe = mbarrier_extended_recipe(contract.operation);
+    ensure!(
+        contract.adapter == recipe.adapter
+            && contract.source_contract == recipe.source_contract
+            && policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key,
+        "{} identity or adapter does not match its closed extended-mbarrier recipe",
+        policy.id
+    );
+    match recipe.source_contract {
+        MbarrierExtendedSourceContract::LlvmImported => ensure!(
+            matches!(
+                source,
+                IntrinsicSource::LlvmImported { source_record }
+                    if Some(source_record.as_str()) == recipe.source_record
+            ) && policy.source.is_none()
+                && policy.source_record.as_deref() == recipe.source_record
+                && policy.llvm_symbol.as_deref() == recipe.llvm_symbol
+                && declaration.is_some_and(|record| {
+                    record.source_record == recipe.source_record.unwrap()
+                        && record.properties == recipe.llvm_properties
+                }),
+            "{} LLVM source contract changed",
+            policy.id
+        ),
+        MbarrierExtendedSourceContract::PtxNativeRawClusterAddress => ensure!(
+            matches!(
+                source,
+                IntrinsicSource::PtxNative { instruction }
+                    if Some(instruction.as_str()) == recipe.ptx_native_instruction
+            ) && policy.source_record.is_none()
+                && policy.llvm_symbol.is_none()
+                && declaration.is_none(),
+            "{} must remain the PTX-native raw-cluster-address carrier",
+            policy.id
+        ),
+    }
+    ensure!(
+        policy.rust_module == "barrier"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == recipe.rust_result
+            && !policy.safe
+            && policy.must_use == recipe.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::barrier::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::barrier::{}", recipe.id)],
+        "{} Rust API does not match its closed extended-mbarrier recipe",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results == recipe.dialect_results
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results == recipe.llvm_results
+            && policy.lowering == "generated_mbarrier_extended_inline_ptx",
+        "{} carrier or lowering does not match its closed extended-mbarrier recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == recipe.execution_scope,
+        "{} convergence, memory clobber, or execution scope changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
+            && policy.ptx_result == recipe.ptx_result
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url,
+        "{} target floor or PTX provenance changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx == recipe.expected_ptx,
+        "{} expected PTX does not match its closed extended-mbarrier recipe",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (
+                IntrinsicBackend::LlvmNvptx,
+                mbarrier_extended_backend_floor(recipe.operation, IntrinsicBackend::LlvmNvptx).0,
+                Some(
+                    mbarrier_extended_backend_floor(recipe.operation, IntrinsicBackend::LlvmNvptx)
+                        .1,
+                ),
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                mbarrier_extended_backend_floor(recipe.operation, IntrinsicBackend::LibNvvm).0,
+                Some(
+                    mbarrier_extended_backend_floor(recipe.operation, IntrinsicBackend::LibNvvm).1,
+                ),
+            ),
+        ],
+        "extended-mbarrier",
+    )?;
+    ensure_no_other_family_contract(policy, "extended mbarrier")?;
+    Ok(())
+}
+
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
     requirements: [(IntrinsicBackend, &str, Option<&str>); 2],
@@ -12900,6 +13762,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
             && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some()
             && (policy.family == "movmatrix") == policy.movmatrix.is_some()
+            && (policy.family == "mbarrier_extended") == policy.mbarrier_extended.is_some()
             && (policy.family == "register_mma") == policy.register_mma.is_some()
             && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
             && (policy.family == "prmt") == policy.prmt.is_some()
@@ -14275,6 +15138,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(mbarrier) = &policy.mbarrier_extended {
+        match mbarrier.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} extended-mbarrier runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} extended-mbarrier runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     if let Some(bridge) = &policy.cp_async_mbarrier {
         match bridge.runtime_validation {
             RuntimeValidation::Unexecuted => ensure!(
@@ -14509,6 +15388,7 @@ fn materialize_record(
         cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
         mbarrier_basic: policy.mbarrier_basic.clone(),
         movmatrix: policy.movmatrix.clone(),
+        mbarrier_extended: policy.mbarrier_extended.clone(),
         register_mma: policy.register_mma.clone(),
         sparse_mma: policy.sparse_mma.clone(),
         prmt: policy.prmt.clone(),
@@ -14634,6 +15514,7 @@ mod tests {
             cp_async_mbarrier: None,
             mbarrier_basic: None,
             movmatrix: None,
+            mbarrier_extended: None,
             register_mma: None,
             sparse_mma: None,
             prmt: None,
@@ -16077,8 +16958,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 41);
-        assert_eq!(overlay.intrinsics.len(), 305);
+        assert_eq!(overlay.shards.len(), 42);
+        assert_eq!(overlay.intrinsics.len(), 316);
         assert_eq!(
             overlay
                 .intrinsics
@@ -16442,6 +17323,33 @@ mod tests {
         }
     }
 
+    fn test_mbarrier_extended_admission() -> MbarrierExtendedAdmission {
+        let variants = [
+            MbarrierExtendedOperation::ArriveExpectTxCta,
+            MbarrierExtendedOperation::ArriveExpectTxCluster,
+            MbarrierExtendedOperation::ArriveRemoteCluster,
+            MbarrierExtendedOperation::TryWaitTokenCta,
+            MbarrierExtendedOperation::TryWaitParityCta,
+            MbarrierExtendedOperation::TryWaitParityCluster,
+            MbarrierExtendedOperation::FenceProxyAsyncSharedCta,
+            MbarrierExtendedOperation::FenceMbarrierInitReleaseCluster,
+            MbarrierExtendedOperation::FenceProxyAsyncGenericReleaseSharedCtaCluster,
+            MbarrierExtendedOperation::FenceProxyAsyncGenericAcquireSharedClusterCluster,
+            MbarrierExtendedOperation::Nanosleep,
+        ]
+        .map(|operation| crate::model::MbarrierExtendedAdmissionVariant {
+            abi_id: mbarrier_extended_recipe(operation).abi_id.into(),
+            operation,
+        })
+        .into();
+        MbarrierExtendedAdmission {
+            llvm_evidence_profile: "llvm-test".into(),
+            libnvvm_evidence_profile: "libnvvm-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants,
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -16457,6 +17365,7 @@ mod tests {
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: None,
             threadfence: None,
@@ -16529,6 +17438,7 @@ mod tests {
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: None,
             threadfence: None,
@@ -16558,6 +17468,7 @@ mod tests {
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: Some(test_cluster_barrier_admission()),
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: None,
             threadfence: None,
@@ -16573,6 +17484,46 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("requires overlay shard schema 31")
+        );
+
+        let extended_shard = OverlayShardFile {
+            schema: MBARRIER_EXTENDED_SHARD_SCHEMA,
+            family: "mbarrier_extended".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            mbarrier_extended: Some(test_mbarrier_extended_admission()),
+            special_registers: None,
+            debug_control: None,
+            threadfence: None,
+            cluster_memory: None,
+            stmatrix: None,
+            clc: None,
+        };
+        validate_overlay_shard_schema_with_max(
+            &extended_shard,
+            path,
+            MBARRIER_EXTENDED_SHARD_SCHEMA,
+        )
+        .unwrap();
+        let mut old_extended_shard = extended_shard;
+        old_extended_shard.schema = MBARRIER_EXTENDED_SHARD_SCHEMA - 1;
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &old_extended_shard,
+                path,
+                MBARRIER_EXTENDED_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 40")
         );
     }
 
@@ -16779,6 +17730,7 @@ record_count = 14
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: Some(admission.clone()),
             debug_control: None,
             threadfence: None,
@@ -17402,6 +18354,7 @@ scope = "system"
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: None,
             threadfence: None,
@@ -17439,6 +18392,7 @@ scope = "system"
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: Some(test_debug_control_admission()),
             threadfence: None,
@@ -17472,6 +18426,7 @@ scope = "system"
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: None,
             threadfence: None,
@@ -17695,6 +18650,115 @@ scope = "system"
         let mut wrong_abi = test_cluster_barrier_admission();
         wrong_abi.variants[0].abi_id = "i9999".into();
         assert!(expand_cluster_barrier_admission(&wrong_abi).is_err());
+    }
+
+    #[test]
+    fn compact_extended_mbarrier_admission_preserves_all_manual_contracts() {
+        let records =
+            expand_mbarrier_extended_admission(&test_mbarrier_extended_admission()).unwrap();
+        assert_eq!(records.len(), 11);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.abi_id.as_str())
+                .collect::<Vec<_>>(),
+            (306..=316)
+                .map(|id| format!("i{id:04}"))
+                .collect::<Vec<_>>()
+        );
+
+        let imported: ImportedFile = read_json(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("intrinsics/imported.json"),
+        )
+        .unwrap();
+        for record in &records {
+            let contract = record.mbarrier_extended.as_ref().unwrap();
+            let (template, constraints) = mbarrier_extended_inline_recipe(contract.operation);
+            assert!(template.ends_with(';') || template.ends_with("; }"));
+            assert!(constraints.contains("~{memory}"));
+            assert!(record.convergent && record.memory == "read_write");
+            assert!(
+                record
+                    .backend_lowerings
+                    .iter()
+                    .all(|lowering| { lowering.mechanism == BackendLoweringMechanism::InlinePtx })
+            );
+            match contract.source_contract {
+                MbarrierExtendedSourceContract::LlvmImported => {
+                    let declaration = imported
+                        .intrinsics
+                        .iter()
+                        .find(|declaration| {
+                            Some(declaration.source_record.as_str())
+                                == record.source_record.as_deref()
+                        })
+                        .unwrap();
+                    validate_imported_policy(record, declaration).unwrap();
+                }
+                MbarrierExtendedSourceContract::PtxNativeRawClusterAddress => {
+                    validate_ptx_native_policy(record).unwrap();
+                    assert_eq!(record.rust_arguments, ["u64"]);
+                    assert_eq!(record.dialect_operands, ["i64"]);
+                }
+            }
+        }
+
+        let base = records
+            .iter()
+            .find(|record| record.id == "mbarrier_arrive_expect_tx")
+            .unwrap();
+        let declaration = imported
+            .intrinsics
+            .iter()
+            .find(|declaration| {
+                Some(declaration.source_record.as_str()) == base.source_record.as_deref()
+            })
+            .unwrap();
+        let mut wrong_adapter = base.clone();
+        wrong_adapter.mbarrier_extended.as_mut().unwrap().adapter =
+            MbarrierExtendedAdapter::PointerTokenToPredicate;
+        assert!(validate_imported_policy(&wrong_adapter, declaration).is_err());
+        let mut wrong_floor = base.clone();
+        wrong_floor.minimum_ptx = "8.6".into();
+        assert!(validate_imported_policy(&wrong_floor, declaration).is_err());
+        let mut lost_clobber = base.clone();
+        lost_clobber.memory = "none".into();
+        assert!(validate_imported_policy(&lost_clobber, declaration).is_err());
+
+        let remote = records
+            .iter()
+            .find(|record| record.id == "mbarrier_arrive_cluster")
+            .unwrap();
+        let incompatible = imported
+            .intrinsics
+            .iter()
+            .find(|declaration| {
+                declaration.source_record == "int_nvvm_mbarrier_arrive_scope_cluster_space_cluster"
+            })
+            .unwrap();
+        assert_eq!(incompatible.arguments, ["shared_cluster_ptr", "i32"]);
+        assert!(
+            validate_mbarrier_extended_policy(
+                remote,
+                &IntrinsicSource::LlvmImported {
+                    source_record: incompatible.source_record.clone(),
+                },
+                Some(incompatible),
+            )
+            .is_err()
+        );
+
+        let mut missing = test_mbarrier_extended_admission();
+        missing.variants.pop();
+        assert!(expand_mbarrier_extended_admission(&missing).is_err());
+        let mut duplicate = test_mbarrier_extended_admission();
+        duplicate.variants[10].operation = MbarrierExtendedOperation::ArriveExpectTxCta;
+        assert!(expand_mbarrier_extended_admission(&duplicate).is_err());
+        let mut wrong_abi = test_mbarrier_extended_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_mbarrier_extended_admission(&wrong_abi).is_err());
     }
 
     #[test]

@@ -2142,3 +2142,80 @@ status = "active"
 catalog_id = "movmatrix_trans_b16"
 operation_key = "movmatrix.m8n8.trans.b16"
 raw_rust_signature = { safe = false, arguments = ["u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0306"
+status = "active"
+catalog_id = "mbarrier_arrive_expect_tx"
+operation_key = "barrier.mbarrier.arrive.expect_tx.shared.cta.release.cta"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u32", "u32"], result = "u64" }
+
+[[entry]]
+abi_id = "i0307"
+status = "active"
+catalog_id = "mbarrier_arrive_expect_tx_cluster"
+operation_key = "barrier.mbarrier.arrive.expect_tx.shared.cta.relaxed.cluster"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u32", "u32"], result = "u64" }
+
+[[entry]]
+abi_id = "i0308"
+status = "active"
+catalog_id = "mbarrier_arrive_cluster"
+operation_key = "barrier.mbarrier.arrive.shared.cluster.release.cluster.raw_address"
+raw_rust_signature = { safe = false, arguments = ["u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0309"
+status = "active"
+catalog_id = "mbarrier_try_wait"
+operation_key = "barrier.mbarrier.try_wait.shared.cta.token"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u64"], result = "bool" }
+
+[[entry]]
+abi_id = "i0310"
+status = "active"
+catalog_id = "mbarrier_try_wait_parity"
+operation_key = "barrier.mbarrier.try_wait.parity.shared.cta"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u32"], result = "bool" }
+
+[[entry]]
+abi_id = "i0311"
+status = "active"
+catalog_id = "mbarrier_try_wait_parity_cluster"
+operation_key = "barrier.mbarrier.try_wait.parity.shared.cta.acquire.cluster"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u32"], result = "bool" }
+
+[[entry]]
+abi_id = "i0312"
+status = "active"
+catalog_id = "fence_proxy_async_shared_cta"
+operation_key = "fence.proxy.async.shared.cta"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0313"
+status = "active"
+catalog_id = "fence_mbarrier_init_release_cluster"
+operation_key = "fence.mbarrier_init.release.cluster"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0314"
+status = "active"
+catalog_id = "fence_proxy_async_generic_release_shared_cta_cluster"
+operation_key = "fence.proxy.async_generic.release.sync_restrict.shared_cta.cluster"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0315"
+status = "active"
+catalog_id = "fence_proxy_async_generic_acquire_shared_cluster_cluster"
+operation_key = "fence.proxy.async_generic.acquire.sync_restrict.shared_cluster.cluster"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0316"
+status = "active"
+catalog_id = "nanosleep"
+operation_key = "thread.nanosleep.u32"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }

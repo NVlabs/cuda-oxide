@@ -11,14 +11,15 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "6e68ac56fe7386e37aec266fa91396afcdcdefb9fa73b4024d837bc8bc0592bb",
-    "abi_ledger_sha256": "83caf98a604381944fb9535cef36bd127281b034d3e5aacc1fec8f66da74fae6",
+    "overlay_sha256": "ca1bff6373094ea03c152750b2e2e4333b67b6e3e466aa617296b7ac6480e913",
+    "abi_ledger_sha256": "70167818ddd0357595c54b45b77a3cfde2ae5fac0c479088affb692dc0e4c5f2",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-debug-control.json:184227ee2b4791011f563f597d8f6fb2393430b327a72c758c34ceec44c9469b",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
+      "cuda-13.3-libnvvm-13.3.33-mbarrier-extended.json:3e01efcd940547e514dcc750aa5fb83fd59cc53f8d2b888788044bcefc1152cd",
       "cuda-13.3-libnvvm-13.3.33-movmatrix.json:4063d72012f78cc980a2d8d7a2f7f888e1ebc5bee41ccf4969ab6f5077cf2d87",
       "cuda-13.3-libnvvm-13.3.33-packed-conversion-fp8.json:167358662f1512c6ca7dba1080140834a22f5e122ae5e8db87fe8e19ff05ad9b",
       "cuda-13.3-libnvvm-13.3.33-prmt.json:e06d8b99575304ab780b58f665babfb7d24dfd2f57e1a9b5eac420208022520c",
@@ -46,6 +47,7 @@
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-debug-control.json:eaee9dadc7aa4d82eae6fe1d4a557cddc6cadc770de670dd9be3c16c6478bc48",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
+      "rust-llvm-22.1.2-1cb4e383-mbarrier-extended.json:120f506b5f7e3419120c4cac99e3a8761ee2a9745c71abb3ba82c5df6952c829",
       "rust-llvm-22.1.2-1cb4e383-packed-conversion-fp8.json:7badda2f91c5c81f7ad375517b3b4d86ac0b6ad373c711d77584606273536693",
       "rust-llvm-22.1.2-1cb4e383-prmt.json:0db77388fb2d4d724a89e800d6c3d2451a9907d09509f8e4d102410bd8b56af6",
       "rust-llvm-22.1.2-1cb4e383-register-mma-b1.json:4c0b0a1a42db6f8b563e87b9d7f405ea9714a0ff48919cec1514ab0c0aa8b5eb",
@@ -14263,6 +14265,854 @@
       "summary": "Reads PTX environment register 2."
     },
     {
+      "id": "fence_mbarrier_init_release_cluster",
+      "operation_key": "fence.mbarrier_init.release.cluster",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fence_mbarrier_init_release_cluster"
+      },
+      "selections": [
+        {
+          "source_record": "INT_FENCE_MBARRIER_INIT_RELEASE_CLUSTER",
+          "asm": "fence.mbarrier_init.release.cluster;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0313",
+        "module": "barrier",
+        "name": "fence_mbarrier_init_release_cluster",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0313",
+        "public_path": "cuda_intrinsics::barrier::fence_mbarrier_init_release_cluster",
+        "compatibility_paths": [
+          "cuda_device::barrier::fence_mbarrier_init_release_cluster"
+        ]
+      },
+      "dialect": {
+        "op_type": "FenceMbarrierInitReleaseClusterOp",
+        "op_name": "nvvm.fence_mbarrier_init_release_cluster",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fence.mbarrier_init.release.cluster",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: fence.mbarrier_init",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-mbarrier-init"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact mbarrier or fence instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX 8.0 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "fence_mbarrier_init_release_cluster",
+        "adapter": "zero_operands_to_void",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fence",
+        "modifiers": [
+          "mbarrier_init",
+          "release",
+          "cluster"
+        ],
+        "operands": []
+      },
+      "summary": "Releases mbarrier initialization at cluster scope."
+    },
+    {
+      "id": "fence_proxy_async_generic_acquire_shared_cluster_cluster",
+      "operation_key": "fence.proxy.async_generic.acquire.sync_restrict.shared_cluster.cluster",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fence_proxy_async_generic_acquire_sync_restrict_space_cluster_scope_cluster"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_FENCE_PROXY_ASYNC_GENERIC_ACQUIRE_SYNC_RESTRICT_SPACE_CLUSTER_SCOPE_CLUSTER",
+          "asm": "fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 86"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0315",
+        "module": "barrier",
+        "name": "fence_proxy_async_generic_acquire_shared_cluster_cluster",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0315",
+        "public_path": "cuda_intrinsics::barrier::fence_proxy_async_generic_acquire_shared_cluster_cluster",
+        "compatibility_paths": [
+          "cuda_device::barrier::fence_proxy_async_generic_acquire_shared_cluster_cluster"
+        ]
+      },
+      "dialect": {
+        "op_type": "FenceProxyAsyncGenericAcquireSharedClusterClusterOp",
+        "op_name": "nvvm.fence_proxy_async_generic_acquire_shared_cluster_cluster",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fence.proxy.async_generic.acquire.sync_restrict.space.cluster.scope.cluster",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: fence.proxy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-proxy"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx86"
+              ],
+              "representation": "generated cluster-scope inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact cluster-scope instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx86"
+              ],
+              "representation": "LLVM-produced PTX 8.6 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "fence_proxy_async_generic_acquire_shared_cluster_cluster",
+        "adapter": "zero_operands_to_void",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fence",
+        "modifiers": [
+          "proxy",
+          "async::generic",
+          "acquire",
+          "sync_restrict::shared::cluster",
+          "cluster"
+        ],
+        "operands": []
+      },
+      "summary": "Acquires cluster-shared async-proxy writes through the generic proxy."
+    },
+    {
+      "id": "fence_proxy_async_generic_release_shared_cta_cluster",
+      "operation_key": "fence.proxy.async_generic.release.sync_restrict.shared_cta.cluster",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fence_proxy_async_generic_release_sync_restrict_space_cta_scope_cluster"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_FENCE_PROXY_ASYNC_GENERIC_RELEASE_SYNC_RESTRICT_SPACE_CTA_SCOPE_CLUSTER",
+          "asm": "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 86"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0314",
+        "module": "barrier",
+        "name": "fence_proxy_async_generic_release_shared_cta_cluster",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0314",
+        "public_path": "cuda_intrinsics::barrier::fence_proxy_async_generic_release_shared_cta_cluster",
+        "compatibility_paths": [
+          "cuda_device::barrier::fence_proxy_async_generic_release_shared_cta_cluster"
+        ]
+      },
+      "dialect": {
+        "op_type": "FenceProxyAsyncGenericReleaseSharedCtaClusterOp",
+        "op_name": "nvvm.fence_proxy_async_generic_release_shared_cta_cluster",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fence.proxy.async_generic.release.sync_restrict.space.cta.scope.cluster",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: fence.proxy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-proxy"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx86"
+              ],
+              "representation": "generated cluster-scope inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact cluster-scope instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx86"
+              ],
+              "representation": "LLVM-produced PTX 8.6 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "fence_proxy_async_generic_release_shared_cta_cluster",
+        "adapter": "zero_operands_to_void",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fence",
+        "modifiers": [
+          "proxy",
+          "async::generic",
+          "release",
+          "sync_restrict::shared::cta",
+          "cluster"
+        ],
+        "operands": []
+      },
+      "summary": "Releases CTA-shared generic-proxy writes to the async proxy at cluster scope."
+    },
+    {
+      "id": "fence_proxy_async_shared_cta",
+      "operation_key": "fence.proxy.async.shared.cta",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fence_proxy_async_shared_cta"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15048",
+          "asm": "fence.proxy.async.shared::cta;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0312",
+        "module": "barrier",
+        "name": "fence_proxy_async_shared_cta",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0312",
+        "public_path": "cuda_intrinsics::barrier::fence_proxy_async_shared_cta",
+        "compatibility_paths": [
+          "cuda_device::barrier::fence_proxy_async_shared_cta"
+        ]
+      },
+      "dialect": {
+        "op_type": "FenceProxyAsyncSharedCtaOp",
+        "op_name": "nvvm.fence_proxy_async_shared_cta",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fence.proxy.async.shared_cta",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: fence.proxy",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-fence-proxy"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact mbarrier or fence instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX 8.0 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "fence_proxy_async_shared_cta",
+        "adapter": "zero_operands_to_void",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fence",
+        "modifiers": [
+          "proxy",
+          "async",
+          "shared::cta"
+        ],
+        "operands": []
+      },
+      "summary": "Makes CTA-shared generic-proxy writes visible to the async proxy."
+    },
+    {
       "id": "fma_bf16x2",
       "operation_key": "packed.alu.bf16x2.fma",
       "family": "packed_alu",
@@ -19589,6 +20439,671 @@
       "summary": "Arrives at a CTA shared-memory barrier and returns its phase token."
     },
     {
+      "id": "mbarrier_arrive_cluster",
+      "operation_key": "barrier.mbarrier.arrive.shared.cluster.release.cluster.raw_address",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mbarrier.arrive.release.cluster.shared::cluster.b64"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0308",
+        "module": "barrier",
+        "name": "mbarrier_arrive_cluster",
+        "arguments": [
+          "u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0308",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_arrive_cluster",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_arrive_cluster"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierArriveClusterOp",
+        "op_name": "nvvm.mbarrier_arrive_cluster",
+        "operands": [
+          "i64"
+        ],
+        "results": []
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact mbarrier or fence instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX 8.0 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "arrive_remote_cluster",
+        "adapter": "raw_cluster_address_to_void",
+        "source_contract": "ptx_native_raw_cluster_address",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "arrive",
+          "release",
+          "cluster",
+          "shared::cluster",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "exact",
+            "value": "_"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Arrives at a remote cluster-shared barrier through its raw address."
+    },
+    {
+      "id": "mbarrier_arrive_expect_tx",
+      "operation_key": "barrier.mbarrier.arrive.expect_tx.shared.cta.release.cta",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mbarrier_arrive_expect_tx_scope_cta_space_cta"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0306",
+        "module": "barrier",
+        "name": "mbarrier_arrive_expect_tx",
+        "arguments": [
+          "*const u64",
+          "u32",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0306",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_arrive_expect_tx",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_arrive_expect_tx"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierArriveExpectTxSharedOp",
+        "op_name": "nvvm.mbarrier_arrive_expect_tx_shared",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mbarrier.arrive.expect.tx.scope.cta.space.cta",
+        "arguments": [
+          "shared_ptr",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact mbarrier or fence instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX 8.0 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "arrive_expect_tx_cta",
+        "adapter": "pointer_tx_count_bytes_to_token_dropping_tx_count",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "arrive",
+          "expect_tx",
+          "release",
+          "cta",
+          "shared::cta",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Arrives at a CTA-shared barrier and adds expected transaction bytes."
+    },
+    {
+      "id": "mbarrier_arrive_expect_tx_cluster",
+      "operation_key": "barrier.mbarrier.arrive.expect_tx.shared.cta.relaxed.cluster",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mbarrier_arrive_expect_tx_relaxed_scope_cluster_space_cta"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0307",
+        "module": "barrier",
+        "name": "mbarrier_arrive_expect_tx_cluster",
+        "arguments": [
+          "*const u64",
+          "u32",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0307",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_arrive_expect_tx_cluster",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_arrive_expect_tx_cluster"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierArriveExpectTxClusterOp",
+        "op_name": "nvvm.mbarrier_arrive_expect_tx_cluster",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mbarrier.arrive.expect.tx.relaxed.scope.cluster.space.cta",
+        "arguments": [
+          "shared_ptr",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx86"
+              ],
+              "representation": "generated cluster-scope inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact cluster-scope instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx86"
+              ],
+              "representation": "LLVM-produced PTX 8.6 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "arrive_expect_tx_cluster",
+        "adapter": "pointer_tx_count_bytes_to_token_dropping_tx_count",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "arrive",
+          "expect_tx",
+          "relaxed",
+          "cluster",
+          "shared::cta",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Arrives at a CTA-shared barrier with cluster-scope transaction tracking."
+    },
+    {
       "id": "mbarrier_init",
       "operation_key": "barrier.mbarrier.init.shared.cta",
       "family": "mbarrier_basic",
@@ -20306,6 +21821,700 @@
         ]
       },
       "summary": "Tests whether the CTA shared-memory barrier phase for a token is complete."
+    },
+    {
+      "id": "mbarrier_try_wait",
+      "operation_key": "barrier.mbarrier.try_wait.shared.cta.token",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mbarrier_try_wait_scope_cta_space_cta"
+      },
+      "selections": [
+        {
+          "source_record": "mbar_try_wait_scope_cta_acquire_STATE",
+          "asm": "mbarrier.try_wait.shared.b64 $res, [$addr], $state;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0309",
+        "module": "barrier",
+        "name": "mbarrier_try_wait",
+        "arguments": [
+          "*const u64",
+          "u64"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0309",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_try_wait",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_try_wait"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierTryWaitSharedOp",
+        "op_name": "nvvm.mbarrier_try_wait_shared",
+        "operands": [
+          "ptr",
+          "i64"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mbarrier.try.wait.scope.cta.space.cta",
+        "arguments": [
+          "shared_ptr",
+          "i64"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback",
+          "NoCapture<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact instruction and predicate adapter at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX 7.8 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "try_wait_token_cta",
+        "adapter": "pointer_token_to_predicate",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "try_wait",
+          "shared",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Tests a CTA-shared barrier token with a scheduling hint."
+    },
+    {
+      "id": "mbarrier_try_wait_parity",
+      "operation_key": "barrier.mbarrier.try_wait.parity.shared.cta",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mbarrier_try_wait_parity_scope_cta_space_cta"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0310",
+        "module": "barrier",
+        "name": "mbarrier_try_wait_parity",
+        "arguments": [
+          "*const u64",
+          "u32"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0310",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_try_wait_parity",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_try_wait_parity"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierTryWaitParitySharedOp",
+        "op_name": "nvvm.mbarrier_try_wait_parity_shared",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mbarrier.try.wait.parity.scope.cta.space.cta",
+        "arguments": [
+          "shared_ptr",
+          "i32"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback",
+          "NoCapture<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact instruction and predicate adapter at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX 7.8 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "try_wait_parity_cta",
+        "adapter": "pointer_parity_to_predicate",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "try_wait",
+          "parity",
+          "shared::cta",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Tests a CTA-shared barrier phase by parity."
+    },
+    {
+      "id": "mbarrier_try_wait_parity_cluster",
+      "operation_key": "barrier.mbarrier.try_wait.parity.shared.cta.acquire.cluster",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mbarrier_try_wait_parity_scope_cluster_space_cta"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0311",
+        "module": "barrier",
+        "name": "mbarrier_try_wait_parity_cluster",
+        "arguments": [
+          "*const u64",
+          "u32"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0311",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_try_wait_parity_cluster",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_try_wait_parity_cluster"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierTryWaitParityClusterOp",
+        "op_name": "nvvm.mbarrier_try_wait_parity_cluster",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mbarrier.try.wait.parity.scope.cluster.space.cta",
+        "arguments": [
+          "shared_ptr",
+          "i32"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback",
+          "NoCapture<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "generated extended-mbarrier inline-PTX probes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained each exact mbarrier or fence instruction at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX 8.0 modules",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted each generated module for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubins retaining the generated inline-PTX forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "try_wait_parity_cluster",
+        "adapter": "pointer_parity_to_predicate",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "try_wait",
+          "parity",
+          "acquire",
+          "cluster",
+          "shared::cta",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Tests barrier parity with cluster-scope acquire ordering."
     },
     {
       "id": "min_bf16x2",
@@ -62991,6 +65200,235 @@
         ]
       },
       "summary": "Multiplies two packed f16x2 values."
+    },
+    {
+      "id": "nanosleep",
+      "operation_key": "thread.nanosleep.u32",
+      "family": "mbarrier_extended",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_nanosleep"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_NANOSLEEP_I",
+          "asm": "nanosleep.u32 \t$i;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 70",
+            "Subtarget->getPTXVersion() >= 63"
+          ]
+        },
+        {
+          "source_record": "INT_NVVM_NANOSLEEP_R",
+          "asm": "nanosleep.u32 \t$i;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 70",
+            "Subtarget->getPTXVersion() >= 63"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0316",
+        "module": "barrier",
+        "name": "nanosleep",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0316",
+        "public_path": "cuda_intrinsics::barrier::nanosleep",
+        "compatibility_paths": [
+          "cuda_device::barrier::nanosleep"
+        ]
+      },
+      "dialect": {
+        "op_type": "NanosleepOp",
+        "op_name": "nvvm.nanosleep",
+        "operands": [
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.nanosleep",
+        "arguments": [
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrHasSideEffects",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "6.3",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 70
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: nanosleep",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-nanosleep"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx63"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 70
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_70",
+                "ptx63"
+              ],
+              "representation": "generated nanosleep inline-PTX probe",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM retained exact nanosleep.u32 at the route floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx63"
+              ],
+              "representation": "the LLVM-produced PTX 6.3 module retargeted to the nearest CUDA 13.3 assembler target",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas no longer accepts sm_70; it accepted the otherwise unchanged PTX 6.3 module for forward-compatible sm_75.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+          "target": {
+            "minimum_ptx": "6.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent NVVM IR 2.0 nanosleep inline-PTX probe",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the module and retained exact nanosleep.u32. The libNVVM route starts at sm_75 because CUDA 13.3 no longer accepts sm_70.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining nanosleep.u32",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a cubin for sm_75.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_extended": {
+        "operation": "nanosleep",
+        "adapter": "nanoseconds_to_void",
+        "source_contract": "llvm_imported",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_extended_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "nanosleep",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Suspends the executing thread for approximately the requested nanoseconds."
     },
     {
       "id": "neg_bf16x2",

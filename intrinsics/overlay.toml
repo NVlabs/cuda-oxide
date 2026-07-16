@@ -12,6 +12,7 @@ shards = [
     "overlay/dotprod.toml",
     "overlay/ldmatrix.toml",
     "overlay/mbarrier_basic.toml",
+    "overlay/mbarrier_extended.toml",
     "overlay/movmatrix.toml",
     "overlay/packed_alu.toml",
     "overlay/packed_atomic.toml",

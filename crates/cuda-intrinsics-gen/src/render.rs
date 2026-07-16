@@ -13,7 +13,8 @@ use crate::model::{
     DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
     EvidenceStageKind, ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement,
     LdmatrixLayout, LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
+    MbarrierBasicOperation, MbarrierExtendedAdapter, MbarrierExtendedOperation,
+    MbarrierExtendedSourceContract, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
     PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
     PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
     PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
@@ -121,6 +122,12 @@ pub fn all_outputs(
         "crates/cuda-device/src/generated/mbarrier_basic.rs".into(),
         render_compat_mbarrier_basic(catalog, catalog_sha256),
     );
+    if mbarrier_extended(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/mbarrier_extended.rs".into(),
+            render_compat_mbarrier_extended(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/cuda-device/src/generated/bf16x2.rs".into(),
         render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::Bf16x2),
@@ -255,6 +262,12 @@ pub fn all_outputs(
             render_dialect_movmatrix(catalog, catalog_sha256),
         );
     }
+    if mbarrier_extended(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/mbarrier_extended.rs".into(),
+            render_dialect_mbarrier_extended(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/warp_match.rs".into(),
         render_dialect_warp_match(catalog, catalog_sha256),
@@ -333,6 +346,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "cp_async_mbarrier" && record.cp_async_mbarrier.is_some())
                     || (record.family == "mbarrier_basic" && record.mbarrier_basic.is_some())
                     || (record.family == "movmatrix" && record.movmatrix.is_some())
+                    || (record.family == "mbarrier_extended" && record.mbarrier_extended.is_some())
                     || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
                     || (record.family == "cluster_memory" && record.cluster_memory.is_some())
                     || (record.family == "clc" && record.clc.is_some())
@@ -992,6 +1006,77 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated basic mbarrier recipe",
                 record.id
             ),
+            "mbarrier_extended" => ensure!(
+                record.rust.module == "barrier"
+                    && !record.rust.safe
+                    && record.semantics.memory == "read_write"
+                    && record.semantics.convergent
+                    && record.lowering == "generated_mbarrier_extended_inline_ptx"
+                    && record.backend_lowerings.iter().all(|lowering| {
+                        lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    })
+                    && record.mbarrier_extended.as_ref().is_some_and(|mbarrier| {
+                        let source_matches = match mbarrier.source_contract {
+                            MbarrierExtendedSourceContract::LlvmImported => record.llvm.is_some(),
+                            MbarrierExtendedSourceContract::PtxNativeRawClusterAddress => {
+                                record.llvm.is_none()
+                                    && matches!(record.source, IntrinsicSource::PtxNative { .. })
+                            }
+                        };
+                        source_matches
+                            && match (mbarrier.operation, mbarrier.adapter) {
+                                (
+                                    MbarrierExtendedOperation::ArriveExpectTxCta,
+                                    MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount,
+                                ) => record.id == "mbarrier_arrive_expect_tx",
+                                (
+                                    MbarrierExtendedOperation::ArriveExpectTxCluster,
+                                    MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount,
+                                ) => record.id == "mbarrier_arrive_expect_tx_cluster",
+                                (
+                                    MbarrierExtendedOperation::ArriveRemoteCluster,
+                                    MbarrierExtendedAdapter::RawClusterAddressToVoid,
+                                ) => record.id == "mbarrier_arrive_cluster",
+                                (
+                                    MbarrierExtendedOperation::TryWaitTokenCta,
+                                    MbarrierExtendedAdapter::PointerTokenToPredicate,
+                                ) => record.id == "mbarrier_try_wait",
+                                (
+                                    MbarrierExtendedOperation::TryWaitParityCta,
+                                    MbarrierExtendedAdapter::PointerParityToPredicate,
+                                ) => record.id == "mbarrier_try_wait_parity",
+                                (
+                                    MbarrierExtendedOperation::TryWaitParityCluster,
+                                    MbarrierExtendedAdapter::PointerParityToPredicate,
+                                ) => record.id == "mbarrier_try_wait_parity_cluster",
+                                (
+                                    MbarrierExtendedOperation::FenceProxyAsyncSharedCta,
+                                    MbarrierExtendedAdapter::ZeroOperandsToVoid,
+                                ) => record.id == "fence_proxy_async_shared_cta",
+                                (
+                                    MbarrierExtendedOperation::FenceMbarrierInitReleaseCluster,
+                                    MbarrierExtendedAdapter::ZeroOperandsToVoid,
+                                ) => record.id == "fence_mbarrier_init_release_cluster",
+                                (
+                                    MbarrierExtendedOperation::FenceProxyAsyncGenericReleaseSharedCtaCluster,
+                                    MbarrierExtendedAdapter::ZeroOperandsToVoid,
+                                ) => record.id
+                                    == "fence_proxy_async_generic_release_shared_cta_cluster",
+                                (
+                                    MbarrierExtendedOperation::FenceProxyAsyncGenericAcquireSharedClusterCluster,
+                                    MbarrierExtendedAdapter::ZeroOperandsToVoid,
+                                ) => record.id
+                                    == "fence_proxy_async_generic_acquire_shared_cluster_cluster",
+                                (
+                                    MbarrierExtendedOperation::Nanosleep,
+                                    MbarrierExtendedAdapter::NanosecondsToVoid,
+                                ) => record.id == "nanosleep",
+                                _ => false,
+                            }
+                    }),
+                "{} is outside the closed generated extended-mbarrier recipe",
+                record.id
+            ),
             "sync" => {
                 if record.id == "sync_threads" {
                     ensure!(
@@ -1415,6 +1500,13 @@ fn movmatrix_template(record: &CatalogIntrinsic) -> String {
         record.expected_ptx.mnemonic,
         record.expected_ptx.modifiers.join(".")
     )
+}
+
+fn mbarrier_extended(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "mbarrier_extended")
 }
 
 fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2379,6 +2471,33 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     MbarrierBasicOperation::Inval => output.push_str(
                         "/// The object must be initialized and no thread or asynchronous operation may still use it.\n\
                          /// Exactly one thread may invalidate the object.\n",
+                    ),
+                }
+            } else if let Some(mbarrier) = &record.mbarrier_extended {
+                output.push_str(
+                    "/// This is a convergent, side-effecting operation with a compiler memory clobber.\n",
+                );
+                match mbarrier.adapter {
+                    MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount => {
+                        output.push_str(
+                            "/// `_arg0` must point to a live, initialized, eight-byte-aligned mbarrier in shared memory. `_arg2` must match the asynchronous transaction bytes.\n\
+                             /// `_arg1` is retained for compatibility and is not a PTX operand.\n",
+                        );
+                    }
+                    MbarrierExtendedAdapter::RawClusterAddressToVoid => output.push_str(
+                        "/// `_arg0` must be a live remote shared-memory barrier address obtained through cluster address mapping.\n",
+                    ),
+                    MbarrierExtendedAdapter::PointerTokenToPredicate => output.push_str(
+                        "/// `_arg0` must point to a live initialized barrier. `_arg1` must be a token for that barrier and phase.\n",
+                    ),
+                    MbarrierExtendedAdapter::PointerParityToPredicate => output.push_str(
+                        "/// `_arg0` must point to a live initialized barrier. `_arg1` must be the expected phase parity.\n",
+                    ),
+                    MbarrierExtendedAdapter::ZeroOperandsToVoid => output.push_str(
+                        "/// The call site must satisfy the scope and proxy-ordering contract named by the operation.\n",
+                    ),
+                    MbarrierExtendedAdapter::NanosecondsToVoid => output.push_str(
+                        "/// `_arg0` is an approximate suspension duration; hardware may resume the thread earlier.\n",
                     ),
                 }
             } else if let Some(copy) = &record.cp_async_copy {
@@ -3478,6 +3597,85 @@ fn render_compat_mbarrier_basic(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_mbarrier_extended(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::barrier` to keep existing paths stable.\n\n");
+    for record in mbarrier_extended(catalog) {
+        let contract = record
+            .mbarrier_extended
+            .as_ref()
+            .expect("extended-mbarrier contract");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        output.push_str(
+            "/// The caller must satisfy the barrier, scope, and memory-ordering contract.\n",
+        );
+        if record.rust.must_use {
+            output.push_str("#[must_use]\n");
+        }
+        output.push_str("#[inline(never)]\n");
+        match contract.operation {
+            MbarrierExtendedOperation::ArriveExpectTxCta
+            | MbarrierExtendedOperation::ArriveExpectTxCluster => {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(bar: *const Barrier, _tx_count: u32, bytes: u32) -> u64 {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = (bar, bytes);\n");
+            }
+            MbarrierExtendedOperation::ArriveRemoteCluster => {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(remote_bar_addr: u64) {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = remote_bar_addr;\n");
+            }
+            MbarrierExtendedOperation::TryWaitTokenCta => {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(bar: *const Barrier, token: u64) -> bool {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = (bar, token);\n");
+            }
+            MbarrierExtendedOperation::TryWaitParityCta
+            | MbarrierExtendedOperation::TryWaitParityCluster => {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(bar: *const Barrier, parity: u32) -> bool {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = (bar, parity);\n");
+            }
+            MbarrierExtendedOperation::FenceProxyAsyncSharedCta
+            | MbarrierExtendedOperation::FenceMbarrierInitReleaseCluster
+            | MbarrierExtendedOperation::FenceProxyAsyncGenericReleaseSharedCtaCluster
+            | MbarrierExtendedOperation::FenceProxyAsyncGenericAcquireSharedClusterCluster => {
+                writeln!(output, "pub unsafe fn {}() {{", record.rust.name).unwrap();
+            }
+            MbarrierExtendedOperation::Nanosleep => {
+                writeln!(output, "pub unsafe fn {}(ns: u32) {{", record.rust.name).unwrap();
+                output.push_str("    let _ = ns;\n");
+            }
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAluFormat) -> String {
     let mut output = rust_header(catalog, hash);
     let module = match format {
@@ -3641,6 +3839,20 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
                 "    cluster_barrier::register(ctx);",
                 "    clc::register(ctx);\n    cluster_barrier::register(ctx);",
             );
+    }
+    if mbarrier_extended(catalog).next().is_some() {
+        output = output.replace(
+            "mod mbarrier_basic;\n",
+            "mod mbarrier_basic;\nmod mbarrier_extended;\n",
+        );
+        output = output.replace(
+            "pub use mbarrier_basic::*;\n",
+            "pub use mbarrier_basic::*;\npub use mbarrier_extended::*;\n",
+        );
+        output = output.replace(
+            "    mbarrier_basic::register(ctx);\n",
+            "    mbarrier_basic::register(ctx);\n    mbarrier_extended::register(ctx);\n",
+        );
     }
     output
 }
@@ -4268,6 +4480,193 @@ fn render_dialect_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
         record.dialect.op_type,
     )
     .unwrap();
+    output
+}
+
+fn render_dialect_mbarrier_extended(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r#"//! Structural operations for extended mbarrier and async-proxy instructions.
+
+use dialect_mir::types::{MirPtrType, address_space};
+use pliron::{
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{IntegerType, Signedness},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::pliron_op;
+
+#[derive(Clone, Copy)]
+enum MbarrierExtendedShape {
+    PointerU32ToU64,
+    RawU64ToVoid,
+    PointerU64ToI1,
+    PointerU32ToI1,
+    ZeroToVoid,
+    U32ToVoid,
+}
+
+fn is_integer(ctx: &Context, value: Value, width: u32, signedness: Signedness) -> bool {
+    value
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| {
+            integer.width() == width && integer.signedness() == signedness
+        })
+}
+
+fn verify_barrier_pointer(ctx: &Context, op: &Operation, value: Value) -> Result<(), Error> {
+    let ty = value.get_type(ctx);
+    let ty = ty.deref(ctx);
+    let Some(pointer) = ty.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "mbarrier address must be a MIR pointer");
+    };
+    if !matches!(pointer.address_space, address_space::GENERIC | address_space::SHARED) {
+        return verify_err!(op.loc(), "mbarrier address must be generic or shared");
+    }
+    Ok(())
+}
+
+fn verify_mbarrier_extended(
+    ctx: &Context,
+    operation: Ptr<Operation>,
+    name: &str,
+    shape: MbarrierExtendedShape,
+) -> Result<(), Error> {
+    let op = operation.deref(ctx);
+    let (operands, results) = match shape {
+        MbarrierExtendedShape::PointerU32ToU64
+        | MbarrierExtendedShape::PointerU64ToI1
+        | MbarrierExtendedShape::PointerU32ToI1 => (2, 1),
+        MbarrierExtendedShape::RawU64ToVoid | MbarrierExtendedShape::U32ToVoid => (1, 0),
+        MbarrierExtendedShape::ZeroToVoid => (0, 0),
+    };
+    if op.get_num_operands() != operands || op.get_num_results() != results {
+        return verify_err!(op.loc(), "{name} has the wrong operand or result count");
+    }
+    match shape {
+        MbarrierExtendedShape::PointerU32ToU64 => {
+            verify_barrier_pointer(ctx, &op, op.get_operand(0))?;
+            if !is_integer(ctx, op.get_operand(1), 32, Signedness::Unsigned)
+                || !is_integer(ctx, op.get_result(0), 64, Signedness::Unsigned)
+            {
+                return verify_err!(op.loc(), "mbarrier arrival requires u32 bytes and a u64 token");
+            }
+        }
+        MbarrierExtendedShape::PointerU64ToI1 => {
+            verify_barrier_pointer(ctx, &op, op.get_operand(0))?;
+            if !is_integer(ctx, op.get_operand(1), 64, Signedness::Unsigned)
+                || !is_integer(ctx, op.get_result(0), 1, Signedness::Signless)
+            {
+                return verify_err!(op.loc(), "mbarrier wait requires a u64 token and i1 result");
+            }
+        }
+        MbarrierExtendedShape::PointerU32ToI1 => {
+            verify_barrier_pointer(ctx, &op, op.get_operand(0))?;
+            if !is_integer(ctx, op.get_operand(1), 32, Signedness::Unsigned)
+                || !is_integer(ctx, op.get_result(0), 1, Signedness::Signless)
+            {
+                return verify_err!(op.loc(), "mbarrier wait requires u32 parity and i1 result");
+            }
+        }
+        MbarrierExtendedShape::RawU64ToVoid => {
+            if !is_integer(ctx, op.get_operand(0), 64, Signedness::Unsigned) {
+                return verify_err!(op.loc(), "remote mbarrier address must be u64");
+            }
+        }
+        MbarrierExtendedShape::U32ToVoid => {
+            if !is_integer(ctx, op.get_operand(0), 32, Signedness::Unsigned) {
+                return verify_err!(op.loc(), "nanosleep duration must be u32");
+            }
+        }
+        MbarrierExtendedShape::ZeroToVoid => {}
+    }
+    Ok(())
+}
+
+"#,
+    );
+    for record in mbarrier_extended(catalog) {
+        let contract = record.mbarrier_extended.as_ref().unwrap();
+        let (operand_count, result_count, shape, build) = match contract.operation {
+            MbarrierExtendedOperation::ArriveExpectTxCta
+            | MbarrierExtendedOperation::ArriveExpectTxCluster => (
+                2,
+                1,
+                "PointerU32ToU64",
+                "    pub fn build(ctx: &mut Context, barrier: Value, bytes: Value) -> Ptr<Operation> {\n        let token_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![token_ty.into()], vec![barrier, bytes], vec![], 0)\n    }\n",
+            ),
+            MbarrierExtendedOperation::ArriveRemoteCluster => (
+                1,
+                0,
+                "RawU64ToVoid",
+                "    pub fn build(ctx: &mut Context, address: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![address], vec![], 0)\n    }\n",
+            ),
+            MbarrierExtendedOperation::TryWaitTokenCta => (
+                2,
+                1,
+                "PointerU64ToI1",
+                "    pub fn build(ctx: &mut Context, barrier: Value, token: Value) -> Ptr<Operation> {\n        let result_ty = IntegerType::get(ctx, 1, Signedness::Signless);\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![result_ty.into()], vec![barrier, token], vec![], 0)\n    }\n",
+            ),
+            MbarrierExtendedOperation::TryWaitParityCta
+            | MbarrierExtendedOperation::TryWaitParityCluster => (
+                2,
+                1,
+                "PointerU32ToI1",
+                "    pub fn build(ctx: &mut Context, barrier: Value, parity: Value) -> Ptr<Operation> {\n        let result_ty = IntegerType::get(ctx, 1, Signedness::Signless);\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![result_ty.into()], vec![barrier, parity], vec![], 0)\n    }\n",
+            ),
+            MbarrierExtendedOperation::FenceProxyAsyncSharedCta
+            | MbarrierExtendedOperation::FenceMbarrierInitReleaseCluster
+            | MbarrierExtendedOperation::FenceProxyAsyncGenericReleaseSharedCtaCluster
+            | MbarrierExtendedOperation::FenceProxyAsyncGenericAcquireSharedClusterCluster => (
+                0,
+                0,
+                "ZeroToVoid",
+                "    pub fn build(ctx: &mut Context) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0)\n    }\n",
+            ),
+            MbarrierExtendedOperation::Nanosleep => (
+                1,
+                0,
+                "U32ToVoid",
+                "    pub fn build(ctx: &mut Context, ns: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![ns], vec![], 0)\n    }\n",
+            ),
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]\npub struct {};",
+            record.dialect.op_name, record.dialect.op_type
+        )
+        .unwrap();
+        writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
+        output.push_str(build);
+        output.push_str("}\n\n");
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_mbarrier_extended(ctx, self.get_operation(), {:?}, MbarrierExtendedShape::{shape})\n    }}\n}}\n",
+            record.dialect.op_name
+        )
+        .unwrap();
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in mbarrier_extended(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
     output
 }
 
@@ -6304,6 +6703,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in mbarrier_extended(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     if dot_products(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
@@ -7501,6 +7904,87 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    for record in mbarrier_extended(catalog) {
+        let contract = record.mbarrier_extended.as_ref().unwrap();
+        let (arguments, returns_value): (Vec<(usize, &str)>, bool) = match contract.adapter {
+            MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount => {
+                (vec![(0, "barrier"), (2, "bytes")], true)
+            }
+            MbarrierExtendedAdapter::RawClusterAddressToVoid => (vec![(0, "address")], false),
+            MbarrierExtendedAdapter::PointerTokenToPredicate => {
+                (vec![(0, "barrier"), (1, "token")], true)
+            }
+            MbarrierExtendedAdapter::PointerParityToPredicate => {
+                (vec![(0, "barrier"), (1, "parity")], true)
+            }
+            MbarrierExtendedAdapter::ZeroOperandsToVoid => (vec![], false),
+            MbarrierExtendedAdapter::NanosecondsToVoid => (vec![(0, "ns")], false),
+        };
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {}, &loc)?;",
+            record.rust.arguments.len()
+        )
+        .unwrap();
+        if arguments.is_empty() {
+            output.push_str("            let last_op = prev_op;\n");
+        }
+        for (position, (argument_index, argument_name)) in arguments.iter().enumerate() {
+            let previous = if position == 0 { "prev_op" } else { "last_op" };
+            writeln!(
+                output,
+                "            let ({argument_name}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{argument_index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
+            )
+            .unwrap();
+        }
+        let build_arguments = arguments
+            .iter()
+            .map(|(_, name)| *name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "            let extended = {}::build(ctx{}{});",
+            record.dialect.op_type,
+            if build_arguments.is_empty() { "" } else { ", " },
+            build_arguments,
+        )
+        .unwrap();
+        output.push_str("            extended.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, extended, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str("            helpers::insert_op(ctx, extended, block_ptr, last_op);\n");
+        if returns_value {
+            output.push_str("            let result = extended.deref(ctx).get_result(0);\n");
+            writeln!(
+                output,
+                "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, extended, value_map, block_map, loc,\n                {:?},\n            )?))",
+                format!("{} call without target block", record.rust.name)
+            )
+            .unwrap();
+        } else {
+            output.push_str(
+                "            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, extended, block_map, loc)))\n            } else {\n",
+            );
+            writeln!(
+                output,
+                "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                format!("{} call without target block", record.rust.name)
+            )
+            .unwrap();
+            output.push_str("            }\n");
+        }
+        output.push_str("        }\n");
+    }
     for record in sync_intrinsics(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -8026,6 +8510,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in mbarrier_extended(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     output.push_str(
         "};\nuse llvm_export::{ops::AsmKind, types as llvm_types};\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
     );
@@ -8041,6 +8529,26 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             );
     }
     output.push_str("use pliron::location::Located;\n\n");
+    if mbarrier_extended(catalog).next().is_some() {
+        if !output.contains("cast_to_shared_addrspace") {
+            output = output.replace(
+                "common::{call_intrinsic,",
+                "common::{call_intrinsic, cast_to_shared_addrspace,",
+            );
+        }
+        output = if output.contains("inline_asm_sideeffect}") {
+            output.replace(
+                "inline_asm_sideeffect}",
+                "inline_asm_sideeffect, trunc_to_i1}",
+            )
+        } else {
+            output.replace(
+                "inline_asm_convergent}",
+                "inline_asm_convergent, trunc_to_i1}",
+            )
+        };
+        output.push_str("use pliron::value::DefiningEntity;\n\n");
+    }
     output.push_str(
         "fn convert_zero_operand_scalar_direct(\n    ctx: &mut Context,\n    rewriter: &mut DialectConversionRewriter,\n    op: Ptr<Operation>,\n    width: u32,\n    intrinsic_name: &str,\n) -> Result<()> {\n    let result_ty = IntegerType::get(ctx, width, Signedness::Signless);\n    let function_ty = llvm_types::FuncType::get(ctx, result_ty.into(), vec![], false);\n    let call = call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, vec![])?;\n    rewriter.replace_operation(ctx, op, call);\n    Ok(())\n}\n\n",
     );
@@ -8765,6 +9273,83 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
                 writeln!(
                     output,
                     "        let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, i32_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        rewriter.replace_operation(ctx, op, asm);\n        Ok(())"
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("    }\n}\n\n");
+    }
+    for record in mbarrier_extended(catalog) {
+        let contract = record.mbarrier_extended.as_ref().unwrap();
+        let (template, constraints) =
+            crate::resolve::mbarrier_extended_inline_recipe(contract.operation);
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        let mutability = if matches!(
+            contract.adapter,
+            MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount
+                | MbarrierExtendedAdapter::PointerTokenToPredicate
+                | MbarrierExtendedAdapter::PointerParityToPredicate
+        ) {
+            "mut "
+        } else {
+            ""
+        };
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n",
+        );
+        writeln!(
+            output,
+            "        let {mutability}operands: Vec<_> = op.deref(ctx).operands().collect();"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "        if operands.len() != {} {{\n            return pliron::input_err_noloc!({:?}, operands.len());\n        }}",
+            record.dialect.operands.len(),
+            format!(
+                "{} requires {} operands, got {{}}",
+                record.rust.name,
+                record.dialect.operands.len()
+            )
+        )
+        .unwrap();
+        if matches!(
+            contract.adapter,
+            MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount
+                | MbarrierExtendedAdapter::PointerTokenToPredicate
+                | MbarrierExtendedAdapter::PointerParityToPredicate
+        ) {
+            output.push_str(
+                "        operands[0] = cast_to_shared_addrspace(ctx, rewriter, operands[0]);\n",
+            );
+        }
+        match contract.adapter {
+            MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount => {
+                writeln!(
+                    output,
+                    "        let result_ty = IntegerType::get(ctx, 64, Signedness::Signless);\n        let asm = inline_asm_convergent(ctx, rewriter, result_ty.into(), operands, {template:?}, {constraints:?});\n        rewriter.replace_operation(ctx, op, asm);\n        Ok(())"
+                )
+                .unwrap();
+            }
+            MbarrierExtendedAdapter::PointerTokenToPredicate
+            | MbarrierExtendedAdapter::PointerParityToPredicate => {
+                writeln!(
+                    output,
+                    "        let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n        let asm = inline_asm_convergent(ctx, rewriter, result_ty.into(), operands, {template:?}, {constraints:?});\n        let asm_result = asm.deref(ctx).get_result(0);\n        let result = trunc_to_i1(ctx, rewriter, asm_result);\n        let DefiningEntity::Op(result_op) = result.defining_entity() else {{ unreachable!() }};\n        rewriter.replace_operation(ctx, op, result_op);\n        Ok(())"
+                )
+                .unwrap();
+            }
+            MbarrierExtendedAdapter::RawClusterAddressToVoid
+            | MbarrierExtendedAdapter::ZeroOperandsToVoid
+            | MbarrierExtendedAdapter::NanosecondsToVoid => {
+                writeln!(
+                    output,
+                    "        let void_ty = llvm_types::VoidType::get(ctx);\n        inline_asm_convergent(ctx, rewriter, void_ty.into(), operands, {template:?}, {constraints:?});\n        rewriter.erase_operation(ctx, op);\n        Ok(())"
                 )
                 .unwrap();
             }
@@ -9631,6 +10216,98 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %result\n}\n\nattributes #0 = { convergent }\n");
+    } else if let Some(mbarrier) = &record.mbarrier_extended {
+        let (template, constraints) =
+            crate::resolve::mbarrier_extended_inline_recipe(mbarrier.operation);
+        match mbarrier.adapter {
+            MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount => {
+                writeln!(
+                    output,
+                    "define i64 @probe_{}(ptr %barrier_generic, i32 %bytes) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  %token = call i64 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %barrier, i32 %bytes) #0"
+                )
+                .unwrap();
+                output.push_str("  ret i64 %token\n}\n\nattributes #0 = { convergent }\n");
+            }
+            MbarrierExtendedAdapter::PointerTokenToPredicate => {
+                writeln!(
+                    output,
+                    "define i1 @probe_{}(ptr %barrier_generic, i64 %token) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  %result_i32 = call i32 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %barrier, i64 %token) #0"
+                )
+                .unwrap();
+                output.push_str(
+                    "  %result = trunc i32 %result_i32 to i1\n  ret i1 %result\n}\n\nattributes #0 = { convergent }\n",
+                );
+            }
+            MbarrierExtendedAdapter::PointerParityToPredicate => {
+                writeln!(
+                    output,
+                    "define i1 @probe_{}(ptr %barrier_generic, i32 %parity) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  %result_i32 = call i32 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %barrier, i32 %parity) #0"
+                )
+                .unwrap();
+                output.push_str(
+                    "  %result = trunc i32 %result_i32 to i1\n  ret i1 %result\n}\n\nattributes #0 = { convergent }\n",
+                );
+            }
+            MbarrierExtendedAdapter::RawClusterAddressToVoid => {
+                writeln!(
+                    output,
+                    "define void @probe_{}(i64 %address) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  call void asm sideeffect {template:?}, {constraints:?}(i64 %address) #0"
+                )
+                .unwrap();
+                output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+            }
+            MbarrierExtendedAdapter::ZeroOperandsToVoid => {
+                writeln!(output, "define void @probe_{}() #0 {{", record.id).unwrap();
+                writeln!(
+                    output,
+                    "  call void asm sideeffect {template:?}, {constraints:?}() #0"
+                )
+                .unwrap();
+                output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+            }
+            MbarrierExtendedAdapter::NanosecondsToVoid => {
+                writeln!(output, "define void @probe_{}(i32 %ns) #0 {{", record.id).unwrap();
+                writeln!(
+                    output,
+                    "  call void asm sideeffect {template:?}, {constraints:?}(i32 %ns) #0"
+                )
+                .unwrap();
+                output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+            }
+        }
     } else if record.packed_alu.is_some() {
         let arity = record.rust.arguments.len();
         let parameters = (0..arity)
@@ -10569,6 +11246,24 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .unwrap();
         }
     }
+    if mbarrier_extended(catalog).next().is_some() {
+        output.push_str("\n## Extended mbarrier contracts\n\n");
+        for record in mbarrier_extended(catalog) {
+            let contract = record.mbarrier_extended.as_ref().unwrap();
+            let source = match contract.source_contract {
+                MbarrierExtendedSourceContract::LlvmImported => "LLVM 22 TableGen",
+                MbarrierExtendedSourceContract::PtxNativeRawClusterAddress => {
+                    "PTX-native raw-address contract"
+                }
+            };
+            writeln!(
+                output,
+                "- `{}` keeps its established CUDA-device signature and exact convergent inline-PTX memory clobber. Its source identity is {source}.",
+                record.id,
+            )
+            .unwrap();
+        }
+    }
     if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
         output.push_str("\n## Synchronization contracts\n\n");
     } else {
@@ -10730,6 +11425,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .or_else(|| {
                 record
                     .movmatrix
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
+            .or_else(|| {
+                record
+                    .mbarrier_extended
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
@@ -12269,11 +12970,117 @@ mod tests {
     }
 
     #[test]
+    fn extended_mbarrier_rendering_preserves_all_manual_contracts() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let records = mbarrier_extended(&catalog).collect::<Vec<_>>();
+        assert_eq!(records.len(), 11);
+
+        let compatibility = render_compat_mbarrier_extended(&catalog, "test-hash");
+        for signature in [
+            "pub unsafe fn mbarrier_arrive_expect_tx(bar: *const Barrier, _tx_count: u32, bytes: u32) -> u64",
+            "pub unsafe fn mbarrier_arrive_expect_tx_cluster(bar: *const Barrier, _tx_count: u32, bytes: u32) -> u64",
+            "pub unsafe fn mbarrier_arrive_cluster(remote_bar_addr: u64)",
+            "pub unsafe fn mbarrier_try_wait(bar: *const Barrier, token: u64) -> bool",
+            "pub unsafe fn mbarrier_try_wait_parity(bar: *const Barrier, parity: u32) -> bool",
+            "pub unsafe fn mbarrier_try_wait_parity_cluster(bar: *const Barrier, parity: u32) -> bool",
+            "pub unsafe fn fence_proxy_async_shared_cta()",
+            "pub unsafe fn fence_mbarrier_init_release_cluster()",
+            "pub unsafe fn fence_proxy_async_generic_release_shared_cta_cluster()",
+            "pub unsafe fn fence_proxy_async_generic_acquire_shared_cluster_cluster()",
+            "pub unsafe fn nanosleep(ns: u32)",
+        ] {
+            assert!(compatibility.contains(signature), "missing {signature}");
+        }
+
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod mbarrier_extended;"));
+        assert!(dialect_mod.contains("pub use mbarrier_extended::*;"));
+        assert!(dialect_mod.contains("mbarrier_extended::register(ctx);"));
+
+        let dialect = render_dialect_mbarrier_extended(&catalog, "test-hash");
+        let importer = render_importer(&catalog, "test-hash");
+        let lowering = render_lowering(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash");
+        for record in &records {
+            assert!(dialect.contains(&format!("pub struct {}", record.dialect.op_type)));
+            assert!(dialect.contains(&format!("{}::register(ctx);", record.dialect.op_type)));
+            assert!(importer.contains(&record.rust.canonical_path));
+            assert!(importer.contains(&record.rust.compatibility_paths[0]));
+            assert!(lowering.contains(&format!(
+                "impl MirToLlvmConversion for {}",
+                record.dialect.op_type
+            )));
+            assert!(raw.contains(&format!("pub unsafe fn {}", record.rust.abi_id)));
+            for route in &record.backend_lowerings {
+                assert_eq!(route.mechanism, BackendLoweringMechanism::InlinePtx);
+            }
+            let (template, constraints) = crate::resolve::mbarrier_extended_inline_recipe(
+                record.mbarrier_extended.as_ref().unwrap().operation,
+            );
+            assert!(lowering.contains(&format!("{template:?}, {constraints:?}")));
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains("asm sideeffect"));
+            assert!(probe.contains(template));
+            assert!(probe.contains("~{memory}"));
+            assert!(probe.contains("attributes #0 = { convergent }"));
+        }
+
+        assert!(dialect.contains("address_space::GENERIC | address_space::SHARED"));
+        assert!(dialect.contains("mbarrier arrival requires u32 bytes and a u64 token"));
+        assert!(dialect.contains("mbarrier wait requires a u64 token and i1 result"));
+        assert!(dialect.contains("mbarrier wait requires u32 parity and i1 result"));
+        assert!(dialect.contains("remote mbarrier address must be u64"));
+        assert!(dialect.contains("nanosleep duration must be u32"));
+
+        assert!(importer.contains("MbarrierArriveExpectTxSharedOp::build(ctx, barrier, bytes)"));
+        assert!(importer.contains("MbarrierArriveExpectTxClusterOp::build(ctx, barrier, bytes)"));
+        assert!(
+            !importer
+                .contains("MbarrierArriveExpectTxSharedOp::build(ctx, barrier, tx_count, bytes)")
+        );
+        assert!(importer.contains("MbarrierArriveClusterOp::build(ctx, address)"));
+        assert!(importer.contains("MbarrierTryWaitSharedOp::build(ctx, barrier, token)"));
+        assert!(importer.contains("MbarrierTryWaitParitySharedOp::build(ctx, barrier, parity)"));
+        assert!(importer.contains("MbarrierTryWaitParityClusterOp::build(ctx, barrier, parity)"));
+        assert!(importer.contains("FenceProxyAsyncSharedCtaOp::build(ctx)"));
+        assert!(importer.contains("FenceMbarrierInitReleaseClusterOp::build(ctx)"));
+        assert!(importer.contains("NanosleepOp::build(ctx, ns)"));
+
+        assert!(lowering.contains("cast_to_shared_addrspace"));
+        assert!(lowering.contains("trunc_to_i1"));
+        assert!(lowering.contains("DefiningEntity::Op(result_op)"));
+        assert!(lowering.contains("rewriter.erase_operation(ctx, op)"));
+        assert!(lowering.contains("mbarrier.arrive.release.cluster.shared::cluster.b64 _, [$0];"));
+        let remote = records
+            .iter()
+            .find(|record| record.id == "mbarrier_arrive_cluster")
+            .unwrap();
+        assert!(remote.llvm.is_none());
+        assert!(matches!(remote.source, IntrinsicSource::PtxNative { .. }));
+        assert!(!render_probe(&catalog, remote, "test-hash").contains("declare"));
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## Extended mbarrier contracts"));
+        assert!(reference.contains("LLVM 22 TableGen"));
+        assert!(reference.contains("PTX-native raw-address contract"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/mbarrier_extended.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/mbarrier_extended.rs"
+        )));
+    }
+
+    #[test]
     fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 305);
+        assert_eq!(catalog.intrinsics.len(), 316);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

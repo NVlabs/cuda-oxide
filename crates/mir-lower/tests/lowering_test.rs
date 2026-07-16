@@ -2149,7 +2149,7 @@ fn test_cluster_mbarrier_and_fences_lower_to_exact_inline_ptx() -> Result<(), an
             "=l,l,r,~{memory}",
         ),
         (
-            "{ .reg .pred p; mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 p, [$1], $2; selp.b32 $0, 1, 0, p; }",
+            "{ .reg .pred %p0; mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
             "=r,l,r,~{memory}",
         ),
         ("fence.mbarrier_init.release.cluster;", "~{memory}"),

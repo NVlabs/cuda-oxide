@@ -168,6 +168,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrierAdmission>,
     #[serde(default)]
+    pub mbarrier_extended: Option<MbarrierExtendedAdmission>,
+    #[serde(default)]
     pub special_registers: Option<SpecialRegisterAdmission>,
     #[serde(default)]
     pub debug_control: Option<DebugControlAdmission>,
@@ -222,6 +224,41 @@ impl StmatrixMultiplicity {
 pub enum StmatrixLayout {
     Normal,
     Transposed,
+}
+
+/// Compact admission for the remaining handwritten mbarrier operations.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MbarrierExtendedAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<MbarrierExtendedAdmissionVariant>,
+}
+
+/// One reviewed extended-mbarrier operation and its reserved ABI ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MbarrierExtendedAdmissionVariant {
+    pub abi_id: String,
+    pub operation: MbarrierExtendedOperation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MbarrierExtendedOperation {
+    ArriveExpectTxCta,
+    ArriveExpectTxCluster,
+    ArriveRemoteCluster,
+    TryWaitTokenCta,
+    TryWaitParityCta,
+    TryWaitParityCluster,
+    FenceProxyAsyncSharedCta,
+    FenceMbarrierInitReleaseCluster,
+    FenceProxyAsyncGenericReleaseSharedCtaCluster,
+    FenceProxyAsyncGenericAcquireSharedClusterCluster,
+    Nanosleep,
 }
 
 /// Compact admission for Hopper cluster special registers.
@@ -566,6 +603,8 @@ pub struct OverlayIntrinsic {
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default)]
     pub movmatrix: Option<Movmatrix>,
+    #[serde(default)]
+    pub mbarrier_extended: Option<MbarrierExtended>,
     #[serde(default)]
     pub register_mma: Option<RegisterMma>,
     #[serde(default)]
@@ -1767,6 +1806,34 @@ pub enum MbarrierBasicAdapter {
     PointerToVoid,
 }
 
+/// Closed contract for the remaining handwritten mbarrier operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MbarrierExtended {
+    pub operation: MbarrierExtendedOperation,
+    pub adapter: MbarrierExtendedAdapter,
+    pub source_contract: MbarrierExtendedSourceContract,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MbarrierExtendedAdapter {
+    PointerTxCountBytesToTokenDroppingTxCount,
+    RawClusterAddressToVoid,
+    PointerTokenToPredicate,
+    PointerParityToPredicate,
+    ZeroOperandsToVoid,
+    NanosecondsToVoid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MbarrierExtendedSourceContract {
+    LlvmImported,
+    PtxNativeRawClusterAddress,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiLedgerFile {
@@ -2067,6 +2134,8 @@ pub struct CatalogIntrinsic {
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub movmatrix: Option<Movmatrix>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mbarrier_extended: Option<MbarrierExtended>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub register_mma: Option<RegisterMma>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2671,6 +2740,39 @@ runtime_validation = "unexecuted"
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<Movmatrix>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn mbarrier_extended_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "arrive_expect_tx_cta"
+adapter = "pointer_tx_count_bytes_to_token_dropping_tx_count"
+source_contract = "llvm_imported"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<MbarrierExtended>(valid).unwrap();
+        assert_eq!(
+            parsed.adapter,
+            MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount
+        );
+        assert_eq!(
+            parsed.source_contract,
+            MbarrierExtendedSourceContract::LlvmImported
+        );
+
+        for invalid in [
+            valid.replace("llvm_imported", "auto"),
+            valid.replace(
+                "pointer_tx_count_bytes_to_token_dropping_tx_count",
+                "direct",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<MbarrierExtended>(&invalid).is_err(),
+                "{invalid}"
+            );
         }
     }
 
