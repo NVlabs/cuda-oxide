@@ -5,17 +5,17 @@
 
 //! Single-instruction warp leader election (`elect.sync`, sm_90+).
 //!
-//! Hopper's `elect.sync` collectively picks the lowest-numbered participating
-//! lane as the warp "leader" and hands every lane two facts in one instruction:
-//! the leader's lane id, and whether *it* is the leader. It replaces the
-//! pre-Hopper idiom `active_mask().trailing_zeros()` + a `lane_id()` compare.
+//! Hopper's `elect.sync` collectively picks one participating lane as the warp
+//! leader and returns its lane id plus a one-hot elected predicate. The choice
+//! is deterministic for the same mask, but PTX does not promise the lowest
+//! lane.
 //!
 //! Two kernels:
-//!   1. `elect_full_warp` — full-warp election via `warp::elect_sync`; shows the
-//!      leader id (0) and the one-hot `is_elected` predicate.
+//!   1. `elect_full_warp` — full-warp election via `warp::elect_sync`; checks
+//!      that the returned leader matches the one-hot predicate.
 //!   2. `elect_subset` — election over a *subset* of lanes (the upper half of
-//!      the warp) via `warp::is_elected_sync`, showing the leader is the lowest
-//!      lane of the participating set (16), not lane 0.
+//!      the warp) via `warp::is_elected_sync`, showing the elected lane belongs
+//!      to the participating set.
 //!
 //! Build and run with:
 //!   cargo oxide run elect_leader
@@ -34,9 +34,6 @@ mod kernels {
 
     /// Full-warp election. Every lane records whether it was elected; lane 0
     /// records the elected leader's lane id.
-    ///
-    /// Expected (single warp): `leader_out[0] == 0` and `elected_out` is
-    /// one-hot — `[1, 0, 0, ..., 0]`.
     #[kernel]
     pub fn elect_full_warp(
         mut leader_out: DisjointSlice<u32>,
@@ -55,11 +52,8 @@ mod kernels {
         }
     }
 
-    /// Subset election: only the upper half of the warp (lanes 16..=31)
-    /// participates. The leader is the lowest lane of that *active* subset, so
-    /// exactly one lane — lane 16 — is elected and writes its id.
-    ///
-    /// Expected (single warp): `out[0] == 16`.
+    /// Subset election: only the upper half of the warp participates. The
+    /// elected lane writes its id.
     #[kernel]
     pub fn elect_subset(mut out: DisjointSlice<u32>) {
         let lane = warp::lane_id();
@@ -123,15 +117,29 @@ fn main() {
     let leader = leader_dev.to_host_vec(&stream).unwrap();
     let elected = elected_dev.to_host_vec(&stream).unwrap();
 
+    let elected_lanes: Vec<_> = elected
+        .iter()
+        .enumerate()
+        .filter_map(|(lane, &value)| (value == 1).then_some(lane as u32))
+        .collect();
+    let elected_lane = elected_lanes.first().copied().unwrap_or(u32::MAX);
     let mut expected_elected = vec![0u32; 32];
-    expected_elected[0] = 1;
+    if elected_lane < 32 {
+        expected_elected[elected_lane as usize] = 1;
+    }
 
-    println!("leader[0]    = {} (expected 0)", leader[0]);
+    println!(
+        "leader[0]    = {} (expected {})",
+        leader[0], elected_lane
+    );
     println!("elected mask = {:?}", elected);
     println!("expected     = {:?}", expected_elected);
 
-    if leader[0] == 0 && elected == expected_elected {
-        println!("✓ leader is lane 0 and is_elected is one-hot");
+    if elected_lanes.len() == 1 && leader[0] == elected_lane && elected == expected_elected {
+        println!(
+            "✓ leader is lane {} and is_elected is one-hot",
+            elected_lane
+        );
     } else {
         println!("✗ full-warp election mismatch!");
         failed = true;
@@ -146,14 +154,17 @@ fn main() {
         .expect("Kernel launch failed");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
-    println!(
-        "out[0] = {} (expected 16 — lowest lane of the active subset)",
-        out[0]
-    );
-
     if out[0] == 16 {
+        println!(
+            "out[0] = {} (expected 16 — lowest lane of the active subset)",
+            out[0]
+        );
         println!("✓ subset leader is the lowest participating lane");
+    } else if (16..32).contains(&out[0]) {
+        println!("out[0] = {} (valid participating lane)", out[0]);
+        println!("✓ subset leader is a participating lane");
     } else {
+        println!("out[0] = {} (expected a lane in 16..=31)", out[0]);
         println!("✗ subset election mismatch!");
         failed = true;
     }

@@ -848,10 +848,10 @@ pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
 // Leader election (sm_90+)
 // =============================================================================
 //
-// `elect.sync` collectively chooses a single "leader" lane out of those named
-// in `mask`. The hardware picks the lowest-numbered participating lane and
-// hands every lane two facts: the leader's lane id, and whether *it* is the
-// leader. It replaces the pre-Hopper idiom
+// `elect.sync` collectively chooses one leader lane from those named in
+// `mask`. The choice is deterministic for the same mask. Every participating
+// lane receives the leader's lane id and whether it is the leader. It replaces
+// a multi-instruction election sequence such as
 //
 // ```rust,ignore
 // let active = warp::active_mask();
@@ -864,15 +864,12 @@ pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
 
 /// Elect a single leader lane from the participating `mask` (sm_90+).
 ///
-/// PTX `elect.sync d|p, membermask` (emitted as convergent inline PTX — the
-/// `@llvm.nvvm.elect.sync` intrinsic has no NVPTX lowering in current LLVM).
-/// The lowest-numbered lane set in `mask` becomes the leader. Returns
+/// PTX `elect.sync d|p, membermask`, lowered through the generated route for
+/// the selected backend. PTX does not promise which participating lane is
+/// chosen, but the choice is deterministic for the same mask. Returns
 /// `(leader_lane, is_elected)`:
 ///
-/// - `leader_lane`: the lane id of the elected leader. PTX only defines this
-///   value on the elected lane itself; it is unspecified on non-elected lanes,
-///   so broadcast it (e.g. via [`shuffle_sync`]) if the rest of the warp needs
-///   it.
+/// - `leader_lane`: the elected lane id, returned to each participating lane.
 /// - `is_elected`: `true` only for the calling lane if it is the leader.
 ///
 /// Requires Hopper (sm_90+). Convergent: every lane named in `mask` must be
