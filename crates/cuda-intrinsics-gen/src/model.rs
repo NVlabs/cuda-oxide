@@ -177,6 +177,8 @@ pub struct OverlayShardFile {
     pub cluster_memory: Option<ClusterMemoryAdmission>,
     #[serde(default)]
     pub stmatrix: Option<StmatrixAdmission>,
+    #[serde(default)]
+    pub clc: Option<ClcAdmission>,
 }
 
 /// Compact admission for the four existing `stmatrix` stores.
@@ -354,6 +356,25 @@ pub enum ThreadfenceScope {
     Cta,
     Device,
     System,
+}
+
+/// Compact admission for Cluster Launch Control.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClcAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ClcAdmissionVariant>,
+}
+
+/// One reviewed Cluster Launch Control operation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClcAdmissionVariant {
+    pub abi_id: String,
+    pub operation: ClcOperation,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -560,6 +581,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub cluster_memory: Option<ClusterMemory>,
     #[serde(default)]
+    pub clc: Option<Clc>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -642,6 +665,34 @@ pub enum ClusterMemoryAdapter {
 pub enum ClusterMemorySourceContract {
     LlvmMapaSharedClusterAs7IdentityInlinePtx,
     PtxNativeMapaThenWeakClusterLoad,
+}
+
+/// Closed semantic contract for Cluster Launch Control.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clc {
+    pub operation: ClcOperation,
+    pub adapter: ClcAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClcOperation {
+    TryCancel,
+    TryCancelMulticast,
+    QueryIsCanceled,
+    QueryGetFirstCtaidX,
+    QueryGetFirstCtaidY,
+    QueryGetFirstCtaidZ,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClcAdapter {
+    GenericPointersToShared,
+    PairU64ToI128BoolToU32,
+    PairU64ToI128U32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2031,6 +2082,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster_memory: Option<ClusterMemory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clc: Option<Clc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
     pub expected_ptx: InstructionPattern,
@@ -2911,6 +2964,33 @@ runtime_validation = "unexecuted"
                 toml::from_str::<ClusterMemory>(&invalid).is_err(),
                 "{invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn clc_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "query_is_canceled"
+adapter = "pair_u64_to_i128_bool_to_u32"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<Clc>(valid).unwrap();
+        assert_eq!(parsed.operation, ClcOperation::QueryIsCanceled);
+        assert_eq!(parsed.adapter, ClcAdapter::PairU64ToI128BoolToU32);
+
+        for invalid in [
+            valid.replace("operation = \"query_is_canceled\"", "operation = \"query\""),
+            valid.replace(
+                "adapter = \"pair_u64_to_i128_bool_to_u32\"",
+                "adapter = \"pair_u64_to_i128\"",
+            ),
+            valid.replace(
+                "runtime_validation = \"unexecuted\"",
+                "runtime_validation = \"assumed\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<Clc>(&invalid).is_err(), "{invalid}");
         }
     }
 }

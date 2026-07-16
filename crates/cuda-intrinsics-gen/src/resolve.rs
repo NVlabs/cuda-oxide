@@ -10,14 +10,15 @@ use crate::model::{
     CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
-    ClusterBarrier, ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering,
-    ClusterMemory, ClusterMemoryAdapter, ClusterMemoryAdmission, ClusterMemoryOperation,
-    ClusterMemorySourceContract, ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy,
-    CpAsyncControlAdapter, CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter,
-    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl,
-    DebugControlAdapter, DebugControlAdmission, DebugControlOperation, DotProductAdapter,
-    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6,
-    EvidenceMatrix, EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
+    Clc, ClcAdapter, ClcAdmission, ClcOperation, ClusterBarrier, ClusterBarrierAdmission,
+    ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemory, ClusterMemoryAdapter,
+    ClusterMemoryAdmission, ClusterMemoryOperation, ClusterMemorySourceContract,
+    ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter,
+    CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
+    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl, DebugControlAdapter,
+    DebugControlAdmission, DebugControlOperation, DotProductAdapter, DotProductOperation,
+    DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix,
+    EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
     EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
     IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
     LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
@@ -58,7 +59,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 39;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 39;
+const OVERLAY_SHARD_SCHEMA: u32 = 40;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -69,6 +70,7 @@ const DEBUG_CONTROL_SHARD_SCHEMA: u32 = 33;
 const THREADFENCE_SHARD_SCHEMA: u32 = 34;
 const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
+const CLC_SHARD_SCHEMA: u32 = 40;
 pub(crate) const CATALOG_SCHEMA: u32 = 38;
 
 struct ResolutionBase {
@@ -154,6 +156,76 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         },
         intrinsics,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn test_catalog_with_clc(repo_root: &Path) -> Result<CatalogFile> {
+    let mut catalog = resolve(repo_root)?;
+    let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
+    let imported_by_record = index_imported_intrinsics(&imported)?;
+    let operations = [
+        ClcOperation::TryCancel,
+        ClcOperation::TryCancelMulticast,
+        ClcOperation::QueryIsCanceled,
+        ClcOperation::QueryGetFirstCtaidX,
+        ClcOperation::QueryGetFirstCtaidY,
+        ClcOperation::QueryGetFirstCtaidZ,
+    ];
+    let admission = ClcAdmission {
+        llvm_evidence_profile: "llvm-clc-test".into(),
+        libnvvm_evidence_profile: "libnvvm-clc-test".into(),
+        runtime_validation: RuntimeValidation::Unexecuted,
+        variants: operations
+            .into_iter()
+            .map(|operation| crate::model::ClcAdmissionVariant {
+                abi_id: clc_recipe(operation).abi_id.into(),
+                operation,
+            })
+            .collect(),
+    };
+    for policy in expand_clc_admission(&admission)? {
+        let source = resolve_policy_source(&policy)?;
+        let declaration = resolve_imported_declaration(&policy, &source, &imported_by_record)?;
+        validate_policy(&policy, &source, declaration, catalog.intrinsic_abi)?;
+        let backend_lowerings = policy
+            .backend_lowerings
+            .iter()
+            .map(|lowering| {
+                Ok(CatalogBackendLowering {
+                    backend: lowering.backend,
+                    mechanism: lowering.mechanism,
+                    evidence_profile: lowering.evidence_profile.clone(),
+                    target: backend_target_requirement(&policy, lowering)?,
+                    version: "test".into(),
+                    sha256: "0".repeat(64),
+                    artifact_path: None,
+                    build_id_prefix: None,
+                    status: "validated".into(),
+                    stages: vec![],
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        catalog.intrinsics.push(materialize_record(
+            &policy,
+            source,
+            declaration,
+            CatalogBackend {
+                profile: "clc-test".into(),
+                version: "test".into(),
+                sha256: "0".repeat(64),
+                status: "validated".into(),
+                target_triple: "nvptx64-nvidia-cuda".into(),
+                gpu_target: "sm_100".into(),
+                ptx_feature: "+ptx86".into(),
+            },
+            backend_lowerings,
+            catalog.intrinsic_abi,
+        )?);
+    }
+    catalog
+        .intrinsics
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(catalog)
 }
 
 fn load_resolution_base(repo_root: &Path) -> Result<ResolutionBase> {
@@ -477,6 +549,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let threadfence_admission = shard.threadfence.take();
         let cluster_memory_admission = shard.cluster_memory.take();
         let stmatrix_admission = shard.stmatrix.take();
+        let clc_admission = shard.clc.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -583,6 +656,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_stmatrix_admission(&admission)?;
         }
+        if let Some(admission) = clc_admission {
+            ensure!(
+                shard.family == "clc" && shard.intrinsics.is_empty(),
+                "compact CLC admission must be the only content of a clc shard"
+            );
+            shard.intrinsics = expand_clc_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -676,6 +756,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.stmatrix.is_none() || shard.schema >= STMATRIX_SHARD_SCHEMA,
         "compact stmatrix admission requires overlay shard schema {}",
         STMATRIX_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.clc.is_none() || shard.schema >= CLC_SHARD_SCHEMA,
+        "compact CLC admission requires overlay shard schema {}",
+        CLC_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1190,6 +1275,10 @@ fn validate_policy(
         )?,
         "debug_control" => validate_debug_control_policy(policy, source)?,
         "cluster_memory" => validate_cluster_memory_policy(policy, source, declaration)?,
+        "clc" => validate_clc_policy(
+            policy,
+            declaration.context("clc requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1230,6 +1319,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "cluster_memory") == policy.cluster_memory.is_some(),
         "{} mixes the cluster-memory contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "clc") == policy.clc.is_some(),
+        "{} mixes the CLC contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1312,6 +1406,16 @@ fn validate_policy(
             || (policy.family == "register_mma" && policy.register_mma.is_some())
             || (policy.family == "sparse_mma" && policy.sparse_mma.is_some())
             || (policy.family == "prmt" && policy.prmt.is_some())
+            || (policy.family == "clc"
+                && policy.clc.as_ref().is_some_and(|clc| {
+                    matches!(
+                        clc.operation,
+                        ClcOperation::QueryIsCanceled
+                            | ClcOperation::QueryGetFirstCtaidX
+                            | ClcOperation::QueryGetFirstCtaidY
+                            | ClcOperation::QueryGetFirstCtaidZ
+                    )
+                }))
             || (policy.family == "sreg"
                 && policy.special_register.as_ref().is_some_and(|special| {
                     matches!(
@@ -1335,6 +1439,19 @@ fn validate_policy(
             "warp_match" => 4,
             "warp_shuffle" => 8,
             "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" | "stmatrix" => 0,
+            "clc"
+                if policy.clc.as_ref().is_some_and(|clc| {
+                    matches!(
+                        clc.operation,
+                        ClcOperation::QueryIsCanceled
+                            | ClcOperation::QueryGetFirstCtaidX
+                            | ClcOperation::QueryGetFirstCtaidY
+                            | ClcOperation::QueryGetFirstCtaidZ
+                    )
+                }) =>
+            {
+                0
+            }
             "sreg"
                 if policy.special_register.as_ref().is_some_and(|special| {
                     matches!(
@@ -1708,6 +1825,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -1845,6 +1963,448 @@ fn validate_threadfence_policy(
         "{} mixes another generated-family contract with threadfence",
         policy.id
     );
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ClcRecipe {
+    operation: ClcOperation,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_arguments: &'static [&'static str],
+    llvm_arguments: &'static [&'static str],
+    llvm_results: &'static [&'static str],
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    dialect_results: &'static [&'static str],
+    adapter: ClcAdapter,
+    modifiers: &'static [&'static str],
+    operands: &'static [OperandPattern],
+    targets: &'static str,
+    minimum_sm: Option<&'static str>,
+    pure: bool,
+    memory: &'static str,
+    execution_scope: &'static str,
+    summary: &'static str,
+}
+
+fn clc_recipe(operation: ClcOperation) -> ClcRecipe {
+    const TRY_OPERANDS: &[OperandPattern] = &[OperandPattern::Address, OperandPattern::Address];
+    const QUERY_OPERANDS: &[OperandPattern] = &[OperandPattern::Register, OperandPattern::Register];
+    let (abi_id, id, operation_key, source_record, llvm_symbol, op_type, op_name) = match operation
+    {
+        ClcOperation::TryCancel => (
+            "i0322",
+            "clc_try_cancel",
+            "cluster.launch_control.try_cancel",
+            "int_nvvm_clusterlaunchcontrol_try_cancel_async_shared",
+            "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.shared",
+            "ClcTryCancelOp",
+            "nvvm.clc_try_cancel",
+        ),
+        ClcOperation::TryCancelMulticast => (
+            "i0323",
+            "clc_try_cancel_multicast",
+            "cluster.launch_control.try_cancel.multicast",
+            "int_nvvm_clusterlaunchcontrol_try_cancel_async_multicast_shared",
+            "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.multicast.shared",
+            "ClcTryCancelMulticastOp",
+            "nvvm.clc_try_cancel_multicast",
+        ),
+        ClcOperation::QueryIsCanceled => (
+            "i0324",
+            "clc_query_is_canceled",
+            "cluster.launch_control.query.is_canceled",
+            "int_nvvm_clusterlaunchcontrol_query_cancel_is_canceled",
+            "llvm.nvvm.clusterlaunchcontrol.query_cancel.is_canceled",
+            "ClcQueryIsCanceledOp",
+            "nvvm.clc_query_is_canceled",
+        ),
+        ClcOperation::QueryGetFirstCtaidX => (
+            "i0325",
+            "clc_query_get_first_ctaid_x",
+            "cluster.launch_control.query.first_ctaid.x",
+            "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_x",
+            "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.x",
+            "ClcQueryGetFirstCtaidXOp",
+            "nvvm.clc_query_get_first_ctaid_x",
+        ),
+        ClcOperation::QueryGetFirstCtaidY => (
+            "i0326",
+            "clc_query_get_first_ctaid_y",
+            "cluster.launch_control.query.first_ctaid.y",
+            "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_y",
+            "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.y",
+            "ClcQueryGetFirstCtaidYOp",
+            "nvvm.clc_query_get_first_ctaid_y",
+        ),
+        ClcOperation::QueryGetFirstCtaidZ => (
+            "i0327",
+            "clc_query_get_first_ctaid_z",
+            "cluster.launch_control.query.first_ctaid.z",
+            "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_z",
+            "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.z",
+            "ClcQueryGetFirstCtaidZOp",
+            "nvvm.clc_query_get_first_ctaid_z",
+        ),
+    };
+    match operation {
+        ClcOperation::TryCancel | ClcOperation::TryCancelMulticast => ClcRecipe {
+            operation,
+            abi_id,
+            id,
+            operation_key,
+            source_record,
+            llvm_symbol,
+            rust_arguments: &["*mut u8", "*mut u64"],
+            llvm_arguments: &["shared_ptr", "shared_ptr"],
+            llvm_results: &[],
+            dialect_op_type: op_type,
+            dialect_op_name: op_name,
+            dialect_operands: &["ptr", "ptr"],
+            dialect_results: &[],
+            adapter: ClcAdapter::GenericPointersToShared,
+            modifiers: if operation == ClcOperation::TryCancel {
+                &[
+                    "try_cancel",
+                    "async",
+                    "shared::cta",
+                    "mbarrier::complete_tx::bytes",
+                    "b128",
+                ]
+            } else {
+                &[
+                    "try_cancel",
+                    "async",
+                    "shared::cta",
+                    "mbarrier::complete_tx::bytes",
+                    "multicast::cluster::all",
+                    "b128",
+                ]
+            },
+            operands: TRY_OPERANDS,
+            targets: if operation == ClcOperation::TryCancel {
+                "all"
+            } else {
+                "sm_100a|sm_101a|sm_110a|sm_120a"
+            },
+            minimum_sm: if operation == ClcOperation::TryCancel {
+                Some("sm_100")
+            } else {
+                None
+            },
+            pure: false,
+            memory: "read_write",
+            execution_scope: "cta",
+            summary: if operation == ClcOperation::TryCancel {
+                "Requests one pending CTA and writes its response to shared memory."
+            } else {
+                "Requests one pending CTA and multicasts its response across the cluster."
+            },
+        },
+        ClcOperation::QueryIsCanceled
+        | ClcOperation::QueryGetFirstCtaidX
+        | ClcOperation::QueryGetFirstCtaidY
+        | ClcOperation::QueryGetFirstCtaidZ => {
+            let (adapter, modifiers, summary) = match operation {
+                ClcOperation::QueryIsCanceled => (
+                    ClcAdapter::PairU64ToI128BoolToU32,
+                    &["query_cancel", "is_canceled", "pred", "b128"] as &[_],
+                    "Returns whether the Cluster Launch Control request was canceled.",
+                ),
+                ClcOperation::QueryGetFirstCtaidX => (
+                    ClcAdapter::PairU64ToI128U32,
+                    &["query_cancel", "get_first_ctaid::x", "b32", "b128"] as &[_],
+                    "Returns the X coordinate from a successful cancellation response.",
+                ),
+                ClcOperation::QueryGetFirstCtaidY => (
+                    ClcAdapter::PairU64ToI128U32,
+                    &["query_cancel", "get_first_ctaid::y", "b32", "b128"] as &[_],
+                    "Returns the Y coordinate from a successful cancellation response.",
+                ),
+                ClcOperation::QueryGetFirstCtaidZ => (
+                    ClcAdapter::PairU64ToI128U32,
+                    &["query_cancel", "get_first_ctaid::z", "b32", "b128"] as &[_],
+                    "Returns the Z coordinate from a successful cancellation response.",
+                ),
+                _ => unreachable!(),
+            };
+            ClcRecipe {
+                operation,
+                abi_id,
+                id,
+                operation_key,
+                source_record,
+                llvm_symbol,
+                rust_arguments: &["u64", "u64"],
+                llvm_arguments: &["i128"],
+                llvm_results: if operation == ClcOperation::QueryIsCanceled {
+                    &["i1"]
+                } else {
+                    &["i32"]
+                },
+                dialect_op_type: op_type,
+                dialect_op_name: op_name,
+                dialect_operands: &["i64", "i64"],
+                dialect_results: &["i32"],
+                adapter,
+                modifiers,
+                operands: QUERY_OPERANDS,
+                targets: "all",
+                minimum_sm: Some("sm_100"),
+                pure: true,
+                memory: "none",
+                execution_scope: "thread",
+                summary,
+            }
+        }
+    }
+}
+
+fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "CLC runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact CLC admission requires both backend evidence profiles"
+    );
+    let expected = [
+        ClcOperation::TryCancel,
+        ClcOperation::TryCancelMulticast,
+        ClcOperation::QueryIsCanceled,
+        ClcOperation::QueryGetFirstCtaidX,
+        ClcOperation::QueryGetFirstCtaidY,
+        ClcOperation::QueryGetFirstCtaidZ,
+    ];
+    ensure!(
+        admission
+            .variants
+            .iter()
+            .map(|variant| variant.operation)
+            .eq(expected),
+        "compact CLC admission must list all six operations in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = clc_recipe(variant.operation);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let query = recipe.pure;
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "clc".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "clc".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: recipe.rust_arguments.iter().map(|value| (*value).into()).collect(),
+                rust_result: if query { "u32".into() } else { "()".into() },
+                safe: false,
+                must_use: false,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::clc::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::clc::{}", recipe.id)],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: recipe.dialect_operands.iter().map(|value| (*value).into()).collect(),
+                dialect_results: recipe.dialect_results.iter().map(|value| (*value).into()).collect(),
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments: recipe.llvm_arguments.iter().map(|value| (*value).into()).collect(),
+                llvm_results: recipe.llvm_results.iter().map(|value| (*value).into()).collect(),
+                pure: recipe.pure,
+                memory: recipe.memory.into(),
+                convergent: false,
+                execution_scope: recipe.execution_scope.into(),
+                minimum_ptx: "8.6".into(),
+                minimum_sm: recipe.minimum_sm.map(Into::into),
+                ptx_result: if query { "u32".into() } else { "()".into() },
+                targets: recipe.targets.into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: "9.7.14.18-19 Cluster Launch Control".into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel".into(),
+                lowering: "generated_clc".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("8.6".into()),
+                        minimum_sm: recipe.minimum_sm.map(Into::into),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some("8.6".into()),
+                        minimum_sm: recipe.minimum_sm.map(Into::into),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: Some(Clc {
+                    operation: recipe.operation,
+                    adapter: recipe.adapter,
+                    runtime_validation: admission.runtime_validation,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "clusterlaunchcontrol".into(),
+                    modifiers: recipe.modifiers.iter().map(|value| (*value).into()).collect(),
+                    operands: if query {
+                        vec![
+                            OperandPattern::Register,
+                            OperandPattern::Exact { value: "%clc_handle".into() },
+                        ]
+                    } else {
+                        recipe.operands.to_vec()
+                    },
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_clc_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    let clc = policy
+        .clc
+        .as_ref()
+        .with_context(|| format!("{} has no closed CLC contract", policy.id))?;
+    let recipe = clc_recipe(clc.operation);
+    let query = recipe.pure;
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == recipe.source_record
+            && declaration.llvm_name == recipe.llvm_symbol,
+        "{} CLC identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "clc"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == if query { "u32" } else { "()" }
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::clc::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::clc::{}", recipe.id)],
+        "{} CLC Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results == recipe.dialect_results
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results == recipe.llvm_results
+            && policy.lowering == "generated_clc",
+        "{} CLC carrier or LLVM adapter changed",
+        policy.id
+    );
+    ensure!(
+        declaration.arguments == recipe.llvm_arguments
+            && declaration.results == recipe.llvm_results
+            && declaration.properties
+                == if query {
+                    vec!["IntrNoMem", "IntrSpeculatable"]
+                } else {
+                    vec!["IntrArgMemOnly", "IntrHasSideEffects"]
+                },
+        "{} imported CLC declaration changed",
+        policy.id
+    );
+    ensure!(
+        policy.pure == recipe.pure
+            && policy.memory == recipe.memory
+            && !policy.convergent
+            && policy.execution_scope == recipe.execution_scope
+            && clc.adapter == recipe.adapter
+            && clc.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} CLC semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "8.6"
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
+            && policy.targets == recipe.targets
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_result == if query { "u32" } else { "()" },
+        "{} CLC target contract changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "clusterlaunchcontrol"
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands
+                == if query {
+                    vec![
+                        OperandPattern::Register,
+                        OperandPattern::Exact {
+                            value: "%clc_handle".into(),
+                        },
+                    ]
+                } else {
+                    recipe.operands.to_vec()
+                }
+            && policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings.iter().all(|route| {
+                route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.minimum_ptx.as_deref() == Some("8.6")
+                    && route.minimum_sm.as_deref() == recipe.minimum_sm
+                    && !route.evidence_profile.trim().is_empty()
+            }),
+        "{} CLC PTX shape or backend route changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "CLC")?;
     Ok(())
 }
 
@@ -3380,6 +3940,7 @@ fn validate_selected_target_predicates(
     let mut imported_ptx = None;
     let mut imported_sm = None;
     let mut has_dot_instructions = false;
+    let mut has_clc_multicast_support = false;
     for predicate in &selection.predicates {
         if let Some(value) = predicate.strip_prefix("Subtarget->getPTXVersion() >= ") {
             ensure!(
@@ -3413,6 +3974,25 @@ fn validate_selected_target_predicates(
             has_dot_instructions = true;
             imported_ptx = Some(50);
             imported_sm = Some(61);
+        } else if predicate == "Subtarget->hasClusterLaunchControlTryCancelMulticastSupport()" {
+            ensure!(
+                policy.family == "clc"
+                    && policy
+                        .clc
+                        .as_ref()
+                        .is_some_and(|clc| { clc.operation == ClcOperation::TryCancelMulticast }),
+                "{} uses the CLC multicast target predicate outside that operation",
+                policy.id
+            );
+            ensure!(
+                !has_clc_multicast_support
+                    && imported_ptx.is_none()
+                    && imported_sm.is_none()
+                    && !has_dot_instructions,
+                "{} has duplicate or conflicting CLC multicast target predicates",
+                policy.id
+            );
+            has_clc_multicast_support = true;
         } else {
             bail!(
                 "{} selected instruction has unsupported target predicate {predicate:?}; target gates must fail closed",
@@ -3467,6 +4047,33 @@ fn validate_selected_target_predicates(
             "{} dotprod selection must carry only the hasDotInstructions predicate",
             policy.id
         );
+    } else if policy.family == "clc" {
+        match policy.clc.as_ref().map(|clc| clc.operation) {
+            Some(ClcOperation::TryCancel) => ensure!(
+                imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
+                "{} selection must carry exactly its PTX and SM predicates",
+                policy.id
+            ),
+            Some(ClcOperation::TryCancelMulticast) => ensure!(
+                has_clc_multicast_support
+                    && selection.predicates.len() == 1
+                    && parse_hardware_target(policy)?
+                        == CatalogHardwareTarget::AnyOf {
+                            alternatives: vec![
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 120 },
+                            ],
+                        },
+                "{} multicast target predicate must map to the reviewed exact architectures",
+                policy.id
+            ),
+            _ => bail!(
+                "{} query operation unexpectedly has an instruction selection",
+                policy.id
+            ),
+        }
     } else if matches!(
         policy.family.as_str(),
         "vote"
@@ -4044,6 +4651,7 @@ fn expand_special_register_admission(
                 special_register: Some(special_register_contract(recipe)),
                 debug_control: None,
                 cluster_memory: None,
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -4671,6 +5279,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         special_register: None,
         debug_control: None,
         cluster_memory: None,
+        clc: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -5595,6 +6204,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -8262,6 +8872,7 @@ fn packed_conversion_overlay_record(
         special_register: None,
         debug_control: None,
         cluster_memory: None,
+        clc: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -9521,6 +10132,7 @@ fn expand_register_mma_integer_admission(
             special_register: None,
             debug_control: None,
             cluster_memory: None,
+            clc: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -9700,6 +10312,7 @@ fn expand_register_mma_binary_admission(
             special_register: None,
             debug_control: None,
             cluster_memory: None,
+            clc: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -10343,6 +10956,7 @@ fn sparse_mma_overlay_record(
         special_register: None,
         debug_control: None,
         cluster_memory: None,
+        clc: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -10785,6 +11399,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -11136,6 +11751,7 @@ fn expand_cluster_barrier_admission(
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -11497,6 +12113,7 @@ fn expand_debug_control_admission(
                     runtime_validation: admission.runtime_validation,
                 }),
                 cluster_memory: None,
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -12008,6 +12625,7 @@ fn expand_cluster_memory_admission(
                     source_contract: recipe.source_contract,
                     runtime_validation: admission.runtime_validation,
                 }),
+                clc: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -12287,7 +12905,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "prmt") == policy.prmt.is_some()
             && (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some()
             && (policy.family == "debug_control") == policy.debug_control.is_some()
-            && (policy.family == "cluster_memory") == policy.cluster_memory.is_some(),
+            && (policy.family == "cluster_memory") == policy.cluster_memory.is_some()
+            && (policy.family == "clc") == policy.clc.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -12319,13 +12938,48 @@ fn parse_hardware_target_fields(
         });
     }
 
+    if targets.contains('|') {
+        ensure!(
+            minimum_sm.is_none(),
+            "{} target alternatives {:?} cannot be combined with minimum_sm",
+            intrinsic_id,
+            targets
+        );
+        let spellings = targets.split('|').collect::<Vec<_>>();
+        ensure!(
+            spellings.len() >= 2,
+            "{} target alternatives must contain at least two targets",
+            intrinsic_id
+        );
+        ensure!(
+            spellings.windows(2).all(|pair| pair[0] < pair[1]),
+            "{} target alternatives must be unique and sorted",
+            intrinsic_id
+        );
+        return Ok(CatalogHardwareTarget::AnyOf {
+            alternatives: spellings
+                .into_iter()
+                .map(|spelling| parse_exact_hardware_alternative(intrinsic_id, spelling))
+                .collect::<Result<Vec<_>>>()?,
+        });
+    }
+
     ensure!(
         minimum_sm.is_none(),
         "{} exact targets {:?} cannot be combined with minimum_sm",
         intrinsic_id,
         targets
     );
-    let suffix = targets
+    Ok(CatalogHardwareTarget::AnyOf {
+        alternatives: vec![parse_exact_hardware_alternative(intrinsic_id, targets)?],
+    })
+}
+
+fn parse_exact_hardware_alternative(
+    intrinsic_id: &str,
+    target: &str,
+) -> Result<CatalogHardwareAlternative> {
+    let suffix = target
         .chars()
         .last()
         .filter(|suffix| matches!(suffix, 'a' | 'f'));
@@ -12333,17 +12987,14 @@ fn parse_hardware_target_fields(
         bail!(
             "{} targets {:?} must be `all`, exact `sm_Na`, or family `sm_Nf`",
             intrinsic_id,
-            targets
+            target
         );
     };
-    let sm = parse_sm_spelling(intrinsic_id, "targets", targets, Some(suffix))?;
-    let alternative = match suffix {
+    let sm = parse_sm_spelling(intrinsic_id, "targets", target, Some(suffix))?;
+    Ok(match suffix {
         'a' => CatalogHardwareAlternative::ExactArchitecture { sm },
         'f' => CatalogHardwareAlternative::FamilyTarget { sm },
         _ => unreachable!(),
-    };
-    Ok(CatalogHardwareTarget::AnyOf {
-        alternatives: vec![alternative],
     })
 }
 
@@ -13318,9 +13969,9 @@ fn validate_selected_stage_targets(
     let requirement = backend_target_requirement(policy, lowering)?;
     let expected_ptx = requirement.minimum_ptx.encoded();
     let expected_hardware = match requirement.hardware {
-        CatalogHardwareTarget::AnyOf { alternatives } if alternatives.len() == 1 => alternatives[0],
+        CatalogHardwareTarget::AnyOf { alternatives } if !alternatives.is_empty() => alternatives,
         _ => bail!(
-            "{} selected backend stages require one hardware target",
+            "{} selected backend stages require a hardware target",
             policy.id
         ),
     };
@@ -13335,8 +13986,9 @@ fn validate_selected_stage_targets(
     for stage in required_stages {
         let (hardware, ptx) = selected_stage_floor(stage)?;
         let allow_forward_minimum = stage.stage != EvidenceStageKind::BackendCodegen;
-        let hardware_matches =
-            selected_stage_hardware_matches(hardware, expected_hardware, allow_forward_minimum);
+        let hardware_matches = expected_hardware.iter().any(|expected| {
+            selected_stage_hardware_matches(hardware, *expected, allow_forward_minimum)
+        });
         let ptx_matches = match lowering.backend {
             IntrinsicBackend::LlvmNvptx => ptx == expected_ptx,
             IntrinsicBackend::LibNvvm => ptx >= expected_ptx,
@@ -13349,7 +14001,11 @@ fn validate_selected_stage_targets(
             describe_stage_hardware(hardware),
             ptx / 10,
             ptx % 10,
-            describe_stage_hardware(expected_hardware),
+            expected_hardware
+                .iter()
+                .map(|hardware| describe_stage_hardware(*hardware))
+                .collect::<Vec<_>>()
+                .join(" or "),
             expected_ptx / 10,
             expected_ptx % 10
         );
@@ -13368,7 +14024,10 @@ fn validate_selected_stage_targets(
             IntrinsicBackend::LibNvvm => ptx >= expected_ptx,
         };
         ensure!(
-            selected_stage_hardware_matches(hardware, expected_hardware, true) && ptx_matches,
+            expected_hardware
+                .iter()
+                .any(|expected| selected_stage_hardware_matches(hardware, *expected, true))
+                && ptx_matches,
             "{} runtime stage target does not satisfy its catalog floor",
             policy.id
         );
@@ -13696,6 +14355,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(clc) = &policy.clc {
+        match clc.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} CLC runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} CLC runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -13841,6 +14516,7 @@ fn materialize_record(
         special_register: policy.special_register.clone(),
         debug_control: policy.debug_control.clone(),
         cluster_memory: policy.cluster_memory.clone(),
+        clc: policy.clc.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -13965,6 +14641,7 @@ mod tests {
             special_register: None,
             debug_control: None,
             cluster_memory: None,
+            clc: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -15671,6 +16348,29 @@ mod tests {
         }
     }
 
+    fn test_clc_admission() -> ClcAdmission {
+        let operations = [
+            ClcOperation::TryCancel,
+            ClcOperation::TryCancelMulticast,
+            ClcOperation::QueryIsCanceled,
+            ClcOperation::QueryGetFirstCtaidX,
+            ClcOperation::QueryGetFirstCtaidY,
+            ClcOperation::QueryGetFirstCtaidZ,
+        ];
+        ClcAdmission {
+            llvm_evidence_profile: "llvm-clc-test".into(),
+            libnvvm_evidence_profile: "libnvvm-clc-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: operations
+                .into_iter()
+                .map(|operation| crate::model::ClcAdmissionVariant {
+                    abi_id: clc_recipe(operation).abi_id.into(),
+                    operation,
+                })
+                .collect(),
+        }
+    }
+
     fn test_threadfence_admission() -> ThreadfenceAdmission {
         ThreadfenceAdmission {
             llvm_evidence_profile: "llvm-test".into(),
@@ -15762,6 +16462,7 @@ mod tests {
             threadfence: None,
             cluster_memory: None,
             stmatrix: None,
+            clc: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -15773,6 +16474,7 @@ mod tests {
         validate_overlay_shard_schema(&shard(32, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(33, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(34, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(35, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(27, Some(test_f8f6f4_admission()), None), path)
             .unwrap();
         validate_overlay_shard_schema_with_max(
@@ -15832,6 +16534,7 @@ mod tests {
             threadfence: None,
             cluster_memory: None,
             stmatrix: None,
+            clc: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -15860,6 +16563,7 @@ mod tests {
             threadfence: None,
             cluster_memory: None,
             stmatrix: None,
+            clc: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -16080,6 +16784,7 @@ record_count = 14
             threadfence: None,
             cluster_memory: None,
             stmatrix: None,
+            clc: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -16609,6 +17314,117 @@ scope = "system"
     }
 
     #[test]
+    fn compact_clc_admission_matches_llvm_and_fails_closed() {
+        let records = expand_clc_admission(&test_clc_admission()).unwrap();
+        assert_eq!(records.len(), 6);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0322", "clc_try_cancel"),
+                ("i0323", "clc_try_cancel_multicast"),
+                ("i0324", "clc_query_is_canceled"),
+                ("i0325", "clc_query_get_first_ctaid_x"),
+                ("i0326", "clc_query_get_first_ctaid_y"),
+                ("i0327", "clc_query_get_first_ctaid_z"),
+            ]
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+        }
+
+        assert_eq!(
+            parse_hardware_target(&records[1]).unwrap(),
+            CatalogHardwareTarget::AnyOf {
+                alternatives: vec![
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 120 },
+                ],
+            }
+        );
+
+        let mut missing = test_clc_admission();
+        missing.variants.pop();
+        assert!(expand_clc_admission(&missing).is_err());
+
+        let mut reordered = test_clc_admission();
+        reordered.variants.swap(0, 1);
+        assert!(expand_clc_admission(&reordered).is_err());
+
+        let mut wrong_abi = test_clc_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_clc_admission(&wrong_abi).is_err());
+
+        let mut executed = test_clc_admission();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_clc_admission(&executed).is_err());
+
+        let declaration = declarations[records[2].source_record.as_deref().unwrap()];
+        let mut wrong_adapter = records[2].clone();
+        wrong_adapter.clc.as_mut().unwrap().adapter = ClcAdapter::PairU64ToI128U32;
+        assert!(validate_imported_policy(&wrong_adapter, declaration).is_err());
+
+        let mut unsorted_targets = records[1].clone();
+        unsorted_targets.targets = "sm_120a|sm_100a".into();
+        assert!(parse_hardware_target(&unsorted_targets).is_err());
+
+        let mut duplicate_targets = records[1].clone();
+        duplicate_targets.targets = "sm_100a|sm_100a".into();
+        assert!(parse_hardware_target(&duplicate_targets).is_err());
+    }
+
+    #[test]
+    fn clc_compact_schema_is_reserved_for_aggregation() {
+        let shard = |schema| OverlayShardFile {
+            schema,
+            family: "clc".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            special_registers: None,
+            debug_control: None,
+            threadfence: None,
+            cluster_memory: None,
+            stmatrix: None,
+            clc: Some(test_clc_admission()),
+        };
+        let path = Path::new("intrinsics/overlay/clc.toml");
+        validate_overlay_shard_schema_with_max(&shard(CLC_SHARD_SCHEMA), path, CLC_SHARD_SCHEMA)
+            .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(CLC_SHARD_SCHEMA - 1),
+                path,
+                CLC_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 40")
+        );
+    }
+
+    #[test]
     fn debug_control_compact_schema_is_reserved_for_aggregation() {
         let shard = |schema| OverlayShardFile {
             schema,
@@ -16628,6 +17444,7 @@ scope = "system"
             threadfence: None,
             cluster_memory: None,
             stmatrix: None,
+            clc: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
@@ -16660,6 +17477,7 @@ scope = "system"
             threadfence: None,
             cluster_memory: Some(test_cluster_memory_admission()),
             stmatrix: None,
+            clc: None,
         };
         let path = Path::new("intrinsics/overlay/cluster_memory.toml");
         validate_overlay_shard_schema_with_max(

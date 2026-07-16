@@ -5,25 +5,26 @@
 
 use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
-    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, ClusterBarrierMode,
-    ClusterBarrierOrdering, ClusterMemoryAdapter, ClusterMemoryOperation,
-    ClusterMemorySourceContract, CpAsyncCachePolicy, CpAsyncControlOperation,
-    CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize,
-    DebugControlAdapter, DebugControlOperation, DotProductAdapter, DotProductOperation,
-    DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
-    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
-    LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
-    MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
-    RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
-    SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, SpecialRegisterObservation,
-    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, StmatrixLayout, StmatrixMultiplicity,
-    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, ClcAdapter,
+    ClcOperation, ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemoryAdapter,
+    ClusterMemoryOperation, ClusterMemorySourceContract, CpAsyncCachePolicy,
+    CpAsyncControlOperation, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
+    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControlAdapter, DebugControlOperation,
+    DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
+    EvidenceStageKind, ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement,
+    LdmatrixLayout, LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter,
+    MbarrierBasicOperation, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
+    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
+    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
+    RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
+    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
+    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
+    SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
+    StmatrixLayout, StmatrixMultiplicity, VoteAdapter, VoteMode, WarpBarrierAdapter,
+    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -156,6 +157,16 @@ pub fn all_outputs(
         outputs.insert(
             "crates/dialect-nvvm/src/ops/generated/debug_control.rs".into(),
             render_dialect_debug_control(catalog, catalog_sha256),
+        );
+    }
+    if clc_intrinsics(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/clc.rs".into(),
+            render_compat_clc(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/clc.rs".into(),
+            render_dialect_clc(catalog, catalog_sha256),
         );
     }
     outputs.insert(
@@ -324,6 +335,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "movmatrix" && record.movmatrix.is_some())
                     || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
                     || (record.family == "cluster_memory" && record.cluster_memory.is_some())
+                    || (record.family == "clc" && record.clc.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -793,6 +805,63 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                             }
                     }),
                 "{} is outside the closed generated debug-control recipe",
+                record.id
+            ),
+            "clc" => ensure!(
+                record.rust.module == "clc"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.lowering == "generated_clc"
+                    && record.llvm.is_some()
+                    && record.clc.as_ref().is_some_and(|clc| {
+                        clc.runtime_validation == RuntimeValidation::Unexecuted
+                            && match (clc.operation, clc.adapter) {
+                                (
+                                    ClcOperation::TryCancel
+                                    | ClcOperation::TryCancelMulticast,
+                                    ClcAdapter::GenericPointersToShared,
+                                ) => {
+                                    record.rust.arguments == ["*mut u8", "*mut u64"]
+                                        && record.rust.result == "()"
+                                        && record.dialect.operands == ["ptr", "ptr"]
+                                        && record.dialect.results.is_empty()
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments == ["shared_ptr", "shared_ptr"]
+                                                && llvm.results.is_empty()
+                                        })
+                                }
+                                (
+                                    ClcOperation::QueryIsCanceled,
+                                    ClcAdapter::PairU64ToI128BoolToU32,
+                                ) => {
+                                    record.rust.arguments == ["u64", "u64"]
+                                        && record.rust.result == "u32"
+                                        && record.dialect.operands == ["i64", "i64"]
+                                        && record.dialect.results == ["i32"]
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments == ["i128"]
+                                                && llvm.results == ["i1"]
+                                        })
+                                }
+                                (
+                                    ClcOperation::QueryGetFirstCtaidX
+                                    | ClcOperation::QueryGetFirstCtaidY
+                                    | ClcOperation::QueryGetFirstCtaidZ,
+                                    ClcAdapter::PairU64ToI128U32,
+                                ) => {
+                                    record.rust.arguments == ["u64", "u64"]
+                                        && record.rust.result == "u32"
+                                        && record.dialect.operands == ["i64", "i64"]
+                                        && record.dialect.results == ["i32"]
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments == ["i128"]
+                                                && llvm.results == ["i32"]
+                                        })
+                                }
+                                _ => false,
+                            }
+                    }),
+                "{} is outside the closed generated CLC recipe",
                 record.id
             ),
             "cp_async_copy" => ensure!(
@@ -1296,6 +1365,13 @@ fn cluster_memory(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "cluster_memory")
+}
+
+fn clc_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "clc")
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -3031,6 +3107,55 @@ fn render_compat_stmatrix(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::clc` to keep its public API stable.\n\n");
+    for record in clc_intrinsics(catalog) {
+        let operation = record.clc.as_ref().expect("CLC contract").operation;
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        match operation {
+            ClcOperation::TryCancel | ClcOperation::TryCancelMulticast => {
+                output.push_str("/// `response` and `mbar` must be valid, aligned shared-memory objects for this request.\n");
+                if operation == ClcOperation::TryCancelMulticast {
+                    output.push_str("/// Every CTA in the cluster must still be active.\n");
+                }
+                output.push_str("#[inline(never)]\n");
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(response: *mut u8, mbar: *mut Barrier) {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = (response, mbar);\n");
+            }
+            ClcOperation::QueryIsCanceled
+            | ClcOperation::QueryGetFirstCtaidX
+            | ClcOperation::QueryGetFirstCtaidY
+            | ClcOperation::QueryGetFirstCtaidZ => {
+                output
+                    .push_str("/// The response halves must come from a completed CLC request.\n");
+                output.push_str("#[inline(never)]\n");
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(resp_lo: u64, resp_hi: u64) -> u32 {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = (resp_lo, resp_hi);\n");
+            }
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -3504,6 +3629,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
         output = output.replace("mod movmatrix;\n", "");
         output = output.replace("pub use movmatrix::*;\n", "");
         output = output.replace("    movmatrix::register(ctx);\n", "");
+    }
+    if clc_intrinsics(catalog).next().is_some() {
+        output = output
+            .replace("mod cluster_barrier;", "mod clc;\nmod cluster_barrier;")
+            .replace(
+                "pub use cluster_barrier::*;",
+                "pub use clc::*;\npub use cluster_barrier::*;",
+            )
+            .replace(
+                "    cluster_barrier::register(ctx);",
+                "    clc::register(ctx);\n    cluster_barrier::register(ctx);",
+            );
     }
     output
 }
@@ -5900,6 +6037,33 @@ fn render_dialect_debug_control(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_dialect_clc(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(clc_intrinsics(catalog).count(), 6);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated Cluster Launch Control operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+    );
+    for record in clc_intrinsics(catalog) {
+        let result_count = record.dialect.results.len();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<2>, NResultsInterface<{result_count}>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in clc_intrinsics(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -5990,6 +6154,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", BreakpointOp, PmEventOp, TrapOp");
     }
     for record in cluster_memory(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
+    for record in clc_intrinsics(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
@@ -7054,6 +7222,58 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    for record in clc_intrinsics(catalog) {
+        let query = !matches!(
+            record.clc.as_ref().unwrap().operation,
+            ClcOperation::TryCancel | ClcOperation::TryCancelMulticast
+        );
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n            require_arity(name, args.len(), 2, &loc)?;\n");
+        output.push_str(
+            "            let (arg0, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n            let (arg1, last_op) = rvalue::translate_operand(\n                ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        let result_types = if query {
+            "vec![pliron::builtin::types::IntegerType::get(ctx, 32, pliron::builtin::types::Signedness::Unsigned).into()]"
+        } else {
+            "vec![]"
+        };
+        writeln!(
+            output,
+            "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), {result_types}, vec![arg0, arg1], vec![], 0);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
+        if query {
+            output.push_str("            let result = intrinsic.deref(ctx).get_result(0);\n");
+            writeln!(
+                output,
+                "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+                format!("{} call without target block", record.rust.name)
+            )
+            .unwrap();
+        } else {
+            output.push_str("            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n");
+            writeln!(
+                output,
+                "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                format!("{} call without target block", record.rust.name)
+            )
+            .unwrap();
+            output.push_str("            }\n");
+        }
+        output.push_str("        }\n");
+    }
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -7606,6 +7826,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "common::{call_intrinsic, cast_to_shared_addrspace,",
         );
     }
+    if clc_intrinsics(catalog).next().is_some() {
+        output = output.replace(
+            "cp_async::{",
+            "clc::{convert_generated_clc_query, convert_generated_clc_try_cancel}, cp_async::{",
+        );
+    }
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
             output.push_str(", ");
@@ -7642,6 +7868,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if debug_controls(catalog).next().is_some() {
         output.push_str(", BreakpointOp, PmEventOp, TrapOp");
+    }
+    for record in clc_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -8564,6 +8794,40 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    for record in clc_intrinsics(catalog) {
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        match record.clc.as_ref().unwrap().operation {
+            ClcOperation::TryCancel | ClcOperation::TryCancelMulticast => {
+                writeln!(
+                    output,
+                    "        convert_generated_clc_try_cancel(ctx, rewriter, self.get_operation(), operands_info, {:?})",
+                    record.llvm_identifier()
+                )
+                .unwrap();
+            }
+            ClcOperation::QueryIsCanceled
+            | ClcOperation::QueryGetFirstCtaidX
+            | ClcOperation::QueryGetFirstCtaidY
+            | ClcOperation::QueryGetFirstCtaidZ => {
+                writeln!(
+                    output,
+                    "        convert_generated_clc_query(ctx, rewriter, self.get_operation(), operands_info, {:?}, {})",
+                    record.llvm_identifier(),
+                    record.clc.as_ref().unwrap().operation == ClcOperation::QueryIsCanceled
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("    }\n}\n\n");
+    }
     for record in debug_controls(catalog) {
         writeln!(
             output,
@@ -9165,6 +9429,73 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 )
                 .unwrap();
                 output.push_str("  ret i32 %value\n}\n\nattributes #0 = { convergent }\n");
+            }
+        }
+    } else if let Some(clc) = &record.clc {
+        match clc.adapter {
+            ClcAdapter::GenericPointersToShared => {
+                writeln!(
+                    output,
+                    "declare void @{}(ptr addrspace(3), ptr addrspace(3))\n",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "define void @probe_{}(ptr %response_generic, ptr %mbarrier_generic) {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %response = addrspacecast ptr %response_generic to ptr addrspace(3)\n\
+                     \x20 %mbarrier = addrspacecast ptr %mbarrier_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  call void @{}(ptr addrspace(3) %response, ptr addrspace(3) %mbarrier)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                output.push_str("  ret void\n}\n");
+            }
+            ClcAdapter::PairU64ToI128BoolToU32 | ClcAdapter::PairU64ToI128U32 => {
+                let llvm_result = if clc.adapter == ClcAdapter::PairU64ToI128BoolToU32 {
+                    "i1"
+                } else {
+                    "i32"
+                };
+                writeln!(
+                    output,
+                    "declare {llvm_result} @{}(i128)\n",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "define i32 @probe_{}(i64 %response_low, i64 %response_high) {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %response_low_i128 = zext i64 %response_low to i128\n\
+                     \x20 %response_high_i128 = zext i64 %response_high to i128\n\
+                     \x20 %response_high_shifted = shl i128 %response_high_i128, 64\n\
+                     \x20 %response = or i128 %response_low_i128, %response_high_shifted\n",
+                );
+                writeln!(
+                    output,
+                    "  %raw_result = call {llvm_result} @{}(i128 %response)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                if clc.adapter == ClcAdapter::PairU64ToI128BoolToU32 {
+                    output.push_str(
+                        "  %result = zext i1 %raw_result to i32\n\
+                         \x20 ret i32 %result\n}\n",
+                    );
+                } else {
+                    output.push_str("  ret i32 %raw_result\n}\n");
+                }
             }
         }
     } else if let Some(bridge) = &record.cp_async_mbarrier {
@@ -10538,6 +10869,13 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         assert_eq!(stmatrices(&catalog).count(), 4);
+        catalog
+    }
+
+    fn catalog_with_clc() -> CatalogFile {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::test_catalog_with_clc(&repo_root).unwrap();
+        assert_eq!(clc_intrinsics(&catalog).count(), 6);
         catalog
     }
 
@@ -12732,6 +13070,100 @@ mod tests {
             source_record: "invented".into(),
         };
         assert!(validate_renderable(&wrong_source).is_err());
+    }
+
+    #[test]
+    fn clc_rendering_preserves_api_and_uses_typed_llvm_routes() {
+        let catalog = catalog_with_clc();
+        validate_renderable(&catalog).unwrap();
+
+        let compatibility = render_compat_clc(&catalog, "test-hash");
+        assert!(
+            compatibility
+                .contains("pub unsafe fn clc_try_cancel(response: *mut u8, mbar: *mut Barrier)")
+        );
+        assert!(compatibility.contains(
+            "pub unsafe fn clc_try_cancel_multicast(response: *mut u8, mbar: *mut Barrier)"
+        ));
+        assert!(
+            compatibility
+                .contains("pub unsafe fn clc_query_is_canceled(resp_lo: u64, resp_hi: u64) -> u32")
+        );
+
+        let dialect = render_dialect_clc(&catalog, "test-hash");
+        for op in [
+            "ClcTryCancelOp",
+            "ClcTryCancelMulticastOp",
+            "ClcQueryIsCanceledOp",
+            "ClcQueryGetFirstCtaidXOp",
+            "ClcQueryGetFirstCtaidYOp",
+            "ClcQueryGetFirstCtaidZOp",
+        ] {
+            assert_eq!(dialect.matches(&format!("pub struct {op}")).count(), 1);
+            assert!(dialect.contains(&format!("{op}::register(ctx)")));
+        }
+        assert_eq!(dialect.matches("NResultsInterface<0>").count(), 2);
+        assert_eq!(dialect.matches("NResultsInterface<1>").count(), 4);
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::clc::clc_try_cancel"));
+        assert!(importer.contains("ClcTryCancelOp::get_concrete_op_info()"));
+        assert!(importer.contains("ClcQueryIsCanceledOp::get_concrete_op_info()"));
+        assert!(importer.contains("helpers::emit_store_result_and_goto"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(
+            lowering
+                .contains("clc::{convert_generated_clc_query, convert_generated_clc_try_cancel}")
+        );
+        assert!(lowering.contains(
+            "convert_generated_clc_try_cancel(ctx, rewriter, self.get_operation(), operands_info, \"llvm_nvvm_clusterlaunchcontrol_try_cancel_async_shared\")"
+        ));
+        assert!(lowering.contains(
+            "convert_generated_clc_query(ctx, rewriter, self.get_operation(), operands_info, \"llvm_nvvm_clusterlaunchcontrol_query_cancel_is_canceled\", true)"
+        ));
+
+        let request = clc_intrinsics(&catalog)
+            .find(|record| record.id == "clc_try_cancel")
+            .unwrap();
+        let request_probe = render_probe(&catalog, request, "test-hash");
+        assert_eq!(request_probe.matches("addrspacecast ptr").count(), 2);
+        assert!(request_probe.contains(
+            "call void @llvm.nvvm.clusterlaunchcontrol.try_cancel.async.shared(ptr addrspace(3) %response, ptr addrspace(3) %mbarrier)"
+        ));
+
+        let query = clc_intrinsics(&catalog)
+            .find(|record| record.id == "clc_query_is_canceled")
+            .unwrap();
+        let query_probe = render_probe(&catalog, query, "test-hash");
+        assert!(query_probe.contains("%response_high_shifted = shl i128 %response_high_i128, 64"));
+        assert!(
+            query_probe.contains("%response = or i128 %response_low_i128, %response_high_shifted")
+        );
+        assert!(query_probe.contains("%result = zext i1 %raw_result to i32"));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains(
+            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(110), GeneratedHardwareAlternative::ExactArchitecture(120)])"
+        ));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/clc.rs")));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/clc.rs"
+        )));
+
+        let mut wrong_adapter = catalog;
+        wrong_adapter
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "clc_query_is_canceled")
+            .unwrap()
+            .clc
+            .as_mut()
+            .unwrap()
+            .adapter = ClcAdapter::PairU64ToI128U32;
+        assert!(validate_renderable(&wrong_adapter).is_err());
     }
 
     #[test]
