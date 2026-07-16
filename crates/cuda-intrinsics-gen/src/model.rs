@@ -157,6 +157,8 @@ pub struct OverlayShardFile {
     pub register_mma_b1: Option<RegisterMmaBinaryAdmission>,
     #[serde(default)]
     pub register_mma_f8f6f4_f32: Option<RegisterMmaF8F6F4Admission>,
+    #[serde(default)]
+    pub register_mma_f8f6f4_f16: Option<RegisterMmaF8F6F4Admission>,
     #[serde(default, alias = "sparse_mma_int8")]
     pub sparse_mma_integer: Option<SparseMmaIntegerAdmission>,
     #[serde(default)]
@@ -627,7 +629,7 @@ pub struct RegisterMmaBinaryVariant {
     pub operation: RegisterMmaOperation,
 }
 
-/// Compact admission for the dense Blackwell `kind::f8f6f4` F32 matrix.
+/// Compact admission for one dense Blackwell `kind::f8f6f4` matrix.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterMmaF8F6F4Admission {
@@ -1315,6 +1317,7 @@ pub enum RegisterMmaOperation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisterMmaAccumulator {
+    F16,
     F32,
     F64,
     S32,
@@ -1364,6 +1367,7 @@ pub enum RegisterMmaParticipation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisterMmaAdapter {
+    C2U32A4U32B2U32ToD2U32,
     C4F32A4U32B2U32ToD4F32,
     C2F64A1F64B1F64ToD2F64,
     C2I32A1U32B1U32ToD2I32,

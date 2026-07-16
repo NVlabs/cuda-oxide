@@ -540,19 +540,25 @@ run_cargo() {
         fi
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local instruction_re='mma\.sp::ordered_metadata\.sync\.aligned\.m16n8k64\.row\.col\.kind::f8f6f4\.f32\.[[:alnum:]]+\.[[:alnum:]]+\.f32'
-        local dense_instruction_re='mma\.sync\.aligned\.m16n8k32\.row\.col\.kind::f8f6f4\.f32\.(e2m1|e2m3|e3m2|e4m3|e5m2)\.(e2m1|e2m3|e3m2|e4m3|e5m2)\.f32'
+        local dense_f32_instruction_re='mma\.sync\.aligned\.m16n8k32\.row\.col\.kind::f8f6f4\.f32\.(e2m1|e2m3|e3m2|e4m3|e5m2)\.(e2m1|e2m3|e3m2|e4m3|e5m2)\.f32'
+        local dense_f16_instruction_re='mma\.sync\.aligned\.m16n8k32\.row\.col\.kind::f8f6f4\.f16\.(e2m1|e2m3|e3m2|e4m3|e5m2)\.(e2m1|e2m3|e3m2|e4m3|e5m2)\.f16'
+        local unresolved_dense_f32_re='llvm\.nvvm\.mma\.m16n8k32\.row\.col\.kind\.f8f6f4\.f32\.'
+        local unresolved_dense_f16_re='llvm\.nvvm\.mma\.m16n8k32\.row\.col\.kind\.f8f6f4\.f16\.'
         local fp8_re='cvt\.rn\.satfinite(\.relu)?\.(e4m3x2|e5m2x2)\.f32'
         local tf32_re='cvt\.(rna|rn|rz)(\.relu)?(\.satfinite)?\.tf32\.f32'
         local ldmatrix_re='ldmatrix\.sync\.aligned\.(m16n16\.x(1|2)\.trans\.shared\.(b8|b8x16\.(b4x16_p64|b6x16_p32))|m8n16\.x(1|2|4)\.shared\.b8x16\.(b4x16_p64|b6x16_p32))'
         local instruction_count unique_instruction_count
-        local dense_instruction_count unique_dense_instruction_count
+        local dense_f32_instruction_count unique_dense_f32_instruction_count
+        local dense_f16_instruction_count unique_dense_f16_instruction_count
         local fp8_count unique_fp8_count
         local tf32_count unique_tf32_count
         local ldmatrix_count unique_ldmatrix_count
         instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
         unique_instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
-        dense_instruction_count="$(grep -oE "${dense_instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
-        unique_dense_instruction_count="$(grep -oE "${dense_instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
+        dense_f32_instruction_count="$(grep -oE "${dense_f32_instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
+        unique_dense_f32_instruction_count="$(grep -oE "${dense_f32_instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
+        dense_f16_instruction_count="$(grep -oE "${dense_f16_instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
+        unique_dense_f16_instruction_count="$(grep -oE "${dense_f16_instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
         fp8_count="$(grep -oE "${fp8_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
         unique_fp8_count="$(grep -oE "${fp8_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
         tf32_count="$(grep -oE "${tf32_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
@@ -563,13 +569,15 @@ run_cargo() {
             || ! grep -qx '\.version 8\.7' "${llvm_ptx}" \
             || ! grep -qx '\.target sm_120a' "${llvm_ptx}" \
             || [[ ${instruction_count} -ne 25 || ${unique_instruction_count} -ne 25 ]] \
-            || [[ ${dense_instruction_count} -ne 25 || ${unique_dense_instruction_count} -ne 25 ]] \
+            || [[ ${dense_f32_instruction_count} -ne 25 || ${unique_dense_f32_instruction_count} -ne 25 ]] \
+            || [[ ${dense_f16_instruction_count} -ne 25 || ${unique_dense_f16_instruction_count} -ne 25 ]] \
             || [[ ${fp8_count} -ne 4 || ${unique_fp8_count} -ne 4 ]] \
             || [[ ${tf32_count} -ne 10 || ${unique_tf32_count} -ne 10 ]] \
-            || [[ ${ldmatrix_count} -ne 12 || ${unique_ldmatrix_count} -ne 12 ]]; then
-            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 sparse f8f6f4, 25 dense f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix instructions\n' >>"${log}"
+            || [[ ${ldmatrix_count} -ne 12 || ${unique_ldmatrix_count} -ne 12 ]] \
+            || grep -qE "${unresolved_dense_f32_re}|${unresolved_dense_f16_re}" "${llvm_ptx}"; then
+            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 sparse f8f6f4, 25 dense F32 f8f6f4, 25 dense F16 f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix instructions\n' >>"${log}"
             if [[ ${VERBOSE} -eq 1 ]]; then
-                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 sparse f8f6f4, 25 dense f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix instructions\n'
+                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 sparse f8f6f4, 25 dense F32 f8f6f4, 25 dense F16 f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix instructions\n'
             fi
             CARGO_EC=1
             return
@@ -590,24 +598,29 @@ run_cargo() {
         local inline_fp8_count unique_inline_fp8_count
         local inline_tf32_count unique_inline_tf32_count
         local inline_ldmatrix_count unique_inline_ldmatrix_count
-        local inline_dense_count unique_inline_dense_count
+        local inline_dense_f32_count unique_inline_dense_f32_count
+        local inline_dense_f16_count unique_inline_dense_f16_count
         inline_fp8_count="$(grep -oE "${inline_fp8_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
         unique_inline_fp8_count="$(grep -oE "${inline_fp8_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
         inline_tf32_count="$(grep -oE "${inline_tf32_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
         unique_inline_tf32_count="$(grep -oE "${inline_tf32_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
         inline_ldmatrix_count="$(grep -oE "${ldmatrix_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
         unique_inline_ldmatrix_count="$(grep -oE "${ldmatrix_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
-        inline_dense_count="$(grep -oE "${dense_instruction_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
-        unique_inline_dense_count="$(grep -oE "${dense_instruction_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
+        inline_dense_f32_count="$(grep -oE "${dense_f32_instruction_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
+        unique_inline_dense_f32_count="$(grep -oE "${dense_f32_instruction_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
+        inline_dense_f16_count="$(grep -oE "${dense_f16_instruction_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
+        unique_inline_dense_f16_count="$(grep -oE "${dense_f16_instruction_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
         if [[ ! -s "${nvvm_ll}" ]] \
             || [[ ${inline_fp8_count} -ne 4 || ${unique_inline_fp8_count} -ne 4 ]] \
             || [[ ${inline_tf32_count} -ne 10 || ${unique_inline_tf32_count} -ne 10 ]] \
             || [[ ${inline_ldmatrix_count} -ne 12 || ${unique_inline_ldmatrix_count} -ne 12 ]] \
-            || [[ ${inline_dense_count} -ne 25 || ${unique_inline_dense_count} -ne 25 ]] \
-            || grep -qE 'llvm\.nvvm\.(ff\.to\.|f2tf32|ldmatrix\.|mma\.m16n8k32\.row\.col\.kind\.f8f6f4)' "${nvvm_ll}"; then
-            printf 'libNVVM route did not emit exactly 25 dense f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix inline-PTX calls\n' >>"${log}"
+            || [[ ${inline_dense_f32_count} -ne 25 || ${unique_inline_dense_f32_count} -ne 25 ]] \
+            || [[ ${inline_dense_f16_count} -ne 25 || ${unique_inline_dense_f16_count} -ne 25 ]] \
+            || grep -qE 'llvm\.nvvm\.(ff\.to\.|f2tf32|ldmatrix\.)' "${nvvm_ll}" \
+            || grep -qE "${unresolved_dense_f32_re}|${unresolved_dense_f16_re}" "${nvvm_ll}"; then
+            printf 'libNVVM route did not emit exactly 25 dense F32 f8f6f4, 25 dense F16 f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix inline-PTX calls\n' >>"${log}"
             if [[ ${VERBOSE} -eq 1 ]]; then
-                printf 'libNVVM route did not emit exactly 25 dense f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix inline-PTX calls\n'
+                printf 'libNVVM route did not emit exactly 25 dense F32 f8f6f4, 25 dense F16 f8f6f4, 4 FP8, 10 TF32, and 12 ldmatrix inline-PTX calls\n'
             fi
             CARGO_EC=1
         fi

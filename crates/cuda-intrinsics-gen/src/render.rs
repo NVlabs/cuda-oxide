@@ -2484,6 +2484,7 @@ fn register_mma_attr_variants(
         RegisterMmaOperation::XorPopc => "RegisterMmaOperationAttr::XorPopc",
     };
     let accumulator = match mma.accumulator {
+        RegisterMmaAccumulator::F16 => "RegisterMmaAccumulatorAttr::F16",
         RegisterMmaAccumulator::F32 => "RegisterMmaAccumulatorAttr::F32",
         RegisterMmaAccumulator::F64 => "RegisterMmaAccumulatorAttr::F64",
         RegisterMmaAccumulator::S32 => "RegisterMmaAccumulatorAttr::S32",
@@ -2527,6 +2528,7 @@ fn register_mma_attr_variants(
 
 fn register_mma_fragment_counts(record: &CatalogIntrinsic) -> (usize, usize, usize, usize) {
     match record.register_mma.as_ref().unwrap().adapter {
+        RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => (2, 4, 2, 2),
         RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 | RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => {
             (4, 4, 2, 4)
         }
@@ -2568,6 +2570,7 @@ fn register_mma_constraints(record: &CatalogIntrinsic) -> String {
     let mma = record.register_mma.as_ref().unwrap();
     let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
     let (output, c, packed) = match mma.adapter {
+        RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => ("=r", "r", "r"),
         RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => ("=f", "f", "r"),
         RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("=d", "d", "d"),
         RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
@@ -2583,6 +2586,7 @@ fn register_mma_constraints(record: &CatalogIntrinsic) -> String {
 
 fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
     match record.register_mma.as_ref().unwrap().adapter {
+        RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => "GeneratedMmaResultType::I32",
         RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => "GeneratedMmaResultType::F32",
         RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => "GeneratedMmaResultType::F64",
         RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
@@ -6449,6 +6453,10 @@ fn verify_stmatrix_operands(
 
 fn register_mma_carriers(record: &CatalogIntrinsic) -> (&'static str, &'static str) {
     match record.register_mma.as_ref().unwrap().adapter {
+        RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => (
+            "&[MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]",
+            "&[MmaCarrier::U32, MmaCarrier::U32]",
+        ),
         RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => (
             "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]",
             "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32]",
@@ -6515,7 +6523,7 @@ pub enum RegisterMmaOperationAttr { Multiply, AndPopc, XorPopc }
 
 #[pliron_attr(name = "nvvm.register_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaAccumulatorAttr { F32, F64, S32 }
+pub enum RegisterMmaAccumulatorAttr { F16, F32, F64, S32 }
 
 #[pliron_attr(name = "nvvm.register_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -8828,6 +8836,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     for record in register_mmas(catalog) {
         let adapter = match record.register_mma.as_ref().unwrap().adapter {
+            RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => {
+                "GeneratedMmaImportAdapter::C2U32A4U32B2U32ToD2U32"
+            }
             RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => {
                 "GeneratedMmaImportAdapter::C4F32A4U32B2U32ToD4F32"
             }
@@ -10160,6 +10171,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 
 #[derive(Clone, Copy)]
 enum GeneratedMmaImportAdapter {
+    C2U32A4U32B2U32ToD2U32,
     C4F32A4U32B2U32ToD4F32,
     C4F32A4U32B4U32ToD4F32,
     C2F64A1F64B1F64ToD2F64,
@@ -10233,6 +10245,8 @@ fn import_generated_mma_operands(
     let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
     let (c_ty, c_count, a_ty, a_count, a_array, b_ty, b_count, b_array, result_ty, result_count) =
         match adapter {
+            GeneratedMmaImportAdapter::C2U32A4U32B2U32ToD2U32 =>
+                (u32_ty, 2, u32_ty, 4, true, u32_ty, 2, true, u32_ty, 2),
             GeneratedMmaImportAdapter::C4F32A4U32B2U32ToD4F32 =>
                 (f32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, f32_ty, 4),
             GeneratedMmaImportAdapter::C4F32A4U32B4U32ToD4F32 =>
@@ -12285,6 +12299,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             RegisterMmaOperation::XorPopc => "GeneratedRegisterMmaOperation::XorPopc",
         };
         let accumulator = match mma.accumulator {
+            RegisterMmaAccumulator::F16 => "GeneratedRegisterMmaAccumulator::F16",
             RegisterMmaAccumulator::F32 => "GeneratedRegisterMmaAccumulator::F32",
             RegisterMmaAccumulator::F64 => "GeneratedRegisterMmaAccumulator::F64",
             RegisterMmaAccumulator::S32 => "GeneratedRegisterMmaAccumulator::S32",
@@ -12517,7 +12532,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "pub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }",
-        "pub enum GeneratedRegisterMmaOperation { Multiply, AndPopc, XorPopc }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }",
+        "pub enum GeneratedRegisterMmaOperation { Multiply, AndPopc, XorPopc }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F16, F32, F64, S32 }",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -12661,6 +12676,11 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         &mut output,
         "            };\n            let accumulator_matches = match accumulator {",
         "            };\n            let operation_matches = match mma_operation {\n                GeneratedRegisterMmaOperation::Multiply => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::Multiply,\n                GeneratedRegisterMmaOperation::AndPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::AndPopc,\n                GeneratedRegisterMmaOperation::XorPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::XorPopc,\n            };\n            let accumulator_matches = match accumulator {",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32",
+        "            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F16 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F16),\n                GeneratedRegisterMmaAccumulator::F32",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -14089,6 +14109,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         let mma = record.register_mma.as_ref().unwrap();
         let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
         let (c_type, packed_type, result_type) = match mma.adapter {
+            RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => ("i32", "i32", "i32"),
             RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => ("float", "i32", "float"),
             RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("double", "double", "double"),
             RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
@@ -16943,9 +16964,9 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 478);
+        assert_eq!(catalog.intrinsics.len(), 503);
         let records: Vec<_> = register_mmas(&catalog).collect();
-        assert_eq!(records.len(), 83);
+        assert_eq!(records.len(), 108);
         let generated_records = records
             .iter()
             .copied()
@@ -16962,7 +16983,7 @@ mod tests {
                     == RegisterMmaCompatibilitySource::ExistingStub
             })
             .collect::<Vec<_>>();
-        assert_eq!(generated_records.len(), 78);
+        assert_eq!(generated_records.len(), 103);
         assert_eq!(existing_records.len(), 5);
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -16974,7 +16995,7 @@ mod tests {
         assert!(raw.contains("Signed accumulator overflow clamps"));
 
         let compatibility = render_compat_register_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 78);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 103);
         for record in generated_records {
             let arguments = ["c", "a", "b"]
                 .into_iter()
@@ -17005,6 +17026,7 @@ mod tests {
         assert!(dialect.contains("RegisterMmaOperationAttr::Multiply"));
         assert!(dialect.contains("RegisterMmaOperationAttr::AndPopc"));
         assert!(dialect.contains("RegisterMmaOperationAttr::XorPopc"));
+        assert!(dialect.contains("RegisterMmaAccumulatorAttr::F16"));
         assert!(dialect.contains("operation_or_multiply"));
         assert!(dialect.contains("RegisterMmaElementAttr::B1"));
         assert!(dialect.contains("RegisterMmaElementAttr::E2m1"));
@@ -17014,6 +17036,9 @@ mod tests {
         assert!(dialect.contains("RegisterMmaElementAttr::U8"));
         assert!(dialect.contains("RegisterMmaOverflowAttr::Wrapping"));
         assert!(dialect.contains("RegisterMmaOverflowAttr::Satfinite"));
+        assert!(dialect.contains(
+            "&[MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]"
+        ));
         for (op_type, op_name) in [
             ("MmaM16N8K16F32Bf16Op", "nvvm.mma_m16n8k16_f32_bf16"),
             ("MmaM16N8K16F32F16Op", "nvvm.mma_m16n8k16_f32_f16"),
@@ -17028,10 +17053,12 @@ mod tests {
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("enum GeneratedMmaImportAdapter"));
+        assert!(importer.contains("C2U32A4U32B2U32ToD2U32"));
         assert!(importer.contains("C4I32A2U32B1U32ToD4I32"));
         assert!(importer.contains("C2I32A1U32B1U32ToD2I32"));
         assert!(importer.contains("(i32_ty, 2, u32_ty, 1, false, u32_ty, 1, false, i32_ty, 2)"));
         assert!(importer.contains("(i32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, i32_ty, 4)"));
+        assert!(importer.contains("(u32_ty, 2, u32_ty, 4, true, u32_ty, 2, true, u32_ty, 2)"));
         assert!(importer.contains("import_generated_mma_operands"));
         assert!(importer.contains("bundle_generated_mma_results"));
         assert!(importer.contains("set_attr_nvvm_register_mma_operation"));
@@ -17057,6 +17084,7 @@ mod tests {
         assert!(lowering.contains("=d,=d,d,d,d,d"));
         assert!(lowering.contains("=r,=r,=r,=r,r,r,r,r,r,r,r"));
         assert!(lowering.contains("=r,=r,r,r,r,r"));
+        assert!(lowering.contains("=r,=r,r,r,r,r,r,r,r,r"));
         assert!(lowering.contains("mma.sync.aligned.m8n8k16.row.col.s32.s8.u8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m8n8k16.row.col.satfinite.s32.u8.s8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m8n8k32.row.col.s32.s4.u4.s32"));
@@ -17109,6 +17137,12 @@ mod tests {
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::F32, 4, 10, "mma.sync.aligned.m16n8k32.row.col.kind::f8f6f4.f32.e5m2.e5m2.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r")"#
         ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 2, 8, "mma.sync.aligned.m16n8k32.row.col.kind::f8f6f4.f16.e2m1.e2m1.f16 {$0, $1}, {$4, $5, $6, $7}, {$8, $9}, {$2, $3};", "=r,=r,r,r,r,r,r,r,r,r")"#
+        ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 2, 8, "mma.sync.aligned.m16n8k32.row.col.kind::f8f6f4.f16.e5m2.e5m2.f16 {$0, $1}, {$4, $5, $6, $7}, {$8, $9}, {$2, $3};", "=r,=r,r,r,r,r,r,r,r,r")"#
+        ));
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
@@ -17138,6 +17172,7 @@ mod tests {
         assert!(targets.contains("GeneratedRegisterMmaOperation::Multiply"));
         assert!(targets.contains("GeneratedRegisterMmaOperation::AndPopc"));
         assert!(targets.contains("GeneratedRegisterMmaOperation::XorPopc"));
+        assert!(targets.contains("GeneratedRegisterMmaAccumulator::F16"));
         assert!(targets.contains("operation: GeneratedRegisterMmaOperation::AndPopc"));
         assert!(targets.contains("operation: GeneratedRegisterMmaOperation::XorPopc"));
         assert!(targets.contains("operation: mma_operation"));
@@ -17179,6 +17214,23 @@ mod tests {
         assert_eq!(
             register_mma_constraints(first_dense),
             "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r"
+        );
+        let first_dense_f16 = records
+            .iter()
+            .find(|record| record.id == "mma_m16n8k32_f16_e2m1_e2m1")
+            .unwrap();
+        let last_dense_f16 = records
+            .iter()
+            .find(|record| record.id == "mma_m16n8k32_f16_e5m2_e5m2")
+            .unwrap();
+        assert_eq!(first_dense_f16.rust.abi_id, "i0479");
+        assert_eq!(last_dense_f16.rust.abi_id, "i0503");
+        assert_eq!(
+            register_mma_constraints(first_dense_f16),
+            "=r,=r,r,r,r,r,r,r,r,r"
+        );
+        assert!(
+            render_probe(&catalog, first_dense_f16, "test-hash").contains("define { i32, i32 }")
         );
 
         for record in &records {
