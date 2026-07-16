@@ -1,6 +1,6 @@
 # Reviewed m16 INT4 register-MMA family.
 
-schema = 21
+schema = 22
 family = "register_mma"
 
 [register_mma_int4]

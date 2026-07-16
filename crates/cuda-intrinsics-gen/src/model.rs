@@ -571,6 +571,7 @@ pub struct SparseMma {
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaShape {
     M16n8k32,
+    M16n8k64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -611,6 +612,7 @@ pub enum SparseMmaMetadata {
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaSelector {
     ImmediateZeroOrOne,
+    ImmediateZero,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -624,6 +626,7 @@ pub enum SparseMmaParticipation {
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaAdapter {
     C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32,
+    C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32,
 }
 
 /// Where the stable `cuda_device::wmma` callable is defined.
@@ -2085,13 +2088,31 @@ runtime_validation = "unexecuted"
             SparseMmaMetadata::Ordered
         );
 
+        let k64 = ordered
+            .replace("shape = \"m16n8k32\"", "shape = \"m16n8k64\"")
+            .replace(
+                "selector = \"immediate_zero_or_one\"",
+                "selector = \"immediate_zero\"",
+            )
+            .replace(
+                "adapter = \"c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32\"",
+                "adapter = \"c4_i32_a4_u32_b4_u32_metadata_u32_selector_u32_to_d4_i32\"",
+            );
+        let parsed_k64 = toml::from_str::<SparseMma>(&k64).unwrap();
+        assert_eq!(parsed_k64.shape, SparseMmaShape::M16n8k64);
+        assert_eq!(parsed_k64.selector, SparseMmaSelector::ImmediateZero);
+        assert_eq!(
+            parsed_k64.adapter,
+            SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32
+        );
+
         for invalid in [
             valid.replace(
                 "selector = \"immediate_zero_or_one\"",
                 "selector = \"runtime\"",
             ),
             valid.replace("metadata = \"standard\"", "metadata = \"unreviewed\""),
-            valid.replace("shape = \"m16n8k32\"", "shape = \"m16n8k64\""),
+            valid.replace("shape = \"m16n8k32\"", "shape = \"m16n8k128\""),
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<SparseMma>(&invalid).is_err(), "{invalid}");

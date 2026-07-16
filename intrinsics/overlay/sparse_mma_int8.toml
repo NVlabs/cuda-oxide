@@ -1,6 +1,6 @@
 # Reviewed base sparse INT8 register-MMA family.
 
-schema = 21
+schema = 22
 family = "sparse_mma"
 
 [sparse_mma_int8]

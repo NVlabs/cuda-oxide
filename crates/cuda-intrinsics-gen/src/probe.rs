@@ -5,7 +5,7 @@
 
 use crate::model::{
     BackendLoweringMechanism, CatalogIntrinsic, CatalogLlvm, CpAsyncSourceSize, EvidenceStageKind,
-    IntrinsicBackend, WarpShuffleAdapter,
+    IntrinsicBackend, SparseMmaSelector, WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
@@ -163,8 +163,12 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.packed_alu.is_some() || record.packed_conversion.is_some() {
         validate_exact_pure_instruction(&record.expected_ptx, ptx)?;
     }
-    if record.sparse_mma.is_some() {
-        validate_sparse_mma_selectors(&record.expected_ptx, ptx)?;
+    if let Some(mma) = &record.sparse_mma {
+        let selectors: &[u32] = match mma.selector {
+            SparseMmaSelector::ImmediateZeroOrOne => &[0, 1],
+            SparseMmaSelector::ImmediateZero => &[0],
+        };
+        validate_sparse_mma_selectors(&record.expected_ptx, selectors, ptx)?;
     }
     Ok(())
 }
@@ -201,7 +205,11 @@ fn validate_exact_pure_instruction(expected: &InstructionPattern, ptx: &str) -> 
     Ok(())
 }
 
-fn validate_sparse_mma_selectors(expected: &InstructionPattern, ptx: &str) -> Result<()> {
+fn validate_sparse_mma_selectors(
+    expected: &InstructionPattern,
+    selectors: &[u32],
+    ptx: &str,
+) -> Result<()> {
     let selector = expected
         .operands
         .get(5)
@@ -212,8 +220,9 @@ fn validate_sparse_mma_selectors(expected: &InstructionPattern, ptx: &str) -> Re
     );
     let instructions = instructions_with_matching_head(ptx, expected);
     ensure!(
-        instructions.len() == 2,
-        "sparse MMA probe must contain exactly two matching instructions; found {}",
+        instructions.len() == selectors.len(),
+        "sparse MMA probe must contain exactly {} matching instructions; found {}",
+        selectors.len(),
         instructions.len()
     );
     ensure!(
@@ -222,10 +231,10 @@ fn validate_sparse_mma_selectors(expected: &InstructionPattern, ptx: &str) -> Re
             .all(|instruction| instruction.prefix.is_empty()),
         "sparse MMA probe instructions must be unguarded"
     );
-    for selector in ["0", "1"] {
+    for selector in selectors {
         let mut pattern = expected.clone();
         pattern.operands[5] = OperandPattern::Exact {
-            value: selector.into(),
+            value: selector.to_string(),
         };
         ensure!(
             matching_instructions(ptx, &pattern).len() == 1,
@@ -1561,8 +1570,8 @@ attributes #0 = { nounwind }
     }
 
     #[test]
-    fn sparse_mma_probe_requires_both_selector_values() {
-        let expected = InstructionPattern::new(
+    fn sparse_mma_probe_requires_each_variant_selector_set() {
+        let k32 = InstructionPattern::new(
             "mma",
             &[
                 "sp", "sync", "aligned", "m16n8k32", "row", "col", "s32", "s8", "u8", "s32",
@@ -1579,29 +1588,62 @@ attributes #0 = { nounwind }
         let selector_zero = "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32 {%r1, %r2, %r3, %r4}, {%r5, %r6}, {%r7, %r8}, {%r9, %r10, %r11, %r12}, %r13, 0;";
         let selector_one = "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32 {%r1, %r2, %r3, %r4}, {%r5, %r6}, {%r7, %r8}, {%r9, %r10, %r11, %r12}, %r13, 1;";
 
-        validate_sparse_mma_selectors(&expected, &format!("{selector_zero}\n{selector_one}"))
+        validate_sparse_mma_selectors(&k32, &[0, 1], &format!("{selector_zero}\n{selector_one}"))
             .unwrap();
-        assert!(validate_sparse_mma_selectors(&expected, selector_zero).is_err());
-        assert!(validate_sparse_mma_selectors(&expected, selector_one).is_err());
+        assert!(validate_sparse_mma_selectors(&k32, &[0, 1], selector_zero).is_err());
+        assert!(validate_sparse_mma_selectors(&k32, &[0, 1], selector_one).is_err());
 
-        let mut register_selector = expected.clone();
+        let mut register_selector = k32.clone();
         register_selector.operands[5] = OperandPattern::Register;
-        assert!(validate_sparse_mma_selectors(&register_selector, selector_zero).is_err());
+        assert!(validate_sparse_mma_selectors(&register_selector, &[0, 1], selector_zero).is_err());
 
         let selector_two = selector_one.replace(", 1;", ", 2;");
         assert!(
             validate_sparse_mma_selectors(
-                &expected,
+                &k32,
+                &[0, 1],
                 &format!("{selector_zero}\n{selector_one}\n{selector_two}")
             )
             .is_err()
         );
         assert!(
             validate_sparse_mma_selectors(
-                &expected,
+                &k32,
+                &[0, 1],
                 &format!("@%p0 {selector_zero}\n{selector_one}")
             )
             .is_err()
+        );
+
+        let k64 = InstructionPattern::new(
+            "mma",
+            &[
+                "sp::ordered_metadata",
+                "sync",
+                "aligned",
+                "m16n8k64",
+                "row",
+                "col",
+                "s32",
+                "s8",
+                "u8",
+                "s32",
+            ],
+            vec![
+                OperandPattern::RegisterList { length: 4 },
+                OperandPattern::RegisterList { length: 4 },
+                OperandPattern::RegisterList { length: 4 },
+                OperandPattern::RegisterList { length: 4 },
+                OperandPattern::Register,
+                OperandPattern::Immediate,
+            ],
+        );
+        let k64_zero = "mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.s32.s8.u8.s32 {%r1, %r2, %r3, %r4}, {%r5, %r6, %r7, %r8}, {%r9, %r10, %r11, %r12}, {%r13, %r14, %r15, %r16}, %r17, 0;";
+        let k64_one = k64_zero.replace(", 0;", ", 1;");
+        validate_sparse_mma_selectors(&k64, &[0], k64_zero).unwrap();
+        assert!(validate_sparse_mma_selectors(&k64, &[0], &k64_one).is_err());
+        assert!(
+            validate_sparse_mma_selectors(&k64, &[0], &format!("{k64_zero}\n{k64_one}")).is_err()
         );
     }
 }

@@ -261,22 +261,37 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated register-MMA recipe",
                 record.id
             ),
-            "sparse_mma" => ensure!(
-                record.rust.module == "matrix"
-                    && record.rust.arguments
-                        == ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"]
-                    && record.rust.result == "[i32; 4]"
-                    && !record.rust.safe
-                    && record.rust.must_use
-                    && record.semantics.memory == "none"
-                    && record.semantics.convergent
-                    && record.dialect.op_type == "SparseMmaOp"
-                    && record.dialect.op_name == "nvvm.sparse_mma"
-                    && record.lowering == "generated_sparse_mma"
-                    && record.sparse_mma.is_some(),
-                "{} is outside the closed generated sparse-MMA recipe",
-                record.id
-            ),
+            "sparse_mma" => {
+                ensure!(
+                    record.sparse_mma.is_some(),
+                    "{} is outside the closed generated sparse-MMA recipe",
+                    record.id
+                );
+                let (c_count, a_count, b_count, d_count) =
+                    sparse_mma_fragment_counts(record);
+                let arguments = [
+                    format!("[i32; {c_count}]"),
+                    format!("[u32; {a_count}]"),
+                    format!("[u32; {b_count}]"),
+                    "u32".to_owned(),
+                    "u32".to_owned(),
+                ];
+                ensure!(
+                    record.rust.module == "matrix"
+                        && record.rust.arguments == arguments
+                        && record.rust.result == format!("[i32; {d_count}]")
+                        && !record.rust.safe
+                        && record.rust.must_use
+                        && record.semantics.memory == "none"
+                        && record.semantics.convergent
+                        && record.dialect.op_type == "SparseMmaOp"
+                        && record.dialect.op_name == "nvvm.sparse_mma"
+                        && record.lowering == "generated_sparse_mma"
+                        && record.sparse_mma.is_some(),
+                    "{} is outside the closed generated sparse-MMA recipe",
+                    record.id
+                )
+            }
             "packed_atomic" => ensure!(
                 record.rust.module == "atomic"
                     && record.rust.arguments == ["*mut u32", "u32"]
@@ -1182,6 +1197,49 @@ fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
     }
 }
 
+fn sparse_mma_fragment_counts(record: &CatalogIntrinsic) -> (usize, usize, usize, usize) {
+    match record.sparse_mma.as_ref().unwrap().adapter {
+        SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32 => (4, 2, 2, 4),
+        SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32 => (4, 4, 4, 4),
+    }
+}
+
+fn sparse_mma_selector_values(record: &CatalogIntrinsic) -> &'static [u32] {
+    match record.sparse_mma.as_ref().unwrap().selector {
+        SparseMmaSelector::ImmediateZeroOrOne => &[0, 1],
+        SparseMmaSelector::ImmediateZero => &[0],
+    }
+}
+
+fn sparse_mma_selector_description(record: &CatalogIntrinsic) -> &'static str {
+    match record.sparse_mma.as_ref().unwrap().selector {
+        SparseMmaSelector::ImmediateZeroOrOne => "the compile-time constant `0` or `1`",
+        SparseMmaSelector::ImmediateZero => "the compile-time constant `0`",
+    }
+}
+
+fn sparse_mma_selector_error(record: &CatalogIntrinsic) -> &'static str {
+    match record.sparse_mma.as_ref().unwrap().selector {
+        SparseMmaSelector::ImmediateZeroOrOne => {
+            "sparse MMA selector must be the compile-time constant 0 or 1"
+        }
+        SparseMmaSelector::ImmediateZero => {
+            "sparse MMA selector must be the compile-time constant 0"
+        }
+    }
+}
+
+fn sparse_mma_import_adapter(record: &CatalogIntrinsic) -> &'static str {
+    match record.sparse_mma.as_ref().unwrap().adapter {
+        SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32 => {
+            "GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32"
+        }
+        SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32 => {
+            "GeneratedMmaImportAdapter::C4I32A4U32B4U32ToD4I32"
+        }
+    }
+}
+
 fn sparse_mma_attr_variants(
     record: &CatalogIntrinsic,
 ) -> (
@@ -1198,6 +1256,7 @@ fn sparse_mma_attr_variants(
     let mma = record.sparse_mma.as_ref().expect("sparse-MMA record");
     let shape = match mma.shape {
         SparseMmaShape::M16n8k32 => "SparseMmaShapeAttr::M16n8k32",
+        SparseMmaShape::M16n8k64 => "SparseMmaShapeAttr::M16n8k64",
     };
     let accumulator = match mma.accumulator {
         SparseMmaAccumulator::S32 => "SparseMmaAccumulatorAttr::S32",
@@ -1220,6 +1279,7 @@ fn sparse_mma_attr_variants(
     };
     let selector = match mma.selector {
         SparseMmaSelector::ImmediateZeroOrOne => "SparseMmaSelectorAttr::ImmediateZeroOrOne",
+        SparseMmaSelector::ImmediateZero => "SparseMmaSelectorAttr::ImmediateZero",
     };
     (
         shape,
@@ -1243,18 +1303,26 @@ fn sparse_mma_ptx_head(record: &CatalogIntrinsic) -> String {
 }
 
 fn sparse_mma_template(record: &CatalogIntrinsic) -> String {
-    let d = register_list(0, 4);
-    let c = register_list(4, 4);
-    let a = register_list(8, 2);
-    let b = register_list(10, 2);
+    let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
+    let d = register_list(0, d_count);
+    let c = register_list(d_count, c_count);
+    let a = register_list(d_count + c_count, a_count);
+    let b = register_list(d_count + c_count + a_count, b_count);
+    let metadata = d_count + c_count + a_count + b_count;
+    let selector = metadata + 1;
     format!(
-        "{} {d}, {a}, {b}, {c}, $12, $13;",
+        "{} {d}, {a}, {b}, {c}, ${metadata}, ${selector};",
         sparse_mma_ptx_head(record)
     )
 }
 
-fn sparse_mma_constraints() -> &'static str {
-    "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,n"
+fn sparse_mma_constraints(record: &CatalogIntrinsic) -> String {
+    let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
+    std::iter::repeat_n("=r", d_count)
+        .chain(std::iter::repeat_n("r", c_count + a_count + b_count + 1))
+        .chain(std::iter::once("n"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn intrinsic_marker(catalog: &CatalogFile, record: &CatalogIntrinsic) -> String {
@@ -1429,12 +1497,22 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     "/// This weak memory operation does not replace a required barrier or fence.\n",
                 );
             } else if let Some(mma) = &record.sparse_mma {
+                let (c_count, a_count, b_count, _) = sparse_mma_fragment_counts(record);
                 output.push_str(
-                    "/// All 32 warp lanes must execute the same sparse MMA instruction with the same qualifiers, and no lane may have exited.\n\
-                     /// `_arg0`, `_arg1`, `_arg2`, and `_arg3` must contain this lane's C, A, B, and sparse metadata fragments in the documented PTX layout.\n\
-                     /// `_arg4` must be the compile-time constant `0` or `1`.\n\
-                     /// The operation is register-only and is not a memory fence.\n",
+                    "/// All 32 warp lanes must execute the same sparse MMA instruction with the same qualifiers, and no lane may have exited.\n",
                 );
+                writeln!(
+                    output,
+                    "/// `_arg0`, `_arg1`, and `_arg2` hold this lane's {c_count}-register C, {a_count}-register A, and {b_count}-register B fragments; `_arg3` holds its sparse metadata."
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "/// `_arg4` must be {}.",
+                    sparse_mma_selector_description(record)
+                )
+                .unwrap();
+                output.push_str("/// The operation is register-only and is not a memory fence.\n");
                 if mma.metadata == SparseMmaMetadata::Ordered {
                     output.push_str(
                         "/// Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.\n",
@@ -1724,10 +1802,11 @@ fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
             panic!("generated sparse-MMA API requires one compatibility path");
         };
         assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
-        assert_eq!(
+        assert!(matches!(
             mma.adapter,
             SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
-        );
+                | SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32
+        ));
 
         writeln!(output, "/// {}", record.summary).unwrap();
         writeln!(
@@ -1754,15 +1833,23 @@ fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "/// All 32 lanes must execute the same instruction with the same qualifiers, and no lane may have exited.\n",
         );
-        output.push_str(
-            "/// `c`, `a`, `b`, and `metadata` must contain this lane's fragments in the documented PTX layout.\n",
-        );
+        let (c_count, a_count, b_count, _) = sparse_mma_fragment_counts(record);
+        writeln!(
+            output,
+            "/// `c`, `a`, and `b` must contain this lane's {c_count}-, {a_count}-, and {b_count}-register fragments; `metadata` must contain its sparse metadata."
+        )
+        .unwrap();
         if mma.metadata == SparseMmaMetadata::Ordered {
             output.push_str(
                 "/// Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.\n",
             );
         }
-        output.push_str("/// `selector` must be the compile-time constant `0` or `1`.\n");
+        writeln!(
+            output,
+            "/// `selector` must be {}.",
+            sparse_mma_selector_description(record)
+        )
+        .unwrap();
         writeln!(
             output,
             "/// See the [PTX sparse MMA fragment layouts]({}).",
@@ -3574,7 +3661,7 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 #[pliron_attr(name = "nvvm.sparse_mma_shape", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaShapeAttr { M16n8k32 }
+pub enum SparseMmaShapeAttr { M16n8k32, M16n8k64 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -3598,7 +3685,7 @@ pub enum SparseMmaMetadataAttr { Standard, Ordered }
 
 #[pliron_attr(name = "nvvm.sparse_mma_selector", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaSelectorAttr { ImmediateZeroOrOne }
+pub enum SparseMmaSelectorAttr { ImmediateZeroOrOne, ImmediateZero }
 
 #[pliron_op(
     name = "nvvm.sparse_mma",
@@ -3642,7 +3729,7 @@ fn constant_u32(ctx: &Context, value: Value) -> Option<u64> {
 impl Verify for SparseMmaOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
-        match (
+        let (expected_operands, selector_upper_exclusive) = match (
             self.get_attr_nvvm_sparse_mma_shape(ctx).as_deref(),
             self.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref(),
             self.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref(),
@@ -3667,17 +3754,20 @@ impl Verify for SparseMmaOp {
             metadata,
             selector,
         ) = sparse_mma_attr_variants(record);
+        let (c_count, a_count, b_count, _) = sparse_mma_fragment_counts(record);
+        let expected_operands = c_count + a_count + b_count + 2;
+        let selector_upper_exclusive = sparse_mma_selector_values(record).len();
         writeln!(
             output,
-            "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => (),"
+            "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => ({expected_operands}, {selector_upper_exclusive}),"
         )
         .unwrap();
     }
     output.push_str(
         r#"            _ => return verify_err!(op.loc(), "nvvm.sparse_mma has a missing or unsupported variant"),
-        }
+        };
         let operands: Vec<_> = op.operands().collect();
-        if operands.len() != 10 || op.get_num_results() != 4 {
+        if operands.len() != expected_operands || op.get_num_results() != 4 {
             return verify_err!(op.loc(), "nvvm.sparse_mma has the wrong register count");
         }
         for (index, operand) in operands.iter().enumerate() {
@@ -3691,8 +3781,10 @@ impl Verify for SparseMmaOp {
                 return verify_err!(op.loc(), "nvvm.sparse_mma result {} has the wrong carrier type", index);
             }
         }
-        if !matches!(constant_u32(ctx, operands[9]), Some(0) | Some(1)) {
-            return verify_err!(op.loc(), "nvvm.sparse_mma selector must be the compile-time constant 0 or 1");
+        if !constant_u32(ctx, operands[expected_operands - 1])
+            .is_some_and(|selector| selector < selector_upper_exclusive as u64)
+        {
+            return verify_err!(op.loc(), "nvvm.sparse_mma selector must be a compile-time constant in 0..{}", selector_upper_exclusive);
         }
         Ok(())
     }
@@ -4436,10 +4528,6 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("        }\n");
     }
     for record in sparse_mmas(catalog) {
-        assert_eq!(
-            record.sparse_mma.as_ref().unwrap().adapter,
-            SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
-        );
         let (
             shape,
             accumulator,
@@ -4457,12 +4545,18 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         render_inline_patterns(&mut output, &path_refs);
         output.push_str(" => {\n");
         output.push_str("            require_arity(name, args.len(), 5, &loc)?;\n");
-        output.push_str(
-            "            if !matches!(&args[4], mir::Operand::Constant(_)) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"sparse MMA selector must be the compile-time constant 0 or 1\".to_owned()\n                    )\n                );\n            }\n",
-        );
-        output.push_str(
-            "            let (mut operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32)?;\n",
-        );
+        writeln!(
+            output,
+            "            if !matches!(&args[4], mir::Operand::Constant(_)) {{\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        {:?}.to_owned()\n                    )\n                );\n            }}",
+            sparse_mma_selector_error(record)
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "            let (mut operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), {})?;",
+            sparse_mma_import_adapter(record)
+        )
+        .unwrap();
         output.push_str(
             "            let (metadata, last_op) = rvalue::translate_operand(\n                ctx, body, &args[3], value_map, block_ptr, Some(last_op), loc.clone(),\n            )?;\n            operands.push(metadata);\n            let (selector_value, last_op) = rvalue::translate_operand(\n                ctx, body, &args[4], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n            operands.push(selector_value);\n",
         );
@@ -5051,6 +5145,7 @@ enum GeneratedMmaImportAdapter {
     C2F64A1F64B1F64ToD2F64,
     C2I32A1U32B1U32ToD2I32,
     C4I32A4U32B2U32ToD4I32,
+    C4I32A4U32B4U32ToD4I32,
     C4I32A2U32B1U32ToD4I32,
     C4I32A2U32B2U32ToD4I32,
 }
@@ -5126,6 +5221,8 @@ fn import_generated_mma_operands(
                 (i32_ty, 2, u32_ty, 1, false, u32_ty, 1, false, i32_ty, 2),
             GeneratedMmaImportAdapter::C4I32A4U32B2U32ToD4I32 =>
                 (i32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, i32_ty, 4),
+            GeneratedMmaImportAdapter::C4I32A4U32B4U32ToD4I32 =>
+                (i32_ty, 4, u32_ty, 4, true, u32_ty, 4, true, i32_ty, 4),
             GeneratedMmaImportAdapter::C4I32A2U32B1U32ToD4I32 =>
                 (i32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, i32_ty, 4),
             GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32 =>
@@ -5526,11 +5623,13 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
                 metadata,
                 selector,
             ) = sparse_mma_attr_variants(record);
+            let (c_count, a_count, b_count, result_count) = sparse_mma_fragment_counts(record);
+            let expected_operands = c_count + a_count + b_count + 2;
             writeln!(
                 output,
-                "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => (GeneratedMmaResultType::I32, 4, 10, {:?}, {:?}),",
+                "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => (GeneratedMmaResultType::I32, {result_count}, {expected_operands}, {:?}, {:?}),",
                 sparse_mma_template(record),
-                sparse_mma_constraints(),
+                sparse_mma_constraints(record),
             )
             .unwrap();
         }
@@ -6035,6 +6134,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
     if let Some(mma) = &record.sparse_mma {
         let shape = match mma.shape {
             SparseMmaShape::M16n8k32 => "GeneratedSparseMmaShape::M16n8k32",
+            SparseMmaShape::M16n8k64 => "GeneratedSparseMmaShape::M16n8k64",
         };
         let accumulator = match mma.accumulator {
             SparseMmaAccumulator::S32 => "GeneratedSparseMmaAccumulator::S32",
@@ -6059,6 +6159,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             SparseMmaSelector::ImmediateZeroOrOne => {
                 "GeneratedSparseMmaSelector::ImmediateZeroOrOne"
             }
+            SparseMmaSelector::ImmediateZero => "GeneratedSparseMmaSelector::ImmediateZero",
         };
         return format!(
             "GeneratedIntrinsicVariant::SparseMma {{ shape: {shape}, accumulator: {accumulator}, a_element: {}, b_element: {}, a_layout: {}, b_layout: {}, overflow: {overflow}, metadata: {metadata}, selector: {selector} }}",
@@ -6149,7 +6250,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -6226,6 +6327,16 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         &mut output,
         "                && overflow_matches\n        }\n    }\n}\n",
         "                && overflow_matches\n        }\n        GeneratedIntrinsicVariant::SparseMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow, metadata, selector } => {\n            let Some(op) = Operation::get_op::<SparseMmaOp>(operation, ctx) else { return false; };\n            let element_matches = |expected, actual: Option<&SparseMmaElementAttr>| match expected {\n                GeneratedSparseMmaElement::S8 => actual == Some(&SparseMmaElementAttr::S8),\n                GeneratedSparseMmaElement::U8 => actual == Some(&SparseMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&SparseMmaLayoutAttr>| match expected {\n                GeneratedSparseMmaLayout::Row => actual == Some(&SparseMmaLayoutAttr::Row),\n                GeneratedSparseMmaLayout::Col => actual == Some(&SparseMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedSparseMmaOverflow::Wrapping => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Wrapping),\n                GeneratedSparseMmaOverflow::Satfinite => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Satfinite),\n            };\n            let metadata_matches = match metadata {\n                GeneratedSparseMmaMetadata::Standard => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Standard),\n                GeneratedSparseMmaMetadata::Ordered => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Ordered),\n            };\n            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)\n                && element_matches(a_element, op.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n                && metadata_matches\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)\n        }\n    }\n}\n",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)",
+        "            let shape_matches = match shape {\n                GeneratedSparseMmaShape::M16n8k32 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32),\n                GeneratedSparseMmaShape::M16n8k64 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k64),\n            };\n            let selector_matches = match selector {\n                GeneratedSparseMmaSelector::ImmediateZeroOrOne => op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne),\n                GeneratedSparseMmaSelector::ImmediateZero => op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZero),\n            };\n            shape_matches\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "                && metadata_matches\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)",
+        "                && metadata_matches\n                && selector_matches",
     );
     output.push_str(
         "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
@@ -6798,22 +6909,28 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         .unwrap();
         output.push_str("  ret i32 %result\n}\n");
     } else if record.sparse_mma.is_some() {
-        let result = "{ i32, i32, i32, i32 }";
-        let parameters = (0..4)
+        let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
+        let result = format!(
+            "{{ {} }}",
+            std::iter::repeat_n("i32", d_count)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let parameters = (0..c_count)
             .map(|index| format!("i32 %c{index}"))
-            .chain((0..2).map(|index| format!("i32 %a{index}")))
-            .chain((0..2).map(|index| format!("i32 %b{index}")))
+            .chain((0..a_count).map(|index| format!("i32 %a{index}")))
+            .chain((0..b_count).map(|index| format!("i32 %b{index}")))
             .chain(std::iter::once("i32 %metadata".to_owned()))
             .collect::<Vec<_>>()
             .join(", ");
-        let arguments = (0..4)
+        let arguments = (0..c_count)
             .map(|index| format!("i32 %c{index}"))
-            .chain((0..2).map(|index| format!("i32 %a{index}")))
-            .chain((0..2).map(|index| format!("i32 %b{index}")))
+            .chain((0..a_count).map(|index| format!("i32 %a{index}")))
+            .chain((0..b_count).map(|index| format!("i32 %b{index}")))
             .chain(std::iter::once("i32 %metadata".to_owned()))
             .collect::<Vec<_>>()
             .join(", ");
-        for selector in [0, 1] {
+        for selector in sparse_mma_selector_values(record) {
             writeln!(
                 output,
                 "define {result} @probe_{}_selector_{selector}({parameters}) #0 {{",
@@ -6824,7 +6941,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 output,
                 "  %result = call {result} asm sideeffect {:?}, {:?}({arguments}, i32 {selector}) #0",
                 sparse_mma_template(record),
-                sparse_mma_constraints(),
+                sparse_mma_constraints(record),
             )
             .unwrap();
             writeln!(output, "  ret {result} %result\n}}").unwrap();
@@ -7018,9 +7135,10 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         };
         writeln!(
             output,
-            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. The selector must be the compile-time constant `0` or `1`. Every non-exited warp lane must execute the same instruction and qualifiers.{metadata} Integer overflow is {overflow}; runtime validation is {runtime}.",
+            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. The selector must be {}. Every non-exited warp lane must execute the same instruction and qualifiers.{metadata} Integer overflow is {overflow}; runtime validation is {runtime}.",
             record.id,
             sparse_mma_ptx_head(record),
+            sparse_mma_selector_description(record),
         )
         .unwrap();
     }
@@ -8481,7 +8599,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 178);
+        assert_eq!(catalog.intrinsics.len(), 186);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -8698,28 +8816,42 @@ mod tests {
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         let records = sparse_mmas(&catalog).collect::<Vec<_>>();
-        assert_eq!(records.len(), 16);
+        let k32 = records
+            .iter()
+            .filter(|record| record.sparse_mma.as_ref().unwrap().shape == SparseMmaShape::M16n8k32)
+            .count();
+        let k64 = records.len() - k32;
+        assert_eq!((records.len(), k32, k64), (24, 16, 8));
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
+        assert!(raw.contains("must be the compile-time constant `0`"));
         for record in &records {
+            let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
             assert!(raw.contains(&format!(
-                "pub unsafe fn {}(_arg0: [i32; 4], _arg1: [u32; 2], _arg2: [u32; 2], _arg3: u32, _arg4: u32) -> [i32; 4]",
-                record.rust.abi_id
+                "pub unsafe fn {}(_arg0: [i32; {c_count}], _arg1: [u32; {a_count}], _arg2: [u32; {b_count}], _arg3: u32, _arg4: u32) -> [i32; {d_count}]",
+                record.rust.abi_id,
             )));
         }
 
         let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 16);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 24);
         assert!(
             compatibility
                 .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
         );
+        assert!(
+            compatibility
+                .contains("c: [i32; 4], a: [u32; 4], b: [u32; 4], metadata: u32, selector: u32")
+        );
 
         let dialect = render_dialect_sparse_mma(&catalog, "test-hash");
         assert_eq!(dialect.matches("pub struct SparseMmaOp").count(), 1);
-        assert!(dialect.contains("operands.len() != 10 || op.get_num_results() != 4"));
-        assert!(dialect.contains("Some(0) | Some(1)"));
+        assert!(dialect.contains("=> (10, 2)"));
+        assert!(dialect.contains("=> (14, 1)"));
+        assert!(dialect.contains("operands.len() != expected_operands"));
+        assert!(dialect.contains("SparseMmaShapeAttr { M16n8k32, M16n8k64 }"));
+        assert!(dialect.contains("SparseMmaSelectorAttr { ImmediateZeroOrOne, ImmediateZero }"));
         assert!(dialect.contains("SparseMmaElementAttr::S8"));
         assert!(dialect.contains("SparseMmaElementAttr::U8"));
         assert!(dialect.contains("SparseMmaOverflowAttr::Wrapping"));
@@ -8728,7 +8860,9 @@ mod tests {
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("sparse MMA selector must be the compile-time constant 0 or 1"));
+        assert!(importer.contains("sparse MMA selector must be the compile-time constant 0"));
         assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32"));
+        assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A4U32B4U32ToD4I32"));
         assert!(importer.contains("operands.push(metadata)"));
         assert!(importer.contains("operands.push(selector_value)"));
         assert!(importer.contains("SparseMmaOp::get_concrete_op_info"));
@@ -8741,9 +8875,9 @@ mod tests {
             1
         );
         assert!(lowering.contains("convert_generated_sparse_mma"));
-        assert!(lowering.contains(sparse_mma_constraints()));
         for record in &records {
             assert!(lowering.contains(&sparse_mma_template(record)));
+            assert!(lowering.contains(&sparse_mma_constraints(record)));
         }
 
         let targets = render_targets(&catalog, "test-hash");
@@ -8751,6 +8885,9 @@ mod tests {
         assert!(targets.contains("Operation::get_op::<SparseMmaOp>"));
         assert!(targets.contains("get_attr_nvvm_sparse_mma_selector"));
         assert!(targets.contains("GeneratedSparseMmaSelector::ImmediateZeroOrOne"));
+        assert!(targets.contains("GeneratedSparseMmaSelector::ImmediateZero"));
+        assert!(targets.contains("GeneratedSparseMmaShape::M16n8k64"));
+        assert!(targets.contains("SparseMmaShapeAttr::M16n8k64"));
         assert!(targets.contains("GeneratedSparseMmaMetadata::Ordered"));
         assert!(targets.contains("SparseMmaMetadataAttr::Ordered"));
 
@@ -8761,14 +8898,22 @@ mod tests {
             lowering
                 .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32")
         );
+        assert!(
+            lowering
+                .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32")
+        );
 
         for record in &records {
             let probe = render_probe(&catalog, record, "test-hash");
             assert!(probe.contains(&format!("probe_{}_selector_0", record.id)));
-            assert!(probe.contains(&format!("probe_{}_selector_1", record.id)));
-            assert_eq!(probe.matches("asm sideeffect").count(), 2);
+            let selectors = sparse_mma_selector_values(record);
+            assert_eq!(
+                probe.contains(&format!("probe_{}_selector_1", record.id)),
+                selectors.contains(&1)
+            );
+            assert_eq!(probe.matches("asm sideeffect").count(), selectors.len());
             assert!(probe.contains(&sparse_mma_template(record)));
-            assert!(probe.contains(sparse_mma_constraints()));
+            assert!(probe.contains(&sparse_mma_constraints(record)));
             assert!(probe.contains("attributes #0 = { convergent }"));
         }
 
