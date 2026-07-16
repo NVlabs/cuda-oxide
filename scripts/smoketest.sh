@@ -540,16 +540,21 @@ run_cargo() {
         fi
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local instruction_re='mma\.sp::ordered_metadata\.sync\.aligned\.m16n8k64\.row\.col\.kind::f8f6f4\.f32\.[[:alnum:]]+\.[[:alnum:]]+\.f32'
+        local fp8_re='cvt\.rn\.satfinite(\.relu)?\.(e4m3x2|e5m2x2)\.f32'
         local instruction_count unique_instruction_count
+        local fp8_count unique_fp8_count
         instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
         unique_instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
+        fp8_count="$(grep -oE "${fp8_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
+        unique_fp8_count="$(grep -oE "${fp8_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
         if [[ ! -s "${llvm_ptx}" ]] \
             || ! grep -qx '\.version 8\.7' "${llvm_ptx}" \
             || ! grep -qx '\.target sm_120a' "${llvm_ptx}" \
-            || [[ ${instruction_count} -ne 25 || ${unique_instruction_count} -ne 25 ]]; then
-            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 unique f8f6f4 instructions\n' >>"${log}"
+            || [[ ${instruction_count} -ne 25 || ${unique_instruction_count} -ne 25 ]] \
+            || [[ ${fp8_count} -ne 4 || ${unique_fp8_count} -ne 4 ]]; then
+            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 f8f6f4 and 4 FP8 instructions\n' >>"${log}"
             if [[ ${VERBOSE} -eq 1 ]]; then
-                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 unique f8f6f4 instructions\n'
+                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 f8f6f4 and 4 FP8 instructions\n'
             fi
             CARGO_EC=1
             return
@@ -560,6 +565,23 @@ run_cargo() {
         else
             cargo oxide "${nvvm_args[@]}" >>"${log}" 2>&1
             CARGO_EC=$?
+        fi
+        if [[ ${CARGO_EC} -ne 0 ]]; then
+            return
+        fi
+        local nvvm_ll="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local inline_fp8_re='call i16 asm "cvt\.rn\.satfinite(\.relu)?\.(e4m3x2|e5m2x2)\.f32 \$0, \$2, \$1;", "=h,f,f"'
+        local inline_fp8_count unique_inline_fp8_count
+        inline_fp8_count="$(grep -oE "${inline_fp8_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
+        unique_inline_fp8_count="$(grep -oE "${inline_fp8_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
+        if [[ ! -s "${nvvm_ll}" ]] \
+            || [[ ${inline_fp8_count} -ne 4 || ${unique_inline_fp8_count} -ne 4 ]] \
+            || grep -q 'llvm\.nvvm\.ff\.to\.' "${nvvm_ll}"; then
+            printf 'libNVVM route did not emit exactly 4 unique ordered FP8 inline-PTX calls\n' >>"${log}"
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                printf 'libNVVM route did not emit exactly 4 unique ordered FP8 inline-PTX calls\n'
+            fi
+            CARGO_EC=1
         fi
         return
     fi

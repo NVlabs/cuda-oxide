@@ -3,14 +3,40 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Compile coverage for generated Blackwell sparse MMA intrinsics.
+//! Compile coverage for generated high-target intrinsics.
 
-use cuda_device::{DisjointSlice, cuda_module, kernel};
+use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_intrinsics::convert::{
+    cvt_rn_satfinite_e4m3x2_f32, cvt_rn_satfinite_e5m2x2_f32,
+    cvt_rn_satfinite_relu_e4m3x2_f32, cvt_rn_satfinite_relu_e5m2x2_f32,
+};
 use cuda_intrinsics::matrix;
 
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    /// Keeps every generated packed-FP8 conversion in device code.
+    #[kernel]
+    pub fn compile_fp8_conversions(
+        mut output: DisjointSlice<u16>,
+        low: f32,
+        high: f32,
+    ) {
+        let values = [
+            cvt_rn_satfinite_e4m3x2_f32(low, high),
+            cvt_rn_satfinite_relu_e4m3x2_f32(low, high),
+            cvt_rn_satfinite_e5m2x2_f32(low, high),
+            cvt_rn_satfinite_relu_e5m2x2_f32(low, high),
+        ];
+        let start = thread::index_1d().get() * values.len();
+        if start + values.len() <= output.len() {
+            for (offset, value) in values.into_iter().enumerate() {
+                // SAFETY: the bounds check covers this thread's unique slots.
+                unsafe { *output.get_unchecked_mut(start + offset) = value };
+            }
+        }
+    }
 
     /// Keeps the complete ordered `kind::f8f6f4` F32 matrix in device code.
     ///

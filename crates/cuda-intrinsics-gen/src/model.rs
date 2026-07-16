@@ -161,6 +161,8 @@ pub struct OverlayShardFile {
     pub sparse_mma_f8f6f4_f32: Option<SparseMmaF8F6F4Admission>,
     #[serde(default)]
     pub prmt: Option<PrmtAdmission>,
+    #[serde(default)]
+    pub packed_conversion_fp8: Option<PackedConversionFp8Admission>,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -180,6 +182,18 @@ pub struct PrmtAdmission {
 pub struct PrmtAdmissionVariant {
     pub abi_id: String,
     pub mode: PrmtMode,
+}
+
+/// Compact admission for the closed scalar-f32 to packed-FP8 family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedConversionFp8Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub destination_formats: Vec<PackedConversionDestinationFormat>,
+    pub saturations: Vec<PackedConversionSaturation>,
+    pub product_count: usize,
 }
 
 /// Compact admission for a closed dense integer register-MMA family.
@@ -1184,6 +1198,8 @@ pub enum PackedConversionSourceFormat {
 #[serde(rename_all = "snake_case")]
 pub enum PackedConversionDestinationFormat {
     Bf16x2,
+    E4m3x2,
+    E5m2x2,
     F16x2,
 }
 
@@ -1199,6 +1215,8 @@ pub enum PackedConversionRounding {
 pub enum PackedConversionSaturation {
     None,
     Relu,
+    Satfinite,
+    SatfiniteRelu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -1813,3 +1813,31 @@ status = "active"
 catalog_id = "prmt_rc16"
 operation_key = "integer.prmt.b32.rc16"
 raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0259"
+status = "active"
+catalog_id = "cvt_rn_satfinite_e4m3x2_f32"
+operation_key = "packed.convert.f32x2.e4m3x2.nearest_even.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0260"
+status = "active"
+catalog_id = "cvt_rn_satfinite_relu_e4m3x2_f32"
+operation_key = "packed.convert.f32x2.e4m3x2.nearest_even.satfinite.relu"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0261"
+status = "active"
+catalog_id = "cvt_rn_satfinite_e5m2x2_f32"
+operation_key = "packed.convert.f32x2.e5m2x2.nearest_even.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0262"
+status = "active"
+catalog_id = "cvt_rn_satfinite_relu_e5m2x2_f32"
+operation_key = "packed.convert.f32x2.e5m2x2.nearest_even.satfinite.relu"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u16" }

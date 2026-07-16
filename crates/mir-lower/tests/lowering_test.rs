@@ -4136,6 +4136,162 @@ fn test_generated_packed_conversions_lower_to_exact_pure_inline_asm() -> Result<
     Ok(())
 }
 
+const FP8_CONVERSION_INTRINSICS: [&str; 4] = [
+    "llvm_nvvm_ff_to_e4m3x2_rn",
+    "llvm_nvvm_ff_to_e4m3x2_rn_relu",
+    "llvm_nvvm_ff_to_e5m2x2_rn",
+    "llvm_nvvm_ff_to_e5m2x2_rn_relu",
+];
+
+const FP8_CONVERSION_PTX: [&str; 4] = [
+    "cvt.rn.satfinite.e4m3x2.f32 $0, $2, $1;",
+    "cvt.rn.satfinite.relu.e4m3x2.f32 $0, $2, $1;",
+    "cvt.rn.satfinite.e5m2x2.f32 $0, $2, $1;",
+    "cvt.rn.satfinite.relu.e5m2x2.f32 $0, $2, $1;",
+];
+
+fn lower_all_fp8_conversions(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::builtin::types::FP32Type;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
+    let low = entry.deref(&ctx).get_argument(0);
+    let high = entry.deref(&ctx).get_argument(1);
+
+    nvvm::CvtRnSatfiniteE4m3x2F32Op::build(&mut ctx, low, high).insert_at_back(entry, &ctx);
+    nvvm::CvtRnSatfiniteReluE4m3x2F32Op::build(&mut ctx, low, high).insert_at_back(entry, &ctx);
+    nvvm::CvtRnSatfiniteE5m2x2F32Op::build(&mut ctx, low, high).insert_at_back(entry, &ctx);
+    nvvm::CvtRnSatfiniteReluE5m2x2F32Op::build(&mut ctx, low, high).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_fp8_conversions_llvm_nvptx_use_exact_typed_calls() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_all_fp8_conversions(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let mut calls = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX FP8 conversions must use typed intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        if !FP8_CONVERSION_INTRINSICS.contains(&callee.as_str()) {
+            continue;
+        }
+        let call_op = call.get_operation();
+        assert_eq!(call_op.deref(&ctx).get_num_operands(), 2);
+        assert_eq!(call_op.deref(&ctx).get_num_results(), 1);
+        let block = call_op.deref(&ctx).get_parent_block().unwrap();
+        assert_eq!(
+            call_op.deref(&ctx).get_operand(0),
+            block.deref(&ctx).get_argument(1)
+        );
+        assert_eq!(
+            call_op.deref(&ctx).get_operand(1),
+            block.deref(&ctx).get_argument(0)
+        );
+        let result_ty = call_op.deref(&ctx).get_result(0).get_type(&ctx);
+        assert_eq!(
+            result_ty
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("FP8 conversion result is an integer")
+                .width(),
+            16
+        );
+        calls.push(callee);
+    }
+    calls.sort();
+    let mut expected = FP8_CONVERSION_INTRINSICS.map(str::to_owned);
+    expected.sort();
+    assert_eq!(calls, expected);
+    Ok(())
+}
+
+#[test]
+fn test_fp8_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_all_fp8_conversions(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let mut templates = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+        {
+            assert!(
+                !FP8_CONVERSION_INTRINSICS.contains(&callee.to_string().as_str()),
+                "libNVVM FP8 conversions must not use typed intrinsics"
+            );
+        }
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        let template = inline_asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        if !FP8_CONVERSION_PTX.contains(&template.as_str()) {
+            continue;
+        }
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("=h,f,f")
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_convergent(&ctx)
+                .map(|value| bool::from((*value).clone())),
+            Some(false)
+        );
+        let asm_op = inline_asm.get_operation();
+        assert_eq!(asm_op.deref(&ctx).get_num_operands(), 2);
+        assert_eq!(asm_op.deref(&ctx).get_num_results(), 1);
+        let result_ty = asm_op.deref(&ctx).get_result(0).get_type(&ctx);
+        assert_eq!(
+            result_ty
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("FP8 conversion result is an integer")
+                .width(),
+            16
+        );
+        templates.push(template);
+    }
+    templates.sort();
+    let mut expected = FP8_CONVERSION_PTX.map(str::to_owned);
+    expected.sort();
+    assert_eq!(templates, expected);
+    Ok(())
+}
+
 #[test]
 fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
