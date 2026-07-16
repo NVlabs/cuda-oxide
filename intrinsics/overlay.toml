@@ -1,4 +1,4 @@
-schema = 36
+schema = 37
 catalog_version = "0.1.0"
 intrinsic_abi = 1
 backend_profile = "rust-llvm-22.1.2-1cb4e383"
@@ -8,6 +8,7 @@ shards = [
     "overlay/cp_async_control.toml",
     "overlay/cp_async_copy.toml",
     "overlay/cp_async_mbarrier.toml",
+    "overlay/debug_control.toml",
     "overlay/dotprod.toml",
     "overlay/ldmatrix.toml",
     "overlay/mbarrier_basic.toml",

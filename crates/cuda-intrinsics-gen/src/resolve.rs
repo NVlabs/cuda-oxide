@@ -13,7 +13,8 @@ use crate::model::{
     ClusterBarrier, ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering,
     ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter,
     CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
-    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
+    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl, DebugControlAdapter,
+    DebugControlAdmission, DebugControlOperation, DotProductAdapter, DotProductOperation,
     DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix,
     EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
     EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
@@ -52,16 +53,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 36;
+const OVERLAY_SCHEMA: u32 = 37;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 32;
+const OVERLAY_SHARD_SCHEMA: u32 = 33;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
 const CLUSTER_SREG_SHARD_SCHEMA: u32 = 30;
 const CLUSTER_BARRIER_SHARD_SCHEMA: u32 = 31;
 const SPECIAL_REGISTER_SHARD_SCHEMA: u32 = 32;
-pub(crate) const CATALOG_SCHEMA: u32 = 35;
+const DEBUG_CONTROL_SHARD_SCHEMA: u32 = 33;
+pub(crate) const CATALOG_SCHEMA: u32 = 36;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -465,6 +467,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let cluster_sreg_admission = shard.cluster_sreg.take();
         let cluster_barrier_admission = shard.cluster_barrier.take();
         let special_register_admission = shard.special_registers.take();
+        let debug_control_admission = shard.debug_control.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -543,6 +546,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_special_register_admission(&admission)?;
         }
+        if let Some(admission) = debug_control_admission {
+            ensure!(
+                shard.family == "debug_control" && shard.intrinsics.is_empty(),
+                "compact debug-control admission must be the only content of a debug_control shard"
+            );
+            shard.intrinsics = expand_debug_control_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -616,6 +626,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.special_registers.is_none() || shard.schema >= SPECIAL_REGISTER_SHARD_SCHEMA,
         "compact special-register admission requires overlay shard schema {}",
         SPECIAL_REGISTER_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.debug_control.is_none() || shard.schema >= DEBUG_CONTROL_SHARD_SCHEMA,
+        "compact debug-control admission requires overlay shard schema {}",
+        DEBUG_CONTROL_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1121,6 +1136,7 @@ fn validate_policy(
             policy,
             declaration.context("cluster_barrier requires imported LLVM declaration")?,
         )?,
+        "debug_control" => validate_debug_control_policy(policy, source)?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1146,6 +1162,11 @@ fn validate_policy(
     ensure!(
         policy.special_register.is_none() || policy.family == "sreg",
         "{} mixes the special-register contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "debug_control") == policy.debug_control.is_some(),
+        "{} mixes the debug-control contract with another generated family",
         policy.id
     );
     ensure!(
@@ -3601,6 +3622,7 @@ fn expand_special_register_admission(
                 prmt: None,
                 cluster_barrier: None,
                 special_register: Some(special_register_contract(recipe)),
+                debug_control: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -4225,6 +4247,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         prmt: None,
         cluster_barrier: None,
         special_register: None,
+        debug_control: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -7413,6 +7436,7 @@ fn packed_conversion_overlay_record(
         prmt: None,
         cluster_barrier: None,
         special_register: None,
+        debug_control: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -8669,6 +8693,7 @@ fn expand_register_mma_integer_admission(
             prmt: None,
             cluster_barrier: None,
             special_register: None,
+            debug_control: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -8845,6 +8870,7 @@ fn expand_register_mma_binary_admission(
             prmt: None,
             cluster_barrier: None,
             special_register: None,
+            debug_control: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -9485,6 +9511,7 @@ fn sparse_mma_overlay_record(
         prmt: None,
         cluster_barrier: None,
         special_register: None,
+        debug_control: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -9924,6 +9951,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 }),
                 cluster_barrier: None,
                 special_register: None,
+                debug_control: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -10272,6 +10300,7 @@ fn expand_cluster_barrier_admission(
                     aligned: recipe.aligned,
                 }),
                 special_register: None,
+                debug_control: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -10419,6 +10448,332 @@ fn validate_cluster_barrier_policy(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct DebugControlRecipe {
+    id: &'static str,
+    operation_key: &'static str,
+    rust_name: &'static str,
+    rust_arguments: &'static [&'static str],
+    rust_result: &'static str,
+    compatibility_path: &'static str,
+    op_type: &'static str,
+    op_name: &'static str,
+    instruction: &'static str,
+    minimum_ptx: &'static str,
+    minimum_sm: Option<&'static str>,
+    section: &'static str,
+    anchor: &'static str,
+    adapter: DebugControlAdapter,
+    summary: &'static str,
+}
+
+fn debug_control_recipe(operation: DebugControlOperation) -> DebugControlRecipe {
+    match operation {
+        DebugControlOperation::Trap => DebugControlRecipe {
+            id: "trap",
+            operation_key: "debug.control.trap",
+            rust_name: "trap",
+            rust_arguments: &[],
+            rust_result: "!",
+            compatibility_path: "cuda_device::debug::trap",
+            op_type: "TrapOp",
+            op_name: "nvvm.trap",
+            instruction: "trap",
+            minimum_ptx: "1.0",
+            minimum_sm: None,
+            section: "9.7.20.4 Miscellaneous Instructions: trap",
+            anchor: "miscellaneous-instructions-trap",
+            adapter: DebugControlAdapter::Direct,
+            summary: "Aborts device execution and reports an interrupt to the host.",
+        },
+        DebugControlOperation::Breakpoint => DebugControlRecipe {
+            id: "breakpoint",
+            operation_key: "debug.control.breakpoint",
+            rust_name: "breakpoint",
+            rust_arguments: &[],
+            rust_result: "()",
+            compatibility_path: "cuda_device::debug::breakpoint",
+            op_type: "BreakpointOp",
+            op_name: "nvvm.brkpt",
+            instruction: "brkpt",
+            minimum_ptx: "1.0",
+            minimum_sm: Some("sm_11"),
+            section: "9.7.20.1 Miscellaneous Instructions: brkpt",
+            anchor: "miscellaneous-instructions-brkpt",
+            adapter: DebugControlAdapter::Direct,
+            summary: "Suspends device execution for a debugger breakpoint.",
+        },
+        DebugControlOperation::Pmevent => DebugControlRecipe {
+            id: "pmevent",
+            operation_key: "debug.profiler.event",
+            rust_name: "pmevent",
+            rust_arguments: &["u32"],
+            rust_result: "()",
+            compatibility_path: "cuda_device::debug::__prof_trigger",
+            op_type: "PmEventOp",
+            op_name: "nvvm.pmevent",
+            instruction: "pmevent",
+            minimum_ptx: "1.4",
+            minimum_sm: None,
+            section: "9.7.20.3 Miscellaneous Instructions: pmevent",
+            anchor: "miscellaneous-instructions-pmevent",
+            adapter: DebugControlAdapter::ConstGenericToImmediateU32,
+            summary: "Triggers one compile-time-selected performance monitor event.",
+        },
+    }
+}
+
+fn expand_debug_control_admission(
+    admission: &DebugControlAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "debug-control runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact debug-control admission requires both backend evidence profiles"
+    );
+    ensure!(
+        admission.operations
+            == [
+                DebugControlOperation::Trap,
+                DebugControlOperation::Breakpoint,
+                DebugControlOperation::Pmevent,
+            ],
+        "compact debug-control admission must list trap, breakpoint, and pmevent exactly once in canonical order"
+    );
+    ensure!(
+        admission.abi_ids.len() == admission.operations.len(),
+        "pending debug-control admission needs exactly three ABI IDs before aggregation"
+    );
+    let unique_abi_ids = admission.abi_ids.iter().collect::<BTreeSet<_>>();
+    ensure!(
+        unique_abi_ids.len() == admission.abi_ids.len(),
+        "debug-control ABI IDs must be unique"
+    );
+
+    admission
+        .operations
+        .iter()
+        .zip(&admission.abi_ids)
+        .map(|(&operation, abi_id)| {
+            validate_abi_id(abi_id)?;
+            let recipe = debug_control_recipe(operation);
+            let immediate = operation == DebugControlOperation::Pmevent;
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "debug_control".into(),
+                source: Some(IntrinsicSource::PtxNative {
+                    instruction: recipe.instruction.into(),
+                }),
+                source_record: None,
+                rust_module: "debug".into(),
+                rust_name: recipe.rust_name.into(),
+                rust_arguments: recipe
+                    .rust_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                rust_result: recipe.rust_result.into(),
+                safe: true,
+                must_use: false,
+                safe_allowlist_reason: Some(
+                    match operation {
+                        DebugControlOperation::Trap => {
+                            "aborting the kernel has no memory-safety preconditions"
+                        }
+                        DebugControlOperation::Breakpoint => {
+                            "requesting a debugger breakpoint has no memory-safety preconditions"
+                        }
+                        DebugControlOperation::Pmevent => {
+                            "the importer accepts only the documented immediate event range"
+                        }
+                    }
+                    .into(),
+                ),
+                public_rust_path: format!("cuda_intrinsics::debug::{}", recipe.rust_name),
+                compatibility_rust_paths: vec![recipe.compatibility_path.into()],
+                dialect_op_type: recipe.op_type.into(),
+                dialect_op_name: recipe.op_name.into(),
+                dialect_operands: vec![],
+                dialect_results: vec![],
+                llvm_symbol: None,
+                resolved_llvm_symbol: None,
+                llvm_arguments: vec![],
+                llvm_results: vec![],
+                pure: false,
+                memory: "none".into(),
+                convergent: false,
+                execution_scope: "thread".into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: recipe.minimum_sm.map(Into::into),
+                ptx_result: "()".into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: recipe.section.into(),
+                ptx_isa_url: format!(
+                    "https://docs.nvidia.com/cuda/parallel-thread-execution/#{}",
+                    recipe.anchor
+                ),
+                lowering: "generated_debug_control".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("3.2".into()),
+                        minimum_sm: Some("sm_20".into()),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some("9.3".into()),
+                        minimum_sm: Some("sm_75".into()),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: Some(DebugControl {
+                    operation,
+                    adapter: recipe.adapter,
+                    runtime_validation: admission.runtime_validation,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: recipe.instruction.into(),
+                    modifiers: vec![],
+                    operands: if immediate {
+                        vec![OperandPattern::Immediate]
+                    } else {
+                        vec![]
+                    },
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_debug_control_policy(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+) -> Result<()> {
+    let debug = policy
+        .debug_control
+        .as_ref()
+        .with_context(|| format!("{} has no closed debug-control contract", policy.id))?;
+    let recipe = debug_control_recipe(debug.operation);
+    let immediate = debug.operation == DebugControlOperation::Pmevent;
+    ensure!(
+        debug.adapter == recipe.adapter
+            && debug.runtime_validation == RuntimeValidation::Unexecuted
+            && policy.id == recipe.id
+            && policy.operation_key == recipe.operation_key
+            && source
+                == &IntrinsicSource::PtxNative {
+                    instruction: recipe.instruction.into(),
+                }
+            && policy.source_record.is_none()
+            && policy.llvm_symbol.is_none()
+            && policy.resolved_llvm_symbol.is_none()
+            && policy.llvm_arguments.is_empty()
+            && policy.llvm_results.is_empty(),
+        "{} identity must remain PTX-native and match its closed debug-control recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "debug"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == recipe.rust_result
+            && policy.safe
+            && !policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::debug::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths == [recipe.compatibility_path],
+        "{} Rust API or compatibility adapter changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.op_type
+            && policy.dialect_op_name == recipe.op_name
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results.is_empty()
+            && policy.lowering == "generated_debug_control",
+        "{} dialect carrier or lowering changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread",
+        "{} debug-control effects changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
+            && policy.targets == "all"
+            && policy.ptx_result == "()"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.section
+            && policy.ptx_isa_url
+                == format!(
+                    "https://docs.nvidia.com/cuda/parallel-thread-execution/#{}",
+                    recipe.anchor
+                ),
+        "{} native target floor or PTX provenance changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == recipe.instruction
+            && policy.expected_ptx.modifiers.is_empty()
+            && policy.expected_ptx.operands
+                == if immediate {
+                    vec![OperandPattern::Immediate]
+                } else {
+                    vec![]
+                },
+        "{} expected PTX changed",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, "3.2", Some("sm_20")),
+            (IntrinsicBackend::LibNvvm, "9.3", Some("sm_75")),
+        ],
+        "debug-control",
+    )?;
+    ensure_no_other_family_contract(policy, "debug-control")?;
+    Ok(())
+}
+
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
     requirements: [(IntrinsicBackend, &str, Option<&str>); 2],
@@ -10486,7 +10841,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "register_mma") == policy.register_mma.is_some()
             && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
             && (policy.family == "prmt") == policy.prmt.is_some()
-            && (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some(),
+            && (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some()
+            && (policy.family == "debug_control") == policy.debug_control.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -11838,6 +12194,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(debug) = &policy.debug_control {
+        match debug.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} debug-control runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} debug-control runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -11980,6 +12352,7 @@ fn materialize_record(
         prmt: policy.prmt.clone(),
         cluster_barrier: policy.cluster_barrier.clone(),
         special_register: policy.special_register.clone(),
+        debug_control: policy.debug_control.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -12101,6 +12474,7 @@ mod tests {
             prmt: None,
             cluster_barrier: None,
             special_register: None,
+            debug_control: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -13470,8 +13844,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 37);
-        assert_eq!(overlay.intrinsics.len(), 294);
+        assert_eq!(overlay.shards.len(), 38);
+        assert_eq!(overlay.intrinsics.len(), 297);
         assert_eq!(
             overlay
                 .intrinsics
@@ -13479,6 +13853,14 @@ mod tests {
                 .filter(|record| record.family == "prmt")
                 .count(),
             7
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "debug_control")
+                .count(),
+            3
         );
         assert_eq!(
             overlay
@@ -13711,6 +14093,20 @@ mod tests {
         }
     }
 
+    fn test_debug_control_admission() -> DebugControlAdmission {
+        DebugControlAdmission {
+            llvm_evidence_profile: "llvm-debug-test".into(),
+            libnvvm_evidence_profile: "libnvvm-debug-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            operations: vec![
+                DebugControlOperation::Trap,
+                DebugControlOperation::Breakpoint,
+                DebugControlOperation::Pmevent,
+            ],
+            abi_ids: vec!["i9001".into(), "i9002".into(), "i9003".into()],
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -13727,6 +14123,7 @@ mod tests {
             cluster_sreg: None,
             cluster_barrier: None,
             special_registers: None,
+            debug_control: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -13752,7 +14149,8 @@ mod tests {
 
         assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
         validate_overlay_shard_schema(&shard(32, None, None), path).unwrap();
-        assert!(validate_overlay_shard_schema(&shard(33, None, None), path).is_err());
+        validate_overlay_shard_schema(&shard(33, None, None), path).unwrap();
+        assert!(validate_overlay_shard_schema(&shard(34, None, None), path).is_err());
         let error =
             validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
                 .unwrap_err();
@@ -13784,6 +14182,7 @@ mod tests {
             cluster_sreg: None,
             cluster_barrier: None,
             special_registers: None,
+            debug_control: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -13808,6 +14207,7 @@ mod tests {
             cluster_sreg: None,
             cluster_barrier: Some(test_cluster_barrier_admission()),
             special_registers: None,
+            debug_control: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -13912,6 +14312,7 @@ record_count = 14
             cluster_sreg: None,
             cluster_barrier: None,
             special_registers: Some(admission.clone()),
+            debug_control: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -14257,6 +14658,138 @@ record_count = 14
         let mut executed = test_fp8_conversion_admission();
         executed.runtime_validation = RuntimeValidation::Executed;
         assert!(expand_packed_conversion_fp8_admission(&executed).is_err());
+    }
+
+    #[test]
+    fn compact_debug_control_admission_is_closed() {
+        let records = expand_debug_control_admission(&test_debug_control_admission()).unwrap();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].id, "trap");
+        assert_eq!(records[1].id, "breakpoint");
+        assert_eq!(records[2].id, "pmevent");
+        for record in &records {
+            validate_ptx_native_policy(record).unwrap();
+            assert_eq!(record.backend_lowerings.len(), 2);
+            assert!(
+                record
+                    .debug_control
+                    .as_ref()
+                    .is_some_and(|debug| debug.runtime_validation == RuntimeValidation::Unexecuted)
+            );
+        }
+        assert_eq!(records[0].minimum_ptx, "1.0");
+        assert_eq!(records[0].minimum_sm, None);
+        assert_eq!(records[1].minimum_ptx, "1.0");
+        assert_eq!(records[1].minimum_sm.as_deref(), Some("sm_11"));
+        assert_eq!(records[2].minimum_ptx, "1.4");
+        assert_eq!(
+            records[2].expected_ptx.operands,
+            [OperandPattern::Immediate]
+        );
+
+        let mut pending = test_debug_control_admission();
+        pending.abi_ids.clear();
+        assert!(expand_debug_control_admission(&pending).is_err());
+
+        let mut missing = test_debug_control_admission();
+        missing.operations.pop();
+        assert!(expand_debug_control_admission(&missing).is_err());
+
+        let mut duplicate_operation = test_debug_control_admission();
+        duplicate_operation.operations[2] = DebugControlOperation::Breakpoint;
+        assert!(expand_debug_control_admission(&duplicate_operation).is_err());
+
+        let mut duplicate_id = test_debug_control_admission();
+        duplicate_id.abi_ids[2] = duplicate_id.abi_ids[1].clone();
+        assert!(expand_debug_control_admission(&duplicate_id).is_err());
+
+        let mut malformed_id = test_debug_control_admission();
+        malformed_id.abi_ids[0] = "debug1".into();
+        assert!(expand_debug_control_admission(&malformed_id).is_err());
+
+        let mut executed = test_debug_control_admission();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_debug_control_admission(&executed).is_err());
+
+        let mut wrong_source = records[0].clone();
+        wrong_source.source = Some(IntrinsicSource::LlvmImported {
+            source_record: "invented".into(),
+        });
+        assert!(validate_ptx_native_policy(&wrong_source).is_err());
+
+        let mut wrong_adapter = records[2].clone();
+        wrong_adapter.debug_control.as_mut().unwrap().adapter = DebugControlAdapter::Direct;
+        assert!(validate_ptx_native_policy(&wrong_adapter).is_err());
+
+        let mut wrong_immediate = records[2].clone();
+        wrong_immediate.expected_ptx.operands = vec![OperandPattern::Register];
+        assert!(validate_ptx_native_policy(&wrong_immediate).is_err());
+
+        let mut wrong_floor = records[1].clone();
+        wrong_floor.backend_lowerings[0].minimum_sm = Some("sm_75".into());
+        assert!(validate_ptx_native_policy(&wrong_floor).is_err());
+    }
+
+    #[test]
+    fn debug_control_compact_schema_is_reserved_for_aggregation() {
+        let shard = |schema| OverlayShardFile {
+            schema,
+            family: "debug_control".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            special_registers: None,
+            debug_control: Some(test_debug_control_admission()),
+        };
+        let path = Path::new("intrinsics/overlay/debug_control.toml");
+        validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
+        assert!(validate_overlay_shard_schema_with_max(&shard(33), path, 32).is_err());
+        let error = validate_overlay_shard_schema_with_max(&shard(32), path, 33).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires overlay shard schema 33")
+        );
+    }
+
+    #[test]
+    fn active_debug_control_sources_parse_and_prove_both_backend_routes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let shard_path = repo_root.join("intrinsics/overlay/debug_control.toml");
+        let shard: OverlayShardFile =
+            toml::from_str(&fs::read_to_string(&shard_path).unwrap()).unwrap();
+        validate_overlay_shard_schema_with_max(&shard, &shard_path, 33).unwrap();
+        let admission = shard.debug_control.unwrap();
+        assert_eq!(admission.abi_ids, ["i0295", "i0296", "i0297"]);
+        let records = expand_debug_control_admission(&admission).unwrap();
+
+        let evidence = vec![
+            read_evidence_file(
+                &repo_root.join("intrinsics/evidence/rust-llvm-22.1.2-1cb4e383-debug-control.json"),
+            )
+            .unwrap(),
+            read_evidence_file(
+                &repo_root.join("intrinsics/evidence/cuda-13.3-libnvvm-13.3.33-debug-control.json"),
+            )
+            .unwrap(),
+        ];
+        let indexed =
+            index_evidence(&evidence, "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e").unwrap();
+        for record in &records {
+            let routes = resolve_backend_lowerings(record, &indexed).unwrap();
+            assert_eq!(routes.len(), 2);
+            assert!(routes.iter().all(|route| {
+                route.mechanism == BackendLoweringMechanism::InlinePtx
+                    && route.status == "validated"
+            }));
+        }
     }
 
     #[test]

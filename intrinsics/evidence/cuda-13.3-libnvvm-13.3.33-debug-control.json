@@ -1,0 +1,86 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_75",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "debug_control_inline_probe",
+      "coverage_count": 3,
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "one CUDA device probe with volatile inline PTX for trap, brkpt, and pmevent 15",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 emitted a 562-byte PTX 9.3 module containing all three instructions; source SHA-256 2e8b8ffd062afdcf1c1806d526388b9bacc7469918370d26af9186b2c9a4b1e1 and PTX SHA-256 ba2d42ec37ae06d4a460291a966872cbc35e999ffd0aa72c7e1aa6cf0f54e6f8."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked debug-control probe retaining trap, brkpt, and pmevent 15",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 produced a 5,416-byte cubin with SHA-256 d9c0af472531aa6da4a84efc0b4cbaccc56f9e090c5c3160792842172c225ee1; cuobjdump retained PMTRIG and BPT.TRAP instructions.",
+          "tool_path": "/usr/local/cuda-13.3/bin/nvcc",
+          "tool_version": "CUDA compilation tools, release 13.3, V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "6b55d91cd23f314ccb6801d71d64d20760a7ec31d37d87017ea0681d79bd3285"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["trap"]}],
+      "product_count": 1,
+      "fixtures": ["debug_control_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "trap"},
+        "llvm_symbol": null,
+        "expected_ptx": {"mnemonic": "trap", "modifiers": [], "operands": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["breakpoint"]}],
+      "product_count": 1,
+      "fixtures": ["debug_control_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "brkpt"},
+        "llvm_symbol": null,
+        "expected_ptx": {"mnemonic": "brkpt", "modifiers": [], "operands": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["pmevent"]}],
+      "product_count": 1,
+      "fixtures": ["debug_control_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "pmevent"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "pmevent",
+          "modifiers": [],
+          "operands": [{"kind": "immediate"}]
+        }
+      }
+    }
+  ]
+}

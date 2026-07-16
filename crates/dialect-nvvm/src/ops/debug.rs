@@ -14,8 +14,6 @@
 //! │ ReadPtxSregClockOp       │ %clock / read.ptx.sreg.clock │ 32-bit clock counter    │
 //! │ ReadPtxSregClock64Op     │ %clock64 / ...clock64        │ 64-bit clock counter    │
 //! │ ReadPtxSregGlobaltimerOp │ %globaltimer / ...globaltimer│ Global timer counter    │
-//! │ TrapOp                   │ trap / llvm.nvvm.trap        │ Abort kernel execution  │
-//! │ BreakpointOp             │ brkpt / llvm.nvvm.brkpt      │ cuda-gdb breakpoint     │
 //! │ VprintfOp                │ vprintf / call @vprintf      │ Formatted output        │
 //! └──────────────────────────┴──────────────────────────────┴─────────────────────────┘
 //! ```
@@ -34,125 +32,6 @@ use pliron::{
     verify_err,
 };
 use pliron_derive::pliron_op;
-
-// =============================================================================
-// Trap/Abort Operations
-// =============================================================================
-
-/// Abort kernel execution.
-///
-/// Corresponds to `llvm.nvvm.trap` / PTX `trap`.
-/// When executed, terminates the kernel with an error.
-///
-/// # Verification
-///
-/// - Must have 0 operands
-/// - Must have 0 results
-#[pliron_op(
-    name = "nvvm.trap",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct TrapOp;
-
-impl TrapOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        TrapOp { op }
-    }
-}
-
-// =============================================================================
-// Debugging Operations
-// =============================================================================
-
-/// Insert a cuda-gdb breakpoint.
-///
-/// Corresponds to `llvm.nvvm.brkpt` / PTX `brkpt`.
-/// When debugging with cuda-gdb, execution stops at this point.
-///
-/// # Verification
-///
-/// - Must have 0 operands
-/// - Must have 0 results
-#[pliron_op(
-    name = "nvvm.brkpt",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct BreakpointOp;
-
-impl BreakpointOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        BreakpointOp { op }
-    }
-}
-
-// =============================================================================
-// Profiler Operations
-// =============================================================================
-
-/// Trigger a profiler event.
-///
-/// Corresponds to PTX `pmevent N;` instruction.
-/// Signals the NVIDIA profiler (Nsight Systems/Compute) at this point.
-///
-/// The event ID is stored as an attribute (compile-time constant).
-///
-/// # Attributes
-///
-/// * `event_id` - The profiler event ID (u32)
-///
-/// # Verification
-///
-/// - Must have 0 operands
-/// - Must have 0 results
-#[pliron_op(
-    name = "nvvm.pmevent",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct PmEventOp;
-
-impl PmEventOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        PmEventOp { op }
-    }
-
-    /// Create a new pmevent operation with the given event ID.
-    pub fn new_with_event_id(ctx: &mut Context, event_id: u32) -> Ptr<Operation> {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
-
-        use pliron::builtin::attributes::IntegerAttr;
-        use pliron::identifier::Identifier;
-        use pliron::utils::apint::APInt;
-        use std::num::NonZeroUsize;
-
-        let i32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
-        let apint = APInt::from_u64(event_id as u64, NonZeroUsize::new(32).unwrap());
-        let attr = IntegerAttr::new(i32_ty, apint);
-        let key = Identifier::try_from("event_id").unwrap();
-        op.deref_mut(ctx).attributes.set(key, attr);
-
-        op
-    }
-
-    /// Get the event ID from the operation's attributes.
-    pub fn get_event_id(&self, ctx: &Context) -> Option<u32> {
-        use pliron::builtin::attributes::IntegerAttr;
-        use pliron::identifier::Identifier;
-
-        let key = Identifier::try_from("event_id").unwrap();
-        let op_ref = self.get_operation().deref(ctx);
-        let int_attr: &IntegerAttr = op_ref.attributes.get(&key)?;
-        Some(int_attr.value().to_u64() as u32)
-    }
-}
 
 // =============================================================================
 // Printf Operations
@@ -242,12 +121,5 @@ impl Verify for VprintfOp {
 
 /// Register debug operations with the context.
 pub(super) fn register(ctx: &mut Context) {
-    // Trap
-    TrapOp::register(ctx);
-    // Debugging
-    BreakpointOp::register(ctx);
-    // Profiler
-    PmEventOp::register(ctx);
-    // Printf
     VprintfOp::register(ctx);
 }

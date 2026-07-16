@@ -9,165 +9,18 @@
 //! - `clock()` - 32-bit GPU clock counter
 //! - `clock64()` - 64-bit GPU clock counter
 //! - `globaltimer()` - 64-bit GPU global timer
-//! - `trap()` - Abort kernel execution
-//! - `breakpoint()` - cuda-gdb breakpoint
-//! - `prof_trigger()` - Profiler event trigger
 //! - `__gpu_vprintf()` - Formatted output to host console
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto};
+use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{BreakpointOp, PmEventOp, TrapOp, VprintfOp};
+use dialect_nvvm::ops::VprintfOp;
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
 use pliron::location::{Located, Location};
-use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-/// Emits `trap()`: Abort kernel execution.
-///
-/// # Generated Operation
-///
-/// `nvvm.trap` followed by `mir.unreachable` - Maps to PTX `trap;`
-///
-/// # Returns
-///
-/// Never returns (divergent) - terminates the block with unreachable
-pub fn emit_trap(
-    ctx: &mut Context,
-    _target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    _block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    // Create the trap operation (void, no return)
-    let trap_op = Operation::new(
-        ctx,
-        TrapOp::get_concrete_op_info(),
-        vec![], // No results
-        vec![], // No operands
-        vec![],
-        0,
-    );
-    trap_op.deref_mut(ctx).set_loc(loc.clone());
-
-    // Insert the trap operation
-    if let Some(prev) = prev_op {
-        trap_op.insert_after(ctx, prev);
-    } else {
-        trap_op.insert_at_front(block_ptr, ctx);
-    }
-
-    // trap() never returns, so we terminate the block with unreachable
-    // (no goto needed since control flow ends here)
-    let unreachable_op = Operation::new(
-        ctx,
-        dialect_mir::ops::MirUnreachableOp::get_concrete_op_info(),
-        vec![],
-        vec![],
-        vec![],
-        0,
-    );
-    unreachable_op.deref_mut(ctx).set_loc(loc);
-    unreachable_op.insert_after(ctx, trap_op);
-
-    Ok(unreachable_op)
-}
-
-/// Emits `breakpoint()`: Insert cuda-gdb breakpoint.
-///
-/// # Generated Operation
-///
-/// `nvvm.brkpt` - Maps to PTX `brkpt;`
-///
-/// # Returns
-///
-/// void
-pub fn emit_breakpoint(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    // Create the breakpoint operation (void)
-    let brkpt_op = Operation::new(
-        ctx,
-        BreakpointOp::get_concrete_op_info(),
-        vec![], // No results
-        vec![], // No operands
-        vec![],
-        0,
-    );
-    brkpt_op.deref_mut(ctx).set_loc(loc.clone());
-
-    // Insert the operation
-    if let Some(prev) = prev_op {
-        brkpt_op.insert_after(ctx, prev);
-    } else {
-        brkpt_op.insert_at_front(block_ptr, ctx);
-    }
-
-    // Emit goto to target block
-    if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, brkpt_op, block_map, loc);
-        Ok(goto_op)
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported("breakpoint call without target block".to_string(),)
-        )
-    }
-}
-
-/// Emits `prof_trigger::<N>()`: Signal profiler event.
-///
-/// # Generated Operation
-///
-/// `nvvm.pmevent` - Maps to PTX `pmevent N;`
-///
-/// # Arguments
-///
-/// * `event_id` - The profiler event ID (extracted from const generic)
-///
-/// # Returns
-///
-/// void
-#[allow(clippy::too_many_arguments)]
-pub fn emit_prof_trigger(
-    ctx: &mut Context,
-    event_id: u32,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    // Create the pmevent operation with event_id as an attribute
-    let pmevent_op = PmEventOp::new_with_event_id(ctx, event_id);
-    pmevent_op.deref_mut(ctx).set_loc(loc.clone());
-
-    // Insert the operation
-    if let Some(prev) = prev_op {
-        pmevent_op.insert_after(ctx, prev);
-    } else {
-        pmevent_op.insert_at_front(block_ptr, ctx);
-    }
-
-    // Emit goto to target block
-    if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, pmevent_op, block_map, loc);
-        Ok(goto_op)
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported("prof_trigger call without target block".to_string(),)
-        )
-    }
-}
 
 /// Emits `__gpu_vprintf()`: Formatted output to host console.
 ///

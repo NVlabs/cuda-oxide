@@ -7,21 +7,22 @@ use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
     CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, ClusterBarrierMode,
     ClusterBarrierOrdering, CpAsyncCachePolicy, CpAsyncControlOperation, CpAsyncMbarrierAdapter,
-    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter,
-    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind,
-    ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
-    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
-    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
-    PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
-    RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
-    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
-    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
-    SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
-    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControlAdapter,
+    DebugControlOperation, DotProductAdapter, DotProductOperation, DotProductSignedness,
+    EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace, IntrinsicBackend,
+    IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity, LdmatrixShape,
+    LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierStateSpace,
+    PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
+    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
+    PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
+    RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
+    SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, SpecialRegisterObservation,
+    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, VoteAdapter, VoteMode,
+    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,6 +123,16 @@ pub fn all_outputs(
             ("lo", "hi"),
         ),
     );
+    if debug_controls(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/debug_control.rs".into(),
+            render_compat_debug_control(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/debug_control.rs".into(),
+            render_dialect_debug_control(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/mod.rs".into(),
         render_dialect_mod(catalog, catalog_sha256),
@@ -566,6 +577,44 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated cluster-barrier recipe",
                 record.id
             ),
+            "debug_control" => ensure!(
+                record.rust.module == "debug"
+                    && record.rust.safe
+                    && !record.rust.must_use
+                    && record.dialect.operands.is_empty()
+                    && record.dialect.results.is_empty()
+                    && record.llvm.is_none()
+                    && record.lowering == "generated_debug_control"
+                    && record.debug_control.as_ref().is_some_and(|debug| {
+                        debug.runtime_validation == RuntimeValidation::Unexecuted
+                            && match debug.operation {
+                                DebugControlOperation::Trap => {
+                                    debug.adapter == DebugControlAdapter::Direct
+                                        && record.rust.arguments.is_empty()
+                                        && record.rust.result == "!"
+                                        && record.dialect.op_type == "TrapOp"
+                                        && record.dialect.op_name == "nvvm.trap"
+                                }
+                                DebugControlOperation::Breakpoint => {
+                                    debug.adapter == DebugControlAdapter::Direct
+                                        && record.rust.arguments.is_empty()
+                                        && record.rust.result == "()"
+                                        && record.dialect.op_type == "BreakpointOp"
+                                        && record.dialect.op_name == "nvvm.brkpt"
+                                }
+                                DebugControlOperation::Pmevent => {
+                                    debug.adapter
+                                        == DebugControlAdapter::ConstGenericToImmediateU32
+                                        && record.rust.arguments == ["u32"]
+                                        && record.rust.result == "()"
+                                        && record.dialect.op_type == "PmEventOp"
+                                        && record.dialect.op_name == "nvvm.pmevent"
+                                }
+                            }
+                    }),
+                "{} is outside the closed generated debug-control recipe",
+                record.id
+            ),
             "cp_async_copy" => ensure!(
                 record.rust.module == "async_copy"
                     && record.rust.result == "()"
@@ -998,6 +1047,13 @@ fn cluster_barrier_template(record: &CatalogIntrinsic) -> String {
         record.expected_ptx.mnemonic,
         record.expected_ptx.modifiers.join(".")
     )
+}
+
+fn debug_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "debug_control")
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2458,6 +2514,59 @@ fn render_compat_cluster_barrier(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_debug_control(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::debug` to keep its public API stable.\n\n");
+    for operation in [
+        DebugControlOperation::Trap,
+        DebugControlOperation::Breakpoint,
+        DebugControlOperation::Pmevent,
+    ] {
+        let record = debug_controls(catalog)
+            .find(|record| {
+                record
+                    .debug_control
+                    .as_ref()
+                    .is_some_and(|debug| debug.operation == operation)
+            })
+            .expect("complete debug-control family");
+        match operation {
+            DebugControlOperation::Trap => {
+                writeln!(output, "/// {}", record.summary).unwrap();
+                output.push_str("#[inline(never)]\npub fn trap() -> ! {\n");
+                output.push_str(
+                    "    unreachable!(\"trap called outside CUDA kernel context\")\n}\n\n",
+                );
+            }
+            DebugControlOperation::Breakpoint => {
+                writeln!(output, "/// {}", record.summary).unwrap();
+                output.push_str("#[inline(never)]\npub fn breakpoint() {\n");
+                output.push_str(
+                    "    unreachable!(\"breakpoint called outside CUDA kernel context\")\n}\n\n",
+                );
+            }
+            DebugControlOperation::Pmevent => {
+                output.push_str(
+                    r#"/// Triggers performance monitor event `N`, which must be in `0..=15`.
+#[inline(always)]
+pub fn prof_trigger<const N: u32>() {
+    __prof_trigger(N);
+}
+
+#[doc(hidden)]
+#[inline(never)]
+pub(crate) fn __prof_trigger(_event_id: u32) {
+    unreachable!("prof_trigger called outside CUDA kernel context")
+}
+
+"#,
+                );
+            }
+        }
+    }
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -2891,6 +3000,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "mod active_mask;\nmod cluster_barrier;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cluster_barrier::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cluster_barrier::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
+    if debug_controls(catalog).next().is_some() {
+        output = output
+            .replace("mod dotprod;", "mod debug_control;\nmod dotprod;")
+            .replace(
+                "pub use dotprod::*;",
+                "pub use debug_control::*;\npub use dotprod::*;",
+            )
+            .replace(
+                "    dotprod::register(ctx);",
+                "    debug_control::register(ctx);\n    dotprod::register(ctx);",
+            );
+    }
     output
 }
 
@@ -4901,6 +5022,110 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_debug_control(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(debug_controls(catalog).count(), 3);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operations for generated PTX debug controls.\n\n\
+         use pliron::{\n\
+             builtin::{\n\
+                 attributes::IntegerAttr,\n\
+                 op_interfaces::{NOpdsInterface, NResultsInterface},\n\
+                 types::{IntegerType, Signedness},\n\
+             },\n\
+             common_traits::Verify,\n\
+             context::{Context, Ptr},\n\
+             identifier::Identifier,\n\
+             location::Located,\n\
+             op::Op,\n\
+             operation::Operation,\n\
+             result::Error,\n\
+             verify_err,\n\
+         };\n\
+         use pliron::utils::apint::APInt;\n\
+         use pliron_derive::pliron_op;\n\
+         use std::num::NonZeroUsize;\n\n\
+         #[pliron_op(\n\
+             name = \"nvvm.trap\",\n\
+             format,\n\
+             verifier = \"succ\",\n\
+             interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n\
+         )]\n\
+         pub struct TrapOp;\n\n\
+         impl TrapOp {\n\
+             pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\
+             pub fn build(ctx: &mut Context) -> Ptr<Operation> {\n\
+                 Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0)\n\
+             }\n\
+         }\n\n\
+         #[pliron_op(\n\
+             name = \"nvvm.brkpt\",\n\
+             format,\n\
+             verifier = \"succ\",\n\
+             interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n\
+         )]\n\
+         pub struct BreakpointOp;\n\n\
+         impl BreakpointOp {\n\
+             pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\
+             pub fn build(ctx: &mut Context) -> Ptr<Operation> {\n\
+                 Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0)\n\
+             }\n\
+         }\n\n\
+         #[pliron_op(\n\
+             name = \"nvvm.pmevent\",\n\
+             format,\n\
+             interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n\
+         )]\n\
+         pub struct PmEventOp;\n\n\
+         impl PmEventOp {\n\
+             pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n\
+             pub fn build(ctx: &mut Context, event_id: u32) -> Ptr<Operation> {\n\
+                 let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);\n\
+                 let ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n\
+                 let value = APInt::from_u64(event_id.into(), NonZeroUsize::new(32).unwrap());\n\
+                 op.deref_mut(ctx).attributes.set(\n\
+                     Identifier::try_from(\"event_id\").unwrap(),\n\
+                     IntegerAttr::new(ty, value),\n\
+                 );\n\
+                 op\n\
+             }\n\n\
+             pub fn new_with_event_id(ctx: &mut Context, event_id: u32) -> Ptr<Operation> {\n\
+                 Self::build(ctx, event_id)\n\
+             }\n\n\
+             pub fn event_id(&self, ctx: &Context) -> Option<u32> {\n\
+                 let key = Identifier::try_from(\"event_id\").unwrap();\n\
+                 let operation = self.get_operation().deref(ctx);\n\
+                 let attribute: &IntegerAttr = operation.attributes.get(&key)?;\n\
+                 let ty_handle = attribute.get_type();\n\
+                 let ty = ty_handle.deref(ctx);\n\
+                 if ty.width() != 32 || ty.signedness() != Signedness::Unsigned {\n\
+                     return None;\n\
+                 }\n\
+                 u32::try_from(attribute.value().to_u64()).ok().filter(|value| *value <= 15)\n\
+             }\n\
+\n\
+             pub fn get_event_id(&self, ctx: &Context) -> Option<u32> {\n\
+                 self.event_id(ctx)\n\
+             }\n\
+         }\n\n\
+         impl Verify for PmEventOp {\n\
+             fn verify(&self, ctx: &Context) -> Result<(), Error> {\n\
+                 let op = self.get_operation().deref(ctx);\n\
+                 if self.event_id(ctx).is_none() {\n\
+                     return verify_err!(op.loc(), \"nvvm.pmevent requires a u32 event ID in 0..=15\");\n\
+                 }\n\
+                 Ok(())\n\
+             }\n\
+         }\n\n\
+         pub(super) fn register(ctx: &mut Context) {\n\
+             TrapOp::register(ctx);\n\
+             BreakpointOp::register(ctx);\n\
+             PmEventOp::register(ctx);\n\
+         }\n",
+    );
+    output
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -4982,6 +5207,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     if cluster_barriers(catalog).next().is_some() {
         output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp");
+    }
+    if debug_controls(catalog).next().is_some() {
+        output.push_str(", BreakpointOp, PmEventOp, TrapOp");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -5166,6 +5394,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
+    if debug_controls(catalog).next().is_some() {
+        output.push_str("use dialect_mir::ops::{MirConstantOp, MirUnreachableOp};\n\n");
+    }
     if register_mmas(catalog).next().is_some() || sparse_mmas(catalog).next().is_some() {
         output.push_str(
             "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirExtractFieldOp}, types::MirArrayType};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
@@ -5844,6 +6075,113 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    for record in debug_controls(catalog) {
+        let operation = record.debug_control.as_ref().unwrap().operation;
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        match operation {
+            DebugControlOperation::Trap => {
+                output.push_str("            require_arity(name, args.len(), 0, &loc)?;\n");
+                output.push_str("            let debug = TrapOp::build(ctx);\n");
+                output.push_str("            debug.deref_mut(ctx).set_loc(loc.clone());\n");
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, debug, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, debug, block_ptr, prev_op);\n\
+                     let unreachable = Operation::new(\n\
+                         ctx, MirUnreachableOp::get_concrete_op_info(), vec![], vec![], vec![], 0,\n\
+                     );\n\
+                     unreachable.deref_mut(ctx).set_loc(loc);\n\
+                     helpers::insert_op(ctx, unreachable, block_ptr, Some(debug));\n\
+                     Ok(Some(unreachable))\n",
+                );
+            }
+            DebugControlOperation::Breakpoint => {
+                output.push_str("            require_arity(name, args.len(), 0, &loc)?;\n");
+                output.push_str("            let debug = BreakpointOp::build(ctx);\n");
+                output.push_str("            debug.deref_mut(ctx).set_loc(loc.clone());\n");
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, debug, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, debug, block_ptr, prev_op);\n\
+                     if let Some(target_idx) = target {\n\
+                         Ok(Some(helpers::emit_goto(ctx, *target_idx, debug, block_map, loc)))\n\
+                     } else {\n",
+                );
+                writeln!(
+                    output,
+                    "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                    format!("{} call without target block", record.rust.name)
+                )
+                .unwrap();
+                output.push_str("            }\n");
+            }
+            DebugControlOperation::Pmevent => {
+                output.push_str(
+                    "            require_arity(name, args.len(), 1, &loc)?;\n\
+                     if !matches!(&args[0], mir::Operand::Constant(_)) {\n\
+                         return input_err!(\n\
+                             loc,\n\
+                             TranslationErr::unsupported(\n\
+                                 \"prof_trigger requires a compile-time constant event ID in 0..=15\".to_owned()\n\
+                             )\n\
+                         );\n\
+                     }\n\
+                     let (event_id_value, last_op) = rvalue::translate_operand(\n\
+                         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n\
+                     )?;\n\
+                     let event_id = event_id_value\n\
+                         .defining_op()\n\
+                         .and_then(|defining_op| Operation::get_op::<MirConstantOp>(defining_op, ctx))\n\
+                         .and_then(|constant| constant.get_attr_value(ctx))\n\
+                         .map(|value| value.value().to_u64())\n\
+                         .and_then(|value| u32::try_from(value).ok())\n\
+                         .filter(|value| *value <= 15);\n\
+                     let Some(event_id) = event_id else {\n\
+                         return input_err!(\n\
+                             loc,\n\
+                             TranslationErr::unsupported(\n\
+                                 \"prof_trigger requires a compile-time constant event ID in 0..=15\".to_owned()\n\
+                             )\n\
+                         );\n\
+                     };\n\
+                     let debug = PmEventOp::build(ctx, event_id);\n\
+                     debug.deref_mut(ctx).set_loc(loc.clone());\n",
+                );
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, debug, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, debug, block_ptr, last_op);\n\
+                     if let Some(target_idx) = target {\n\
+                         Ok(Some(helpers::emit_goto(ctx, *target_idx, debug, block_map, loc)))\n\
+                     } else {\n",
+                );
+                writeln!(
+                    output,
+                    "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                    format!("{} call without target block", record.rust.name)
+                )
+                .unwrap();
+                output.push_str("            }\n");
+            }
+        }
+        output.push_str("        }\n");
+    }
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -6384,6 +6722,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, basic::convert_sreg_read_inline, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
+    if debug_controls(catalog).next().is_some() {
+        output = output.replace(
+            "inline_asm_convergent}",
+            "inline_asm_convergent, inline_asm_sideeffect}",
+        );
+    }
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
             output.push_str(", ");
@@ -6413,6 +6757,9 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if cluster_barriers(catalog).next().is_some() {
         output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp, ClusterSyncOp");
+    }
+    if debug_controls(catalog).next().is_some() {
+        output.push_str(", BreakpointOp, PmEventOp, TrapOp");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -7165,6 +7512,36 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("    }\n}\n\n");
+    }
+    for record in debug_controls(catalog) {
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n",
+        );
+        match record.debug_control.as_ref().unwrap().operation {
+            DebugControlOperation::Trap => output.push_str(
+                "        inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], \"trap;\", \"\");\n",
+            ),
+            DebugControlOperation::Breakpoint => output.push_str(
+                "        inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], \"brkpt;\", \"\");\n",
+            ),
+            DebugControlOperation::Pmevent => output.push_str(
+                "        let Some(event_id) = self.event_id(ctx) else {\n\
+                     return pliron::input_err!(\n\
+                         op.deref(ctx).loc(),\n\
+                         \"nvvm.pmevent requires a u32 event ID in 0..=15\",\n\
+                     );\n\
+                 };\n\
+                 let template = format!(\"pmevent {event_id};\");\n\
+                 inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], &template, \"\");\n",
+            ),
+        }
+        output.push_str("        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n");
     }
     for record in sync_intrinsics(catalog) {
         writeln!(
@@ -8308,6 +8685,15 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         output.push_str("  ret ");
         output.push_str(&result);
         output.push_str(" %result\n}\n\nattributes #0 = { convergent }\n");
+    } else if let Some(debug) = &record.debug_control {
+        let template = match debug.operation {
+            DebugControlOperation::Trap => "trap;",
+            DebugControlOperation::Breakpoint => "brkpt;",
+            DebugControlOperation::Pmevent => "pmevent 15;",
+        };
+        writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
+        writeln!(output, "  call void asm sideeffect {:?}, \"\"()", template).unwrap();
+        output.push_str("  ret void\n}\n");
     } else if record.prmt.is_some() {
         let arity = record.rust.arguments.len();
         let declaration = std::iter::repeat_n("i32", arity)
@@ -8822,6 +9208,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
+            .or_else(|| {
+                record
+                    .debug_control
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
             .unwrap_or_else(|| "not recorded".to_owned());
         writeln!(output, "- `{}`: runtime `{runtime}`", record.id).unwrap();
         for lowering in &record.backend_lowerings {
@@ -8915,6 +9307,13 @@ mod tests {
     use super::*;
     use crate::model::ImportedSelectionConstraints;
     use std::path::Path;
+
+    fn catalog_with_debug_controls() -> CatalogFile {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        assert_eq!(debug_controls(&catalog).count(), 3);
+        catalog
+    }
 
     #[test]
     fn selection_alternatives_keep_predicates_and_constraints_grouped() {
@@ -10070,7 +10469,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 294);
+        assert_eq!(catalog.intrinsics.len(), 297);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -10731,5 +11130,91 @@ mod tests {
         ));
         assert!(targets.contains("Operation::get_op::<ClusterBarrierOp>"));
         assert!(targets.contains("ClusterBarrierModeAttr::WaitAligned"));
+    }
+
+    #[test]
+    fn debug_control_rendering_preserves_api_immediates_and_side_effects() {
+        let catalog = catalog_with_debug_controls();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(debug_controls(&catalog).count(), 3);
+
+        let compatibility = render_compat_debug_control(&catalog, "test-hash");
+        assert!(compatibility.contains("pub fn trap() -> !"));
+        assert!(compatibility.contains("pub fn breakpoint()"));
+        assert!(compatibility.contains("pub fn prof_trigger<const N: u32>()"));
+        assert!(compatibility.contains("pub(crate) fn __prof_trigger(_event_id: u32)"));
+        assert!(compatibility.contains("__prof_trigger(N);"));
+
+        let dialect = render_dialect_debug_control(&catalog, "test-hash");
+        for op in ["TrapOp", "BreakpointOp", "PmEventOp"] {
+            assert_eq!(dialect.matches(&format!("pub struct {op}")).count(), 1);
+            assert!(dialect.contains(&format!("{op}::register(ctx)")));
+        }
+        assert!(dialect.contains("event_id: u32"));
+        assert!(dialect.contains("pub fn new_with_event_id"));
+        assert!(dialect.contains("pub fn get_event_id"));
+        assert!(dialect.contains("filter(|value| *value <= 15)"));
+        assert!(dialect.contains("requires a u32 event ID in 0..=15"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::debug::__prof_trigger"));
+        assert!(importer.contains("mir::Operand::Constant"));
+        assert!(importer.contains("u32::try_from(value)"));
+        assert!(importer.contains("filter(|value| *value <= 15)"));
+        assert!(importer.contains("PmEventOp::build(ctx, event_id)"));
+        assert!(importer.contains("MirUnreachableOp::get_concrete_op_info()"));
+        assert!(
+            importer.contains("prof_trigger requires a compile-time constant event ID in 0..=15")
+        );
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        for op in ["TrapOp", "BreakpointOp", "PmEventOp"] {
+            assert!(lowering.contains(&format!("impl MirToLlvmConversion for {op}")));
+        }
+        assert!(lowering.contains(
+            "inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], \"trap;\", \"\")"
+        ));
+        assert!(lowering.contains(
+            "inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], \"brkpt;\", \"\")"
+        ));
+        assert!(lowering.contains("let template = format!(\"pmevent {event_id};\")"));
+
+        for record in debug_controls(&catalog) {
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains("call void asm sideeffect"));
+            assert!(!probe.contains("attributes #0 = { convergent }"));
+        }
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/debug_control.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/debug_control.rs"
+        )));
+
+        let mut wrong_adapter = catalog.clone();
+        wrong_adapter
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "pmevent")
+            .unwrap()
+            .debug_control
+            .as_mut()
+            .unwrap()
+            .adapter = DebugControlAdapter::Direct;
+        assert!(validate_renderable(&wrong_adapter).is_err());
+
+        let mut wrong_runtime = catalog;
+        wrong_runtime
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "trap")
+            .unwrap()
+            .debug_control
+            .as_mut()
+            .unwrap()
+            .runtime_validation = RuntimeValidation::Executed;
+        assert!(validate_renderable(&wrong_runtime).is_err());
     }
 }

@@ -970,42 +970,6 @@ fn translate_call(
         }
     }
 
-    // Handle prof_trigger specially to extract const generic N
-    if let Some(ref name) = pattern_name
-        && name == "cuda_device::debug::prof_trigger"
-    {
-        // Extract the const generic N from the function type
-        if let mir::Operand::Constant(const_op) = func
-            && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(_, substs)) =
-                const_op.const_.ty().kind()
-        {
-            // The const generic N is the first generic argument
-            if let Some(rustc_public::ty::GenericArgKind::Const(c)) = substs.0.first() {
-                use rustc_public::ty::TyConstKind;
-
-                let event_id = match c.kind() {
-                    TyConstKind::Value(_, alloc) => {
-                        // Read the allocation bytes (little-endian u32)
-                        alloc.read_uint().unwrap_or(0) as u32
-                    }
-                    _ => {
-                        // Try eval_target_usize as fallback
-                        c.eval_target_usize().unwrap_or(0) as u32
-                    }
-                };
-                return intrinsics::debug::emit_prof_trigger(
-                    ctx,
-                    event_id,
-                    &target_usize,
-                    block_ptr,
-                    prev_op,
-                    block_map,
-                    loc,
-                );
-            }
-        }
-    }
-
     // Per-loop unroll marker from `#[unroll]` / `#[unroll(N)]`. The enclosing
     // `#[kernel]` or `#[device]` macro injects this call at the start of the loop
     // body, so we plant a `mir.unroll_hint` op right here, inside that loop
@@ -2513,12 +2477,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)
         // =================================================================
-        "cuda_device::debug::trap" => Ok(Some(intrinsics::debug::emit_trap(
-            ctx, target, block_ptr, prev_op, block_map, loc,
-        )?)),
-        "cuda_device::debug::breakpoint" => Ok(Some(intrinsics::debug::emit_breakpoint(
-            ctx, target, block_ptr, prev_op, block_map, loc,
-        )?)),
         "cuda_device::debug::__gpu_vprintf" => Ok(Some(intrinsics::debug::emit_vprintf(
             ctx,
             body,

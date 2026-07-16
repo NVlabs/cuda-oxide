@@ -2065,3 +2065,24 @@ status = "active"
 catalog_id = "total_smem_size"
 operation_key = "shared.total_size"
 raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0295"
+status = "active"
+catalog_id = "trap"
+operation_key = "debug.control.trap"
+raw_rust_signature = { safe = true, arguments = [], result = "!" }
+
+[[entry]]
+abi_id = "i0296"
+status = "active"
+catalog_id = "breakpoint"
+operation_key = "debug.control.breakpoint"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0297"
+status = "active"
+catalog_id = "pmevent"
+operation_key = "debug.profiler.event"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "()" }

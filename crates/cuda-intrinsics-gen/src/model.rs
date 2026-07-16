@@ -169,6 +169,8 @@ pub struct OverlayShardFile {
     pub cluster_barrier: Option<ClusterBarrierAdmission>,
     #[serde(default)]
     pub special_registers: Option<SpecialRegisterAdmission>,
+    #[serde(default)]
+    pub debug_control: Option<DebugControlAdmission>,
 }
 
 /// Compact admission for Hopper cluster special registers.
@@ -236,6 +238,19 @@ pub struct SpecialRegisterAdmission {
     pub runtime_validation: RuntimeValidation,
     pub registers: Vec<SpecialRegisterKind>,
     pub product_count: usize,
+}
+
+/// Compact admission for PTX debug controls.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugControlAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub operations: Vec<DebugControlOperation>,
+    /// Filled only when this pending shard is aggregated.
+    #[serde(default)]
+    pub abi_ids: Vec<String>,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -436,6 +451,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub special_register: Option<SpecialRegister>,
     #[serde(default)]
+    pub debug_control: Option<DebugControl>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -487,6 +504,15 @@ pub struct SpecialRegister {
     pub llvm_exclusion: Option<SpecialRegisterLlvmExclusion>,
 }
 
+/// Closed semantic contract for PTX debug controls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugControl {
+    pub operation: DebugControlOperation,
+    pub adapter: DebugControlAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpecialRegisterKind {
@@ -502,6 +528,14 @@ pub enum SpecialRegisterKind {
     Nwarpid,
     DynamicSmemSize,
     TotalSmemSize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugControlOperation {
+    Trap,
+    Breakpoint,
+    Pmevent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -555,6 +589,13 @@ pub struct SpecialRegisterLlvmExclusion {
 #[serde(rename_all = "snake_case")]
 pub enum SpecialRegisterLlvmExclusionReason {
     ResultWidthMismatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugControlAdapter {
+    Direct,
+    ConstGenericToImmediateU32,
 }
 
 /// Backend-specific lowering selected by reviewed evidence.
@@ -1832,6 +1873,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub special_register: Option<SpecialRegister>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_control: Option<DebugControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
     pub expected_ptx: InstructionPattern,
@@ -2618,6 +2661,39 @@ aligned = true
         ] {
             assert!(
                 toml::from_str::<ClusterBarrier>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_control_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "pmevent"
+adapter = "const_generic_to_immediate_u32"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<DebugControl>(valid).unwrap();
+        assert_eq!(parsed.operation, DebugControlOperation::Pmevent);
+        assert_eq!(
+            parsed.adapter,
+            DebugControlAdapter::ConstGenericToImmediateU32
+        );
+
+        for invalid in [
+            valid.replace("operation = \"pmevent\"", "operation = \"profiler\""),
+            valid.replace(
+                "adapter = \"const_generic_to_immediate_u32\"",
+                "adapter = \"runtime_u32\"",
+            ),
+            valid.replace(
+                "runtime_validation = \"unexecuted\"",
+                "runtime_validation = \"assumed\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<DebugControl>(&invalid).is_err(),
                 "{invalid}"
             );
         }

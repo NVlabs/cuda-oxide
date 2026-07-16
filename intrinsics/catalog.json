@@ -1,5 +1,5 @@
 {
-  "schema": 35,
+  "schema": 36,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,12 +11,13 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "8eef8ed3126776b0653d969490811c2e4994ad8645016b4170803ae9b1740716",
-    "abi_ledger_sha256": "4f43052ed637f9f1d7e5e45c9cfaf72aab7774188b6acf47e9525407aaa1353f",
+    "overlay_sha256": "6a23a730badbee6dff130f041084dbb2b208a6418aec1423cc98dc7c9400bd31",
+    "abi_ledger_sha256": "4b4ce34c52f59ecd171ff55115eb82780d38a43e136fea2c2dabd491f917abc3",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
+      "cuda-13.3-libnvvm-13.3.33-debug-control.json:184227ee2b4791011f563f597d8f6fb2393430b327a72c758c34ceec44c9469b",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
       "cuda-13.3-libnvvm-13.3.33-packed-conversion-fp8.json:167358662f1512c6ca7dba1080140834a22f5e122ae5e8db87fe8e19ff05ad9b",
       "cuda-13.3-libnvvm-13.3.33-prmt.json:e06d8b99575304ab780b58f665babfb7d24dfd2f57e1a9b5eac420208022520c",
@@ -40,6 +41,7 @@
       "rust-llvm-22.1.2-1cb4e383-cluster-sreg.json:91bad86696394b7eb34261fef0025087550558fe21ecb402e6d9da91fbc09136",
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
+      "rust-llvm-22.1.2-1cb4e383-debug-control.json:eaee9dadc7aa4d82eae6fe1d4a557cddc6cadc770de670dd9be3c16c6478bc48",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
       "rust-llvm-22.1.2-1cb4e383-packed-conversion-fp8.json:7badda2f91c5c81f7ad375517b3b4d86ac0b6ad373c711d77584606273536693",
       "rust-llvm-22.1.2-1cb4e383-prmt.json:0db77388fb2d4d724a89e800d6c3d2451a9907d09509f8e4d102410bd8b56af6",
@@ -58,7 +60,7 @@
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int8.json:524e0e0651ef3c0db9eadd6d4a563095430f57656557c01080b24c49f0f110bb",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-standard-int4.json:04aa237d2de9b0aec92852f3ac9f4dd1ff08c5b6a7d0ecb263b7ac3781dd2f4b",
       "rust-llvm-22.1.2-1cb4e383-special-registers.json:25e9c6b3d16bcaf1e0de6e322a55255b2ca05c011097597a9f06bd5f7bdadf62",
-      "rust-llvm-22.1.2-1cb4e383.json:618de5e9edb60f43a8b00d2923ddff6e5a373fc0e9f4ea6f525dca03c4e9bde5"
+      "rust-llvm-22.1.2-1cb4e383.json:3eb72286da6334949d1b252be0c5ea74004f0f6445768c123d2868fb8de78376"
     ]
   },
   "intrinsics": [
@@ -3701,6 +3703,191 @@
         ]
       },
       "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "breakpoint",
+      "operation_key": "debug.control.breakpoint",
+      "family": "debug_control",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "brkpt"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0296",
+        "module": "debug",
+        "name": "breakpoint",
+        "arguments": [],
+        "result": "()",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "requesting a debugger breakpoint has no memory-safety preconditions",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0296",
+        "public_path": "cuda_intrinsics::debug::breakpoint",
+        "compatibility_paths": [
+          "cuda_device::debug::breakpoint"
+        ]
+      },
+      "dialect": {
+        "op_type": "BreakpointOp",
+        "op_name": "nvvm.brkpt",
+        "operands": [],
+        "results": []
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 11
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.20.1 Miscellaneous Instructions: brkpt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#miscellaneous-instructions-brkpt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-debug-control",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one LLVM IR probe with side-effect inline PTX for trap, brkpt, and pmevent 15",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted PTX 3.2 containing all three instructions; source SHA-256 cbe8cd68385d281ecb4edeb5458a63f1e851ee0ab2539c7b5d335b79e91e543e and PTX SHA-256 df263240edffc345f2c5a65b953c362a49878e08e9fdf1c2a06858829643dad5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "1,011-byte LLVM-produced PTX module containing trap, brkpt, and pmevent 15",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the module and produced a 1,464-byte cubin with SHA-256 c7cba4e51e90a77cda2ea1bf2ce9194bffd4a833d4e55f9909b91441d4cbaa91.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
+          "target": {
+            "minimum_ptx": "9.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one CUDA device probe with volatile inline PTX for trap, brkpt, and pmevent 15",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 emitted a 562-byte PTX 9.3 module containing all three instructions; source SHA-256 2e8b8ffd062afdcf1c1806d526388b9bacc7469918370d26af9186b2c9a4b1e1 and PTX SHA-256 ba2d42ec37ae06d4a460291a966872cbc35e999ffd0aa72c7e1aa6cf0f54e6f8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked debug-control probe retaining trap, brkpt, and pmevent 15",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 produced a 5,416-byte cubin with SHA-256 d9c0af472531aa6da4a84efc0b4cbaccc56f9e090c5c3160792842172c225ee1; cuobjdump retained PMTRIG and BPT.TRAP instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/nvcc",
+              "tool_version": "CUDA compilation tools, release 13.3, V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "6b55d91cd23f314ccb6801d71d64d20760a7ec31d37d87017ea0681d79bd3285"
+            }
+          ]
+        }
+      ],
+      "debug_control": {
+        "operation": "breakpoint",
+        "adapter": "direct",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_debug_control",
+      "expected_ptx": {
+        "mnemonic": "brkpt",
+        "modifiers": [],
+        "operands": []
+      },
+      "summary": "Suspends device execution for a debugger breakpoint."
     },
     {
       "id": "clock",
@@ -63966,6 +64153,191 @@
       "summary": "Atomically adds two packed f16 lanes in global memory and returns the two independently observed old lane values."
     },
     {
+      "id": "pmevent",
+      "operation_key": "debug.profiler.event",
+      "family": "debug_control",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "pmevent"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0297",
+        "module": "debug",
+        "name": "pmevent",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "the importer accepts only the documented immediate event range",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0297",
+        "public_path": "cuda_intrinsics::debug::pmevent",
+        "compatibility_paths": [
+          "cuda_device::debug::__prof_trigger"
+        ]
+      },
+      "dialect": {
+        "op_type": "PmEventOp",
+        "op_name": "nvvm.pmevent",
+        "operands": [],
+        "results": []
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "1.4",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.20.3 Miscellaneous Instructions: pmevent",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#miscellaneous-instructions-pmevent"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-debug-control",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one LLVM IR probe with side-effect inline PTX for trap, brkpt, and pmevent 15",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted PTX 3.2 containing all three instructions; source SHA-256 cbe8cd68385d281ecb4edeb5458a63f1e851ee0ab2539c7b5d335b79e91e543e and PTX SHA-256 df263240edffc345f2c5a65b953c362a49878e08e9fdf1c2a06858829643dad5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "1,011-byte LLVM-produced PTX module containing trap, brkpt, and pmevent 15",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the module and produced a 1,464-byte cubin with SHA-256 c7cba4e51e90a77cda2ea1bf2ce9194bffd4a833d4e55f9909b91441d4cbaa91.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
+          "target": {
+            "minimum_ptx": "9.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one CUDA device probe with volatile inline PTX for trap, brkpt, and pmevent 15",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 emitted a 562-byte PTX 9.3 module containing all three instructions; source SHA-256 2e8b8ffd062afdcf1c1806d526388b9bacc7469918370d26af9186b2c9a4b1e1 and PTX SHA-256 ba2d42ec37ae06d4a460291a966872cbc35e999ffd0aa72c7e1aa6cf0f54e6f8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked debug-control probe retaining trap, brkpt, and pmevent 15",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 produced a 5,416-byte cubin with SHA-256 d9c0af472531aa6da4a84efc0b4cbaccc56f9e090c5c3160792842172c225ee1; cuobjdump retained PMTRIG and BPT.TRAP instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/nvcc",
+              "tool_version": "CUDA compilation tools, release 13.3, V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "6b55d91cd23f314ccb6801d71d64d20760a7ec31d37d87017ea0681d79bd3285"
+            }
+          ]
+        }
+      ],
+      "debug_control": {
+        "operation": "pmevent",
+        "adapter": "const_generic_to_immediate_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_debug_control",
+      "expected_ptx": {
+        "mnemonic": "pmevent",
+        "modifiers": [],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Triggers one compile-time-selected performance monitor event."
+    },
+    {
       "id": "prmt",
       "operation_key": "integer.prmt.b32",
       "family": "prmt",
@@ -71893,6 +72265,185 @@
         ]
       },
       "summary": "Returns the total user shared-memory allocation in bytes."
+    },
+    {
+      "id": "trap",
+      "operation_key": "debug.control.trap",
+      "family": "debug_control",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "trap"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0295",
+        "module": "debug",
+        "name": "trap",
+        "arguments": [],
+        "result": "!",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "aborting the kernel has no memory-safety preconditions",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0295",
+        "public_path": "cuda_intrinsics::debug::trap",
+        "compatibility_paths": [
+          "cuda_device::debug::trap"
+        ]
+      },
+      "dialect": {
+        "op_type": "TrapOp",
+        "op_name": "nvvm.trap",
+        "operands": [],
+        "results": []
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.20.4 Miscellaneous Instructions: trap",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#miscellaneous-instructions-trap"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-debug-control",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one LLVM IR probe with side-effect inline PTX for trap, brkpt, and pmevent 15",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted PTX 3.2 containing all three instructions; source SHA-256 cbe8cd68385d281ecb4edeb5458a63f1e851ee0ab2539c7b5d335b79e91e543e and PTX SHA-256 df263240edffc345f2c5a65b953c362a49878e08e9fdf1c2a06858829643dad5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "1,011-byte LLVM-produced PTX module containing trap, brkpt, and pmevent 15",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the module and produced a 1,464-byte cubin with SHA-256 c7cba4e51e90a77cda2ea1bf2ce9194bffd4a833d4e55f9909b91441d4cbaa91.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
+          "target": {
+            "minimum_ptx": "9.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one CUDA device probe with volatile inline PTX for trap, brkpt, and pmevent 15",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 emitted a 562-byte PTX 9.3 module containing all three instructions; source SHA-256 2e8b8ffd062afdcf1c1806d526388b9bacc7469918370d26af9186b2c9a4b1e1 and PTX SHA-256 ba2d42ec37ae06d4a460291a966872cbc35e999ffd0aa72c7e1aa6cf0f54e6f8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked debug-control probe retaining trap, brkpt, and pmevent 15",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 produced a 5,416-byte cubin with SHA-256 d9c0af472531aa6da4a84efc0b4cbaccc56f9e090c5c3160792842172c225ee1; cuobjdump retained PMTRIG and BPT.TRAP instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/nvcc",
+              "tool_version": "CUDA compilation tools, release 13.3, V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "6b55d91cd23f314ccb6801d71d64d20760a7ec31d37d87017ea0681d79bd3285"
+            }
+          ]
+        }
+      ],
+      "debug_control": {
+        "operation": "trap",
+        "adapter": "direct",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_debug_control",
+      "expected_ptx": {
+        "mnemonic": "trap",
+        "modifiers": [],
+        "operands": []
+      },
+      "summary": "Aborts device execution and reports an interrupt to the host."
     },
     {
       "id": "uni_sync",
