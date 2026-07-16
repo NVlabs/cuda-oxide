@@ -1815,6 +1815,15 @@ fn scalar_arithmetic_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
     )
 }
 
+fn scalar_arithmetic_llvm_mechanism(record: &CatalogIntrinsic) -> BackendLoweringMechanism {
+    record
+        .backend_lowerings
+        .iter()
+        .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+        .expect("scalar arithmetic has an LLVM-NVPTX route")
+        .mechanism
+}
+
 fn prmts(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
     catalog
         .intrinsics
@@ -11305,7 +11314,7 @@ fn convert_generated_tcgen05_load(
         for record in scalar_arithmetics(catalog) {
             writeln!(
                 output,
-                "            (Some(&{}), Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {:?}, {}),",
+                "            (Some(&{}), Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {:?}, {}, {}),",
                 scalar_arithmetic_format_attr(record),
                 scalar_arithmetic_operation_attr(record),
                 scalar_arithmetic_rounding_attr(record),
@@ -11314,11 +11323,13 @@ fn convert_generated_tcgen05_load(
                 record.llvm_identifier(),
                 scalar_arithmetic_ptx_mnemonic(record),
                 scalar_arithmetic_contract(record).format == ScalarArithmeticFormat::F64,
+                scalar_arithmetic_llvm_mechanism(record)
+                    == BackendLoweringMechanism::InlinePtx,
             )
             .unwrap();
         }
         output.push_str(
-            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_arithmetic variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_arithmetic(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2,\n        )\n    }\n}\n\n",
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_arithmetic variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_arithmetic(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3,\n        )\n    }\n}\n\n",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -14205,9 +14216,6 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     } else if record.scalar_arithmetic.is_some() {
         let ty = scalar_arithmetic_llvm_type(record);
         let arity = scalar_arithmetic_arity(record);
-        let declaration = std::iter::repeat_n(ty, arity)
-            .collect::<Vec<_>>()
-            .join(", ");
         let parameters = (0..arity)
             .map(|index| format!("{ty} %arg{index}"))
             .collect::<Vec<_>>()
@@ -14216,20 +14224,46 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             .map(|index| format!("{ty} %arg{index}"))
             .collect::<Vec<_>>()
             .join(", ");
-        writeln!(
-            output,
-            "declare {ty} @{}({declaration})",
-            llvm(record).symbol
-        )
-        .unwrap();
-        output.push('\n');
+        if scalar_arithmetic_llvm_mechanism(record) == BackendLoweringMechanism::TypedNvvm {
+            let declaration = std::iter::repeat_n(ty, arity)
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(
+                output,
+                "declare {ty} @{}({declaration})\n",
+                llvm(record).symbol
+            )
+            .unwrap();
+        }
         writeln!(output, "define {ty} @probe_{}({parameters}) {{", record.id).unwrap();
-        writeln!(
-            output,
-            "  %result = call {ty} @{}({arguments})",
-            llvm(record).symbol
-        )
-        .unwrap();
+        match scalar_arithmetic_llvm_mechanism(record) {
+            BackendLoweringMechanism::TypedNvvm => {
+                writeln!(
+                    output,
+                    "  %result = call {ty} @{}({arguments})",
+                    llvm(record).symbol
+                )
+                .unwrap();
+            }
+            BackendLoweringMechanism::InlinePtx => {
+                let register = if ty == "double" { "d" } else { "f" };
+                let constraints = std::iter::once(format!("={register}"))
+                    .chain(std::iter::repeat_n(register.to_owned(), arity))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let operands = (0..=arity)
+                    .map(|index| format!("${index}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(
+                    output,
+                    "  %result = call {ty} asm {:?}, {:?}({arguments})",
+                    format!("{} {operands};", scalar_arithmetic_ptx_mnemonic(record)),
+                    constraints,
+                )
+                .unwrap();
+            }
+        }
         writeln!(output, "  ret {ty} %result\n}}").unwrap();
     } else if record.scalar_conversion.is_some() {
         writeln!(output, "declare i32 @{}(float)", llvm(record).symbol).unwrap();
@@ -14471,9 +14505,13 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str("\n## Explicit-rounding scalar-arithmetic contracts\n\n");
     for record in scalar_arithmetics(catalog) {
+        let llvm_route = match scalar_arithmetic_llvm_mechanism(record) {
+            BackendLoweringMechanism::TypedNvvm => "the typed intrinsic",
+            BackendLoweringMechanism::InlinePtx => "pure inline PTX",
+        };
         writeln!(
             output,
-            "- `{}` performs `{}`. LLVM-NVPTX uses the typed intrinsic; libNVVM uses pure inline PTX.",
+            "- `{}` performs `{}`. LLVM-NVPTX uses {llvm_route}; libNVVM uses pure inline PTX.",
             record.id,
             scalar_arithmetic_ptx_mnemonic(record),
         )
@@ -18105,7 +18143,7 @@ mod tests {
         assert!(lowering.contains("fma.rp.ftz.sat.f32"));
         assert!(lowering.contains("llvm_nvvm_add_rn_d"));
         assert!(lowering.contains("add.rp.sat.ftz.f32"));
-        assert!(lowering.contains("recipe.0, recipe.1, recipe.2"));
+        assert!(lowering.contains("recipe.0, recipe.1, recipe.2, recipe.3"));
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains("GeneratedIntrinsicVariant::ScalarArithmetic"));
@@ -18127,8 +18165,10 @@ mod tests {
             .unwrap();
         let f32_probe = render_probe(&catalog, f32_sat, "test-hash");
         assert!(
-            f32_probe.contains("declare float @llvm.nvvm.fma.rp.ftz.sat.f(float, float, float)")
+            f32_probe
+                .contains("call float asm \"fma.rp.ftz.sat.f32 $0, $1, $2, $3;\", \"=f,f,f,f\"")
         );
+        assert!(!f32_probe.contains("@llvm.nvvm.fma.rp.ftz.sat.f"));
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
         assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/float.rs")));

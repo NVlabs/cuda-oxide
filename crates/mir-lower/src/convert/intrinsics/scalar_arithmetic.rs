@@ -29,6 +29,7 @@ pub(crate) fn convert_generated_scalar_arithmetic(
     intrinsic_name: &str,
     ptx_mnemonic: &str,
     is_f64: bool,
+    llvm_inline_ptx: bool,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     if !matches!(operands.len(), 2 | 3) || op.deref(ctx).get_num_results() != 1 {
@@ -42,13 +43,14 @@ pub(crate) fn convert_generated_scalar_arithmetic(
     } else {
         FP32Type::get(ctx).into()
     };
-    let lowered = match context::lowering_options(ctx).intrinsic_backend {
-        IntrinsicBackend::LlvmNvptx => {
+    let backend = context::lowering_options(ctx).intrinsic_backend;
+    let lowered = match backend {
+        IntrinsicBackend::LlvmNvptx if !llvm_inline_ptx => {
             let function_ty =
                 llvm_types::FuncType::get(ctx, result_ty, vec![result_ty; operands.len()], false);
             call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?
         }
-        IntrinsicBackend::LibNvvm => {
+        IntrinsicBackend::LlvmNvptx | IntrinsicBackend::LibNvvm => {
             let constraint = match (is_f64, operands.len()) {
                 (false, 2) => "=f,f,f",
                 (false, 3) => "=f,f,f,f",

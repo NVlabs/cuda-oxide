@@ -4691,6 +4691,171 @@ fn test_scalar_conversion_invalid_variant_fails_closed() {
     );
 }
 
+fn lower_representative_scalar_arithmetic(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::builtin::types::FP32Type;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into(), f32_ty.into()]);
+    let args: Vec<_> = (0..3)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect();
+
+    for (operation, saturation, operands) in [
+        (
+            nvvm::ScalarArithmeticOperationAttr::Add,
+            nvvm::ScalarArithmeticSaturationAttr::None,
+            vec![args[0], args[1]],
+        ),
+        (
+            nvvm::ScalarArithmeticOperationAttr::Add,
+            nvvm::ScalarArithmeticSaturationAttr::Sat,
+            vec![args[0], args[1]],
+        ),
+        (
+            nvvm::ScalarArithmeticOperationAttr::Fma,
+            nvvm::ScalarArithmeticSaturationAttr::None,
+            args.clone(),
+        ),
+        (
+            nvvm::ScalarArithmeticOperationAttr::Fma,
+            nvvm::ScalarArithmeticSaturationAttr::Sat,
+            args,
+        ),
+    ] {
+        nvvm::ScalarArithmeticOp::build(
+            &mut ctx,
+            operands,
+            nvvm::ScalarArithmeticFormatAttr::F32,
+            operation,
+            nvvm::ScalarArithmeticRoundingAttr::Rn,
+            nvvm::ScalarArithmeticSubnormalAttr::Preserve,
+            saturation,
+        )
+        .insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+fn is_representative_scalar_arithmetic_intrinsic(name: &str) -> bool {
+    name.starts_with("llvm_nvvm_add_rn") || name.starts_with("llvm_nvvm_fma_rn")
+}
+
+#[test]
+fn test_scalar_arithmetic_llvm_uses_inline_ptx_only_for_saturation() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) =
+        lower_representative_scalar_arithmetic(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let mut calls = Vec::new();
+    let mut inline_ptx = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+            && is_representative_scalar_arithmetic_intrinsic(&callee.to_string())
+        {
+            calls.push(callee.to_string());
+        }
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        let template = inline_asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        let constraints = inline_asm
+            .get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_convergent(&ctx)
+                .map(|value| bool::from((*value).clone())),
+            Some(false)
+        );
+        inline_ptx.push((template, constraints));
+    }
+
+    calls.sort();
+    assert_eq!(calls, ["llvm_nvvm_add_rn_f", "llvm_nvvm_fma_rn_f"]);
+    inline_ptx.sort();
+    assert_eq!(
+        inline_ptx,
+        [
+            ("add.rn.sat.f32 $0, $1, $2;".into(), "=f,f,f".into()),
+            ("fma.rn.sat.f32 $0, $1, $2, $3;".into(), "=f,f,f,f".into(),),
+        ]
+    );
+
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let mut declarations: Vec<_> = module_block
+        .deref(&ctx)
+        .iter(&ctx)
+        .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, &ctx))
+        .map(|func| func.get_symbol_name(&ctx).to_string())
+        .filter(|name| is_representative_scalar_arithmetic_intrinsic(name))
+        .collect();
+    declarations.sort();
+    assert_eq!(declarations, calls);
+    Ok(())
+}
+
+#[test]
+fn test_scalar_arithmetic_libnvvm_uses_exact_inline_ptx() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) =
+        lower_representative_scalar_arithmetic(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let mut calls = Vec::new();
+    let mut inline_ptx = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+            && is_representative_scalar_arithmetic_intrinsic(&callee.to_string())
+        {
+            calls.push(callee.to_string());
+        }
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        let template = inline_asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        let constraints = inline_asm
+            .get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
+        inline_ptx.push((template, constraints));
+    }
+
+    assert!(calls.is_empty());
+    inline_ptx.sort();
+    assert_eq!(
+        inline_ptx,
+        [
+            ("add.rn.f32 $0, $1, $2;".into(), "=f,f,f".into()),
+            ("add.rn.sat.f32 $0, $1, $2;".into(), "=f,f,f".into()),
+            ("fma.rn.f32 $0, $1, $2, $3;".into(), "=f,f,f,f".into(),),
+            ("fma.rn.sat.f32 $0, $1, $2, $3;".into(), "=f,f,f,f".into(),),
+        ]
+    );
+    Ok(())
+}
+
 const STMATRIX_TYPED_INTRINSICS: [&str; 4] = [
     "llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_b16_p3",
     "llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_trans_b16_p3",

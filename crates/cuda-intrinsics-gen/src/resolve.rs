@@ -12646,6 +12646,10 @@ fn scalar_arithmetic_overlay_record(
         .map(|(backend, evidence_profile)| OverlayBackendLowering {
             backend,
             mechanism: match backend {
+                IntrinsicBackend::LlvmNvptx if saturation == ScalarArithmeticSaturation::Sat => {
+                    // LLVM 21 has no typed intrinsic for these LLVM 22 forms.
+                    BackendLoweringMechanism::InlinePtx
+                }
                 IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
                 IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
             },
@@ -12930,11 +12934,13 @@ fn validate_scalar_arithmetic_policy(
         "{} expected scalar-arithmetic PTX changed",
         policy.id
     );
+    let llvm_mechanism = if arithmetic.saturation == ScalarArithmeticSaturation::Sat {
+        BackendLoweringMechanism::InlinePtx
+    } else {
+        BackendLoweringMechanism::TypedNvvm
+    };
     let expected_backends = [
-        (
-            IntrinsicBackend::LlvmNvptx,
-            BackendLoweringMechanism::TypedNvvm,
-        ),
+        (IntrinsicBackend::LlvmNvptx, llvm_mechanism),
         (
             IntrinsicBackend::LibNvvm,
             BackendLoweringMechanism::InlinePtx,
@@ -12951,7 +12957,7 @@ fn validate_scalar_arithmetic_policy(
                         && !lowering.evidence_profile.trim().is_empty()
                 })
             }),
-        "{} must define typed LLVM and inline-PTX libNVVM routes",
+        "{} has the wrong reviewed scalar-arithmetic backend routes",
         policy.id
     );
     validate_selected_target_predicates(policy, direct)?;
@@ -18949,18 +18955,31 @@ fn validate_scalar_arithmetic_backend_evidence(
     if policy.family != "scalar_arithmetic" {
         return Ok(());
     }
-    match lowering.backend {
-        IntrinsicBackend::LlvmNvptx => ensure!(
+    match (lowering.backend, lowering.mechanism) {
+        (IntrinsicBackend::LlvmNvptx, BackendLoweringMechanism::TypedNvvm) => ensure!(
             successful_stage(
                 record,
                 BackendLoweringMechanism::TypedNvvm,
                 EvidenceStageKind::DeclarationCanonicalization,
             )
             .is_some(),
-            "{} LLVM scalar-arithmetic evidence must canonicalize the typed declaration",
+            "{} typed LLVM scalar-arithmetic evidence must canonicalize the declaration",
             policy.id
         ),
-        IntrinsicBackend::LibNvvm => ensure!(
+        (IntrinsicBackend::LlvmNvptx, BackendLoweringMechanism::InlinePtx) => {
+            validate_typed_llvm_evidence(policy, record)?;
+            ensure!(
+                successful_stage(
+                    record,
+                    BackendLoweringMechanism::TypedNvvm,
+                    EvidenceStageKind::DeclarationCanonicalization,
+                )
+                .is_some(),
+                "{} inline LLVM scalar-arithmetic evidence must canonicalize its imported declaration",
+                policy.id
+            );
+        }
+        (IntrinsicBackend::LibNvvm, _) => ensure!(
             record.resolved_llvm_symbol.is_none()
                 && record.concrete_llvm_arguments.is_empty()
                 && record.concrete_llvm_results.is_empty()
@@ -28032,6 +28051,29 @@ scope = "system"
         assert_eq!(records.last().unwrap().id, "add_rp_ftz_sat_f32");
         assert_eq!(records.last().unwrap().abi_id, "i0453");
         validate_unique_overlay(&records, 1).unwrap();
+        let llvm_inline_count = records
+            .iter()
+            .filter(|record| {
+                record.backend_lowerings.iter().any(|lowering| {
+                    lowering.backend == IntrinsicBackend::LlvmNvptx
+                        && lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                })
+            })
+            .count();
+        assert_eq!(llvm_inline_count, 16);
+        assert!(records.iter().all(|record| {
+            let expected =
+                if record.scalar_arithmetic.as_ref().is_some_and(|arithmetic| {
+                    arithmetic.saturation == ScalarArithmeticSaturation::Sat
+                }) {
+                    BackendLoweringMechanism::InlinePtx
+                } else {
+                    BackendLoweringMechanism::TypedNvvm
+                };
+            record.backend_lowerings.iter().any(|lowering| {
+                lowering.backend == IntrinsicBackend::LlvmNvptx && lowering.mechanism == expected
+            })
+        }));
 
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let imported: ImportedFile =

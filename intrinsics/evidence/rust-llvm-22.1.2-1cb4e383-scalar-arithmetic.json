@@ -16,19 +16,19 @@
   "fixtures": [
     {
       "id": "scalar_arithmetic_sm80_ptx70",
-      "coverage_count": 44,
+      "coverage_count": 36,
       "stages": [
         {
           "targets": ["sm_80", "ptx70"],
-          "representation": "44 typed LLVM candidate declarations at the Ampere admission floor",
+          "representation": "36 selected typed LLVM declarations within the 44-candidate proof bundle",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
-          "detail": "Pinned llvm-as and llvm-dis canonicalized all 44 fresh probes and matched every imported signature and property set. The normalized 220-row artifact index has SHA-256 24dbac0280031cc90cfba25238d09c3194e6616076947b0dc189b5dcccc24126; the canonicalized 44-manifest bundle has SHA-256 f8795846613e0f0c86ff773f3c3bde7047f014dff27c93b61eec301c0b65afba."
+          "detail": "Pinned llvm-as and llvm-dis canonicalized all 44 candidate probes. The 36 selected typed routes matched their imported signatures and property sets. The normalized 220-row artifact index has SHA-256 24dbac0280031cc90cfba25238d09c3194e6616076947b0dc189b5dcccc24126; the canonicalized 44-manifest bundle has SHA-256 f8795846613e0f0c86ff773f3c3bde7047f014dff27c93b61eec301c0b65afba."
         },
         {
           "targets": ["sm_80", "ptx70"],
-          "representation": "44 typed llvm.nvvm mul, div, and fma calls",
+          "representation": "36 selected typed llvm.nvvm mul, div, and fma calls",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
@@ -36,7 +36,7 @@
         },
         {
           "targets": ["sm_80", "ptx70"],
-          "representation": "44 typed LLVM PTX outputs assembled at the admission floor",
+          "representation": "36 selected typed LLVM routes within the 44-output assembly proof",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
@@ -50,19 +50,19 @@
     },
     {
       "id": "scalar_add_sm80_ptx70",
-      "coverage_count": 20,
+      "coverage_count": 12,
       "stages": [
         {
           "targets": ["sm_80", "ptx70"],
-          "representation": "20 typed LLVM add candidate declarations at the Ampere admission floor",
+          "representation": "12 selected typed LLVM add declarations within the 20-candidate proof bundle",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
-          "detail": "Pinned llvm-as and llvm-dis canonicalized all 20 declarations and matched every imported signature and property set. The canonical manifest bundle has SHA-256 0ea3fb5767d9527b171de379b7ce5fdaeaee8c433e278cda0f67bb4973e1ac60; a physical audit matched all 100 payloads in the artifact index with SHA-256 7523944499f326a8eb1090c4c82a5efe3b7ff319dd806d997b814508d61dff3a."
+          "detail": "Pinned llvm-as and llvm-dis canonicalized all 20 candidate declarations. The 12 selected typed routes matched their imported signatures and property sets. The canonical manifest bundle has SHA-256 0ea3fb5767d9527b171de379b7ce5fdaeaee8c433e278cda0f67bb4973e1ac60; a physical audit matched all 100 payloads in the artifact index with SHA-256 7523944499f326a8eb1090c4c82a5efe3b7ff319dd806d997b814508d61dff3a."
         },
         {
           "targets": ["sm_80", "ptx70"],
-          "representation": "20 typed llvm.nvvm.add calls",
+          "representation": "12 selected typed llvm.nvvm.add calls",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
@@ -70,12 +70,46 @@
         },
         {
           "targets": ["sm_80", "ptx70"],
-          "representation": "20 typed LLVM add PTX outputs assembled at the admission floor",
+          "representation": "12 selected typed LLVM add routes within the 20-output assembly proof",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
           "artifact_kind": "cubin",
           "detail": "CUDA 13.3 ptxas accepted all 20 fresh sm_80/PTX 7.0 outputs.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
+    },
+    {
+      "id": "scalar_sat_inline_sm80_ptx70",
+      "coverage_count": 16,
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "16 imported LLVM 22 saturating add and fma declarations",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llvm-as and llvm-dis canonicalized these declarations in the 44-form arithmetic and 20-form add proof bundles. Their manifest SHA-256 values are f8795846613e0f0c86ff773f3c3bde7047f014dff27c93b61eec301c0b65afba and 0ea3fb5767d9527b171de379b7ce5fdaeaee8c433e278cda0f67bb4973e1ac60."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "16 pure inline-PTX saturating add and fma calls",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 16 selected instructions across two probes. The PTX files had SHA-256 13bae6359a033e218c3d8cda6a05d34ef017f94ffb4127204c341003a596b2e5 and c0904b539a5d409f456b9a5e6145e4bb47d1e94a565680a892276fdab3603e9b."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "16 inline-PTX saturating scalar instructions assembled at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted both probes and produced cubins with SHA-256 f15cdd950be3a925782a0958c3522bd2d26c6f75742bb41779a3b8c841d472d7 and 79ea7082bde55f2d1b36c9d53b861e85c2df8683ec01927803a376f547b0adf7.",
           "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
           "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
@@ -276,7 +310,7 @@
     {
       "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
       "product_count": 4,
-      "fixtures": ["scalar_arithmetic_sm80_ptx70"],
+      "fixtures": ["scalar_sat_inline_sm80_ptx70"],
       "template": {
         "id": "fma_${rounding}_sat_f32",
         "source_record": "int_nvvm_fma_${rounding}_sat_f",
@@ -297,7 +331,7 @@
     {
       "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
       "product_count": 4,
-      "fixtures": ["scalar_arithmetic_sm80_ptx70"],
+      "fixtures": ["scalar_sat_inline_sm80_ptx70"],
       "template": {
         "id": "fma_${rounding}_ftz_sat_f32",
         "source_record": "int_nvvm_fma_${rounding}_ftz_sat_f",
@@ -381,7 +415,7 @@
     {
       "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
       "product_count": 4,
-      "fixtures": ["scalar_add_sm80_ptx70"],
+      "fixtures": ["scalar_sat_inline_sm80_ptx70"],
       "template": {
         "id": "add_${rounding}_sat_f32",
         "source_record": "int_nvvm_add_${rounding}_sat_f",
@@ -402,7 +436,7 @@
     {
       "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
       "product_count": 4,
-      "fixtures": ["scalar_add_sm80_ptx70"],
+      "fixtures": ["scalar_sat_inline_sm80_ptx70"],
       "template": {
         "id": "add_${rounding}_ftz_sat_f32",
         "source_record": "int_nvvm_add_${rounding}_ftz_sat_f",
