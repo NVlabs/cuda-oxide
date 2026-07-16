@@ -167,6 +167,8 @@ pub struct OverlayShardFile {
     pub cluster_sreg: Option<ClusterSregAdmission>,
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrierAdmission>,
+    #[serde(default)]
+    pub special_registers: Option<SpecialRegisterAdmission>,
 }
 
 /// Compact admission for Hopper cluster special registers.
@@ -223,6 +225,17 @@ pub enum ClusterBarrierOrdering {
     Release,
     Relaxed,
     Acquire,
+}
+
+/// Compact admission for the reviewed non-launch special-register reads.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpecialRegisterAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub registers: Vec<SpecialRegisterKind>,
+    pub product_count: usize,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -421,6 +434,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrier>,
     #[serde(default)]
+    pub special_register: Option<SpecialRegister>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -457,6 +472,89 @@ pub enum PrmtMode {
 pub enum PrmtAdapter {
     DirectThreeOperands,
     InsertZeroSecondSource,
+}
+
+/// Closed semantic and lowering contract for one special-register read.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpecialRegister {
+    pub register: SpecialRegisterKind,
+    pub observation: SpecialRegisterObservation,
+    pub result_width: SpecialRegisterWidth,
+    pub ptx_type: SpecialRegisterPtxType,
+    pub output_constraint: SpecialRegisterOutputConstraint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llvm_exclusion: Option<SpecialRegisterLlvmExclusion>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialRegisterKind {
+    Clock,
+    Clock64,
+    Globaltimer,
+    Envreg1,
+    Envreg2,
+    Smid,
+    Nsmid,
+    Gridid,
+    Warpid,
+    Nwarpid,
+    DynamicSmemSize,
+    TotalSmemSize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialRegisterObservation {
+    StablePure,
+    VolatileObservation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialRegisterWidth {
+    B32,
+    B64,
+}
+
+impl SpecialRegisterWidth {
+    pub const fn bits(self) -> u32 {
+        match self {
+            Self::B32 => 32,
+            Self::B64 => 64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialRegisterPtxType {
+    B32,
+    U32,
+    U64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialRegisterOutputConstraint {
+    Register32,
+    Register64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpecialRegisterLlvmExclusion {
+    pub source_record: String,
+    pub llvm_symbol: String,
+    pub imported_result_width: SpecialRegisterWidth,
+    pub reason: SpecialRegisterLlvmExclusionReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialRegisterLlvmExclusionReason {
+    ResultWidthMismatch,
 }
 
 /// Backend-specific lowering selected by reviewed evidence.
@@ -1731,6 +1829,8 @@ pub struct CatalogIntrinsic {
     pub prmt: Option<Prmt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster_barrier: Option<ClusterBarrier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub special_register: Option<SpecialRegister>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,

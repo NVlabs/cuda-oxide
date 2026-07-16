@@ -1,5 +1,5 @@
 {
-  "schema": 34,
+  "schema": 35,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "3909df832689f75a6b74d5ea1aa4816c58ef1804b426f29db6b243cca2acbcc5",
-    "abi_ledger_sha256": "bc9dd5dd02d30d96c2d279a74d3fc01ace1c760f56b84ddef942155183625e1b",
+    "overlay_sha256": "8eef8ed3126776b0653d969490811c2e4994ad8645016b4170803ae9b1740716",
+    "abi_ledger_sha256": "4f43052ed637f9f1d7e5e45c9cfaf72aab7774188b6acf47e9525407aaa1353f",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
@@ -34,6 +34,7 @@
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8-m16n8k64.json:b5d907929b64795b7e32890433cf78f322c0c0f76a47107c69bb0725fe4701ad",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8.json:eac863f6241bf09043f568769de5d98a9b5294c6fcb66a383e2db1e27ebf3f18",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-standard-int4.json:02e3dfd40df03f3d7e39ad1067ac560aafc4bb60cb71a6258f02e92e942b3c96",
+      "cuda-13.3-libnvvm-13.3.33-special-registers.json:a662dd4fab997972c1961469c5405a54ef784e45b54d8ab4b50d3f775140dbe3",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
       "rust-llvm-22.1.2-1cb4e383-cluster-barrier.json:10b857690722e43670121d16b356ea0074105968388aa91f5012e7aaa63fd795",
       "rust-llvm-22.1.2-1cb4e383-cluster-sreg.json:91bad86696394b7eb34261fef0025087550558fe21ecb402e6d9da91fbc09136",
@@ -56,6 +57,7 @@
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int8-m16n8k64.json:69b1970ef38c0e667fe8c96665b7b2a088eef4c64e0c7adbcf935b03e3c4aa14",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int8.json:524e0e0651ef3c0db9eadd6d4a563095430f57656557c01080b24c49f0f110bb",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-standard-int4.json:04aa237d2de9b0aec92852f3ac9f4dd1ff08c5b6a7d0ecb263b7ac3781dd2f4b",
+      "rust-llvm-22.1.2-1cb4e383-special-registers.json:25e9c6b3d16bcaf1e0de6e322a55255b2ca05c011097597a9f06bd5f7bdadf62",
       "rust-llvm-22.1.2-1cb4e383.json:618de5e9edb60f43a8b00d2923ddff6e5a373fc0e9f4ea6f525dca03c4e9bde5"
     ]
   },
@@ -3699,6 +3701,502 @@
         ]
       },
       "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "clock",
+      "operation_key": "debug.clock",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_clock"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_CLOCK",
+          "asm": "mov.u32 \t$d, %clock;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0283",
+        "module": "debug",
+        "name": "clock",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0283",
+        "public_path": "cuda_intrinsics::debug::clock",
+        "compatibility_paths": [
+          "cuda_device::debug::clock"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClockOp",
+        "op_name": "nvvm.read_ptx_sreg_clock",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.clock",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback",
+          "IntrNoFree",
+          "IntrWillReturn",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": false,
+        "execution_scope": "sm"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.23 Special Registers: %clock, %clock_hi",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clock-clock-hi"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 2,238-byte canonical IR with SHA-256 a0a8fceff003d4b7a3b3b06c39903cfe73ebaeb3b439126d3445a2a65cded6f0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed calls lowering to six exact special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted all six reads in 972-byte PTX with SHA-256 cb4020930644bdd8ecf4de1f01416710cbea39f4d098b3a7edd607a8a2a57d65.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining all six typed special-register reads",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 PTX and produced a 3,240-byte cubin with SHA-256 f79ee0584ed55d4083aeec88051cf5e3af4a017fa66d54c51b26dfb4319bed25.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed calls for six special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six typed special-register reads",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "clock",
+        "observation": "volatile_observation",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clock"
+          }
+        ]
+      },
+      "summary": "Samples the current SM's 32-bit clock counter."
+    },
+    {
+      "id": "clock64",
+      "operation_key": "debug.clock64",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_clock64"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_CLOCK64",
+          "asm": "mov.u64 \t$d, %clock64;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0284",
+        "module": "debug",
+        "name": "clock64",
+        "arguments": [],
+        "result": "u64",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0284",
+        "public_path": "cuda_intrinsics::debug::clock64",
+        "compatibility_paths": [
+          "cuda_device::debug::clock64"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClock64Op",
+        "op_name": "nvvm.read_ptx_sreg_clock64",
+        "operands": [],
+        "results": [
+          "i64"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.clock64",
+        "arguments": [],
+        "results": [
+          "i64"
+        ],
+        "properties": [
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback",
+          "IntrNoFree",
+          "IntrWillReturn",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": false,
+        "execution_scope": "sm"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.24 Special Registers: %clock64",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clock64"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 2,238-byte canonical IR with SHA-256 a0a8fceff003d4b7a3b3b06c39903cfe73ebaeb3b439126d3445a2a65cded6f0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed calls lowering to six exact special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted all six reads in 972-byte PTX with SHA-256 cb4020930644bdd8ecf4de1f01416710cbea39f4d098b3a7edd607a8a2a57d65.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining all six typed special-register reads",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 PTX and produced a 3,240-byte cubin with SHA-256 f79ee0584ed55d4083aeec88051cf5e3af4a017fa66d54c51b26dfb4319bed25.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed calls for six special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six typed special-register reads",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "clock64",
+        "observation": "volatile_observation",
+        "result_width": "b64",
+        "ptx_type": "u64",
+        "output_constraint": "register64"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clock64"
+          }
+        ]
+      },
+      "summary": "Samples the current SM's 64-bit clock counter."
     },
     {
       "id": "cluster_block_count",
@@ -12878,6 +13376,701 @@
       "summary": "Multiplies four pairs of packed unsigned bytes, sums them, and adds an unsigned accumulator."
     },
     {
+      "id": "dynamic_smem_size",
+      "operation_key": "shared.dynamic_size",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_dynamic_smem_size"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_DYNAMIC_SMEM_SIZE",
+          "asm": "mov.u32 \t$d, %dynamic_smem_size;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0293",
+        "module": "shared",
+        "name": "dynamic_smem_size",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0293",
+        "public_path": "cuda_intrinsics::shared::dynamic_smem_size",
+        "compatibility_paths": [
+          "cuda_device::shared::dynamic_smem_size"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregDynamicSmemSizeOp",
+        "op_name": "nvvm.read_ptx_sreg_dynamic_smem_size",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.dynamic_smem_size",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "4.1",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.32 Special Registers: %dynamic_smem_size",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-dynamic-smem-size"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx41"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "4.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx41"
+              ],
+              "representation": "pure inline PTX reads of dynamic and total shared-memory sizes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted both size reads in 655-byte PTX with SHA-256 4ab2630ee33912457ed45c1cd516ae0797e062fcba7123db9bac352c67280b3a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx41"
+              ],
+              "representation": "LLVM-produced PTX retaining both shared-memory size reads",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 2,856-byte cubin with SHA-256 ee3358b59d2b596f1b276d983c3149d58c384872ee5edad482cf20a99183e7b1.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "4.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "selected pure or side-effecting inline PTX for six special registers",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six inline special-register reads",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "dynamic_smem_size",
+        "observation": "stable_pure",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%dynamic_smem_size"
+          }
+        ]
+      },
+      "summary": "Returns the launch-time dynamic shared-memory size in bytes."
+    },
+    {
+      "id": "envreg1",
+      "operation_key": "grid.environment_register.1",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_envreg1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0286",
+        "module": "grid",
+        "name": "envreg1",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0286",
+        "public_path": "cuda_intrinsics::grid::envreg1",
+        "compatibility_paths": [
+          "cuda_device::grid::envreg1"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregEnvReg1Op",
+        "op_name": "nvvm.read_ptx_sreg_envreg1",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.envreg1",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "2.1",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.27 Special Registers: %envreg<32>",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-envreg"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 2,238-byte canonical IR with SHA-256 a0a8fceff003d4b7a3b3b06c39903cfe73ebaeb3b439126d3445a2a65cded6f0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed calls lowering to six exact special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted all six reads in 972-byte PTX with SHA-256 cb4020930644bdd8ecf4de1f01416710cbea39f4d098b3a7edd607a8a2a57d65.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining all six typed special-register reads",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 PTX and produced a 3,240-byte cubin with SHA-256 f79ee0584ed55d4083aeec88051cf5e3af4a017fa66d54c51b26dfb4319bed25.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "2.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed calls for six special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six typed special-register reads",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "envreg1",
+        "observation": "stable_pure",
+        "result_width": "b32",
+        "ptx_type": "b32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%envreg1"
+          }
+        ]
+      },
+      "summary": "Reads PTX environment register 1."
+    },
+    {
+      "id": "envreg2",
+      "operation_key": "grid.environment_register.2",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_envreg2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0287",
+        "module": "grid",
+        "name": "envreg2",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0287",
+        "public_path": "cuda_intrinsics::grid::envreg2",
+        "compatibility_paths": [
+          "cuda_device::grid::envreg2"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregEnvReg2Op",
+        "op_name": "nvvm.read_ptx_sreg_envreg2",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.envreg2",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "2.1",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.27 Special Registers: %envreg<32>",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-envreg"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 2,238-byte canonical IR with SHA-256 a0a8fceff003d4b7a3b3b06c39903cfe73ebaeb3b439126d3445a2a65cded6f0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed calls lowering to six exact special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted all six reads in 972-byte PTX with SHA-256 cb4020930644bdd8ecf4de1f01416710cbea39f4d098b3a7edd607a8a2a57d65.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining all six typed special-register reads",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 PTX and produced a 3,240-byte cubin with SHA-256 f79ee0584ed55d4083aeec88051cf5e3af4a017fa66d54c51b26dfb4319bed25.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "2.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed calls for six special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six typed special-register reads",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "envreg2",
+        "observation": "stable_pure",
+        "result_width": "b32",
+        "ptx_type": "b32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%envreg2"
+          }
+        ]
+      },
+      "summary": "Reads PTX environment register 2."
+    },
+    {
       "id": "fma_bf16x2",
       "operation_key": "packed.alu.bf16x2.fma",
       "family": "packed_alu",
@@ -13840,6 +15033,243 @@
       "summary": "Computes a packed f16x2 fused multiply-add and applies ReLU."
     },
     {
+      "id": "globaltimer",
+      "operation_key": "debug.global_timer",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_globaltimer"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_GLOBALTIMER",
+          "asm": "mov.u64 \t$d, %globaltimer;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0285",
+        "module": "debug",
+        "name": "globaltimer",
+        "arguments": [],
+        "result": "u64",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0285",
+        "public_path": "cuda_intrinsics::debug::globaltimer",
+        "compatibility_paths": [
+          "cuda_device::debug::globaltimer"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregGlobaltimerOp",
+        "op_name": "nvvm.read_ptx_sreg_globaltimer",
+        "operands": [],
+        "results": [
+          "i64"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.globaltimer",
+        "arguments": [],
+        "results": [
+          "i64"
+        ],
+        "properties": [
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback",
+          "IntrNoFree",
+          "IntrWillReturn",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": false,
+        "execution_scope": "device"
+      },
+      "target": {
+        "minimum_ptx": "3.1",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.28 Special Registers: %globaltimer, %globaltimer_lo, %globaltimer_hi",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-globaltimer"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30"
+              ],
+              "representation": "typed globaltimer declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 571-byte canonical IR with SHA-256 05f5c3e1cb6db2e75012139ce279738ff495d4073aacfd429b50bdfde6153f44.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_30",
+                "ptx32"
+              ],
+              "representation": "typed globaltimer call lowering to an exact 64-bit read",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted the read in 548-byte PTX with SHA-256 a78d9cae78923fa3a3be7909f47e29aedb6bfa663681173ec7a9aed44e8f4bfe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining the typed globaltimer read",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_30 PTX and produced a 2,856-byte cubin with SHA-256 70b45763f48528285ad1525d565230adce99b4abc193a0f6302ca82be86024b2.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "3.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "selected pure or side-effecting inline PTX for six special registers",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six inline special-register reads",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "globaltimer",
+        "observation": "volatile_observation",
+        "result_width": "b64",
+        "ptx_type": "u64",
+        "output_constraint": "register64"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%globaltimer"
+          }
+        ]
+      },
+      "summary": "Samples the device-wide 64-bit global timer."
+    },
+    {
       "id": "grid_dim_x",
       "operation_key": "launch.grid_dimension.x",
       "family": "sreg",
@@ -14147,6 +15577,212 @@
         ]
       },
       "summary": "Returns the number of cooperative thread arrays (CTAs) in the grid's Z dimension."
+    },
+    {
+      "id": "gridid",
+      "operation_key": "launch.grid_identifier",
+      "family": "sreg",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mov.u64 %gridid"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0290",
+        "module": "thread",
+        "name": "gridid",
+        "arguments": [],
+        "result": "u64",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0290",
+        "public_path": "cuda_intrinsics::thread::gridid",
+        "compatibility_paths": [
+          "cuda_device::thread::gridid",
+          "cuda_device::gridid"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregGridIdOp",
+        "op_name": "nvvm.read_ptx_sreg_gridid",
+        "operands": [],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "3.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.10 Special Registers: %gridid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-gridid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx32"
+              ],
+              "representation": "pure 64-bit inline PTX gridid read",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted the full-width gridid read in 582-byte PTX with SHA-256 ee2f3fba8b51cd03bace8fccd9e3a76817240b7eb6e69e29943df3838b730159.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining the 64-bit gridid read",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 2,856-byte cubin with SHA-256 39c56630ff2afdadeb521c2a56023f289a2a39f0d39b0d01e2a5b3d9171dedd9.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "3.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "selected pure or side-effecting inline PTX for six special registers",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six inline special-register reads",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "gridid",
+        "observation": "stable_pure",
+        "result_width": "b64",
+        "ptx_type": "u64",
+        "output_constraint": "register64",
+        "llvm_exclusion": {
+          "source_record": "int_nvvm_read_ptx_sreg_gridid",
+          "llvm_symbol": "llvm.nvvm.read.ptx.sreg.gridid",
+          "imported_result_width": "b32",
+          "reason": "result_width_mismatch"
+        }
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%gridid"
+          }
+        ]
+      },
+      "summary": "Returns the full 64-bit temporal grid identifier."
     },
     {
       "id": "lane_id",
@@ -61389,6 +63025,505 @@
       "summary": "Negates both packed f16x2 lanes."
     },
     {
+      "id": "nsmid",
+      "operation_key": "execution.sm_identifier_bound",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nsmid"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_NSMID",
+          "asm": "mov.u32 \t$d, %nsmid;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0289",
+        "module": "thread",
+        "name": "nsmid",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0289",
+        "public_path": "cuda_intrinsics::thread::nsmid",
+        "compatibility_paths": [
+          "cuda_device::thread::nsmid",
+          "cuda_device::nsmid"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNsmIdOp",
+        "op_name": "nvvm.read_ptx_sreg_nsmid",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nsmid",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "device"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.9 Special Registers: %nsmid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nsmid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 2,238-byte canonical IR with SHA-256 a0a8fceff003d4b7a3b3b06c39903cfe73ebaeb3b439126d3445a2a65cded6f0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed calls lowering to six exact special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted all six reads in 972-byte PTX with SHA-256 cb4020930644bdd8ecf4de1f01416710cbea39f4d098b3a7edd607a8a2a57d65.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining all six typed special-register reads",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 PTX and produced a 3,240-byte cubin with SHA-256 f79ee0584ed55d4083aeec88051cf5e3af4a017fa66d54c51b26dfb4319bed25.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed calls for six special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six typed special-register reads",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "nsmid",
+        "observation": "stable_pure",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nsmid"
+          }
+        ]
+      },
+      "summary": "Returns the upper bound for SM identifiers."
+    },
+    {
+      "id": "nwarpid",
+      "operation_key": "warp.hardware_identifier_bound",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nwarpid"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_NWARPID",
+          "asm": "mov.u32 \t$d, %nwarpid;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0292",
+        "module": "warp",
+        "name": "nwarpid",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0292",
+        "public_path": "cuda_intrinsics::warp::nwarpid",
+        "compatibility_paths": [
+          "cuda_device::warp::nwarpid"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNwarpIdOp",
+        "op_name": "nvvm.read_ptx_sreg_nwarpid",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nwarpid",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.5 Special Registers: %nwarpid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nwarpid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as and llvm-dis produced 2,238-byte canonical IR with SHA-256 a0a8fceff003d4b7a3b3b06c39903cfe73ebaeb3b439126d3445a2a65cded6f0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed calls lowering to six exact special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted all six reads in 972-byte PTX with SHA-256 cb4020930644bdd8ecf4de1f01416710cbea39f4d098b3a7edd607a8a2a57d65.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining all six typed special-register reads",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 PTX and produced a 3,240-byte cubin with SHA-256 f79ee0584ed55d4083aeec88051cf5e3af4a017fa66d54c51b26dfb4319bed25.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed calls for six special-register reads",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six typed special-register reads",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "nwarpid",
+        "observation": "stable_pure",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nwarpid"
+          }
+        ]
+      },
+      "summary": "Returns the upper bound for hardware warp identifiers."
+    },
+    {
       "id": "packed_atomic_add_bf16x2",
       "operation_key": "atomic.add.bf16x2.global.relaxed.gpu.nearest_even.preserve.per_element",
       "family": "packed_atomic",
@@ -68123,6 +70258,222 @@
       "summary": "Exchange a 64-bit value with a named XOR partner using two 32-bit shuffles."
     },
     {
+      "id": "smid",
+      "operation_key": "execution.sm_identifier",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_smid"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_SMID",
+          "asm": "mov.u32 \t$d, %smid;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0288",
+        "module": "thread",
+        "name": "smid",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0288",
+        "public_path": "cuda_intrinsics::thread::smid",
+        "compatibility_paths": [
+          "cuda_device::thread::smid",
+          "cuda_device::smid"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregSmIdOp",
+        "op_name": "nvvm.read_ptx_sreg_smid",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.smid",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "1.3",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.8 Special Registers: %smid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-smid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "side-effecting inline PTX reads of smid and warpid",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted both volatile location samples in 633-byte PTX with SHA-256 8b6bdea0bf90c68baecd7189ae84ba5c24a0ca32a3a347a1dc72ca8a0a62277f.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining smid and warpid reads",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 2,984-byte cubin with SHA-256 2a1f9febb72d01384c5c1c4583e4511020b2c086144d8b25f6aad354a4c34618.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "1.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "selected pure or side-effecting inline PTX for six special registers",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six inline special-register reads",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "smid",
+        "observation": "volatile_observation",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%smid"
+          }
+        ]
+      },
+      "summary": "Samples the SM currently executing this thread."
+    },
+    {
       "id": "sub_bf16x2",
       "operation_key": "packed.alu.bf16x2.sub",
       "family": "packed_alu",
@@ -69323,6 +71674,227 @@
       "summary": "Returns the Z thread index within the current cooperative thread array (CTA)."
     },
     {
+      "id": "total_smem_size",
+      "operation_key": "shared.total_size",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_total_smem_size"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_TOTAL_SMEM_SIZE",
+          "asm": "mov.u32 \t$d, %total_smem_size;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0294",
+        "module": "shared",
+        "name": "total_smem_size",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0294",
+        "public_path": "cuda_intrinsics::shared::total_smem_size",
+        "compatibility_paths": [
+          "cuda_device::shared::total_smem_size"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregTotalSmemSizeOp",
+        "op_name": "nvvm.read_ptx_sreg_total_smem_size",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.total_smem_size",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "4.1",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.30 Special Registers: %total_smem_size",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-total-smem-size"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx41"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "4.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx41"
+              ],
+              "representation": "pure inline PTX reads of dynamic and total shared-memory sizes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted both size reads in 655-byte PTX with SHA-256 4ab2630ee33912457ed45c1cd516ae0797e062fcba7123db9bac352c67280b3a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx41"
+              ],
+              "representation": "LLVM-produced PTX retaining both shared-memory size reads",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 2,856-byte cubin with SHA-256 ee3358b59d2b596f1b276d983c3149d58c384872ee5edad482cf20a99183e7b1.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "4.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "selected pure or side-effecting inline PTX for six special registers",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six inline special-register reads",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "total_smem_size",
+        "observation": "stable_pure",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%total_smem_size"
+          }
+        ]
+      },
+      "summary": "Returns the total user shared-memory allocation in bytes."
+    },
+    {
       "id": "uni_sync",
       "operation_key": "warp.vote.sync.uni.pred",
       "family": "vote",
@@ -69454,6 +72026,221 @@
         ]
       },
       "summary": "Returns true when every named warp lane has the same predicate."
+    },
+    {
+      "id": "warpid",
+      "operation_key": "warp.hardware_identifier",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_warpid"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_WARPID",
+          "asm": "mov.u32 \t$d, %warpid;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0291",
+        "module": "warp",
+        "name": "warpid",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading this special register has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0291",
+        "public_path": "cuda_intrinsics::warp::warpid",
+        "compatibility_paths": [
+          "cuda_device::warp::warpid"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregWarpIdOp",
+        "op_name": "nvvm.read_ptx_sreg_warpid",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.warpid",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.3",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.4 Special Registers: %warpid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-warpid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "side-effecting inline PTX reads of smid and warpid",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned llc emitted both volatile location samples in 633-byte PTX with SHA-256 8b6bdea0bf90c68baecd7189ae84ba5c24a0ca32a3a347a1dc72ca8a0a62277f.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX retaining smid and warpid reads",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 2,984-byte cubin with SHA-256 2a1f9febb72d01384c5c1c4583e4511020b2c086144d8b25f6aad354a4c34618.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "1.3",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "selected pure or side-effecting inline PTX for six special registers",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked kernel retaining all six inline special-register reads",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "special_register": {
+        "register": "warpid",
+        "observation": "volatile_observation",
+        "result_width": "b32",
+        "ptx_type": "u32",
+        "output_constraint": "register32"
+      },
+      "lowering": "generated_special_register",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%warpid"
+          }
+        ]
+      },
+      "summary": "Samples the hardware warp currently executing this thread."
     }
   ]
 }

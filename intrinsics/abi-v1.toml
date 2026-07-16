@@ -1981,3 +1981,87 @@ status = "active"
 catalog_id = "barrier_cluster_wait_aligned"
 operation_key = "cluster.barrier.wait.aligned"
 raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0283"
+status = "active"
+catalog_id = "clock"
+operation_key = "debug.clock"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0284"
+status = "active"
+catalog_id = "clock64"
+operation_key = "debug.clock64"
+raw_rust_signature = { safe = true, arguments = [], result = "u64" }
+
+[[entry]]
+abi_id = "i0285"
+status = "active"
+catalog_id = "globaltimer"
+operation_key = "debug.global_timer"
+raw_rust_signature = { safe = true, arguments = [], result = "u64" }
+
+[[entry]]
+abi_id = "i0286"
+status = "active"
+catalog_id = "envreg1"
+operation_key = "grid.environment_register.1"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0287"
+status = "active"
+catalog_id = "envreg2"
+operation_key = "grid.environment_register.2"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0288"
+status = "active"
+catalog_id = "smid"
+operation_key = "execution.sm_identifier"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0289"
+status = "active"
+catalog_id = "nsmid"
+operation_key = "execution.sm_identifier_bound"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0290"
+status = "active"
+catalog_id = "gridid"
+operation_key = "launch.grid_identifier"
+raw_rust_signature = { safe = true, arguments = [], result = "u64" }
+
+[[entry]]
+abi_id = "i0291"
+status = "active"
+catalog_id = "warpid"
+operation_key = "warp.hardware_identifier"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0292"
+status = "active"
+catalog_id = "nwarpid"
+operation_key = "warp.hardware_identifier_bound"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0293"
+status = "active"
+catalog_id = "dynamic_smem_size"
+operation_key = "shared.dynamic_size"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0294"
+status = "active"
+catalog_id = "total_smem_size"
+operation_key = "shared.total_size"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }

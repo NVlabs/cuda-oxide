@@ -147,41 +147,7 @@ pub fn lanemask_gt() -> u32 {
     unreachable!("lanemask_gt called outside CUDA kernel context")
 }
 
-// =============================================================================
-// Hardware Warp Identification
-// =============================================================================
-
-/// Sample the current warp identifier within this thread block (CTA).
-///
-/// Returns the `%warpid` special register. It is the same for every thread in
-/// a warp and unique only within the current CTA, not across CTAs. The value
-/// may change if the thread is rescheduled after preemption. For a stable
-/// logical warp index, derive one from `threadIdx` instead.
-///
-/// Valid range: `0 ..< nwarpid()`.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %warpid;`
-#[inline(never)]
-pub fn warpid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.warpid()
-    unreachable!("warpid called outside CUDA kernel context")
-}
-
-/// Read the maximum number of warp identifiers.
-///
-/// Returns the `%nwarpid` special register. This is an identifier bound, not
-/// the number of warps currently active.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %nwarpid;`
-#[inline(never)]
-pub fn nwarpid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nwarpid()
-    unreachable!("nwarpid called outside CUDA kernel context")
-}
+include!("generated/warp_sreg.rs");
 
 /// Synchronize a subset of warp lanes given by `mask`.
 ///

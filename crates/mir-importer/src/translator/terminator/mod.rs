@@ -67,10 +67,6 @@ use dialect_mir::ops::{
     MirAssertOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirGotoOp, MirNotOp, MirReturnOp,
     MirUnrollHintOp,
 };
-use dialect_nvvm::ops::{
-    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
-};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -2359,92 +2355,6 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
-        // SM and grid identification
-        "cuda_device::smid" | "cuda_device::thread::smid" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregSmIdOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::nsmid" | "cuda_device::thread::nsmid" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregNsmIdOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridid" | "cuda_device::thread::gridid" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic_u64(
-                ctx,
-                ReadPtxSregGridIdOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::grid::envreg1" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            dialect_nvvm::ops::ReadPtxSregEnvReg1Op::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::grid::envreg2" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            dialect_nvvm::ops::ReadPtxSregEnvReg2Op::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        // Shared memory size queries
-        "cuda_device::shared::dynamic_smem_size" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregDynamicSmemSizeOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::shared::total_smem_size" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregTotalSmemSizeOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-
         // =================================================================
         // Thread Index Helpers (from intrinsics::indexing)
         //
@@ -2603,36 +2513,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)
         // =================================================================
-        "cuda_device::debug::clock" => Ok(Some(intrinsics::debug::emit_clock(
-            ctx,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::debug::clock64" => Ok(Some(intrinsics::debug::emit_clock64(
-            ctx,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::debug::globaltimer" => Ok(Some(intrinsics::debug::emit_globaltimer(
-            ctx,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
         "cuda_device::debug::trap" => Ok(Some(intrinsics::debug::emit_trap(
             ctx, target, block_ptr, prev_op, block_map, loc,
         )?)),
@@ -2814,29 +2694,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Warp Primitives (from intrinsics::warp)
         // =================================================================
-        // Hardware warp identification
-        "cuda_device::warp::warpid" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregWarpIdOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::nwarpid" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregNwarpIdOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
         "cuda_device::warp::elect_sync" => Ok(Some(intrinsics::warp::emit_elect_sync(
             ctx,
             body,

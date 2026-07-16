@@ -26,20 +26,6 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
-pub(crate) fn convert_sreg_read_i32(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-    intrinsic_name: &str,
-) -> Result<()> {
-    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-    let func_ty = llvm_types::FuncType::get(ctx, i32_ty.into(), vec![], false);
-    let call_op = call_intrinsic(ctx, rewriter, op, intrinsic_name, func_ty, vec![])?;
-    rewriter.replace_operation(ctx, op, call_op);
-    Ok(())
-}
-
 /// Lower a special-register read through exact inline PTX.
 ///
 /// This is used when no LLVM intrinsic exists on every supported LLVM

@@ -35,7 +35,10 @@ use crate::model::{
     RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator,
     SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
-    SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, VoteAdapter,
+    SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
+    SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
+    SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
+    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth, VoteAdapter,
     VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
     WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
     WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode,
@@ -49,15 +52,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 35;
+const OVERLAY_SCHEMA: u32 = 36;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 31;
+const OVERLAY_SHARD_SCHEMA: u32 = 32;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
 const CLUSTER_SREG_SHARD_SCHEMA: u32 = 30;
 const CLUSTER_BARRIER_SHARD_SCHEMA: u32 = 31;
-pub(crate) const CATALOG_SCHEMA: u32 = 34;
+const SPECIAL_REGISTER_SHARD_SCHEMA: u32 = 32;
+pub(crate) const CATALOG_SCHEMA: u32 = 35;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -94,6 +98,7 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     for policy in &overlay.intrinsics {
         let source = resolve_policy_source(policy)?;
         let declaration = resolve_imported_declaration(policy, &source, &imported_by_record)?;
+        validate_special_register_llvm_exclusion(policy, &imported_by_record)?;
         validate_policy(policy, &source, declaration, overlay.intrinsic_abi)?;
         let evidence = evidence_by_profile_id
             .get(&(overlay.backend_profile.as_str(), policy.id.as_str()))
@@ -278,6 +283,7 @@ pub(crate) fn resolve_candidate(
         .with_context(|| format!("unknown overlay intrinsic {intrinsic_id}"))?;
     let source = resolve_policy_source(policy)?;
     let declaration = resolve_imported_declaration(policy, &source, &imported_by_record)?;
+    validate_special_register_llvm_exclusion(policy, &imported_by_record)?;
     validate_policy(policy, &source, declaration, base.overlay.intrinsic_abi)?;
     ensure!(
         !backend_version.trim().is_empty()
@@ -458,6 +464,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
         let cluster_sreg_admission = shard.cluster_sreg.take();
         let cluster_barrier_admission = shard.cluster_barrier.take();
+        let special_register_admission = shard.special_registers.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -529,6 +536,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_cluster_barrier_admission(&admission)?;
         }
+        if let Some(admission) = special_register_admission {
+            ensure!(
+                shard.family == "sreg" && shard.intrinsics.is_empty(),
+                "compact special-register admission must be the only content of an sreg shard"
+            );
+            shard.intrinsics = expand_special_register_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -597,6 +611,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.cluster_barrier.is_none() || shard.schema >= CLUSTER_BARRIER_SHARD_SCHEMA,
         "compact cluster-barrier admission requires overlay shard schema {}",
         CLUSTER_BARRIER_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.special_registers.is_none() || shard.schema >= SPECIAL_REGISTER_SHARD_SCHEMA,
+        "compact special-register admission requires overlay shard schema {}",
+        SPECIAL_REGISTER_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1033,10 +1052,7 @@ fn validate_policy(
         ),
     }
     match policy.family.as_str() {
-        "sreg" => validate_sreg_policy(
-            policy,
-            declaration.context("sreg requires imported LLVM declaration")?,
-        )?,
+        "sreg" => validate_sreg_policy(policy, source, declaration)?,
         "ldmatrix" => validate_ldmatrix_policy(
             policy,
             declaration.context("ldmatrix requires imported LLVM declaration")?,
@@ -1128,6 +1144,11 @@ fn validate_policy(
         policy.id
     );
     ensure!(
+        policy.special_register.is_none() || policy.family == "sreg",
+        "{} mixes the special-register contract with another generated family",
+        policy.id
+    );
+    ensure!(
         !policy.execution_scope.trim().is_empty(),
         "{} has no execution scope",
         policy.id
@@ -1201,7 +1222,14 @@ fn validate_policy(
             && policy.packed_conversion.is_some())
             || (policy.family == "register_mma" && policy.register_mma.is_some())
             || (policy.family == "sparse_mma" && policy.sparse_mma.is_some())
-            || (policy.family == "prmt" && policy.prmt.is_some());
+            || (policy.family == "prmt" && policy.prmt.is_some())
+            || (policy.family == "sreg"
+                && policy.special_register.as_ref().is_some_and(|special| {
+                    matches!(
+                        special.register,
+                        SpecialRegisterKind::Envreg1 | SpecialRegisterKind::Envreg2
+                    )
+                }));
         ensure!(
             !declaration.selections.is_empty() || selectionless_closed_family,
             "{} has a declaration but no NVPTX TableGen selection record",
@@ -1217,6 +1245,16 @@ fn validate_policy(
             "warp_match" => 4,
             "warp_shuffle" => 8,
             "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" => 0,
+            "sreg"
+                if policy.special_register.as_ref().is_some_and(|special| {
+                    matches!(
+                        special.register,
+                        SpecialRegisterKind::Envreg1 | SpecialRegisterKind::Envreg2
+                    )
+                }) =>
+            {
+                0
+            }
             "cp_async_copy"
                 if policy
                     .cp_async_copy
@@ -3010,7 +3048,867 @@ fn validate_selected_target_predicates(
     Ok(())
 }
 
-fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+const REVIEWED_SPECIAL_REGISTERS: [SpecialRegisterKind; 12] = [
+    SpecialRegisterKind::Clock,
+    SpecialRegisterKind::Clock64,
+    SpecialRegisterKind::Globaltimer,
+    SpecialRegisterKind::Envreg1,
+    SpecialRegisterKind::Envreg2,
+    SpecialRegisterKind::Smid,
+    SpecialRegisterKind::Nsmid,
+    SpecialRegisterKind::Gridid,
+    SpecialRegisterKind::Warpid,
+    SpecialRegisterKind::Nwarpid,
+    SpecialRegisterKind::DynamicSmemSize,
+    SpecialRegisterKind::TotalSmemSize,
+];
+
+#[derive(Clone, Copy)]
+struct SpecialRegisterRecipe {
+    kind: SpecialRegisterKind,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: Option<&'static str>,
+    llvm_symbol: Option<&'static str>,
+    rust_module: &'static str,
+    compatibility_paths: &'static [&'static str],
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    register_spelling: &'static str,
+    observation: SpecialRegisterObservation,
+    result_width: SpecialRegisterWidth,
+    ptx_type: SpecialRegisterPtxType,
+    output_constraint: SpecialRegisterOutputConstraint,
+    llvm_mechanism: BackendLoweringMechanism,
+    libnvvm_mechanism: BackendLoweringMechanism,
+    minimum_ptx: &'static str,
+    minimum_sm: Option<&'static str>,
+    execution_scope: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+    selection_record: Option<&'static str>,
+    selection_asm: Option<&'static str>,
+    summary: &'static str,
+}
+
+fn special_register_recipe(kind: SpecialRegisterKind) -> SpecialRegisterRecipe {
+    use BackendLoweringMechanism::{InlinePtx, TypedNvvm};
+    use SpecialRegisterKind::*;
+    use SpecialRegisterObservation::{StablePure, VolatileObservation};
+    use SpecialRegisterOutputConstraint::{Register32, Register64};
+    use SpecialRegisterPtxType::{B32, U32, U64};
+    use SpecialRegisterWidth::{B32 as Width32, B64 as Width64};
+
+    match kind {
+        Clock => SpecialRegisterRecipe {
+            kind,
+            id: "clock",
+            operation_key: "debug.clock",
+            source_record: Some("int_nvvm_read_ptx_sreg_clock"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.clock"),
+            rust_module: "debug",
+            compatibility_paths: &["cuda_device::debug::clock"],
+            dialect_op_type: "ReadPtxSregClockOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_clock",
+            register_spelling: "%clock",
+            observation: VolatileObservation,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: TypedNvvm,
+            minimum_ptx: "1.0",
+            minimum_sm: None,
+            execution_scope: "sm",
+            ptx_isa_section: "10.23 Special Registers: %clock, %clock_hi",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clock-clock-hi",
+            selection_record: Some("SREG_CLOCK"),
+            selection_asm: Some("mov.u32 \t$d, %clock;"),
+            summary: "Samples the current SM's 32-bit clock counter.",
+        },
+        Clock64 => SpecialRegisterRecipe {
+            kind,
+            id: "clock64",
+            operation_key: "debug.clock64",
+            source_record: Some("int_nvvm_read_ptx_sreg_clock64"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.clock64"),
+            rust_module: "debug",
+            compatibility_paths: &["cuda_device::debug::clock64"],
+            dialect_op_type: "ReadPtxSregClock64Op",
+            dialect_op_name: "nvvm.read_ptx_sreg_clock64",
+            register_spelling: "%clock64",
+            observation: VolatileObservation,
+            result_width: Width64,
+            ptx_type: U64,
+            output_constraint: Register64,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: TypedNvvm,
+            minimum_ptx: "2.0",
+            minimum_sm: Some("sm_20"),
+            execution_scope: "sm",
+            ptx_isa_section: "10.24 Special Registers: %clock64",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clock64",
+            selection_record: Some("SREG_CLOCK64"),
+            selection_asm: Some("mov.u64 \t$d, %clock64;"),
+            summary: "Samples the current SM's 64-bit clock counter.",
+        },
+        Globaltimer => SpecialRegisterRecipe {
+            kind,
+            id: "globaltimer",
+            operation_key: "debug.global_timer",
+            source_record: Some("int_nvvm_read_ptx_sreg_globaltimer"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.globaltimer"),
+            rust_module: "debug",
+            compatibility_paths: &["cuda_device::debug::globaltimer"],
+            dialect_op_type: "ReadPtxSregGlobaltimerOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_globaltimer",
+            register_spelling: "%globaltimer",
+            observation: VolatileObservation,
+            result_width: Width64,
+            ptx_type: U64,
+            output_constraint: Register64,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: InlinePtx,
+            minimum_ptx: "3.1",
+            minimum_sm: Some("sm_30"),
+            execution_scope: "device",
+            ptx_isa_section: "10.28 Special Registers: %globaltimer, %globaltimer_lo, %globaltimer_hi",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-globaltimer",
+            selection_record: Some("SREG_GLOBALTIMER"),
+            selection_asm: Some("mov.u64 \t$d, %globaltimer;"),
+            summary: "Samples the device-wide 64-bit global timer.",
+        },
+        Envreg1 => SpecialRegisterRecipe {
+            kind,
+            id: "envreg1",
+            operation_key: "grid.environment_register.1",
+            source_record: Some("int_nvvm_read_ptx_sreg_envreg1"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.envreg1"),
+            rust_module: "grid",
+            compatibility_paths: &["cuda_device::grid::envreg1"],
+            dialect_op_type: "ReadPtxSregEnvReg1Op",
+            dialect_op_name: "nvvm.read_ptx_sreg_envreg1",
+            register_spelling: "%envreg1",
+            observation: StablePure,
+            result_width: Width32,
+            ptx_type: B32,
+            output_constraint: Register32,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: TypedNvvm,
+            minimum_ptx: "2.1",
+            minimum_sm: None,
+            execution_scope: "grid",
+            ptx_isa_section: "10.27 Special Registers: %envreg<32>",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-envreg",
+            selection_record: None,
+            selection_asm: None,
+            summary: "Reads PTX environment register 1.",
+        },
+        Envreg2 => SpecialRegisterRecipe {
+            kind,
+            id: "envreg2",
+            operation_key: "grid.environment_register.2",
+            source_record: Some("int_nvvm_read_ptx_sreg_envreg2"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.envreg2"),
+            rust_module: "grid",
+            compatibility_paths: &["cuda_device::grid::envreg2"],
+            dialect_op_type: "ReadPtxSregEnvReg2Op",
+            dialect_op_name: "nvvm.read_ptx_sreg_envreg2",
+            register_spelling: "%envreg2",
+            observation: StablePure,
+            result_width: Width32,
+            ptx_type: B32,
+            output_constraint: Register32,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: TypedNvvm,
+            minimum_ptx: "2.1",
+            minimum_sm: None,
+            execution_scope: "grid",
+            ptx_isa_section: "10.27 Special Registers: %envreg<32>",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-envreg",
+            selection_record: None,
+            selection_asm: None,
+            summary: "Reads PTX environment register 2.",
+        },
+        Smid => SpecialRegisterRecipe {
+            kind,
+            id: "smid",
+            operation_key: "execution.sm_identifier",
+            source_record: Some("int_nvvm_read_ptx_sreg_smid"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.smid"),
+            rust_module: "thread",
+            compatibility_paths: &["cuda_device::thread::smid", "cuda_device::smid"],
+            dialect_op_type: "ReadPtxSregSmIdOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_smid",
+            register_spelling: "%smid",
+            observation: VolatileObservation,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: InlinePtx,
+            libnvvm_mechanism: InlinePtx,
+            minimum_ptx: "1.3",
+            minimum_sm: None,
+            execution_scope: "thread",
+            ptx_isa_section: "10.8 Special Registers: %smid",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-smid",
+            selection_record: Some("SREG_SMID"),
+            selection_asm: Some("mov.u32 \t$d, %smid;"),
+            summary: "Samples the SM currently executing this thread.",
+        },
+        Nsmid => SpecialRegisterRecipe {
+            kind,
+            id: "nsmid",
+            operation_key: "execution.sm_identifier_bound",
+            source_record: Some("int_nvvm_read_ptx_sreg_nsmid"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.nsmid"),
+            rust_module: "thread",
+            compatibility_paths: &["cuda_device::thread::nsmid", "cuda_device::nsmid"],
+            dialect_op_type: "ReadPtxSregNsmIdOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_nsmid",
+            register_spelling: "%nsmid",
+            observation: StablePure,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: TypedNvvm,
+            minimum_ptx: "2.0",
+            minimum_sm: Some("sm_20"),
+            execution_scope: "device",
+            ptx_isa_section: "10.9 Special Registers: %nsmid",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nsmid",
+            selection_record: Some("SREG_NSMID"),
+            selection_asm: Some("mov.u32 \t$d, %nsmid;"),
+            summary: "Returns the upper bound for SM identifiers.",
+        },
+        Gridid => SpecialRegisterRecipe {
+            kind,
+            id: "gridid",
+            operation_key: "launch.grid_identifier",
+            source_record: None,
+            llvm_symbol: None,
+            rust_module: "thread",
+            compatibility_paths: &["cuda_device::thread::gridid", "cuda_device::gridid"],
+            dialect_op_type: "ReadPtxSregGridIdOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_gridid",
+            register_spelling: "%gridid",
+            observation: StablePure,
+            result_width: Width64,
+            ptx_type: U64,
+            output_constraint: Register64,
+            llvm_mechanism: InlinePtx,
+            libnvvm_mechanism: InlinePtx,
+            minimum_ptx: "3.0",
+            minimum_sm: Some("sm_30"),
+            execution_scope: "grid",
+            ptx_isa_section: "10.10 Special Registers: %gridid",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-gridid",
+            selection_record: None,
+            selection_asm: None,
+            summary: "Returns the full 64-bit temporal grid identifier.",
+        },
+        Warpid => SpecialRegisterRecipe {
+            kind,
+            id: "warpid",
+            operation_key: "warp.hardware_identifier",
+            source_record: Some("int_nvvm_read_ptx_sreg_warpid"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.warpid"),
+            rust_module: "warp",
+            compatibility_paths: &["cuda_device::warp::warpid"],
+            dialect_op_type: "ReadPtxSregWarpIdOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_warpid",
+            register_spelling: "%warpid",
+            observation: VolatileObservation,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: InlinePtx,
+            libnvvm_mechanism: InlinePtx,
+            minimum_ptx: "1.3",
+            minimum_sm: None,
+            execution_scope: "cta",
+            ptx_isa_section: "10.4 Special Registers: %warpid",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-warpid",
+            selection_record: Some("SREG_WARPID"),
+            selection_asm: Some("mov.u32 \t$d, %warpid;"),
+            summary: "Samples the hardware warp currently executing this thread.",
+        },
+        Nwarpid => SpecialRegisterRecipe {
+            kind,
+            id: "nwarpid",
+            operation_key: "warp.hardware_identifier_bound",
+            source_record: Some("int_nvvm_read_ptx_sreg_nwarpid"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.nwarpid"),
+            rust_module: "warp",
+            compatibility_paths: &["cuda_device::warp::nwarpid"],
+            dialect_op_type: "ReadPtxSregNwarpIdOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_nwarpid",
+            register_spelling: "%nwarpid",
+            observation: StablePure,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: TypedNvvm,
+            libnvvm_mechanism: TypedNvvm,
+            minimum_ptx: "2.0",
+            minimum_sm: Some("sm_20"),
+            execution_scope: "cta",
+            ptx_isa_section: "10.5 Special Registers: %nwarpid",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nwarpid",
+            selection_record: Some("SREG_NWARPID"),
+            selection_asm: Some("mov.u32 \t$d, %nwarpid;"),
+            summary: "Returns the upper bound for hardware warp identifiers.",
+        },
+        DynamicSmemSize => SpecialRegisterRecipe {
+            kind,
+            id: "dynamic_smem_size",
+            operation_key: "shared.dynamic_size",
+            source_record: Some("int_nvvm_read_ptx_sreg_dynamic_smem_size"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.dynamic_smem_size"),
+            rust_module: "shared",
+            compatibility_paths: &["cuda_device::shared::dynamic_smem_size"],
+            dialect_op_type: "ReadPtxSregDynamicSmemSizeOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_dynamic_smem_size",
+            register_spelling: "%dynamic_smem_size",
+            observation: StablePure,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: InlinePtx,
+            libnvvm_mechanism: InlinePtx,
+            minimum_ptx: "4.1",
+            minimum_sm: Some("sm_20"),
+            execution_scope: "cta",
+            ptx_isa_section: "10.32 Special Registers: %dynamic_smem_size",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-dynamic-smem-size",
+            selection_record: Some("INT_PTX_SREG_DYNAMIC_SMEM_SIZE"),
+            selection_asm: Some("mov.u32 \t$d, %dynamic_smem_size;"),
+            summary: "Returns the launch-time dynamic shared-memory size in bytes.",
+        },
+        TotalSmemSize => SpecialRegisterRecipe {
+            kind,
+            id: "total_smem_size",
+            operation_key: "shared.total_size",
+            source_record: Some("int_nvvm_read_ptx_sreg_total_smem_size"),
+            llvm_symbol: Some("llvm.nvvm.read.ptx.sreg.total_smem_size"),
+            rust_module: "shared",
+            compatibility_paths: &["cuda_device::shared::total_smem_size"],
+            dialect_op_type: "ReadPtxSregTotalSmemSizeOp",
+            dialect_op_name: "nvvm.read_ptx_sreg_total_smem_size",
+            register_spelling: "%total_smem_size",
+            observation: StablePure,
+            result_width: Width32,
+            ptx_type: U32,
+            output_constraint: Register32,
+            llvm_mechanism: InlinePtx,
+            libnvvm_mechanism: InlinePtx,
+            minimum_ptx: "4.1",
+            minimum_sm: Some("sm_20"),
+            execution_scope: "cta",
+            ptx_isa_section: "10.30 Special Registers: %total_smem_size",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-total-smem-size",
+            selection_record: Some("INT_PTX_SREG_TOTAL_SMEM_SIZE"),
+            selection_asm: Some("mov.u32 \t$d, %total_smem_size;"),
+            summary: "Returns the total user shared-memory allocation in bytes.",
+        },
+    }
+}
+
+fn special_register_ptx_type(ptx_type: SpecialRegisterPtxType) -> &'static str {
+    match ptx_type {
+        SpecialRegisterPtxType::B32 => "b32",
+        SpecialRegisterPtxType::U32 => "u32",
+        SpecialRegisterPtxType::U64 => "u64",
+    }
+}
+
+fn special_register_backend_floor(
+    recipe: SpecialRegisterRecipe,
+    backend: IntrinsicBackend,
+) -> (Option<&'static str>, Option<&'static str>) {
+    match backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let minimum_ptx = if matches!(recipe.minimum_ptx, "4.1") {
+                "4.1"
+            } else {
+                "3.2"
+            };
+            let minimum_sm = if recipe.minimum_sm == Some("sm_30") {
+                "sm_30"
+            } else {
+                "sm_20"
+            };
+            (Some(minimum_ptx), Some(minimum_sm))
+        }
+        IntrinsicBackend::LibNvvm => (None, Some("sm_75")),
+    }
+}
+
+fn special_register_contract(recipe: SpecialRegisterRecipe) -> SpecialRegister {
+    let llvm_exclusion =
+        (recipe.kind == SpecialRegisterKind::Gridid).then(|| SpecialRegisterLlvmExclusion {
+            source_record: "int_nvvm_read_ptx_sreg_gridid".into(),
+            llvm_symbol: "llvm.nvvm.read.ptx.sreg.gridid".into(),
+            imported_result_width: SpecialRegisterWidth::B32,
+            reason: SpecialRegisterLlvmExclusionReason::ResultWidthMismatch,
+        });
+    SpecialRegister {
+        register: recipe.kind,
+        observation: recipe.observation,
+        result_width: recipe.result_width,
+        ptx_type: recipe.ptx_type,
+        output_constraint: recipe.output_constraint,
+        llvm_exclusion,
+    }
+}
+
+fn expand_special_register_admission(
+    admission: &SpecialRegisterAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "special-register runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact special-register admission requires both backend evidence profiles"
+    );
+    ensure!(
+        admission.registers == REVIEWED_SPECIAL_REGISTERS
+            && admission.product_count == REVIEWED_SPECIAL_REGISTERS.len(),
+        "compact special-register admission must list the canonical 12 registers exactly once and in order"
+    );
+
+    admission
+        .registers
+        .iter()
+        .copied()
+        .map(|kind| {
+            let recipe = special_register_recipe(kind);
+            let width = recipe.result_width.bits();
+            let rust_result = format!("u{width}");
+            let dialect_result = format!("i{width}");
+            let source = match recipe.source_record {
+                Some(_) => None,
+                None => Some(IntrinsicSource::PtxNative {
+                    instruction: format!(
+                        "mov.{} {}",
+                        special_register_ptx_type(recipe.ptx_type),
+                        recipe.register_spelling
+                    ),
+                }),
+            };
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: String::new(),
+                operation_key: recipe.operation_key.into(),
+                family: "sreg".into(),
+                source,
+                source_record: recipe.source_record.map(str::to_owned),
+                rust_module: recipe.rust_module.into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: vec![],
+                rust_result: rust_result.clone(),
+                safe: true,
+                must_use: false,
+                safe_allowlist_reason: Some(
+                    "reading this special register has no caller obligations.".into(),
+                ),
+                public_rust_path: format!("cuda_intrinsics::{}::{}", recipe.rust_module, recipe.id),
+                compatibility_rust_paths: recipe
+                    .compatibility_paths
+                    .iter()
+                    .map(|path| (*path).into())
+                    .collect(),
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: vec![],
+                dialect_results: vec![dialect_result.clone()],
+                llvm_symbol: recipe.llvm_symbol.map(str::to_owned),
+                resolved_llvm_symbol: None,
+                llvm_arguments: vec![],
+                llvm_results: recipe
+                    .source_record
+                    .map(|_| dialect_result)
+                    .into_iter()
+                    .collect(),
+                pure: recipe.observation == SpecialRegisterObservation::StablePure,
+                memory: if matches!(
+                    recipe.kind,
+                    SpecialRegisterKind::Clock
+                        | SpecialRegisterKind::Clock64
+                        | SpecialRegisterKind::Globaltimer
+                ) {
+                    "inaccessible_read_write".into()
+                } else {
+                    "none".into()
+                },
+                convergent: false,
+                execution_scope: recipe.execution_scope.into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: recipe.minimum_sm.map(str::to_owned),
+                ptx_result: rust_result,
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: recipe.ptx_isa_section.into(),
+                ptx_isa_url: recipe.ptx_isa_url.into(),
+                lowering: "generated_special_register".into(),
+                backend_lowerings: [
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        recipe.llvm_mechanism,
+                        &admission.llvm_evidence_profile,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        recipe.libnvvm_mechanism,
+                        &admission.libnvvm_evidence_profile,
+                    ),
+                ]
+                .into_iter()
+                .map(
+                    |(backend, mechanism, evidence_profile)| OverlayBackendLowering {
+                        minimum_ptx: special_register_backend_floor(recipe, backend)
+                            .0
+                            .map(str::to_owned),
+                        minimum_sm: special_register_backend_floor(recipe, backend)
+                            .1
+                            .map(str::to_owned),
+                        backend,
+                        mechanism,
+                        evidence_profile: evidence_profile.clone(),
+                    },
+                )
+                .collect(),
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: Some(special_register_contract(recipe)),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "mov".into(),
+                    modifiers: vec![special_register_ptx_type(recipe.ptx_type).into()],
+                    operands: vec![
+                        OperandPattern::Register,
+                        OperandPattern::Exact {
+                            value: recipe.register_spelling.into(),
+                        },
+                    ],
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_special_register_policy(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+    declaration: Option<&ImportedIntrinsic>,
+) -> Result<()> {
+    let special = policy
+        .special_register
+        .as_ref()
+        .with_context(|| format!("{} has no closed special-register contract", policy.id))?;
+    let recipe = special_register_recipe(special.register);
+    ensure!(
+        special == &special_register_contract(recipe),
+        "{} special-register width, PTX type, constraint, observation, or LLVM exclusion changed",
+        policy.id
+    );
+    let expected_source = match recipe.source_record {
+        Some(source_record) => IntrinsicSource::LlvmImported {
+            source_record: source_record.into(),
+        },
+        None => IntrinsicSource::PtxNative {
+            instruction: format!(
+                "mov.{} {}",
+                special_register_ptx_type(recipe.ptx_type),
+                recipe.register_spelling
+            ),
+        },
+    };
+    ensure!(
+        policy.id == recipe.id
+            && policy.operation_key == recipe.operation_key
+            && source == &expected_source
+            && policy.source_record.as_deref() == recipe.source_record
+            && policy.llvm_symbol.as_deref() == recipe.llvm_symbol
+            && policy.resolved_llvm_symbol.is_none()
+            && policy.llvm_arguments.is_empty(),
+        "{} special-register identity or source changed",
+        policy.id
+    );
+    let width = recipe.result_width.bits();
+    let rust_result = format!("u{width}");
+    let dialect_result = format!("i{width}");
+    let expected_llvm_results = recipe
+        .source_record
+        .map(|_| dialect_result.clone())
+        .into_iter()
+        .collect::<Vec<_>>();
+    ensure!(
+        policy.rust_module == recipe.rust_module
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments.is_empty()
+            && policy.rust_result == rust_result
+            && policy.safe
+            && !policy.must_use
+            && policy.public_rust_path
+                == format!("cuda_intrinsics::{}::{}", recipe.rust_module, recipe.id)
+            && policy.compatibility_rust_paths
+                == recipe
+                    .compatibility_paths
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect::<Vec<_>>(),
+        "{} special-register Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results == [dialect_result.as_str()]
+            && policy.llvm_results == expected_llvm_results
+            && policy.lowering == "generated_special_register",
+        "{} special-register carrier, result width, or lowering changed",
+        policy.id
+    );
+    let expected_pure = recipe.observation == SpecialRegisterObservation::StablePure;
+    let expected_memory = if matches!(
+        recipe.kind,
+        SpecialRegisterKind::Clock
+            | SpecialRegisterKind::Clock64
+            | SpecialRegisterKind::Globaltimer
+    ) {
+        "inaccessible_read_write"
+    } else {
+        "none"
+    };
+    ensure!(
+        policy.pure == expected_pure
+            && policy.memory == expected_memory
+            && !policy.convergent
+            && policy.execution_scope == recipe.execution_scope,
+        "{} special-register observation or effects changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
+            && policy.ptx_result == rust_result
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url,
+        "{} special-register target floor or PTX provenance changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: "mov".into(),
+                modifiers: vec![special_register_ptx_type(recipe.ptx_type).into()],
+                operands: vec![
+                    OperandPattern::Register,
+                    OperandPattern::Exact {
+                        value: recipe.register_spelling.into(),
+                    },
+                ],
+            },
+        "{} special-register PTX shape changed",
+        policy.id
+    );
+    let expected_routes = [
+        (
+            IntrinsicBackend::LlvmNvptx,
+            recipe.llvm_mechanism,
+            special_register_backend_floor(recipe, IntrinsicBackend::LlvmNvptx),
+        ),
+        (
+            IntrinsicBackend::LibNvvm,
+            recipe.libnvvm_mechanism,
+            special_register_backend_floor(recipe, IntrinsicBackend::LibNvvm),
+        ),
+    ];
+    ensure!(
+        policy.backend_lowerings.len() == expected_routes.len()
+            && policy.backend_lowerings.iter().zip(expected_routes).all(
+                |(actual, (backend, mechanism, (minimum_ptx, minimum_sm)))| {
+                    actual.backend == backend
+                        && actual.mechanism == mechanism
+                        && !actual.evidence_profile.trim().is_empty()
+                        && actual.minimum_ptx.as_deref() == minimum_ptx
+                        && actual.minimum_sm.as_deref() == minimum_sm
+                }
+            ),
+        "{} special-register backend routes changed",
+        policy.id
+    );
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
+            && policy.dot_product.is_none()
+            && policy.packed_alu.is_none()
+            && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
+            && policy.cp_async_mbarrier.is_none()
+            && policy.mbarrier_basic.is_none()
+            && policy.register_mma.is_none()
+            && policy.sparse_mma.is_none()
+            && policy.prmt.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with a special register",
+        policy.id
+    );
+
+    match (recipe.source_record, declaration) {
+        (None, None) => {}
+        (Some(_), Some(declaration)) => {
+            let timer = matches!(
+                recipe.kind,
+                SpecialRegisterKind::Clock
+                    | SpecialRegisterKind::Clock64
+                    | SpecialRegisterKind::Globaltimer
+            );
+            let expected_properties: &[&str] = if timer {
+                &[
+                    "IntrInaccessibleMemOnly",
+                    "IntrNoCallback",
+                    "IntrNoFree",
+                    "IntrWillReturn",
+                    "NoUndef<ret>",
+                ]
+            } else {
+                &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"]
+            };
+            ensure!(
+                declaration.arguments.is_empty()
+                    && declaration.results == [dialect_result.as_str()]
+                    && declaration.properties
+                        == expected_properties
+                            .iter()
+                            .map(|property| (*property).to_owned())
+                            .collect::<Vec<_>>()
+                    && if timer {
+                        declaration
+                            .classes
+                            .iter()
+                            .any(|class| class == "PTXReadNCSRegIntrinsic")
+                    } else {
+                        declaration
+                            .classes
+                            .iter()
+                            .any(|class| class == "NVVMPureIntrinsic")
+                    },
+                "{} imported special-register signature, class, or properties changed",
+                policy.id
+            );
+            match (recipe.selection_record, recipe.selection_asm) {
+                (None, None) => ensure!(
+                    declaration.selections.is_empty(),
+                    "{} selectionless environment-register contract changed",
+                    policy.id
+                ),
+                (Some(selection_record), Some(selection_asm)) => ensure!(
+                    declaration.selections.len() == 1
+                        && declaration.selections[0].source_record == selection_record
+                        && declaration.selections[0].asm == selection_asm
+                        && declaration.selections[0].predicates.is_empty()
+                        && declaration.selections[0].constraints.is_empty(),
+                    "{} imported special-register selection changed",
+                    policy.id
+                ),
+                _ => unreachable!("closed special-register selection recipe"),
+            }
+        }
+        _ => bail!(
+            "{} special-register source and imported declaration disagree",
+            policy.id
+        ),
+    }
+    Ok(())
+}
+
+fn validate_special_register_llvm_exclusion(
+    policy: &OverlayIntrinsic,
+    imported_by_record: &BTreeMap<&str, &ImportedIntrinsic>,
+) -> Result<()> {
+    let Some(exclusion) = policy
+        .special_register
+        .as_ref()
+        .and_then(|special| special.llvm_exclusion.as_ref())
+    else {
+        return Ok(());
+    };
+    let declaration = imported_by_record
+        .get(exclusion.source_record.as_str())
+        .with_context(|| {
+            format!(
+                "{} excludes missing imported LLVM record {}",
+                policy.id, exclusion.source_record
+            )
+        })?;
+    ensure!(
+        policy.id == "gridid"
+            && exclusion.reason == SpecialRegisterLlvmExclusionReason::ResultWidthMismatch
+            && exclusion.imported_result_width == SpecialRegisterWidth::B32
+            && declaration.llvm_name == exclusion.llvm_symbol
+            && declaration.arguments.is_empty()
+            && declaration.results == ["i32"]
+            && declaration.properties == ["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"]
+            && declaration.selections.len() == 1
+            && declaration.selections[0].source_record == "SREG_GRIDID"
+            && declaration.selections[0].asm == "mov.u32 \t$d, %gridid;"
+            && declaration.selections[0].predicates.is_empty()
+            && declaration.selections[0].constraints.is_empty()
+            && policy.rust_result == "u64"
+            && policy.dialect_results == ["i64"],
+        "{} LLVM exclusion no longer proves the reviewed i32-to-u64 gridid width mismatch",
+        policy.id
+    );
+    Ok(())
+}
+
+fn validate_sreg_policy(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+    declaration: Option<&ImportedIntrinsic>,
+) -> Result<()> {
+    if policy.special_register.is_some() {
+        return validate_special_register_policy(policy, source, declaration);
+    }
+    let declaration = declaration.context("sreg requires imported LLVM declaration")?;
     ensure!(
         policy.rust_arguments.is_empty() && policy.llvm_arguments.is_empty(),
         "{} is not a zero-operand intrinsic; the sreg recipe cannot lower it",
@@ -3035,7 +3933,9 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
         policy.id
     );
     ensure!(
-        policy.resolved_llvm_symbol.is_none() && policy.backend_lowerings.is_empty(),
+        policy.resolved_llvm_symbol.is_none()
+            && policy.backend_lowerings.is_empty()
+            && policy.special_register.is_none(),
         "{} uses a backend contract outside the direct-NVVM sreg recipe",
         policy.id
     );
@@ -3324,6 +4224,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         sparse_mma: None,
         prmt: None,
         cluster_barrier: None,
+        special_register: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -6511,6 +7412,7 @@ fn packed_conversion_overlay_record(
         sparse_mma: None,
         prmt: None,
         cluster_barrier: None,
+        special_register: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -7766,6 +8668,7 @@ fn expand_register_mma_integer_admission(
             sparse_mma: None,
             prmt: None,
             cluster_barrier: None,
+            special_register: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -7941,6 +8844,7 @@ fn expand_register_mma_binary_admission(
             sparse_mma: None,
             prmt: None,
             cluster_barrier: None,
+            special_register: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -8580,6 +9484,7 @@ fn sparse_mma_overlay_record(
         sparse_mma: Some(mma),
         prmt: None,
         cluster_barrier: None,
+        special_register: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -9018,6 +9923,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                     adapter: recipe.adapter,
                 }),
                 cluster_barrier: None,
+                special_register: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -9365,6 +10271,7 @@ fn expand_cluster_barrier_admission(
                     ordering: recipe.ordering,
                     aligned: recipe.aligned,
                 }),
+                special_register: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -11072,6 +11979,7 @@ fn materialize_record(
         sparse_mma: policy.sparse_mma.clone(),
         prmt: policy.prmt.clone(),
         cluster_barrier: policy.cluster_barrier.clone(),
+        special_register: policy.special_register.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -11192,6 +12100,7 @@ mod tests {
             sparse_mma: None,
             prmt: None,
             cluster_barrier: None,
+            special_register: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -12561,8 +13470,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 36);
-        assert_eq!(overlay.intrinsics.len(), 282);
+        assert_eq!(overlay.shards.len(), 37);
+        assert_eq!(overlay.intrinsics.len(), 294);
         assert_eq!(
             overlay
                 .intrinsics
@@ -12792,6 +13701,16 @@ mod tests {
         }
     }
 
+    fn test_special_register_admission() -> SpecialRegisterAdmission {
+        SpecialRegisterAdmission {
+            llvm_evidence_profile: "rust-llvm-22.1.2-1cb4e383".into(),
+            libnvvm_evidence_profile: "cuda-13.3-libnvvm-13.3.33".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            registers: REVIEWED_SPECIAL_REGISTERS.into(),
+            product_count: REVIEWED_SPECIAL_REGISTERS.len(),
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -12807,6 +13726,7 @@ mod tests {
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            special_registers: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -12831,8 +13751,8 @@ mod tests {
         .unwrap();
 
         assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
-        validate_overlay_shard_schema(&shard(31, None, None), path).unwrap();
-        assert!(validate_overlay_shard_schema(&shard(32, None, None), path).is_err());
+        validate_overlay_shard_schema(&shard(32, None, None), path).unwrap();
+        assert!(validate_overlay_shard_schema(&shard(33, None, None), path).is_err());
         let error =
             validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
                 .unwrap_err();
@@ -12863,6 +13783,7 @@ mod tests {
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
             cluster_sreg: None,
             cluster_barrier: None,
+            special_registers: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -12886,6 +13807,7 @@ mod tests {
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: Some(test_cluster_barrier_admission()),
+            special_registers: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -12936,6 +13858,225 @@ record_count = 14
         let mut wrong_count = admission;
         wrong_count.record_count = 13;
         assert!(expand_cluster_sreg_admission(&wrong_count).is_err());
+    }
+
+    #[test]
+    fn special_register_admission_is_closed_and_schema_gated() {
+        let admission = test_special_register_admission();
+        let records = expand_special_register_admission(&admission).unwrap();
+        assert_eq!(records.len(), 12);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "clock",
+                "clock64",
+                "globaltimer",
+                "envreg1",
+                "envreg2",
+                "smid",
+                "nsmid",
+                "gridid",
+                "warpid",
+                "nwarpid",
+                "dynamic_smem_size",
+                "total_smem_size",
+            ]
+        );
+
+        let mut reordered = admission.clone();
+        reordered.registers.swap(0, 1);
+        assert!(expand_special_register_admission(&reordered).is_err());
+
+        let mut wrong_count = admission.clone();
+        wrong_count.product_count -= 1;
+        assert!(expand_special_register_admission(&wrong_count).is_err());
+
+        let mut executed = admission.clone();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_special_register_admission(&executed).is_err());
+
+        let shard = |schema| OverlayShardFile {
+            schema,
+            family: "sreg".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            special_registers: Some(admission.clone()),
+        };
+        let path = Path::new("intrinsics/overlay/sreg_special.toml");
+        validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
+        assert!(
+            validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA - 1), path)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 32")
+        );
+    }
+
+    #[test]
+    fn pinned_special_registers_preserve_apis_widths_and_backend_routes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let base = load_resolution_base(&repo_root).unwrap();
+        let declarations = index_imported_intrinsics(&base.imported).unwrap();
+        let records = base
+            .overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.special_register.is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 12);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.abi_id.clone())
+                .collect::<BTreeSet<_>>(),
+            (283..=294)
+                .map(|id| format!("i{id:04}"))
+                .collect::<BTreeSet<_>>()
+        );
+
+        for record in &records {
+            let source = resolve_policy_source(record).unwrap();
+            let declaration = resolve_imported_declaration(record, &source, &declarations).unwrap();
+            validate_special_register_policy(record, &source, declaration).unwrap();
+            validate_special_register_llvm_exclusion(record, &declarations).unwrap();
+        }
+
+        for (id, section, anchor) in [
+            ("clock", "10.23", "special-registers-clock-clock-hi"),
+            ("clock64", "10.24", "special-registers-clock64"),
+            ("globaltimer", "10.28", "special-registers-globaltimer"),
+            ("envreg1", "10.27", "special-registers-envreg"),
+            ("envreg2", "10.27", "special-registers-envreg"),
+            ("smid", "10.8", "special-registers-smid"),
+            ("nsmid", "10.9", "special-registers-nsmid"),
+            ("gridid", "10.10", "special-registers-gridid"),
+            ("warpid", "10.4", "special-registers-warpid"),
+            ("nwarpid", "10.5", "special-registers-nwarpid"),
+            (
+                "dynamic_smem_size",
+                "10.32",
+                "special-registers-dynamic-smem-size",
+            ),
+            (
+                "total_smem_size",
+                "10.30",
+                "special-registers-total-smem-size",
+            ),
+        ] {
+            let record = records.iter().find(|record| record.id == id).unwrap();
+            assert!(record.ptx_isa_section.starts_with(section));
+            assert!(record.ptx_isa_url.ends_with(anchor));
+        }
+
+        let gridid = records.iter().find(|record| record.id == "gridid").unwrap();
+        assert_eq!(gridid.rust_result, "u64");
+        assert_eq!(gridid.dialect_results, ["i64"]);
+        assert!(matches!(
+            resolve_policy_source(gridid).unwrap(),
+            IntrinsicSource::PtxNative { .. }
+        ));
+        assert!(
+            gridid
+                .special_register
+                .as_ref()
+                .unwrap()
+                .llvm_exclusion
+                .is_some()
+        );
+
+        let clock = records.iter().find(|record| record.id == "clock").unwrap();
+        let source = resolve_policy_source(clock).unwrap();
+        let declaration = resolve_imported_declaration(clock, &source, &declarations)
+            .unwrap()
+            .unwrap();
+
+        let mut wrong_effects = (*clock).clone();
+        wrong_effects.memory = "none".into();
+        assert!(
+            validate_special_register_policy(&wrong_effects, &source, Some(declaration)).is_err()
+        );
+
+        let mut wrong_contract = (*clock).clone();
+        wrong_contract
+            .special_register
+            .as_mut()
+            .unwrap()
+            .output_constraint = SpecialRegisterOutputConstraint::Register64;
+        assert!(
+            validate_special_register_policy(&wrong_contract, &source, Some(declaration)).is_err()
+        );
+
+        let mut wrong_route = (*clock).clone();
+        wrong_route.backend_lowerings[0].mechanism = BackendLoweringMechanism::InlinePtx;
+        assert!(
+            validate_special_register_policy(&wrong_route, &source, Some(declaration)).is_err()
+        );
+    }
+
+    #[test]
+    fn special_register_evidence_validates_both_backend_routes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let policies =
+            expand_special_register_admission(&test_special_register_admission()).unwrap();
+        let mut evidence_files = vec![
+            read_evidence_file(
+                &repo_root
+                    .join("intrinsics/evidence/rust-llvm-22.1.2-1cb4e383-special-registers.json"),
+            )
+            .unwrap(),
+            read_evidence_file(
+                &repo_root
+                    .join("intrinsics/evidence/cuda-13.3-libnvvm-13.3.33-special-registers.json"),
+            )
+            .unwrap(),
+        ];
+        let llvm_revision = "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e";
+        let indexed = index_evidence(&evidence_files, llvm_revision).unwrap();
+        for policy in &policies {
+            for lowering in &policy.backend_lowerings {
+                let evidence = indexed
+                    .get(&(lowering.evidence_profile.as_str(), policy.id.as_str()))
+                    .unwrap();
+                validate_evidence(policy, evidence, Some(lowering)).unwrap();
+            }
+        }
+
+        let libnvvm = evidence_files
+            .iter_mut()
+            .find(|file| file.backend_kind == Some(IntrinsicBackend::LibNvvm))
+            .unwrap();
+        libnvvm
+            .records
+            .iter_mut()
+            .find(|record| record.id == "gridid")
+            .unwrap()
+            .stages
+            .retain(|stage| stage.stage != EvidenceStageKind::DeviceLink);
+        let indexed = index_evidence(&evidence_files, llvm_revision).unwrap();
+        let policy = policies
+            .iter()
+            .find(|policy| policy.id == "gridid")
+            .unwrap();
+        let lowering = policy
+            .backend_lowerings
+            .iter()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap();
+        let evidence = indexed
+            .get(&(lowering.evidence_profile.as_str(), policy.id.as_str()))
+            .unwrap();
+        assert!(validate_evidence(policy, evidence, Some(lowering)).is_err());
     }
 
     #[test]
@@ -13000,9 +14141,11 @@ record_count = 14
             .collect()
         );
 
+        let source = resolve_policy_source(records[0]).unwrap();
         let error = validate_sreg_policy(
             records[0],
-            declarations["int_nvvm_read_ptx_sreg_cluster_ctaid_w"],
+            &source,
+            Some(declarations["int_nvvm_read_ptx_sreg_cluster_ctaid_w"]),
         )
         .unwrap_err();
         assert!(error.to_string().contains("unused always-zero"));
@@ -13012,9 +14155,11 @@ record_count = 14
             .intrinsics
             .iter()
             .find_map(|record| record.sparse_mma.clone());
+        let source = resolve_policy_source(&mixed).unwrap();
         let error = validate_sreg_policy(
             &mixed,
-            declarations[mixed.source_record.as_deref().unwrap()],
+            &source,
+            Some(declarations[mixed.source_record.as_deref().unwrap()]),
         )
         .unwrap_err();
         assert!(error.to_string().contains("mixes another generated-family"));

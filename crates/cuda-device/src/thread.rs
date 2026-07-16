@@ -511,58 +511,6 @@ pub fn index_2d_col() -> usize {
 include!("generated/sreg.rs");
 
 // =============================================================================
-// SM and Grid Identification
-// =============================================================================
-
-/// Sample the current SM (streaming multiprocessor) identifier.
-///
-/// Returns the `%smid` special register: the SM on which this thread is
-/// executing at the moment of the read. The value may change if the thread is
-/// rescheduled after preemption, so use this for profiling and diagnostics,
-/// not as a stable work-partitioning key.
-///
-/// Values are below [`nsmid()`], but SM identifiers need not be contiguous.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %smid;`
-#[inline(never)]
-pub fn smid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.smid()
-    unreachable!("smid called outside CUDA kernel context")
-}
-
-/// Read the maximum SM ID + 1 (number of SM slots).
-///
-/// Returns the `%nsmid` special register. Note that SM IDs may not be
-/// contiguous, so this is the upper bound, not the count of active SMs.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %nsmid;`
-#[inline(never)]
-pub fn nsmid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nsmid()
-    unreachable!("nsmid called outside CUDA kernel context")
-}
-
-/// Read the grid's temporal launch identifier.
-///
-/// Returns the full 64-bit `%gridid` special register. CUDA debuggers use this
-/// per-grid value to distinguish CTAs and clusters in concurrently executing
-/// grids and across repeated launches.
-///
-/// # PTX
-///
-/// `mov.u64 %rd, %gridid;`
-#[inline(never)]
-pub fn gridid() -> u64 {
-    // Lowered to exact inline PTX because LLVM's intrinsic exposes only the
-    // legacy low-32-bit form.
-    unreachable!("gridid called outside CUDA kernel context")
-}
-
-// =============================================================================
 // Synchronization Intrinsics
 // =============================================================================
 

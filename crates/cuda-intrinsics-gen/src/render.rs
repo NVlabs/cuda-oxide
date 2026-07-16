@@ -19,6 +19,7 @@ use crate::model::{
     RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
     SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
     SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
+    SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
     VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
     WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
@@ -59,6 +60,12 @@ pub fn all_outputs(
         "crates/cuda-device/src/generated/sreg.rs".into(),
         render_compat_sreg(catalog, catalog_sha256),
     );
+    for module in ["debug", "grid", "shared", "warp"] {
+        outputs.insert(
+            format!("crates/cuda-device/src/generated/{module}_sreg.rs").into(),
+            render_compat_special_register_module(catalog, catalog_sha256, module),
+        );
+    }
     outputs.insert(
         "crates/cuda-device/src/generated/cluster_sreg.rs".into(),
         render_compat_cluster_sreg(catalog, catalog_sha256),
@@ -212,10 +219,24 @@ pub fn all_outputs(
         render_targets(catalog, catalog_sha256),
     );
     for record in &catalog.intrinsics {
-        outputs.insert(
-            format!("intrinsics/probes/{}.ll", record.id).into(),
-            render_probe(catalog, record, catalog_sha256),
-        );
+        if record.special_register.is_some() {
+            for backend in [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm] {
+                outputs.insert(
+                    format!(
+                        "intrinsics/probes/{}.{}.ll",
+                        record.id,
+                        backend_label(backend)
+                    )
+                    .into(),
+                    render_special_register_probe(catalog, record, catalog_sha256, backend),
+                );
+            }
+        } else {
+            outputs.insert(
+                format!("intrinsics/probes/{}.ll", record.id).into(),
+                render_probe(catalog, record, catalog_sha256),
+            );
+        }
     }
     outputs.insert(
         "intrinsics/generated-reference.md".into(),
@@ -252,15 +273,35 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             );
         }
         match record.family.as_str() {
-            "sreg" => ensure!(
-                record.rust.module == "sreg"
-                    && record.rust.arguments.is_empty()
-                    && llvm(record).arguments.is_empty()
-                    && record.lowering == "direct_nvvm"
-                    && record.scalar_width().is_some(),
-                "{} is outside the zero-operand scalar direct-NVVM sreg recipe",
-                record.id
-            ),
+            "sreg" => {
+                if let Some(special) = &record.special_register {
+                    ensure!(
+                        matches!(record.rust.module.as_str(), "debug" | "grid" | "thread" | "warp" | "shared")
+                            && record.rust.arguments.is_empty()
+                            && record.dialect.operands.is_empty()
+                            && record.dialect.results
+                                == [format!("i{}", special.result_width.bits())]
+                            && record.scalar_width() == Some(special.result_width.bits())
+                            && record.lowering == "generated_special_register"
+                            && record.backend_lowerings.len() == 2
+                            && record.semantics.pure
+                                == (special.observation
+                                    == SpecialRegisterObservation::StablePure),
+                        "{} is outside the closed generated special-register recipe",
+                        record.id
+                    );
+                } else {
+                    ensure!(
+                        record.rust.module == "sreg"
+                            && record.rust.arguments.is_empty()
+                            && llvm(record).arguments.is_empty()
+                            && record.lowering == "direct_nvvm"
+                            && record.scalar_width().is_some(),
+                        "{} is outside the zero-operand scalar direct-NVVM sreg recipe",
+                        record.id
+                    );
+                }
+            }
             "ldmatrix" => ensure!(
                 record.rust.module == "matrix"
                     && record.rust.arguments == ["*const u32"]
@@ -2190,8 +2231,8 @@ fn render_compat_sreg(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         writeln!(
             output,
-            "/// The compiler replaces this call with `{}`.",
-            llvm(record).symbol
+            "/// The compiler replaces this call with {}.",
+            source_label(record)
         )
         .unwrap();
         output.push_str("#[allow(non_snake_case)]\n#[inline(never)]\n");
@@ -2243,6 +2284,48 @@ fn render_compat_cluster_sreg(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "pub(crate) fn {name}() -> {} {{",
+            record.rust.result
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_special_register_module(
+    catalog: &CatalogFile,
+    hash: &str,
+    module: &str,
+) -> String {
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "// Included inside `cuda_device::{module}` to keep existing paths stable.\n"
+    )
+    .unwrap();
+    let prefix = format!("cuda_device::{module}::");
+    for record in sregs(catalog).filter(|record| record.special_register.is_some()) {
+        let Some(path) = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with(&prefix))
+        else {
+            continue;
+        };
+        let name = path.rsplit("::").next().unwrap();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Generated from {}.", source_label(record)).unwrap();
+        output.push_str("#[inline(never)]\n");
+        let safety = if record.rust.safe { "" } else { "unsafe " };
+        writeln!(
+            output,
+            "pub {safety}fn {name}() -> {} {{",
             record.rust.result
         )
         .unwrap();
@@ -2821,9 +2904,9 @@ fn render_dialect_sreg(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(output, "/// {}", record.summary).unwrap();
         writeln!(
             output,
-            "/// Catalog ID `{}`; `{}` returns one `i{width}` result.",
+            "/// Catalog ID `{}`; {} returns one `i{width}` result.",
             record.id,
-            llvm(record).symbol
+            source_label(record)
         )
         .unwrap();
         writeln!(
@@ -6239,10 +6322,67 @@ fn bundle_generated_mma_results(
     output
 }
 
+fn special_register_ptx_type(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .special_register
+        .as_ref()
+        .expect("special-register record")
+        .ptx_type
+    {
+        SpecialRegisterPtxType::B32 => "b32",
+        SpecialRegisterPtxType::U32 => "u32",
+        SpecialRegisterPtxType::U64 => "u64",
+    }
+}
+
+fn special_register_output_constraint(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .special_register
+        .as_ref()
+        .expect("special-register record")
+        .output_constraint
+    {
+        SpecialRegisterOutputConstraint::Register32 => "=r",
+        SpecialRegisterOutputConstraint::Register64 => "=l",
+    }
+}
+
+fn special_register_inline_template(record: &CatalogIntrinsic) -> String {
+    let register = match record.expected_ptx.operands.as_slice() {
+        [_, crate::ptx::OperandPattern::Exact { value }] => value,
+        _ => unreachable!("closed special-register PTX operands"),
+    };
+    format!("mov.{} $0, {register};", special_register_ptx_type(record))
+}
+
+fn special_register_asm_kind(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .special_register
+        .as_ref()
+        .expect("special-register record")
+        .observation
+    {
+        SpecialRegisterObservation::StablePure => "AsmKind::Pure",
+        SpecialRegisterObservation::VolatileObservation => "AsmKind::SideEffect",
+    }
+}
+
+fn special_register_backend_mechanism(
+    record: &CatalogIntrinsic,
+    backend: IntrinsicBackend,
+) -> BackendLoweringMechanism {
+    record
+        .backend_lowerings
+        .iter()
+        .find(|route| route.backend == backend)
+        .expect("special-register backend route")
+        .mechanism
+}
+
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, basic::convert_sreg_read_inline, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -6420,7 +6560,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(&record.dialect.op_type);
     }
     output.push_str(
-        "};\nuse llvm_export::types as llvm_types;\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
+        "};\nuse llvm_export::{ops::AsmKind, types as llvm_types};\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
     );
     output.push_str("use pliron::location::Located;\n\n");
     output.push_str(
@@ -6436,13 +6576,47 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
         );
-        writeln!(
-            output,
-            "        convert_zero_operand_scalar_direct(ctx, rewriter, self.get_operation(), {}, {:?})",
-            record.scalar_width().unwrap(),
-            record.llvm_identifier()
-        )
-        .unwrap();
+        if record.special_register.is_none() {
+            writeln!(
+                output,
+                "        convert_zero_operand_scalar_direct(ctx, rewriter, self.get_operation(), {}, {:?})",
+                record.scalar_width().unwrap(),
+                record.llvm_identifier()
+            )
+            .unwrap();
+        } else {
+            output.push_str("        match context::lowering_options(ctx).intrinsic_backend {\n");
+            for (backend, backend_variant) in [
+                (IntrinsicBackend::LlvmNvptx, "LlvmNvptx"),
+                (IntrinsicBackend::LibNvvm, "LibNvvm"),
+            ] {
+                writeln!(
+                    output,
+                    "            IntrinsicBackend::{backend_variant} => {{"
+                )
+                .unwrap();
+                match special_register_backend_mechanism(record, backend) {
+                    BackendLoweringMechanism::TypedNvvm => writeln!(
+                        output,
+                        "                convert_zero_operand_scalar_direct(ctx, rewriter, self.get_operation(), {}, {:?})",
+                        record.scalar_width().unwrap(),
+                        record.llvm_identifier()
+                    )
+                    .unwrap(),
+                    BackendLoweringMechanism::InlinePtx => writeln!(
+                        output,
+                        "                convert_sreg_read_inline(ctx, rewriter, self.get_operation(), {}, {:?}, {:?}, {})",
+                        record.scalar_width().unwrap(),
+                        special_register_inline_template(record),
+                        special_register_output_constraint(record),
+                        special_register_asm_kind(record),
+                    )
+                    .unwrap(),
+                }
+                output.push_str("            }\n");
+            }
+            output.push_str("        }\n");
+        }
         output.push_str("    }\n}\n\n");
     }
     for record in active_masks(catalog) {
@@ -7459,7 +7633,53 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_special_register_probe(
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+    hash: &str,
+    backend: IntrinsicBackend,
+) -> String {
+    let mut output = llvm_header(catalog, hash);
+    output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+    let width = record.scalar_width().expect("special-register width");
+    let function_name = format!("probe_{}_{}", record.id, backend_label(backend));
+    match special_register_backend_mechanism(record, backend) {
+        BackendLoweringMechanism::TypedNvvm => {
+            let symbol = &record
+                .llvm
+                .as_ref()
+                .expect("typed special-register route")
+                .symbol;
+            writeln!(output, "declare i{width} @{symbol}()\n").unwrap();
+            writeln!(output, "define i{width} @{function_name}() {{").unwrap();
+            writeln!(output, "  %result = call i{width} @{symbol}()").unwrap();
+        }
+        BackendLoweringMechanism::InlinePtx => {
+            writeln!(output, "define i{width} @{function_name}() {{").unwrap();
+            let sideeffect = if record.special_register.as_ref().is_some_and(|special| {
+                special.observation == SpecialRegisterObservation::VolatileObservation
+            }) {
+                " sideeffect"
+            } else {
+                ""
+            };
+            writeln!(
+                output,
+                "  %result = call i{width} asm{sideeffect} {:?}, {:?}()",
+                special_register_inline_template(record),
+                special_register_output_constraint(record)
+            )
+            .unwrap();
+        }
+    }
+    writeln!(output, "  ret i{width} %result\n}}").unwrap();
+    output
+}
+
 pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
+    if record.special_register.is_some() {
+        return render_special_register_probe(catalog, record, hash, IntrinsicBackend::LlvmNvptx);
+    }
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
     if let Some(bridge) = &record.cp_async_mbarrier {
@@ -9850,7 +10070,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 282);
+        assert_eq!(catalog.intrinsics.len(), 294);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -10444,6 +10664,30 @@ mod tests {
 
         let compatibility = render_compat_prmt(&catalog, "test-hash");
         assert_eq!(compatibility.matches("pub fn prmt").count(), 7);
+    }
+
+    #[test]
+    fn selected_special_register_probes_use_the_llvm_route() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+
+        let clock = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == "clock")
+            .unwrap();
+        let typed = render_probe(&catalog, clock, "test-hash");
+        assert!(typed.contains("declare i32 @llvm.nvvm.read.ptx.sreg.clock()"));
+        assert!(typed.contains("call i32 @llvm.nvvm.read.ptx.sreg.clock()"));
+
+        let gridid = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == "gridid")
+            .unwrap();
+        let inline = render_probe(&catalog, gridid, "test-hash");
+        assert!(inline.contains("define i64 @probe_gridid_llvm_nvptx()"));
+        assert!(inline.contains("call i64 asm \"mov.u64 $0, %gridid;\", \"=l\"()"));
     }
 
     #[test]

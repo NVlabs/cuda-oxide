@@ -51,30 +51,7 @@
 use crate::atomic::{AtomicOrdering, DeviceAtomicU32};
 use crate::thread;
 
-/// Read PTX `%envreg1`.
-///
-/// For cooperative kernel launches (`cuLaunchKernelEx` with
-/// `CU_LAUNCH_ATTRIBUTE_COOPERATIVE`) the CUDA driver writes the **high**
-/// 32 bits of the per-launch grid workspace pointer here. The low half is
-/// in [`envreg2`].
-///
-/// (The driver-ABI convention follows the public CUDA toolkit header
-/// `cooperative_groups/details/driver_abi.h`, whose `load_env_reg64`
-/// template is `<HiReg, LoReg>` instantiated as `<1, 2>`.)
-///
-/// Mainly exposed so test kernels can confirm the driver populated the
-/// envregs as expected. Production code should call [`sync`] instead.
-#[inline(never)]
-pub fn envreg1() -> u32 {
-    unreachable!("grid::envreg1 called outside CUDA kernel context")
-}
-
-/// Read PTX `%envreg2` (low 32 bits of the grid workspace pointer for
-/// cooperative launches). See [`envreg1`] for the full convention.
-#[inline(never)]
-pub fn envreg2() -> u32 {
-    unreachable!("grid::envreg2 called outside CUDA kernel context")
-}
+include!("generated/grid_sreg.rs");
 
 /// Layout of the per-launch grid workspace populated by the CUDA driver.
 ///

@@ -1,0 +1,181 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": [],
+    "concrete_llvm_arguments": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_75",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "inline_special_registers",
+      "coverage_count": 6,
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "selected pure or side-effecting inline PTX for six special registers",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained globaltimer, smid, gridid, warpid, dynamic_smem_size, and total_smem_size in 2,028-byte LTOIR (SHA-256 e00f26c9c773f5ea24198cda4a679a0de54ceafb3a13be5190b4dcf0b475f864) and emitted 1,135-byte PTX (SHA-256 4cb7846fcc9a10b3d26ccbab61c1936f26ae6255911d637cf6875fbf4e6d3bea)."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked kernel retaining all six inline special-register reads",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 60456548b55c17dbef4e6a269c3eacb20298af44406ed81eec5657362501cdda; cuobjdump retained globaltimer, virtual SM, grid, warp, and shared-memory size reads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "typed_special_registers",
+      "coverage_count": 6,
+      "stages": [
+        {
+          "targets": ["sm_75"],
+          "representation": "typed declarations for clock, clock64, envreg1, envreg2, nsmid, and nwarpid",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified all six intrinsic declarations before compilation."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "typed calls for six special-register reads",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM produced 2,316-byte LTOIR (SHA-256 57b3175e40f2a217ede37a7b8dc3aadce172260ec9ed5459eca6b2d7023711bb) and exact 879-byte PTX (SHA-256 dfac22a9564622fa9b2e9ef64f97a1a50e0e23c853f9734e2aa7c5b8a22ad8eb)."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked kernel retaining all six typed special-register reads",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 3,240-byte cubin with SHA-256 276fc6a71465f9db688bafa30cd6f85084f291f9fab7a7155e090aa3db1173d3; cuobjdump retained clock and device-constant register reads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "name", "values": ["clock"]}],
+      "product_count": 1,
+      "fixtures": ["typed_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source_record": "int_nvvm_read_ptx_sreg_${name}",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${name}",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u32"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": ["i32"], "concrete_llvm_results": ["i32"], "declaration_attributes_canonicalized": true}
+      }
+    },
+    {
+      "axes": [{"name": "name", "values": ["clock64"]}],
+      "product_count": 1,
+      "fixtures": ["typed_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source_record": "int_nvvm_read_ptx_sreg_${name}",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${name}",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u64"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": ["i64"], "concrete_llvm_results": ["i64"], "declaration_attributes_canonicalized": true}
+      }
+    },
+    {
+      "axes": [{"name": "name", "values": ["globaltimer"]}],
+      "product_count": 1,
+      "fixtures": ["inline_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source_record": "int_nvvm_read_ptx_sreg_${name}",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${name}",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u64"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": ["i64"]}
+      }
+    },
+    {
+      "axes": [{"name": "name", "values": ["envreg1", "envreg2"]}],
+      "product_count": 2,
+      "fixtures": ["typed_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source_record": "int_nvvm_read_ptx_sreg_${name}",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${name}",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["b32"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": ["i32"], "concrete_llvm_results": ["i32"], "declaration_attributes_canonicalized": true}
+      }
+    },
+    {
+      "axes": [{"name": "name", "values": ["nsmid", "nwarpid"]}],
+      "product_count": 2,
+      "fixtures": ["typed_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source_record": "int_nvvm_read_ptx_sreg_${name}",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${name}",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u32"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": ["i32"], "concrete_llvm_results": ["i32"], "declaration_attributes_canonicalized": true}
+      }
+    },
+    {
+      "axes": [{"name": "name", "values": ["smid", "warpid"]}],
+      "product_count": 2,
+      "fixtures": ["inline_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source_record": "int_nvvm_read_ptx_sreg_${name}",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${name}",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u32"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": ["i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "name", "values": ["gridid"]}],
+      "product_count": 1,
+      "fixtures": ["inline_special_registers"],
+      "template": {
+        "id": "${name}",
+        "source": {"kind": "ptx_native", "instruction": "mov.u64 %${name}"},
+        "llvm_symbol": null,
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u64"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${name}"}]},
+        "facts": {"llvm_results": [], "concrete_llvm_results": []}
+      }
+    },
+    {
+      "axes": [{"name": "size", "values": ["dynamic", "total"]}],
+      "product_count": 2,
+      "fixtures": ["inline_special_registers"],
+      "template": {
+        "id": "${size}_smem_size",
+        "source_record": "int_nvvm_read_ptx_sreg_${size}_smem_size",
+        "llvm_symbol": "llvm.nvvm.read.ptx.sreg.${size}_smem_size",
+        "expected_ptx": {"mnemonic": "mov", "modifiers": ["u32"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%${size}_smem_size"}]},
+        "facts": {"llvm_results": ["i32"]}
+      }
+    }
+  ]
+}

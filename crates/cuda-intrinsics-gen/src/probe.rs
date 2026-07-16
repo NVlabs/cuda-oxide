@@ -1054,8 +1054,14 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
             "IntrNoCallback" => {
                 require_attribute_token(function_attributes, "nocallback", symbol, "function")?
             }
+            "IntrNoFree" => {
+                require_attribute_token(function_attributes, "nofree", symbol, "function")?
+            }
             "IntrSpeculatable" => {
                 require_attribute_token(function_attributes, "speculatable", symbol, "function")?
+            }
+            "IntrWillReturn" => {
+                require_attribute_token(function_attributes, "willreturn", symbol, "function")?
             }
             "IntrNoMem" => no_memory = true,
             "IntrArgMemOnly" => argument_memory_only = true,
@@ -1954,6 +1960,36 @@ attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwri
 "#;
 
         assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+    }
+
+    #[test]
+    fn verifies_timer_lifetime_and_return_attributes() {
+        let llvm = llvm_facts(
+            "llvm.nvvm.read.ptx.sreg.clock",
+            None,
+            &[],
+            &["i32"],
+            &[
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+                "IntrNoFree",
+                "IntrWillReturn",
+                "NoUndef<ret>",
+            ],
+            true,
+            None,
+        );
+        let canonical = r#"
+declare noundef i32 @llvm.nvvm.read.ptx.sreg.clock() #0
+attributes #0 = { nocallback nofree willreturn memory(inaccessiblemem: readwrite) }
+"#;
+        assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+
+        let missing_nofree = r#"
+declare noundef i32 @llvm.nvvm.read.ptx.sreg.clock() #0
+attributes #0 = { nocallback willreturn memory(inaccessiblemem: readwrite) }
+"#;
+        assert!(assert_canonical_intrinsic_declaration(missing_nofree, &llvm).is_err());
     }
 
     #[test]
