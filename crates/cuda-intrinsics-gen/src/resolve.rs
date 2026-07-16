@@ -15957,6 +15957,7 @@ fn validate_typed_llvm_evidence(policy: &OverlayIntrinsic, record: &EvidenceReco
         .iter()
         .map(|argument| {
             match argument.as_str() {
+                "shared_cluster_ptr" => return Ok("ptr addrspace(7)".into()),
                 "shared_ptr" => return Ok("ptr addrspace(3)".into()),
                 "global_ptr" => return Ok("ptr addrspace(1)".into()),
                 "ptr" => return Ok("ptr".into()),
@@ -22919,6 +22920,25 @@ scope = "system"
         record.concrete_llvm_arguments.remove(2);
         let error = validate_typed_llvm_evidence(&policy, &record).unwrap_err();
         assert!(error.to_string().contains("resolved signature"));
+    }
+
+    #[test]
+    fn typed_evidence_maps_cluster_shared_pointers_to_address_space_seven() {
+        let mut policy =
+            dot_product_policy(DotProductOperation::Dp2a, DotProductSignedness::Signed);
+        let mut record = dot_product_evidence(&policy);
+        policy.llvm_arguments = vec![
+            "shared_cluster_ptr".into(),
+            "shared_ptr".into(),
+            "ptr".into(),
+        ];
+        record.concrete_llvm_arguments = vec![
+            "ptr addrspace(7)".into(),
+            "ptr addrspace(3)".into(),
+            "ptr".into(),
+        ];
+
+        validate_typed_llvm_evidence(&policy, &record).unwrap();
     }
 
     #[test]
