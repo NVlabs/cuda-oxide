@@ -2490,6 +2490,11 @@ fn register_mma_attr_variants(
     };
     let element = |element| match element {
         RegisterMmaElement::Bf16 => "RegisterMmaElementAttr::Bf16",
+        RegisterMmaElement::E2m1 => "RegisterMmaElementAttr::E2m1",
+        RegisterMmaElement::E2m3 => "RegisterMmaElementAttr::E2m3",
+        RegisterMmaElement::E3m2 => "RegisterMmaElementAttr::E3m2",
+        RegisterMmaElement::E4m3 => "RegisterMmaElementAttr::E4m3",
+        RegisterMmaElement::E5m2 => "RegisterMmaElementAttr::E5m2",
         RegisterMmaElement::F16 => "RegisterMmaElementAttr::F16",
         RegisterMmaElement::Tf32 => "RegisterMmaElementAttr::Tf32",
         RegisterMmaElement::F64 => "RegisterMmaElementAttr::F64",
@@ -6514,7 +6519,7 @@ pub enum RegisterMmaAccumulatorAttr { F32, F64, S32 }
 
 #[pliron_attr(name = "nvvm.register_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaElementAttr { Bf16, F16, Tf32, F64, B1, S4, U4, S8, U8 }
+pub enum RegisterMmaElementAttr { Bf16, E2m1, E2m3, E3m2, E4m3, E5m2, F16, Tf32, F64, B1, S4, U4, S8, U8 }
 
 #[pliron_attr(name = "nvvm.register_mma_layout", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -12286,6 +12291,11 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
         };
         let element = |element| match element {
             RegisterMmaElement::Bf16 => "GeneratedRegisterMmaElement::Bf16",
+            RegisterMmaElement::E2m1 => "GeneratedRegisterMmaElement::E2m1",
+            RegisterMmaElement::E2m3 => "GeneratedRegisterMmaElement::E2m3",
+            RegisterMmaElement::E3m2 => "GeneratedRegisterMmaElement::E3m2",
+            RegisterMmaElement::E4m3 => "GeneratedRegisterMmaElement::E4m3",
+            RegisterMmaElement::E5m2 => "GeneratedRegisterMmaElement::E5m2",
             RegisterMmaElement::F16 => "GeneratedRegisterMmaElement::F16",
             RegisterMmaElement::Tf32 => "GeneratedRegisterMmaElement::Tf32",
             RegisterMmaElement::F64 => "GeneratedRegisterMmaElement::F64",
@@ -12502,7 +12512,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }",
-        "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, B1, S4, U4, S8, U8 }",
+        "GeneratedRegisterMmaElement { Bf16, E2m1, E2m3, E3m2, E4m3, E5m2, F16, Tf32, F64, B1, S4, U4, S8, U8 }",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -12670,7 +12680,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8",
-        "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::B1 => actual == Some(&RegisterMmaElementAttr::B1),\n                GeneratedRegisterMmaElement::S4 => actual == Some(&RegisterMmaElementAttr::S4),\n                GeneratedRegisterMmaElement::U4 => actual == Some(&RegisterMmaElementAttr::U4),\n                GeneratedRegisterMmaElement::S8",
+        "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::E2m1 => actual == Some(&RegisterMmaElementAttr::E2m1),\n                GeneratedRegisterMmaElement::E2m3 => actual == Some(&RegisterMmaElementAttr::E2m3),\n                GeneratedRegisterMmaElement::E3m2 => actual == Some(&RegisterMmaElementAttr::E3m2),\n                GeneratedRegisterMmaElement::E4m3 => actual == Some(&RegisterMmaElementAttr::E4m3),\n                GeneratedRegisterMmaElement::E5m2 => actual == Some(&RegisterMmaElementAttr::E5m2),\n                GeneratedRegisterMmaElement::B1 => actual == Some(&RegisterMmaElementAttr::B1),\n                GeneratedRegisterMmaElement::S4 => actual == Some(&RegisterMmaElementAttr::S4),\n                GeneratedRegisterMmaElement::U4 => actual == Some(&RegisterMmaElementAttr::U4),\n                GeneratedRegisterMmaElement::S8",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -16933,9 +16943,9 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 453);
+        assert_eq!(catalog.intrinsics.len(), 478);
         let records: Vec<_> = register_mmas(&catalog).collect();
-        assert_eq!(records.len(), 58);
+        assert_eq!(records.len(), 83);
         let generated_records = records
             .iter()
             .copied()
@@ -16952,7 +16962,7 @@ mod tests {
                     == RegisterMmaCompatibilitySource::ExistingStub
             })
             .collect::<Vec<_>>();
-        assert_eq!(generated_records.len(), 53);
+        assert_eq!(generated_records.len(), 78);
         assert_eq!(existing_records.len(), 5);
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -16964,7 +16974,7 @@ mod tests {
         assert!(raw.contains("Signed accumulator overflow clamps"));
 
         let compatibility = render_compat_register_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 53);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 78);
         for record in generated_records {
             let arguments = ["c", "a", "b"]
                 .into_iter()
@@ -16997,6 +17007,8 @@ mod tests {
         assert!(dialect.contains("RegisterMmaOperationAttr::XorPopc"));
         assert!(dialect.contains("operation_or_multiply"));
         assert!(dialect.contains("RegisterMmaElementAttr::B1"));
+        assert!(dialect.contains("RegisterMmaElementAttr::E2m1"));
+        assert!(dialect.contains("RegisterMmaElementAttr::E5m2"));
         assert!(dialect.contains("RegisterMmaElementAttr::S4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U8"));
@@ -17091,6 +17103,12 @@ mod tests {
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::I32, 4, 10, "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r")"#
         ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::F32, 4, 10, "mma.sync.aligned.m16n8k32.row.col.kind::f8f6f4.f32.e2m1.e2m1.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r")"#
+        ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::F32, 4, 10, "mma.sync.aligned.m16n8k32.row.col.kind::f8f6f4.f32.e5m2.e5m2.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r")"#
+        ));
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
@@ -17125,6 +17143,8 @@ mod tests {
         assert!(targets.contains("operation: mma_operation"));
         assert!(targets.contains("operation_or_multiply"));
         assert!(targets.contains("GeneratedRegisterMmaElement::B1"));
+        assert!(targets.contains("GeneratedRegisterMmaElement::E2m1"));
+        assert!(targets.contains("GeneratedRegisterMmaElement::E5m2"));
         assert!(targets.contains("GeneratedRegisterMmaElement::S4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U8"));
@@ -17142,6 +17162,24 @@ mod tests {
         ));
         assert!(targets.contains("overflow: GeneratedRegisterMmaOverflow::Satfinite"));
         assert!(targets.contains("get_attr_nvvm_register_mma_overflow"));
+        assert!(targets.contains("minimum_ptx: GeneratedPtxVersion::from_encoded(87)"));
+        assert!(targets.contains("GeneratedHardwareAlternative::ExactArchitecture(120)"));
+        assert!(targets.contains("GeneratedHardwareAlternative::FamilyTarget(121)"));
+
+        let first_dense = records
+            .iter()
+            .find(|record| record.id == "mma_m16n8k32_f32_e2m1_e2m1")
+            .unwrap();
+        let last_dense = records
+            .iter()
+            .find(|record| record.id == "mma_m16n8k32_f32_e5m2_e5m2")
+            .unwrap();
+        assert_eq!(first_dense.rust.abi_id, "i0454");
+        assert_eq!(last_dense.rust.abi_id, "i0478");
+        assert_eq!(
+            register_mma_constraints(first_dense),
+            "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r"
+        );
 
         for record in &records {
             let probe = render_probe(&catalog, record, "test-hash");

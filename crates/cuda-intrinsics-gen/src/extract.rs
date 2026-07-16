@@ -342,38 +342,34 @@ fn selection_index(
             collect_actual_def_references(pattern, wanted, &mut references);
         }
 
-        // Ldmatrix instructions synthesize their selection through a PatFrag.
-        // Their concrete instruction record has
-        // `Pattern = []`, a direct `Intr` reference, and an
-        // `IntrinsicPattern` whose operator is the address-space-constrained
-        // PatFrag. Follow that path only when the ordinary pattern supplied no
-        // intrinsic reference, then prove that both records name the same
-        // intrinsic before accepting the selection.
+        // Some instructions keep `Pattern = []` and identify the intrinsic
+        // through `Intr` plus `IntrinsicPattern`. Accept an exact operator
+        // match. Ldmatrix remains the only admitted PatFrag form because its
+        // address-space constraint is modeled below.
         if references.is_empty()
             && let Some(intrinsic) = direct_wanted_intrinsic(record, wanted)
-            && intrinsic.starts_with("int_nvvm_ldmatrix_")
         {
-            let has_patfrag = record
+            let operator = record
                 .get("IntrinsicPattern")
                 .and_then(|pattern| pattern.get("operator"))
                 .and_then(|operator| operator.get("def"))
-                .is_some();
-            ensure!(
-                has_patfrag,
-                "ldmatrix selection {record_name} has an Intr reference but no IntrinsicPattern PatFrag"
-            );
-            let patfrag = intrinsic_pattern_patfrag(record_name, record, root)?;
-            let mut patfrag_references = BTreeSet::new();
-            let fragments = patfrag
-                .get("Fragments")
-                .with_context(|| format!("selection {record_name} PatFrag has no Fragments"))?;
-            collect_actual_def_references(fragments, wanted, &mut patfrag_references);
-            ensure!(
-                patfrag_references.contains(intrinsic),
-                "selection {record_name} names intrinsic {intrinsic}, but its IntrinsicPattern PatFrag references {:?}",
-                patfrag_references
-            );
-            references.insert(intrinsic.to_owned());
+                .and_then(Value::as_str);
+            if intrinsic.starts_with("int_nvvm_ldmatrix_") {
+                let patfrag = intrinsic_pattern_patfrag(record_name, record, root)?;
+                let mut patfrag_references = BTreeSet::new();
+                let fragments = patfrag
+                    .get("Fragments")
+                    .with_context(|| format!("selection {record_name} PatFrag has no Fragments"))?;
+                collect_actual_def_references(fragments, wanted, &mut patfrag_references);
+                ensure!(
+                    patfrag_references.contains(intrinsic),
+                    "selection {record_name} names intrinsic {intrinsic}, but its IntrinsicPattern PatFrag references {:?}",
+                    patfrag_references
+                );
+                references.insert(intrinsic.to_owned());
+            } else if operator == Some(intrinsic) {
+                references.insert(intrinsic.to_owned());
+            }
         }
         if references.is_empty() {
             continue;
@@ -417,11 +413,15 @@ fn selection_immediate_bindings(
     record: &Value,
     intrinsic: &str,
 ) -> Result<Vec<ImportedImmediateBinding>> {
-    let Some(pattern) = record.get("Pattern") else {
-        return Ok(Vec::new());
-    };
     let mut occurrences = Vec::new();
-    collect_immediate_bindings(pattern, record_name, intrinsic, &mut occurrences)?;
+    if let Some(pattern) = record.get("Pattern") {
+        collect_immediate_bindings(pattern, record_name, intrinsic, &mut occurrences)?;
+    }
+    if occurrences.is_empty()
+        && let Some(pattern) = record.get("IntrinsicPattern")
+    {
+        collect_immediate_bindings(pattern, record_name, intrinsic, &mut occurrences)?;
+    }
     occurrences.sort();
     occurrences.dedup();
     ensure!(
@@ -884,6 +884,60 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("conflicting immediate patterns"), "{error}");
+    }
+
+    #[test]
+    fn joins_exact_intrinsic_pattern_when_pattern_is_empty() {
+        const INTRINSIC: &str = "int_nvvm_mma_test";
+        let wanted = BTreeSet::from([INTRINSIC]);
+        let root = Map::from_iter([(
+            "MMA_TEST".into(),
+            json!({
+                "Pattern": [],
+                "Intr": {"kind": "def", "def": INTRINSIC},
+                "IntrinsicPattern": {
+                    "kind": "dag",
+                    "operator": {"kind": "def", "def": INTRINSIC},
+                    "args": [
+                        [{"kind": "def", "def": "B32"}, "a"],
+                        [7, null]
+                    ]
+                },
+                "AsmString": "mma.sync.test;",
+                "Predicates": [{"kind": "def", "def": "hasMmaTest"}]
+            }),
+        )]);
+
+        let selection = &selection_index(&root, &wanted).unwrap()[INTRINSIC][0];
+        assert_eq!(selection.source_record, "MMA_TEST");
+        assert_eq!(
+            selection.constraints.immediate_bindings,
+            [ImportedImmediateBinding {
+                argument_index: 1,
+                value: 7,
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_mismatched_exact_intrinsic_pattern() {
+        const INTRINSIC: &str = "int_nvvm_mma_test";
+        let wanted = BTreeSet::from([INTRINSIC]);
+        let root = Map::from_iter([(
+            "MMA_TEST".into(),
+            json!({
+                "Pattern": [],
+                "Intr": {"kind": "def", "def": INTRINSIC},
+                "IntrinsicPattern": {
+                    "kind": "dag",
+                    "operator": {"kind": "def", "def": "int_nvvm_mma_other"}
+                },
+                "AsmString": "mma.sync.test;",
+                "Predicates": []
+            }),
+        )]);
+
+        assert!(selection_index(&root, &wanted).unwrap().is_empty());
     }
 
     fn ldmatrix_fixture(patfrag_intrinsic: &str, shared_predicate: &str) -> Map<String, Value> {
