@@ -5,7 +5,7 @@
 
 //! Hopper WGMMA (Warpgroup Matrix Multiply-Accumulate) intrinsics.
 //!
-//! Handles SM90 (Hopper) asynchronous warpgroup matrix operations.
+//! Handles Hopper `sm_90a` asynchronous warpgroup matrix operations.
 
 use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
@@ -20,6 +20,28 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
+
+const CUSTOM_DESCRIPTOR_UNSUPPORTED: &str = "custom WGMMA descriptor encoding is not yet supported";
+const MMA_UNSUPPORTED: &str = "WGMMA MMA is not yet supported: lowering must preserve delayed \
+32-register accumulator state across commit_group and wait_group";
+
+fn unsupported_diagnostic(path: &str) -> Option<&'static str> {
+    match path {
+        "cuda_device::wgmma::make_smem_desc_custom" => Some(CUSTOM_DESCRIPTOR_UNSUPPORTED),
+        "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16"
+        | "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16"
+        | "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_tf32" => Some(MMA_UNSUPPORTED),
+        _ => None,
+    }
+}
+
+/// Reject public WGMMA entries that do not have a sound lowering yet.
+pub(crate) fn reject_unsupported(path: &str, loc: Location) -> TranslationResult<()> {
+    let Some(diagnostic) = unsupported_diagnostic(path) else {
+        return Ok(());
+    };
+    input_err!(loc, TranslationErr::unsupported(diagnostic))
+}
 
 /// Emit make_smem_desc: Create SMEM descriptor for WGMMA.
 ///
@@ -196,5 +218,34 @@ pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
                 "wgmma_mma_m64n64k16_f32_bf16 call without target block".to_string()
             )
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CUSTOM_DESCRIPTOR_UNSUPPORTED, MMA_UNSUPPORTED, unsupported_diagnostic};
+
+    #[test]
+    fn unsupported_wgmma_paths_are_exact() {
+        assert_eq!(
+            unsupported_diagnostic("cuda_device::wgmma::make_smem_desc_custom"),
+            Some(CUSTOM_DESCRIPTOR_UNSUPPORTED)
+        );
+        for path in [
+            "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16",
+            "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16",
+            "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_tf32",
+        ] {
+            assert_eq!(unsupported_diagnostic(path), Some(MMA_UNSUPPORTED));
+        }
+
+        for path in [
+            "cuda_device::wgmma::make_smem_desc",
+            "cuda_device::wgmma::wgmma_fence",
+            "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16_extra",
+            "other_crate::wgmma::wgmma_mma_m64n64k16_f32_bf16",
+        ] {
+            assert_eq!(unsupported_diagnostic(path), None);
+        }
     }
 }

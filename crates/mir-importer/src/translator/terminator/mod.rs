@@ -2097,7 +2097,7 @@ fn emit_typed_swap(
 /// | Index Helpers     | `index_1d`, `index_2d::<S>`, `index_2d_runtime`, `index_2d_row`, `index_2d_col` |
 /// | Synchronization   | `sync_threads`, `mbarrier_*`, `fence_*`           |
 /// | Warp Primitives   | `shuffle_*`, `vote_*`, `lane_id`                  |
-/// | WGMMA (Hopper)    | `wgmma_fence`, `wgmma_mma_*`, `make_smem_desc`    |
+/// | WGMMA (Hopper `sm_90a`) | `wgmma_fence`, `wgmma_mma_*`, `make_smem_desc` |
 /// | TMA               | `cp_async_bulk_tensor_*_g2s/s2g`, `wait_group`    |
 /// | Tcgen05 (Blackwell)| `tcgen05_alloc`, `tcgen05_mma_*`, `tcgen05_ld_*` |
 /// | Memory            | `SharedArray::index`, `stmatrix_*`, `cvt_*`       |
@@ -2117,6 +2117,8 @@ fn try_dispatch_intrinsic(
     loc: Location,
     substs_contains: &impl Fn(&str) -> bool,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
+    intrinsics::wgmma::reject_unsupported(name, loc.clone())?;
+
     if let Some(operation) = intrinsics::generated::try_dispatch_generated_intrinsic(
         ctx,
         body,

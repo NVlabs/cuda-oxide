@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warpgroup Matrix Multiply-Accumulate (WGMMA) operations for Hopper+ GPUs.
+//! Warpgroup Matrix Multiply-Accumulate (WGMMA) operations for Hopper `sm_90a`.
 //!
 //! WGMMA provides tensor core operations that operate at the warpgroup level
 //! (4 warps = 128 threads) for high-throughput matrix multiplication.
@@ -33,7 +33,7 @@
 //! # Requirements
 //!
 //! - **PTX ISA**: 8.0+
-//! - **Architecture**: sm_90+ (Hopper)
+//! - **Architecture**: `sm_90a` (Hopper)
 //! - **Execution**: Warpgroup-synchronous (128 threads must execute together)
 
 use dialect_mir::types::{MirPtrType, address_space};

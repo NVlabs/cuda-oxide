@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! WGMMA (Warpgroup Matrix Multiply-Accumulate) intrinsic conversion for Hopper+ GPUs.
+//! WGMMA conversion for Hopper `sm_90a`.
 //!
 //! # Operations
 //!
@@ -61,8 +61,8 @@ pub(crate) fn convert_make_smem_desc(
 
 /// Convert WGMMA MMA operation to inline PTX.
 ///
-/// The full lowering requires register allocation for 16+ output registers
-/// and is not yet implemented. Until it lands, calls to
+/// The full lowering must preserve delayed 32-register accumulator state
+/// through commit and wait. Until it lands, calls to
 /// `cuda_device::wgmma::wgmma_mma_*` from a `#[kernel]` are rejected at
 /// codegen time with a clear diagnostic.
 ///
@@ -76,9 +76,7 @@ pub(crate) fn convert_mma(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     pliron::input_err_noloc!(
-        "wgmma.mma_async lowering is not yet implemented; \
-         calls to `cuda_device::wgmma::wgmma_mma_*` from a kernel are \
-         currently unsupported. Tracking issue: full lowering requires \
-         register allocation for 16+ output registers."
+        "WGMMA MMA is not yet supported: lowering must preserve delayed \
+         32-register accumulator state across commit_group and wait_group"
     )
 }
