@@ -13,13 +13,14 @@ use crate::model::{
     LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
     MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSaturation, PackedConversionSourceFormat, ReduxAdapter, RegisterMmaAccumulator,
-    RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
-    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
-    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
-    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
+    RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
+    SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, VoteAdapter, VoteMode,
+    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,6 +62,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/cuda-device/src/generated/dotprod.rs".into(),
         render_compat_dotprod(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/prmt.rs".into(),
+        render_compat_prmt(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/cuda-device/src/generated/atomic.rs".into(),
@@ -137,6 +142,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/packed_conversion.rs".into(),
         render_dialect_packed_conversion(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/prmt.rs".into(),
+        render_dialect_prmt(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/redux.rs".into(),
@@ -412,6 +421,23 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                             )
                     }),
                 "{} is outside the closed generated packed-conversion recipe",
+                record.id
+            ),
+            "prmt" => ensure!(
+                record.rust.module == "prmt"
+                    && matches!(record.rust.arguments.len(), 2 | 3)
+                    && record.rust.arguments.iter().all(|argument| argument == "u32")
+                    && record.rust.result == "u32"
+                    && record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.op_type == "PrmtOp"
+                    && record.dialect.op_name == "nvvm.prmt"
+                    && record.dialect.operands.len() == record.rust.arguments.len()
+                    && record.dialect.operands.iter().all(|operand| operand == "i32")
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_prmt"
+                    && record.prmt.is_some(),
+                "{} is outside the closed generated prmt recipe",
                 record.id
             ),
             "cp_async_copy" => ensure!(
@@ -808,6 +834,13 @@ fn packed_conversions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .intrinsics
         .iter()
         .filter(|record| record.family == "packed_conversion")
+}
+
+fn prmts(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "prmt")
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2028,6 +2061,42 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_prmt(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::prmt` to keep the public paths stable.\n\n");
+    for record in prmts(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::prmt::"))
+            .expect("prmt compatibility path");
+        let arguments = record
+            .rust
+            .arguments
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| format!("arg{index}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let values = (0..record.rust.arguments.len())
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        writeln!(output, "pub fn {}({arguments}) -> u32 {{", record.rust.name).unwrap();
+        writeln!(output, "    let _ = ({values});").unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -2459,7 +2528,7 @@ fn render_compat_packed_conversion(
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -4128,6 +4197,120 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
     output
 }
 
+fn render_dialect_prmt(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r##"//! One structural operation for the closed generated `prmt` family.
+
+use pliron::{
+    attribute::Attribute,
+    builtin::{
+        op_interfaces::NResultsInterface,
+        types::{IntegerType, Signedness},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.prmt_mode", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum PrmtModeAttr {
+    Generic,
+    F4e,
+    B4e,
+    Rc8,
+    Ecl,
+    Ecr,
+    Rc16,
+}
+
+/// Byte permutation whose exact mode is carried by an attribute.
+#[pliron_op(
+    name = "nvvm.prmt",
+    format,
+    interfaces = [NResultsInterface<1>],
+    attributes = (nvvm_prmt_mode: PrmtModeAttr)
+)]
+pub struct PrmtOp;
+
+impl PrmtOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    pub fn build(ctx: &mut Context, operands: Vec<Value>, mode: PrmtModeAttr) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty.into()],
+            operands,
+            vec![],
+            0,
+        );
+        let this = Self { op };
+        this.set_attr_nvvm_prmt_mode(ctx, mode);
+        this.get_operation()
+    }
+}
+
+impl Verify for PrmtOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let Some(mode) = self.get_attr_nvvm_prmt_mode(ctx) else {
+            return verify_err!(op.loc(), "nvvm.prmt requires a mode attribute");
+        };
+        let expected_operands = match &*mode {
+            PrmtModeAttr::Generic | PrmtModeAttr::F4e | PrmtModeAttr::B4e => 3,
+            PrmtModeAttr::Rc8 | PrmtModeAttr::Ecl | PrmtModeAttr::Ecr | PrmtModeAttr::Rc16 => 2,
+        };
+        if op.get_num_operands() != expected_operands || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.prmt {:?} requires {} operands and one result",
+                mode,
+                expected_operands
+            );
+        }
+        for index in 0..expected_operands {
+            let ty = op.get_operand(index).get_type(ctx);
+            if !ty
+                .deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 32)
+            {
+                return verify_err!(op.loc(), "nvvm.prmt operand {} must be a 32-bit integer", index);
+            }
+        }
+        let result_ty = op.get_result(0).get_type(ctx);
+        if !result_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 32)
+        {
+            return verify_err!(op.loc(), "nvvm.prmt result must be a 32-bit integer");
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    PrmtModeAttr::register(ctx);
+    PrmtOp::register(ctx);
+}
+"##,
+    );
+    output
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -4203,6 +4386,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     if sparse_mmas(catalog).next().is_some() {
         output.push_str(", SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr");
+    }
+    if prmts(catalog).next().is_some() {
+        output.push_str(", PrmtModeAttr, PrmtOp");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -4940,6 +5126,62 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     for record in packed_conversions(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
+    for record in prmts(catalog) {
+        let mode = match record.prmt.as_ref().unwrap().mode {
+            PrmtMode::Generic => "PrmtModeAttr::Generic",
+            PrmtMode::F4e => "PrmtModeAttr::F4e",
+            PrmtMode::B4e => "PrmtModeAttr::B4e",
+            PrmtMode::Rc8 => "PrmtModeAttr::Rc8",
+            PrmtMode::Ecl => "PrmtModeAttr::Ecl",
+            PrmtMode::Ecr => "PrmtModeAttr::Ecr",
+            PrmtMode::Rc16 => "PrmtModeAttr::Rc16",
+        };
+        let arity = record.rust.arguments.len();
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {arity}, &loc)?;"
+        )
+        .unwrap();
+        for index in 0..arity {
+            let previous = if index == 0 { "prev_op" } else { "last_op" };
+            writeln!(
+                output,
+                "            let (arg{index}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
+            )
+            .unwrap();
+        }
+        let arguments = (0..arity)
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "            let prmt = PrmtOp::build(ctx, vec![{arguments}], {mode});"
+        )
+        .unwrap();
+        output.push_str("            prmt.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, prmt, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, prmt, block_ptr, last_op);\n            let result = prmt.deref(ctx).get_result(0);\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, prmt, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -5421,7 +5663,7 @@ fn bundle_generated_mma_results(
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -5440,6 +5682,9 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if sparse_mmas(catalog).next().is_some() {
         output.push_str(", SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr");
+    }
+    if prmts(catalog).next().is_some() {
+        output.push_str(", PrmtModeAttr, PrmtOp");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -5706,6 +5951,50 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.sparse_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_sparse_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
+        );
+    }
+    if prmts(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for PrmtOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match self.get_attr_nvvm_prmt_mode(ctx).as_deref() {\n",
+        );
+        for record in prmts(catalog) {
+            let prmt = record.prmt.as_ref().unwrap();
+            let mode = match prmt.mode {
+                PrmtMode::Generic => "PrmtModeAttr::Generic",
+                PrmtMode::F4e => "PrmtModeAttr::F4e",
+                PrmtMode::B4e => "PrmtModeAttr::B4e",
+                PrmtMode::Rc8 => "PrmtModeAttr::Rc8",
+                PrmtMode::Ecl => "PrmtModeAttr::Ecl",
+                PrmtMode::Ecr => "PrmtModeAttr::Ecr",
+                PrmtMode::Rc16 => "PrmtModeAttr::Rc16",
+            };
+            let modifier = match prmt.mode {
+                PrmtMode::Generic => "",
+                PrmtMode::F4e => ".f4e",
+                PrmtMode::B4e => ".b4e",
+                PrmtMode::Rc8 => ".rc8",
+                PrmtMode::Ecl => ".ecl",
+                PrmtMode::Ecr => ".ecr",
+                PrmtMode::Rc16 => ".rc16",
+            };
+            let template = match prmt.adapter {
+                PrmtAdapter::DirectThreeOperands => {
+                    format!("prmt.b32{modifier} $0, $1, $2, $3;")
+                }
+                PrmtAdapter::InsertZeroSecondSource => {
+                    format!("prmt.b32{modifier} $0, $1, 0, $2;")
+                }
+            };
+            writeln!(
+                output,
+                "            Some(&{mode}) => ({:?}, {:?}),",
+                record.llvm_identifier(),
+                template
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.prmt mode has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_prmt(ctx, rewriter, self.get_operation(), recipe.0, recipe.1)\n    }\n}\n\n",
         );
     }
     if packed_atomics(catalog).next().is_some() {
@@ -6144,6 +6433,18 @@ fn generated_selection_alternatives(selections: &[CatalogSelection]) -> String {
 }
 
 fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
+    if let Some(prmt) = &record.prmt {
+        let mode = match prmt.mode {
+            PrmtMode::Generic => "GeneratedPrmtMode::Generic",
+            PrmtMode::F4e => "GeneratedPrmtMode::F4e",
+            PrmtMode::B4e => "GeneratedPrmtMode::B4e",
+            PrmtMode::Rc8 => "GeneratedPrmtMode::Rc8",
+            PrmtMode::Ecl => "GeneratedPrmtMode::Ecl",
+            PrmtMode::Ecr => "GeneratedPrmtMode::Ecr",
+            PrmtMode::Rc16 => "GeneratedPrmtMode::Rc16",
+        };
+        return format!("GeneratedIntrinsicVariant::Prmt {{ mode: {mode} }}");
+    }
     if let Some(packed) = &record.packed_atomic {
         let format = match packed.format {
             PackedAtomicFormat::F16x2 => "GeneratedPackedAtomicFormat::F16x2",
@@ -6331,12 +6632,12 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
         "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}",
-        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n}",
+        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n    Prmt { mode: GeneratedPrmtMode },\n}",
     );
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -6419,8 +6720,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         "                && metadata_matches\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)",
         "                && metadata_matches\n                && selector_matches",
     );
+    replace_exact_render_fragment(
+        &mut output,
+        "        }\n    }\n}\n",
+        "        }\n        GeneratedIntrinsicVariant::Prmt { mode } => {\n            let Some(op) = Operation::get_op::<PrmtOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedPrmtMode::Generic => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Generic),\n                GeneratedPrmtMode::F4e => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::F4e),\n                GeneratedPrmtMode::B4e => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::B4e),\n                GeneratedPrmtMode::Rc8 => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Rc8),\n                GeneratedPrmtMode::Ecl => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Ecl),\n                GeneratedPrmtMode::Ecr => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Ecr),\n                GeneratedPrmtMode::Rc16 => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Rc16),\n            }\n        }\n    }\n}\n",
+    );
     output.push_str(
-        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
+        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
@@ -7076,6 +7382,33 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         output.push_str("  ret ");
         output.push_str(&result);
         output.push_str(" %result\n}\n\nattributes #0 = { convergent }\n");
+    } else if record.prmt.is_some() {
+        let arity = record.rust.arguments.len();
+        let declaration = std::iter::repeat_n("i32", arity)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let parameters = (0..arity)
+            .map(|index| format!("i32 %arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = (0..arity)
+            .map(|index| format!("i32 %arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "declare i32 @{}({declaration})\n",
+            llvm(record).symbol
+        )
+        .unwrap();
+        writeln!(output, "define i32 @probe_{}({parameters}) {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call i32 @{}({arguments})",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n");
     } else if let Some(ldmatrix) = &record.ldmatrix {
         let register_count = ldmatrix.variant.multiplicity.register_count();
         let result_ty = if register_count == 1 {
@@ -8680,7 +9013,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 251);
+        assert_eq!(catalog.intrinsics.len(), 258);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -9218,5 +9551,36 @@ mod tests {
         assert!(outputs.contains_key(&PathBuf::from(
             "crates/dialect-nvvm/src/ops/generated/sparse_mma.rs"
         )));
+    }
+
+    #[test]
+    fn prmt_rendering_keeps_modes_and_zero_source_exact() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(prmts(&catalog).count(), 7);
+
+        let dialect = render_dialect_prmt(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct PrmtOp").count(), 1);
+        for mode in ["Generic", "F4e", "B4e", "Rc8", "Ecl", "Ecr", "Rc16"] {
+            assert!(dialect.contains(mode));
+        }
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        for mode in ["rc8", "ecl", "ecr", "rc16"] {
+            assert!(lowering.contains(&format!("prmt.b32.{mode} $0, $1, 0, $2;")));
+        }
+        assert!(lowering.contains("prmt.b32 $0, $1, $2, $3;"));
+        assert!(lowering.contains("prmt.b32.f4e $0, $1, $2, $3;"));
+        assert!(lowering.contains("prmt.b32.b4e $0, $1, $2, $3;"));
+        assert!(lowering.contains("convert_generated_prmt"));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains("GeneratedIntrinsicVariant::Prmt"));
+        assert!(targets.contains("Operation::get_op::<PrmtOp>"));
+        assert!(targets.contains("GeneratedPrmtMode::Rc16"));
+
+        let compatibility = render_compat_prmt(&catalog, "test-hash");
+        assert_eq!(compatibility.matches("pub fn prmt").count(), 7);
     }
 }

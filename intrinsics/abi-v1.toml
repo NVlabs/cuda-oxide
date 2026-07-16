@@ -1764,3 +1764,52 @@ status = "active"
 catalog_id = "mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f32_e5m2_e5m2_f32"
 operation_key = "matrix.mma.sp.m16n8k64.row.col.kind_f8f6f4.f32.e5m2.e5m2.f32.not_applicable.ordered_metadata"
 raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0252"
+status = "active"
+catalog_id = "prmt"
+operation_key = "integer.prmt.b32"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0253"
+status = "active"
+catalog_id = "prmt_f4e"
+operation_key = "integer.prmt.b32.f4e"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0254"
+status = "active"
+catalog_id = "prmt_b4e"
+operation_key = "integer.prmt.b32.b4e"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0255"
+status = "active"
+catalog_id = "prmt_rc8"
+operation_key = "integer.prmt.b32.rc8"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0256"
+status = "active"
+catalog_id = "prmt_ecl"
+operation_key = "integer.prmt.b32.ecl"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0257"
+status = "active"
+catalog_id = "prmt_ecr"
+operation_key = "integer.prmt.b32.ecr"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0258"
+status = "active"
+catalog_id = "prmt_rc16"
+operation_key = "integer.prmt.b32.rc16"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }

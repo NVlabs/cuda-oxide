@@ -26,12 +26,12 @@ use crate::model::{
     PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
     PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
     PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
-    PreSm70MemberMaskRule, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation,
-    RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaBinaryAdmission,
-    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaIntegerAdmission,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation,
-    RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
+    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
+    RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaIntegerAdmission, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator,
+    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, VoteAdapter,
     VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
@@ -47,11 +47,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 31;
+const OVERLAY_SCHEMA: u32 = 32;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 27;
+const OVERLAY_SHARD_SCHEMA: u32 = 28;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
-pub(crate) const CATALOG_SCHEMA: u32 = 30;
+const PRMT_SHARD_SCHEMA: u32 = 28;
+pub(crate) const CATALOG_SCHEMA: u32 = 31;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -448,6 +449,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let binary_mma_admission = shard.register_mma_b1.take();
         let sparse_mma_admission = shard.sparse_mma_integer.take();
         let sparse_mma_f8f6f4_admission = shard.sparse_mma_f8f6f4_f32.take();
+        let prmt_admission = shard.prmt.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -490,6 +492,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact sparse f8f6f4 MMA admission must be the only content of a sparse_mma shard"
             );
             shard.intrinsics = expand_sparse_mma_f8f6f4_admission(&admission)?;
+        }
+        if let Some(admission) = prmt_admission {
+            ensure!(
+                shard.family == "prmt" && shard.intrinsics.is_empty(),
+                "compact prmt admission must be the only content of a prmt shard"
+            );
+            shard.intrinsics = expand_prmt_admission(&admission)?;
         }
         ensure!(
             !shard.intrinsics.is_empty(),
@@ -539,6 +548,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.sparse_mma_f8f6f4_f32.is_none() || shard.schema >= SPARSE_MMA_F8F6F4_SHARD_SCHEMA,
         "compact sparse f8f6f4 MMA admission requires overlay shard schema {}",
         SPARSE_MMA_F8F6F4_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.prmt.is_none() || shard.schema >= PRMT_SHARD_SCHEMA,
+        "compact prmt admission requires overlay shard schema {}",
+        PRMT_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -606,7 +620,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -623,6 +637,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.mbarrier_basic,
             record.register_mma,
             record.sparse_mma,
+            record.prmt,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -1037,6 +1052,10 @@ fn validate_policy(
             policy,
             declaration.context("sparse_mma requires imported LLVM declaration")?,
         )?,
+        "prmt" => validate_prmt_policy(
+            policy,
+            declaration.context("prmt requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1047,6 +1066,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "sparse_mma") == policy.sparse_mma.is_some(),
         "{} mixes the sparse-MMA contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "prmt") == policy.prmt.is_some(),
+        "{} mixes the prmt contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1122,7 +1146,8 @@ fn validate_policy(
         let selectionless_closed_family = (policy.family == "packed_conversion"
             && policy.packed_conversion.is_some())
             || (policy.family == "register_mma" && policy.register_mma.is_some())
-            || (policy.family == "sparse_mma" && policy.sparse_mma.is_some());
+            || (policy.family == "sparse_mma" && policy.sparse_mma.is_some())
+            || (policy.family == "prmt" && policy.prmt.is_some());
         ensure!(
             !declaration.selections.is_empty() || selectionless_closed_family,
             "{} has a declaration but no NVPTX TableGen selection record",
@@ -1137,7 +1162,7 @@ fn validate_policy(
             "vote" | "warp_barrier" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
-            "packed_conversion" | "register_mma" | "sparse_mma" => 0,
+            "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" => 0,
             "cp_async_copy"
                 if policy
                     .cp_async_copy
@@ -6984,6 +7009,7 @@ fn expand_register_mma_integer_admission(
             mbarrier_basic: None,
             register_mma: Some(mma),
             sparse_mma: None,
+            prmt: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -7157,6 +7183,7 @@ fn expand_register_mma_binary_admission(
             mbarrier_basic: None,
             register_mma: Some(mma),
             sparse_mma: None,
+            prmt: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -7794,6 +7821,7 @@ fn sparse_mma_overlay_record(
         mbarrier_basic: None,
         register_mma: None,
         sparse_mma: Some(mma),
+        prmt: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -8007,6 +8035,380 @@ fn validate_register_mma_policy(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct PrmtRecipe {
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    modifier: Option<&'static str>,
+    adapter: PrmtAdapter,
+    summary: &'static str,
+}
+
+fn prmt_recipe(mode: PrmtMode) -> PrmtRecipe {
+    use PrmtAdapter::{DirectThreeOperands, InsertZeroSecondSource};
+    match mode {
+        PrmtMode::Generic => PrmtRecipe {
+            abi_id: "i0252",
+            id: "prmt",
+            operation_key: "integer.prmt.b32",
+            source_record: "int_nvvm_prmt",
+            llvm_symbol: "llvm.nvvm.prmt",
+            modifier: None,
+            adapter: DirectThreeOperands,
+            summary: "Permutes bytes selected from two 32-bit inputs.",
+        },
+        PrmtMode::F4e => PrmtRecipe {
+            abi_id: "i0253",
+            id: "prmt_f4e",
+            operation_key: "integer.prmt.b32.f4e",
+            source_record: "int_nvvm_prmt_f4e",
+            llvm_symbol: "llvm.nvvm.prmt.f4e",
+            modifier: Some("f4e"),
+            adapter: DirectThreeOperands,
+            summary: "Permutes bytes with the forward four-byte extract mode.",
+        },
+        PrmtMode::B4e => PrmtRecipe {
+            abi_id: "i0254",
+            id: "prmt_b4e",
+            operation_key: "integer.prmt.b32.b4e",
+            source_record: "int_nvvm_prmt_b4e",
+            llvm_symbol: "llvm.nvvm.prmt.b4e",
+            modifier: Some("b4e"),
+            adapter: DirectThreeOperands,
+            summary: "Permutes bytes with the backward four-byte extract mode.",
+        },
+        PrmtMode::Rc8 => PrmtRecipe {
+            abi_id: "i0255",
+            id: "prmt_rc8",
+            operation_key: "integer.prmt.b32.rc8",
+            source_record: "int_nvvm_prmt_rc8",
+            llvm_symbol: "llvm.nvvm.prmt.rc8",
+            modifier: Some("rc8"),
+            adapter: InsertZeroSecondSource,
+            summary: "Replicates a selected byte across the 32-bit result.",
+        },
+        PrmtMode::Ecl => PrmtRecipe {
+            abi_id: "i0256",
+            id: "prmt_ecl",
+            operation_key: "integer.prmt.b32.ecl",
+            source_record: "int_nvvm_prmt_ecl",
+            llvm_symbol: "llvm.nvvm.prmt.ecl",
+            modifier: Some("ecl"),
+            adapter: InsertZeroSecondSource,
+            summary: "Clamps a byte extract toward the least-significant byte.",
+        },
+        PrmtMode::Ecr => PrmtRecipe {
+            abi_id: "i0257",
+            id: "prmt_ecr",
+            operation_key: "integer.prmt.b32.ecr",
+            source_record: "int_nvvm_prmt_ecr",
+            llvm_symbol: "llvm.nvvm.prmt.ecr",
+            modifier: Some("ecr"),
+            adapter: InsertZeroSecondSource,
+            summary: "Clamps a byte extract toward the most-significant byte.",
+        },
+        PrmtMode::Rc16 => PrmtRecipe {
+            abi_id: "i0258",
+            id: "prmt_rc16",
+            operation_key: "integer.prmt.b32.rc16",
+            source_record: "int_nvvm_prmt_rc16",
+            llvm_symbol: "llvm.nvvm.prmt.rc16",
+            modifier: Some("rc16"),
+            adapter: InsertZeroSecondSource,
+            summary: "Replicates a selected 16-bit half across the result.",
+        },
+    }
+}
+
+fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "prmt runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact prmt admission requires both backend evidence profiles"
+    );
+    let expected_modes = BTreeSet::from([
+        PrmtMode::Generic,
+        PrmtMode::F4e,
+        PrmtMode::B4e,
+        PrmtMode::Rc8,
+        PrmtMode::Ecl,
+        PrmtMode::Ecr,
+        PrmtMode::Rc16,
+    ]);
+    let actual_modes: BTreeSet<_> = admission
+        .variants
+        .iter()
+        .map(|variant| variant.mode)
+        .collect();
+    ensure!(
+        admission.variants.len() == expected_modes.len() && actual_modes == expected_modes,
+        "compact prmt admission must contain each of the seven reviewed modes exactly once"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = prmt_recipe(variant.mode);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let three_operands = recipe.adapter == PrmtAdapter::DirectThreeOperands;
+            let rust_arguments = vec!["u32".into(); if three_operands { 3 } else { 2 }];
+            let llvm_arguments = vec!["i32".into(); if three_operands { 3 } else { 2 }];
+            let mut modifiers = vec!["b32".into()];
+            if let Some(modifier) = recipe.modifier {
+                modifiers.push(modifier.into());
+            }
+            let operands = if three_operands {
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                ]
+            } else {
+                vec![
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Exact { value: "0".into() },
+                    OperandPattern::Register,
+                ]
+            };
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "prmt".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "prmt".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments,
+                rust_result: "u32".into(),
+                safe: true,
+                must_use: true,
+                safe_allowlist_reason: Some(
+                    "it only permutes register bytes and has no caller preconditions.".into(),
+                ),
+                public_rust_path: format!("cuda_intrinsics::prmt::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::prmt::{}", recipe.id)],
+                dialect_op_type: "PrmtOp".into(),
+                dialect_op_name: "nvvm.prmt".into(),
+                dialect_operands: llvm_arguments.clone(),
+                dialect_results: vec!["i32".into()],
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments,
+                llvm_results: vec!["i32".into()],
+                pure: true,
+                memory: "none".into(),
+                convergent: false,
+                execution_scope: "thread".into(),
+                minimum_ptx: "2.0".into(),
+                minimum_sm: Some("sm_20".into()),
+                ptx_result: "u32".into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: "9.7.9.7 Data Movement and Conversion Instructions: prmt".into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt".into(),
+                lowering: "generated_prmt".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("3.2".into()),
+                        minimum_sm: Some("sm_20".into()),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: None,
+                        minimum_sm: Some("sm_75".into()),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: Some(Prmt {
+                    mode: variant.mode,
+                    adapter: recipe.adapter,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "prmt".into(),
+                    modifiers,
+                    operands,
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_prmt_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    let prmt = policy
+        .prmt
+        .as_ref()
+        .with_context(|| format!("{} has no closed prmt contract", policy.id))?;
+    let recipe = prmt_recipe(prmt.mode);
+    let three_operands = recipe.adapter == PrmtAdapter::DirectThreeOperands;
+    ensure!(
+        prmt.adapter == recipe.adapter
+            && policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} prmt identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "prmt"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == vec!["u32"; if three_operands { 3 } else { 2 }]
+            && policy.rust_result == "u32"
+            && policy.safe
+            && policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::prmt::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::prmt::{}", recipe.id)],
+        "{} prmt Rust API does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "PrmtOp"
+            && policy.dialect_op_name == "nvvm.prmt"
+            && policy.dialect_operands == vec!["i32"; if three_operands { 3 } else { 2 }]
+            && policy.dialect_results == ["i32"]
+            && policy.llvm_arguments == policy.dialect_operands
+            && policy.llvm_results == ["i32"]
+            && policy.lowering == "generated_prmt",
+        "{} prmt carrier or lowering does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration
+            .classes
+            .iter()
+            .any(|class| class == "NVVMPureIntrinsic")
+            && declaration.properties == ["IntrNoMem", "IntrSpeculatable"]
+            && policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread",
+        "{} prmt effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "2.0"
+            && policy.minimum_sm.as_deref() == Some("sm_20")
+            && policy.targets == "all"
+            && policy.ptx_result == "u32"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == "9.7.9.7 Data Movement and Conversion Instructions: prmt"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt",
+        "{} prmt target floor or PTX provenance changed",
+        policy.id
+    );
+    let mut modifiers = vec!["b32"];
+    if let Some(modifier) = recipe.modifier {
+        modifiers.push(modifier);
+    }
+    let expected_operands = if three_operands {
+        vec![
+            OperandPattern::Register,
+            OperandPattern::Register,
+            OperandPattern::Register,
+            OperandPattern::Register,
+        ]
+    } else {
+        vec![
+            OperandPattern::Register,
+            OperandPattern::Register,
+            OperandPattern::Exact { value: "0".into() },
+            OperandPattern::Register,
+        ]
+    };
+    ensure!(
+        policy.expected_ptx.mnemonic == "prmt"
+            && policy.expected_ptx.modifiers == modifiers
+            && policy.expected_ptx.operands == expected_operands,
+        "{} expected PTX does not match its closed prmt mode",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ]),
+        "{} must define exactly the reviewed prmt backend routes",
+        policy.id
+    );
+    for lowering in &policy.backend_lowerings {
+        let floor_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => {
+                lowering.minimum_ptx.as_deref() == Some("3.2")
+                    && lowering.minimum_sm.as_deref() == Some("sm_20")
+            }
+            IntrinsicBackend::LibNvvm => {
+                lowering.minimum_ptx.is_none() && lowering.minimum_sm.as_deref() == Some("sm_75")
+            }
+        };
+        ensure!(
+            floor_matches && !lowering.evidence_profile.trim().is_empty(),
+            "{} backend {:?} does not carry its reviewed prmt floor",
+            policy.id,
+            lowering.backend
+        );
+    }
+    ensure_no_other_family_contract(policy, "prmt")?;
+    Ok(())
+}
+
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
     requirements: [(IntrinsicBackend, &str, Option<&str>); 2],
@@ -8072,7 +8474,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
             && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some()
             && (policy.family == "register_mma") == policy.register_mma.is_some()
-            && (policy.family == "sparse_mma") == policy.sparse_mma.is_some(),
+            && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
+            && (policy.family == "prmt") == policy.prmt.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -9527,6 +9930,7 @@ fn materialize_record(
         mbarrier_basic: policy.mbarrier_basic.clone(),
         register_mma: policy.register_mma.clone(),
         sparse_mma: policy.sparse_mma.clone(),
+        prmt: policy.prmt.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -9645,6 +10049,7 @@ mod tests {
             mbarrier_basic: None,
             register_mma: None,
             sparse_mma: None,
+            prmt: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -11003,8 +11408,16 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 32);
-        assert_eq!(overlay.intrinsics.len(), 251);
+        assert_eq!(overlay.shards.len(), 33);
+        assert_eq!(overlay.intrinsics.len(), 258);
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "prmt")
+                .count(),
+            7
+        );
         assert_eq!(
             overlay
                 .intrinsics
@@ -11164,9 +11577,32 @@ mod tests {
         }
     }
 
+    fn test_prmt_admission() -> PrmtAdmission {
+        let variants = [
+            PrmtMode::Generic,
+            PrmtMode::F4e,
+            PrmtMode::B4e,
+            PrmtMode::Rc8,
+            PrmtMode::Ecl,
+            PrmtMode::Ecr,
+            PrmtMode::Rc16,
+        ]
+        .map(|mode| crate::model::PrmtAdmissionVariant {
+            abi_id: prmt_recipe(mode).abi_id.into(),
+            mode,
+        })
+        .into();
+        PrmtAdmission {
+            llvm_evidence_profile: "llvm-test".into(),
+            libnvvm_evidence_profile: "libnvvm-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants,
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
-        let shard = |schema, admission| OverlayShardFile {
+        let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
             schema,
             family: "sparse_mma".into(),
             intrinsics: vec![],
@@ -11174,23 +11610,40 @@ mod tests {
             register_mma_int8: None,
             register_mma_b1: None,
             sparse_mma_integer: None,
-            sparse_mma_f8f6f4_f32: admission,
+            sparse_mma_f8f6f4_f32,
+            prmt,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
-        validate_overlay_shard_schema(&shard(26, None), path).unwrap();
-        validate_overlay_shard_schema(&shard(27, None), path).unwrap();
-        validate_overlay_shard_schema(&shard(27, Some(test_f8f6f4_admission())), path).unwrap();
-        validate_overlay_shard_schema_with_max(&shard(27, Some(test_f8f6f4_admission())), path, 28)
+        validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(27, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(28, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(27, Some(test_f8f6f4_admission()), None), path)
             .unwrap();
+        validate_overlay_shard_schema(&shard(28, None, Some(test_prmt_admission())), path).unwrap();
+        validate_overlay_shard_schema_with_max(
+            &shard(28, None, Some(test_prmt_admission())),
+            path,
+            29,
+        )
+        .unwrap();
 
-        assert!(validate_overlay_shard_schema(&shard(25, None), path).is_err());
-        assert!(validate_overlay_shard_schema(&shard(28, None), path).is_err());
-        let error = validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission())), path)
-            .unwrap_err();
+        assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
+        assert!(validate_overlay_shard_schema(&shard(29, None, None), path).is_err());
+        let error =
+            validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
+                .unwrap_err();
         assert!(
             error
                 .to_string()
                 .contains("requires overlay shard schema 27")
+        );
+        let error =
+            validate_overlay_shard_schema(&shard(27, None, Some(test_prmt_admission())), path)
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires overlay shard schema 28")
         );
     }
 
@@ -11222,6 +11675,26 @@ mod tests {
         let mut wrong_count = test_f8f6f4_admission();
         wrong_count.product_count = 24;
         assert!(expand_sparse_mma_f8f6f4_admission(&wrong_count).is_err());
+    }
+
+    #[test]
+    fn compact_prmt_admission_requires_every_mode_and_reserved_abi_id() {
+        assert_eq!(
+            expand_prmt_admission(&test_prmt_admission()).unwrap().len(),
+            7
+        );
+
+        let mut missing = test_prmt_admission();
+        missing.variants.pop();
+        assert!(expand_prmt_admission(&missing).is_err());
+
+        let mut duplicate = test_prmt_admission();
+        duplicate.variants[6].mode = PrmtMode::Rc8;
+        assert!(expand_prmt_admission(&duplicate).is_err());
+
+        let mut wrong_abi = test_prmt_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_prmt_admission(&wrong_abi).is_err());
     }
 
     #[test]

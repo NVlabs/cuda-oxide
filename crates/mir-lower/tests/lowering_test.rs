@@ -2758,6 +2758,153 @@ fn test_dot_product_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::E
     Ok(())
 }
 
+// =============================================================================
+// Byte permutation lowering tests
+// =============================================================================
+
+const PRMT_TYPED_INTRINSICS: [(&str, usize); 7] = [
+    ("llvm_nvvm_prmt", 3),
+    ("llvm_nvvm_prmt_f4e", 3),
+    ("llvm_nvvm_prmt_b4e", 3),
+    ("llvm_nvvm_prmt_rc8", 2),
+    ("llvm_nvvm_prmt_ecl", 2),
+    ("llvm_nvvm_prmt_ecr", 2),
+    ("llvm_nvvm_prmt_rc16", 2),
+];
+
+const PRMT_INLINE_PTX: [(&str, &str, usize); 7] = [
+    ("prmt.b32 $0, $1, $2, $3;", "=r,r,r,r", 3),
+    ("prmt.b32.f4e $0, $1, $2, $3;", "=r,r,r,r", 3),
+    ("prmt.b32.b4e $0, $1, $2, $3;", "=r,r,r,r", 3),
+    ("prmt.b32.rc8 $0, $1, 0, $2;", "=r,r,r", 2),
+    ("prmt.b32.ecl $0, $1, 0, $2;", "=r,r,r", 2),
+    ("prmt.b32.ecr $0, $1, 0, $2;", "=r,r,r", 2),
+    ("prmt.b32.rc16 $0, $1, 0, $2;", "=r,r,r", 2),
+];
+
+fn lower_all_prmt_modes(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
+    let operands = (0..3)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+
+    for mode in [
+        nvvm::PrmtModeAttr::Generic,
+        nvvm::PrmtModeAttr::F4e,
+        nvvm::PrmtModeAttr::B4e,
+    ] {
+        nvvm::PrmtOp::build(&mut ctx, operands.clone(), mode).insert_at_back(entry, &ctx);
+    }
+    for mode in [
+        nvvm::PrmtModeAttr::Rc8,
+        nvvm::PrmtModeAttr::Ecl,
+        nvvm::PrmtModeAttr::Ecr,
+        nvvm::PrmtModeAttr::Rc16,
+    ] {
+        nvvm::PrmtOp::build(&mut ctx, vec![operands[0], operands[2]], mode)
+            .insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_prmt_llvm_nvptx_uses_exact_typed_intrinsics() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) = lower_all_prmt_modes(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let mut calls = Vec::new();
+    for op in body {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX byte permutations must use typed intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        let Some((_, expected_arity)) = PRMT_TYPED_INTRINSICS
+            .iter()
+            .find(|(expected, _)| *expected == callee)
+        else {
+            continue;
+        };
+        assert_eq!(op.deref(&ctx).get_num_operands(), *expected_arity);
+        calls.push((callee, *expected_arity));
+    }
+    calls.sort();
+    let mut expected = PRMT_TYPED_INTRINSICS.map(|(name, arity)| (name.to_owned(), arity));
+    expected.sort();
+    assert_eq!(calls, expected);
+    Ok(())
+}
+
+#[test]
+fn test_prmt_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) = lower_all_prmt_modes(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let mut inline_ptx = Vec::new();
+    for op in body {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+        {
+            assert!(
+                !callee.to_string().starts_with("llvm_nvvm_prmt"),
+                "libNVVM byte permutations must not use typed intrinsic calls"
+            );
+        }
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        let template = inline_asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        let Some((_, expected_constraints, expected_arity)) = PRMT_INLINE_PTX
+            .iter()
+            .find(|(expected, _, _)| *expected == template)
+        else {
+            continue;
+        };
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some(*expected_constraints)
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
+        assert_eq!(op.deref(&ctx).get_num_operands(), *expected_arity);
+        assert_eq!(op.deref(&ctx).get_num_results(), 1);
+        inline_ptx.push((template, *expected_constraints, *expected_arity));
+    }
+    inline_ptx.sort();
+    let mut expected = PRMT_INLINE_PTX
+        .map(|(template, constraints, arity)| (template.to_owned(), constraints, arity));
+    expected.sort();
+    assert_eq!(inline_ptx, expected);
+    Ok(())
+}
+
 fn lower_sync_threads(
     backend: mir_lower::IntrinsicBackend,
 ) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {

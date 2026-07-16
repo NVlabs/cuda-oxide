@@ -159,6 +159,27 @@ pub struct OverlayShardFile {
     pub sparse_mma_integer: Option<SparseMmaIntegerAdmission>,
     #[serde(default)]
     pub sparse_mma_f8f6f4_f32: Option<SparseMmaF8F6F4Admission>,
+    #[serde(default)]
+    pub prmt: Option<PrmtAdmission>,
+}
+
+/// Compact admission for the closed `prmt` family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrmtAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<PrmtAdmissionVariant>,
+}
+
+/// One reviewed member of the `prmt` family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrmtAdmissionVariant {
+    pub abi_id: String,
+    pub mode: PrmtMode,
 }
 
 /// Compact admission for a closed dense integer register-MMA family.
@@ -322,6 +343,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub sparse_mma: Option<SparseMma>,
     #[serde(default)]
+    pub prmt: Option<Prmt>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -331,6 +354,33 @@ pub struct OverlayIntrinsic {
     pub selected_address_space: Option<ImportedAddressSpace>,
     pub expected_ptx: InstructionPattern,
     pub summary: String,
+}
+
+/// Closed semantic contract for byte permutation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Prmt {
+    pub mode: PrmtMode,
+    pub adapter: PrmtAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrmtMode {
+    Generic,
+    F4e,
+    B4e,
+    Rc8,
+    Ecl,
+    Ecr,
+    Rc16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrmtAdapter {
+    DirectThreeOperands,
+    InsertZeroSecondSource,
 }
 
 /// Backend-specific lowering selected by reviewed evidence.
@@ -1597,6 +1647,8 @@ pub struct CatalogIntrinsic {
     pub register_mma: Option<RegisterMma>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sparse_mma: Option<SparseMma>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prmt: Option<Prmt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,

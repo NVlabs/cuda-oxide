@@ -1,5 +1,5 @@
 {
-  "schema": 30,
+  "schema": 31,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,12 +11,13 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "6d874b9c6d1fe8d0bf43e832d21ebcffe35af6b096e2070c06d3ef1383c90435",
-    "abi_ledger_sha256": "cf5037509240efda40cdfbdf8967eb5c315d8c4e7ccaac88bdd2b30c3b49d3eb",
+    "overlay_sha256": "6393825d68388c0f7532909ebddc16ac7c5e0f6155082bdb05afe25f0f928912",
+    "abi_ledger_sha256": "88435872cd1a151d6e34d8d314490842909d3b7d66ff89426d8b845fe5ebedb7",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
+      "cuda-13.3-libnvvm-13.3.33-prmt.json:e06d8b99575304ab780b58f665babfb7d24dfd2f57e1a9b5eac420208022520c",
       "cuda-13.3-libnvvm-13.3.33-register-mma-b1.json:e7974bf639d1957d7115ebb74308611d130daa814f13a408d440e953bc466bee",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int4-m16.json:2db40fe5bd2964185ef622f307d37d5c14a0766554d6051bb3e219ad4097e1e7",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int4-m8.json:c64d20e835ef405cb9d5d4448ca5d3f76c40fbb8679572b7fd8bcbf8f227fe42",
@@ -35,6 +36,7 @@
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
+      "rust-llvm-22.1.2-1cb4e383-prmt.json:0db77388fb2d4d724a89e800d6c3d2451a9907d09509f8e4d102410bd8b56af6",
       "rust-llvm-22.1.2-1cb4e383-register-mma-b1.json:4c0b0a1a42db6f8b563e87b9d7f405ea9714a0ff48919cec1514ab0c0aa8b5eb",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int4-m16.json:61c4f096e61755b69c5c08b28aa1d31280b222fd3cdf7a56d6c2660f8d46b0c0",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int4-m8.json:fdddc37e76fb5e60fcd7d6cb0a395539b7665f8ea5882b97cde735d7f0407f29",
@@ -57597,6 +57599,1698 @@
         ]
       },
       "summary": "Atomically adds two packed f16 lanes in global memory and returns the two independently observed old lane values."
+    },
+    {
+      "id": "prmt",
+      "operation_key": "integer.prmt.b32",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0252",
+        "module": "prmt",
+        "name": "prmt",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0252",
+        "public_path": "cuda_intrinsics::prmt::prmt",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "generic",
+        "adapter": "direct_three_operands"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Permutes bytes selected from two 32-bit inputs."
+    },
+    {
+      "id": "prmt_b4e",
+      "operation_key": "integer.prmt.b32.b4e",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt_b4e"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0254",
+        "module": "prmt",
+        "name": "prmt_b4e",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0254",
+        "public_path": "cuda_intrinsics::prmt::prmt_b4e",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt_b4e"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt.b4e",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "b4e",
+        "adapter": "direct_three_operands"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32",
+          "b4e"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Permutes bytes with the backward four-byte extract mode."
+    },
+    {
+      "id": "prmt_ecl",
+      "operation_key": "integer.prmt.b32.ecl",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt_ecl"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0256",
+        "module": "prmt",
+        "name": "prmt_ecl",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0256",
+        "public_path": "cuda_intrinsics::prmt::prmt_ecl",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt_ecl"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt.ecl",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "ecl",
+        "adapter": "insert_zero_second_source"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32",
+          "ecl"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Clamps a byte extract toward the least-significant byte."
+    },
+    {
+      "id": "prmt_ecr",
+      "operation_key": "integer.prmt.b32.ecr",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt_ecr"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0257",
+        "module": "prmt",
+        "name": "prmt_ecr",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0257",
+        "public_path": "cuda_intrinsics::prmt::prmt_ecr",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt_ecr"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt.ecr",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "ecr",
+        "adapter": "insert_zero_second_source"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32",
+          "ecr"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Clamps a byte extract toward the most-significant byte."
+    },
+    {
+      "id": "prmt_f4e",
+      "operation_key": "integer.prmt.b32.f4e",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt_f4e"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0253",
+        "module": "prmt",
+        "name": "prmt_f4e",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0253",
+        "public_path": "cuda_intrinsics::prmt::prmt_f4e",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt_f4e"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt.f4e",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "f4e",
+        "adapter": "direct_three_operands"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32",
+          "f4e"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Permutes bytes with the forward four-byte extract mode."
+    },
+    {
+      "id": "prmt_rc16",
+      "operation_key": "integer.prmt.b32.rc16",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt_rc16"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0258",
+        "module": "prmt",
+        "name": "prmt_rc16",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0258",
+        "public_path": "cuda_intrinsics::prmt::prmt_rc16",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt_rc16"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt.rc16",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "rc16",
+        "adapter": "insert_zero_second_source"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32",
+          "rc16"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Replicates a selected 16-bit half across the result."
+    },
+    {
+      "id": "prmt_rc8",
+      "operation_key": "integer.prmt.b32.rc8",
+      "family": "prmt",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_prmt_rc8"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0255",
+        "module": "prmt",
+        "name": "prmt_rc8",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "it only permutes register bytes and has no caller preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0255",
+        "public_path": "cuda_intrinsics::prmt::prmt_rc8",
+        "compatibility_paths": [
+          "cuda_device::prmt::prmt_rc8"
+        ]
+      },
+      "dialect": {
+        "op_type": "PrmtOp",
+        "op_name": "nvvm.prmt",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.prmt.rc8",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.7 Data Movement and Conversion Instructions: prmt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-prmt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_20"
+              ],
+              "representation": "typed declarations for all seven PRMT records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the canonical attributes; IR SHA-256 0ee6196e1f67ae7ee42660cee813a5cbe5b0d247dbdbca079ef4559f26c324ea.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "one typed probe retaining dynamic and immediate calls for every PRMT mode",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted all seven modes with dynamic controls and all seven immediate controls; PTX SHA-256 765f7cb84c57545ee6f09cd5fedc27b7e4bca47153f4dd468bad18f1855d6fb8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx32"
+              ],
+              "representation": "LLVM-produced PTX 3.2 containing all seven PRMT modes",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the virtual sm_20 floor PTX; cubin SHA-256 0d714af03e6771b42bfbb0cb2a8f81e645aa81e12a829c414d5ffd90ea27a9e7.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+          "target": {
+            "minimum_ptx": "2.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all seven PRMT modes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "prmt": {
+        "mode": "rc8",
+        "adapter": "insert_zero_second_source"
+      },
+      "lowering": "generated_prmt",
+      "expected_ptx": {
+        "mnemonic": "prmt",
+        "modifiers": [
+          "b32",
+          "rc8"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Replicates a selected byte across the 32-bit result."
     },
     {
       "id": "redux_sync_add",

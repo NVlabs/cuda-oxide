@@ -1,0 +1,113 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-prmt",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": ["i32"],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_75",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "prmt_inline_probe",
+      "coverage_count": 7,
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "one libNVVM LTO probe retaining dynamic calls for all seven PRMT modes",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted every mode; LTOIR SHA-256 82beb73a1fde7677a85801ad07a59d8949aa05c36111d7c632af171b3d0703d5."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked cubin retaining all seven PRMT modes",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced PTX and cubin; PTX SHA-256 dcf052adef81afc5af5769e4495f7527929e7ae604631583aa61de75486cc609, cubin SHA-256 2c1eb32f40834c3ff328d02148e68da3ede02610bb6bc39979c1b45756d3efdc.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "mode", "values": ["prmt"]}],
+      "product_count": 1,
+      "fixtures": ["prmt_inline_probe"],
+      "template": {
+        "id": "${mode}",
+        "source_record": "int_nvvm_${mode}",
+        "llvm_symbol": "llvm.nvvm.${mode}",
+        "expected_ptx": {
+          "mnemonic": "prmt",
+          "modifiers": ["b32"],
+          "operands": [
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "register"}
+          ]
+        },
+        "facts": {"llvm_arguments": ["i32", "i32", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "mode", "values": ["b4e", "f4e"]}],
+      "product_count": 2,
+      "fixtures": ["prmt_inline_probe"],
+      "template": {
+        "id": "prmt_${mode}",
+        "source_record": "int_nvvm_prmt_${mode}",
+        "llvm_symbol": "llvm.nvvm.prmt.${mode}",
+        "expected_ptx": {
+          "mnemonic": "prmt",
+          "modifiers": ["b32", "${mode}"],
+          "operands": [
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "register"}
+          ]
+        },
+        "facts": {"llvm_arguments": ["i32", "i32", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "mode", "values": ["ecl", "ecr", "rc16", "rc8"]}],
+      "product_count": 4,
+      "fixtures": ["prmt_inline_probe"],
+      "template": {
+        "id": "prmt_${mode}",
+        "source_record": "int_nvvm_prmt_${mode}",
+        "llvm_symbol": "llvm.nvvm.prmt.${mode}",
+        "expected_ptx": {
+          "mnemonic": "prmt",
+          "modifiers": ["b32", "${mode}"],
+          "operands": [
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "exact", "value": "0"},
+            {"kind": "register"}
+          ]
+        },
+        "facts": {"llvm_arguments": ["i32", "i32"]}
+      }
+    }
+  ]
+}
