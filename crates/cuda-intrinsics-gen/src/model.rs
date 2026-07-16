@@ -544,6 +544,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default)]
+    pub movmatrix: Option<Movmatrix>,
+    #[serde(default)]
     pub register_mma: Option<RegisterMma>,
     #[serde(default)]
     pub sparse_mma: Option<SparseMma>,
@@ -851,6 +853,27 @@ pub enum LdmatrixMemoryOrder {
 pub enum RuntimeValidation {
     Unexecuted,
     Executed,
+}
+
+/// Closed contract for the in-register warp matrix transpose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Movmatrix {
+    pub participation: MovmatrixParticipation,
+    pub adapter: MovmatrixAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MovmatrixParticipation {
+    AllWarpLanesSameInstructionNoExitedLanes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MovmatrixAdapter {
+    PackedB16x2U32ToPackedB16x2U32,
 }
 
 /// Closed contract for register-only warp-level `mma.sync` operations.
@@ -1992,6 +2015,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movmatrix: Option<Movmatrix>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub register_mma: Option<RegisterMma>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sparse_mma: Option<SparseMma>,
@@ -2568,6 +2593,31 @@ runtime_validation = "unexecuted"
                 toml::from_str::<MbarrierBasic>(&invalid).is_err(),
                 "{invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn movmatrix_contract_rejects_open_ended_policy() {
+        let valid = r#"
+participation = "all_warp_lanes_same_instruction_no_exited_lanes"
+adapter = "packed_b16x2_u32_to_packed_b16x2_u32"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<Movmatrix>(valid).unwrap();
+        assert_eq!(
+            parsed.participation,
+            MovmatrixParticipation::AllWarpLanesSameInstructionNoExitedLanes
+        );
+
+        for invalid in [
+            valid.replace(
+                "all_warp_lanes_same_instruction_no_exited_lanes",
+                "participating_lanes",
+            ),
+            valid.replace("packed_b16x2_u32_to_packed_b16x2_u32", "direct_u32"),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<Movmatrix>(&invalid).is_err(), "{invalid}");
         }
     }
 

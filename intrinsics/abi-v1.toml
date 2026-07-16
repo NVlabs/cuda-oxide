@@ -2135,3 +2135,10 @@ status = "active"
 catalog_id = "stmatrix_m8n8_x4_trans_b16"
 operation_key = "matrix.stmatrix.m8n8.x4.transposed.b16.shared"
 raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0305"
+status = "active"
+catalog_id = "movmatrix_trans_b16"
+operation_key = "movmatrix.m8n8.trans.b16"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "u32" }

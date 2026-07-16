@@ -4826,6 +4826,64 @@
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         }
       ]
+    },
+    {
+      "id": "movmatrix_trans_b16",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "movmatrix.sync.aligned.m8n8.trans.b16"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_75",
+      "ptx_feature": "+ptx78",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "movmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "trans",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx78"
+          ],
+          "representation": "one convergent LLVM IR inline-PTX probe for the packed b16 transpose",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned Rust LLVM emitted one exact movmatrix instruction; source SHA-256 b8776ed95d8c8e451deea02d8851a238cfcfe570e286a92c94e5971bf06db963, bitcode SHA-256 caf25ab44ed893d449343707f06af85395e86f41852c32ec1b577be184365aee, and PTX SHA-256 f1e1b7d8ad879abd120d6cb32a5999925af0ed77b3a7144a7dfd8db76ea18246."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx78"
+          ],
+          "representation": "642-byte LLVM-produced PTX module containing movmatrix.sync.aligned.m8n8.trans.b16",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the module and produced a 1,464-byte cubin with SHA-256 cbb5dbdfabb866accc3b6dd469ada00f0296aaca7012e3ae14c9b9396da5a887.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
     }
   ]
 }

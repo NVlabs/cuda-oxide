@@ -2889,24 +2889,6 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
-        // Warp-level matrix operations (from intrinsics::wmma)
-        // =================================================================
-        "cuda_device::wmma::movmatrix_trans_b16" => {
-            Ok(Some(intrinsics::wmma::emit_movmatrix_trans_b16(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-
-        // =================================================================
         // CLC - Cluster Launch Control (from intrinsics::clc)
         // =================================================================
         "cuda_device::clc::clc_try_cancel" => Ok(Some(intrinsics::clc::emit_clc_try_cancel(

@@ -11,14 +11,15 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "03db2e70d460a1de6a44dc585d1138d59900810419d9df9a162c06c48fdc9f2e",
-    "abi_ledger_sha256": "e54aabdae3ecb51f5afc8754561db2eead5f1067ff61ce1bbd070159e37dcd67",
+    "overlay_sha256": "6e68ac56fe7386e37aec266fa91396afcdcdefb9fa73b4024d837bc8bc0592bb",
+    "abi_ledger_sha256": "83caf98a604381944fb9535cef36bd127281b034d3e5aacc1fec8f66da74fae6",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-debug-control.json:184227ee2b4791011f563f597d8f6fb2393430b327a72c758c34ceec44c9469b",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
+      "cuda-13.3-libnvvm-13.3.33-movmatrix.json:4063d72012f78cc980a2d8d7a2f7f888e1ebc5bee41ccf4969ab6f5077cf2d87",
       "cuda-13.3-libnvvm-13.3.33-packed-conversion-fp8.json:167358662f1512c6ca7dba1080140834a22f5e122ae5e8db87fe8e19ff05ad9b",
       "cuda-13.3-libnvvm-13.3.33-prmt.json:e06d8b99575304ab780b58f665babfb7d24dfd2f57e1a9b5eac420208022520c",
       "cuda-13.3-libnvvm-13.3.33-register-mma-b1.json:e7974bf639d1957d7115ebb74308611d130daa814f13a408d440e953bc466bee",
@@ -64,7 +65,7 @@
       "rust-llvm-22.1.2-1cb4e383-special-registers.json:25e9c6b3d16bcaf1e0de6e322a55255b2ca05c011097597a9f06bd5f7bdadf62",
       "rust-llvm-22.1.2-1cb4e383-stmatrix.json:2613b295a6baaf873eef8111b0a9a49699df238490bbf8b05aea49e79f332dcc",
       "rust-llvm-22.1.2-1cb4e383-threadfence.json:682055fd75b61cd6f86f92e5927cde6ed44091f461fb72569cee67e2e7b0783e",
-      "rust-llvm-22.1.2-1cb4e383.json:3eb72286da6334949d1b252be0c5ea74004f0f6445768c123d2868fb8de78376"
+      "rust-llvm-22.1.2-1cb4e383.json:e6aae4e643ef2fa50f5edf9d0ec54fddc34d7e85ebf247bcb60b728367bd47bd"
     ]
   },
   "intrinsics": [
@@ -62372,6 +62373,210 @@
         ]
       },
       "summary": "Multiplies warp-distributed sparse unsigned A and unsigned B INT8 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "movmatrix_trans_b16",
+      "operation_key": "movmatrix.m8n8.trans.b16",
+      "family": "movmatrix",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "movmatrix.sync.aligned.m8n8.trans.b16"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0305",
+        "module": "matrix",
+        "name": "movmatrix_trans_b16",
+        "arguments": [
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0305",
+        "public_path": "cuda_intrinsics::matrix::movmatrix_trans_b16",
+        "compatibility_paths": [
+          "cuda_device::wmma::movmatrix_trans_b16"
+        ]
+      },
+      "dialect": {
+        "op_type": "MovmatrixTransB16Op",
+        "op_name": "nvvm.movmatrix_trans_b16",
+        "operands": [
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.17 Warp-level matrix transpose instruction: movmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-movmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx78"
+              ],
+              "representation": "one convergent LLVM IR inline-PTX probe for the packed b16 transpose",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned Rust LLVM emitted one exact movmatrix instruction; source SHA-256 b8776ed95d8c8e451deea02d8851a238cfcfe570e286a92c94e5971bf06db963, bitcode SHA-256 caf25ab44ed893d449343707f06af85395e86f41852c32ec1b577be184365aee, and PTX SHA-256 f1e1b7d8ad879abd120d6cb32a5999925af0ed77b3a7144a7dfd8db76ea18246.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx78"
+              ],
+              "representation": "642-byte LLVM-produced PTX module containing movmatrix.sync.aligned.m8n8.trans.b16",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the module and produced a 1,464-byte cubin with SHA-256 cbb5dbdfabb866accc3b6dd469ada00f0296aaca7012e3ae14c9b9396da5a887.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-movmatrix",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "one CUDA device probe with volatile inline PTX for the packed b16 transpose",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 emitted a 776-byte PTX 9.3 module containing one exact movmatrix instruction; source SHA-256 b739bbbdb128536727c6d7fe1b9a68475d290b17890620b93723b5ba1f86f7c0 and PTX SHA-256 fc7891162851c2656b68e3a7d5570aad52c06d75ab7ea1a864ab66256783053a.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "linked CUDA movmatrix probe retaining the exact instruction",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 produced a 3,240-byte cubin with SHA-256 5d975d8240f586224c39bc2599939ea724d488a0b5c4944e955c13025b1a3bcc.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/nvcc",
+              "tool_version": "CUDA compilation tools, release 13.3, V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "6b55d91cd23f314ccb6801d71d64d20760a7ec31d37d87017ea0681d79bd3285"
+            }
+          ]
+        }
+      ],
+      "movmatrix": {
+        "participation": "all_warp_lanes_same_instruction_no_exited_lanes",
+        "adapter": "packed_b16x2_u32_to_packed_b16x2_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_movmatrix_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "movmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "trans",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Transposes one packed b16 matrix fragment across a warp."
     },
     {
       "id": "mul_bf16x2",

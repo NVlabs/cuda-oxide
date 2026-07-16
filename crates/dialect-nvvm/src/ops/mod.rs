@@ -25,7 +25,6 @@
 //! │ wgmma       │ Warpgroup Matrix Multiply-Acc      │ Hopper+    │ 5    │
 //! │ tcgen05     │ Tensor Core Gen 5 operations       │ Blackwell+ │ 25+  │
 //! │ stmatrix    │ Shared memory matrix store         │ Hopper+    │ 5    │
-//! │ wmma        │ In-register matrix transpose       │ Turing+    │ 1    │
 //! └─────────────┴────────────────────────────────────┴────────────┴──────┘
 //! ```
 //!
@@ -110,7 +109,6 @@ mod tcgen05;
 mod tma;
 mod warp;
 mod wgmma;
-mod wmma;
 
 use pliron::context::Context;
 
@@ -127,7 +125,6 @@ pub use tcgen05::*;
 pub use tma::*;
 pub use warp::*;
 pub use wgmma::*;
-pub use wmma::*;
 
 /// Register all NVVM dialect operations with the context.
 ///
@@ -146,5 +143,4 @@ pub fn register(ctx: &mut Context) {
     wgmma::register(ctx);
     tcgen05::register(ctx);
     debug::register(ctx);
-    wmma::register(ctx);
 }

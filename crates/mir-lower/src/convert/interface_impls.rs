@@ -48,11 +48,11 @@ use dialect_nvvm::ops::{
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, InlinePtxOp,
     MapaSharedClusterOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
     MbarrierArriveExpectTxSharedOp, MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp,
-    MbarrierTryWaitSharedOp, MovmatrixTransB16Op, NanosleepOp, NvvmAtomicCmpxchgOp,
-    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, Tcgen05AllocCg2Op, Tcgen05AllocOp,
-    Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp,
-    Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op,
-    Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
+    MbarrierTryWaitSharedOp, NanosleepOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp,
+    NvvmAtomicStoreOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
+    Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
+    Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
+    Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
     Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
     Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
     Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
@@ -1904,25 +1904,6 @@ impl MirToLlvmConversion for CpAsyncBulkWaitGroupReadOp {
             self.get_operation(),
             operands_info,
             true,
-        )
-    }
-}
-
-// ---- NVVM warp-level matrix ops --------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MovmatrixTransB16Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::wmma::convert_movmatrix_trans_b16(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
         )
     }
 }

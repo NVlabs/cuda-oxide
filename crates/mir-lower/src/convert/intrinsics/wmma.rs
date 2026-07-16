@@ -3,49 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warp-level matrix intrinsic lowering.
+//! Shared lowering helpers for generated matrix intrinsics.
 
 use crate::convert::intrinsics::common::*;
-use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
+use llvm_export::ops as llvm;
 use llvm_export::types as llvm_types;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
-use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
+use pliron::irbuild::dialect_conversion::DialectConversionRewriter;
 use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
-
-/// Lower `movmatrix.sync.aligned.m8n8.trans.b16`.
-pub(crate) fn convert_movmatrix_trans_b16(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 1 {
-        return pliron::input_err_noloc!(
-            "movmatrix_trans_b16 requires 1 operand, got {}",
-            operands.len()
-        );
-    }
-
-    let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-    let inline_asm = llvm::InlineAsmOp::build(
-        ctx,
-        result_ty.into(),
-        vec![operands[0]],
-        "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;",
-        "=r,r",
-        AsmKind::Convergent,
-    );
-    let asm_op = inline_asm.get_operation();
-    rewriter.insert_operation(ctx, asm_op);
-    rewriter.replace_operation(ctx, op, asm_op);
-    Ok(())
-}
 
 /// Result carrier used by generated MMA recipes.
 #[derive(Clone, Copy)]

@@ -7,7 +7,7 @@
 // Catalog schema/version: 38/0.1.0; intrinsic ABI: v1; catalog SHA-256: 9e773570940ed3f9fd4f8cadd82d26f4fbb565bca56a868686ee658133d32530.
 // LLVM source: 1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e.
 
-//! Structural operation for the generated active warp mask.
+//! Structural operation for generated in-register matrix transpose.
 
 use pliron::{
     builtin::{
@@ -21,51 +21,58 @@ use pliron::{
     operation::Operation,
     result::Error,
     r#type::Typed,
+    value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
 
-/// Returns the lanes active at this instruction in the current warp.
-#[pliron_op(
-    name = "nvvm.activemask",
-    format,
-    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
-)]
-pub struct ActiveMaskOp;
+fn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == 32)
+}
 
-impl ActiveMaskOp {
+/// Transposes one packed b16 matrix fragment across a warp.
+#[pliron_op(
+    name = "nvvm.movmatrix_trans_b16",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct MovmatrixTransB16Op;
+
+impl MovmatrixTransB16Op {
     pub fn new(op: Ptr<Operation>) -> Self {
         Self { op }
     }
 
-    pub fn build(ctx: &mut Context) -> Ptr<Operation> {
+    pub fn build(ctx: &mut Context, value: Value) -> Ptr<Operation> {
         let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
             vec![result_ty.into()],
-            vec![],
+            vec![value],
             vec![],
             0,
         )
     }
 }
 
-impl Verify for ActiveMaskOp {
+impl Verify for MovmatrixTransB16Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
-        let valid = op.get_num_operands() == 0
-            && op.get_num_results() == 1
-            && op
-                .get_result(0)
-                .get_type(ctx)
-                .deref(ctx)
-                .downcast_ref::<IntegerType>()
-                .is_some_and(|integer| integer.width() == 32);
-        if !valid {
+        if op.get_num_operands() != 1 || op.get_num_results() != 1 {
             return verify_err!(
                 op.loc(),
-                "nvvm.activemask requires no operands and one i32 result"
+                "nvvm.movmatrix_trans_b16 requires one operand and one result"
+            );
+        }
+        if !is_i32(ctx, op.get_operand(0).get_type(ctx))
+            || !is_i32(ctx, op.get_result(0).get_type(ctx))
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.movmatrix_trans_b16 operand and result must be 32-bit integers"
             );
         }
         Ok(())
@@ -73,5 +80,5 @@ impl Verify for ActiveMaskOp {
 }
 
 pub(super) fn register(ctx: &mut Context) {
-    ActiveMaskOp::register(ctx);
+    MovmatrixTransB16Op::register(ctx);
 }

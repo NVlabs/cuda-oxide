@@ -102,6 +102,12 @@ pub fn all_outputs(
             render_compat_stmatrix(catalog, catalog_sha256),
         );
     }
+    if movmatrix(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/movmatrix.rs".into(),
+            render_compat_movmatrix(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/cuda-device/src/generated/atomic.rs".into(),
         render_compat_packed_atomic(catalog, catalog_sha256),
@@ -232,6 +238,12 @@ pub fn all_outputs(
         "crates/dialect-nvvm/src/ops/generated/mbarrier_basic.rs".into(),
         render_dialect_mbarrier_basic(catalog, catalog_sha256),
     );
+    if movmatrix(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/movmatrix.rs".into(),
+            render_dialect_movmatrix(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/warp_match.rs".into(),
         render_dialect_warp_match(catalog, catalog_sha256),
@@ -309,6 +321,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "cp_async_control" && record.cp_async_control.is_some())
                     || (record.family == "cp_async_mbarrier" && record.cp_async_mbarrier.is_some())
                     || (record.family == "mbarrier_basic" && record.mbarrier_basic.is_some())
+                    || (record.family == "movmatrix" && record.movmatrix.is_some())
                     || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
                     || (record.family == "cluster_memory" && record.cluster_memory.is_some())
                     || record.family == "sync",
@@ -380,6 +393,24 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_register_mma"
                     && record.register_mma.is_some(),
                 "{} is outside the closed generated register-MMA recipe",
+                record.id
+            ),
+            "movmatrix" => ensure!(
+                record.rust.module == "matrix"
+                    && record.rust.arguments == ["u32"]
+                    && record.rust.result == "u32"
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.op_type == "MovmatrixTransB16Op"
+                    && record.dialect.op_name == "nvvm.movmatrix_trans_b16"
+                    && record.dialect.operands == ["i32"]
+                    && record.dialect.results == ["i32"]
+                    && record.semantics.pure
+                    && record.semantics.memory == "none"
+                    && record.semantics.convergent
+                    && record.lowering == "generated_movmatrix_inline_ptx"
+                    && record.movmatrix.is_some(),
+                "{} is outside the generated movmatrix recipe",
                 record.id
             ),
             "sparse_mma" => {
@@ -1295,6 +1326,21 @@ fn mbarrier_basics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrin
         .filter(|record| record.family == "mbarrier_basic")
 }
 
+fn movmatrix(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "movmatrix")
+}
+
+fn movmatrix_template(record: &CatalogIntrinsic) -> String {
+    format!(
+        "{}.{} $0, $1;",
+        record.expected_ptx.mnemonic,
+        record.expected_ptx.modifiers.join(".")
+    )
+}
+
 fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
     catalog
         .intrinsics
@@ -2149,6 +2195,12 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                         "/// Signed accumulator overflow clamps to the finite `i32` range.\n",
                     );
                 }
+            } else if record.movmatrix.is_some() {
+                output.push_str(
+                    "/// All 32 warp lanes must execute the same instruction, and no lane may have exited.\n\
+                     /// `_arg0` must contain this lane's two packed b16 input elements.\n\
+                     /// The operation is register-only and is not a memory fence.\n",
+                );
             } else if record.redux.is_some() {
                 output.push_str(
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `redux.sync` operation with the same qualifiers and mask.\n\
@@ -2844,6 +2896,50 @@ fn render_compat_cluster_memory(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::wmma` to keep its public API stable.\n\n");
+    for record in movmatrix(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::wmma::"))
+            .expect("movmatrix compatibility path");
+        assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n\
+             /// Each lane supplies two packed b16 values. The warp collectively transposes the 8x8 tile.\n\
+             /// This register-only operation does not access or order memory.\n\
+             ///\n\
+             /// # Safety\n\
+             /// All 32 warp lanes must execute the same call, and no lane may have exited.\n",
+        );
+        writeln!(
+            output,
+            "/// Requires PTX {} and `sm_75+`.",
+            record.target.minimum_ptx
+        )
+        .unwrap();
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub unsafe fn {}(value: u32) -> u32 {{",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("    let _ = value;\n");
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_debug_control(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::debug` to keep its public API stable.\n\n");
@@ -3366,7 +3462,7 @@ fn render_compat_packed_conversion(
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod cluster_barrier;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cluster_barrier::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cluster_barrier::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod cluster_barrier;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod movmatrix;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cluster_barrier::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use movmatrix::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cluster_barrier::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    movmatrix::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     if debug_controls(catalog).next().is_some() {
         output = output
@@ -3403,6 +3499,11 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
                 "    sync::register(ctx);",
                 "    stmatrix::register(ctx);\n    sync::register(ctx);",
             );
+    }
+    if movmatrix(catalog).next().is_none() {
+        output = output.replace("mod movmatrix;\n", "");
+        output = output.replace("pub use movmatrix::*;\n", "");
+        output = output.replace("    movmatrix::register(ctx);\n", "");
     }
     output
 }
@@ -3990,6 +4091,46 @@ fn verify_mbarrier_basic(
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
+    output
+}
+
+fn render_dialect_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    if movmatrix(catalog).next().is_none() {
+        output.push_str(
+            "//! Structural operation for generated in-register matrix transpose.\n\nuse pliron::context::Context;\n\npub(super) fn register(_ctx: &mut Context) {}\n",
+        );
+        return output;
+    }
+    let record = movmatrix(catalog).next().unwrap();
+    output.push_str(
+        "//! Structural operation for generated in-register matrix transpose.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+    );
+    writeln!(output, "/// {}", record.summary).unwrap();
+    writeln!(
+        output,
+        "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],\n)]\npub struct {};\n",
+        record.dialect.op_name, record.dialect.op_type
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "impl {} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, value: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![value],\n            vec![],\n            0,\n        )\n    }}\n}}\n",
+        record.dialect.op_type
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "impl Verify for {} {{\n    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 1 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_i32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n\npub(super) fn register(ctx: &mut Context) {{\n    {}::register(ctx);\n}}\n",
+        record.dialect.op_type,
+        format!("{} requires one operand and one result", record.dialect.op_name),
+        format!(
+            "{} operand and result must be 32-bit integers",
+            record.dialect.op_name
+        ),
+        record.dialect.op_type,
+    )
+    .unwrap();
     output
 }
 
@@ -5829,6 +5970,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
     }
+    if let Some(record) = movmatrix(catalog).next() {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     if register_mmas(catalog).next().is_some() {
         output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
     }
@@ -6632,6 +6777,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
     for record in packed_conversions(catalog) {
+        render_importer_pure_value_dispatch(&mut output, catalog, record);
+    }
+    for record in movmatrix(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
     for record in prmts(catalog) {
@@ -7470,6 +7618,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
     }
+    if let Some(record) = movmatrix(catalog).next() {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     if register_mmas(catalog).next().is_some() {
         for record in
             register_mmas(catalog).filter(|record| register_mma_compat_op_type(record).is_some())
@@ -7856,6 +8008,15 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_stmatrix(\n            ctx, rewriter, self.get_operation(), {count}, {transposed}, {intrinsic_name:?},\n        )\n    }}\n}}\n"
+        )
+        .unwrap();
+    }
+    if let Some(record) = movmatrix(catalog).next() {
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        let op = self.get_operation();\n        let operands: Vec<_> = op.deref(ctx).operands().collect();\n        if operands.len() != 1 {{\n            return pliron::input_err_noloc!(\n                \"movmatrix_trans_b16 requires 1 operand, got {{}}\",\n                operands.len()\n            );\n        }}\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, result_ty.into(), operands, {:?}, \"=r,r\",\n        );\n        rewriter.replace_operation(ctx, op, asm);\n        Ok(())\n    }}\n}}\n",
+            record.dialect.op_type,
+            movmatrix_template(record),
         )
         .unwrap();
     }
@@ -9130,6 +9291,15 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 output.push_str("  ret void\n}\n");
             }
         }
+    } else if record.movmatrix.is_some() {
+        writeln!(output, "define i32 @probe_{}(i32 %value) #0 {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call i32 asm {:?}, \"=r,r\"(i32 %value) #0",
+            movmatrix_template(record),
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n\nattributes #0 = { convergent }\n");
     } else if record.packed_alu.is_some() {
         let arity = record.rust.arguments.len();
         let parameters = (0..arity)
@@ -10057,6 +10227,17 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             }
         }
     }
+    if movmatrix(catalog).next().is_some() {
+        output.push_str("\n## movmatrix contracts\n\n");
+        for record in movmatrix(catalog) {
+            writeln!(
+                output,
+                "- `{}` transposes one packed b16 fragment in registers. All warp lanes must execute the same instruction, and no lane may have exited.",
+                record.id,
+            )
+            .unwrap();
+        }
+    }
     if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
         output.push_str("\n## Synchronization contracts\n\n");
     } else {
@@ -10212,6 +10393,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .or_else(|| {
                 record
                     .mbarrier_basic
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
+            .or_else(|| {
+                record
+                    .movmatrix
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
@@ -11659,11 +11846,96 @@ mod tests {
     }
 
     #[test]
+    fn movmatrix_rendering_owns_dialect_import_and_lowering() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let mut record = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == "packed_atomic_add_f16x2")
+            .unwrap()
+            .clone();
+        record.id = "movmatrix_trans_b16".into();
+        record.operation_key = "movmatrix.m8n8.trans.b16".into();
+        record.family = "movmatrix".into();
+        record.rust.abi_id = "i0305".into();
+        record.rust.module = "matrix".into();
+        record.rust.name = "movmatrix_trans_b16".into();
+        record.rust.arguments = vec!["u32".into()];
+        record.rust.result = "u32".into();
+        record.rust.safe = false;
+        record.rust.must_use = true;
+        record.rust.canonical_path = "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0305".into();
+        record.rust.public_path = "cuda_intrinsics::matrix::movmatrix_trans_b16".into();
+        record.rust.compatibility_paths = vec!["cuda_device::wmma::movmatrix_trans_b16".into()];
+        record.dialect.op_type = "MovmatrixTransB16Op".into();
+        record.dialect.op_name = "nvvm.movmatrix_trans_b16".into();
+        record.dialect.operands = vec!["i32".into()];
+        record.dialect.results = vec!["i32".into()];
+        record.semantics.pure = true;
+        record.semantics.memory = "none".into();
+        record.semantics.convergent = true;
+        record.semantics.execution_scope = "warp".into();
+        record.packed_atomic = None;
+        record.movmatrix = Some(crate::model::Movmatrix {
+            participation:
+                crate::model::MovmatrixParticipation::AllWarpLanesSameInstructionNoExitedLanes,
+            adapter: crate::model::MovmatrixAdapter::PackedB16x2U32ToPackedB16x2U32,
+            runtime_validation: RuntimeValidation::Unexecuted,
+        });
+        record.lowering = "generated_movmatrix_inline_ptx".into();
+        record.expected_ptx = crate::ptx::InstructionPattern::new(
+            "movmatrix",
+            &["sync", "aligned", "m8n8", "trans", "b16"],
+            vec![
+                crate::ptx::OperandPattern::Register,
+                crate::ptx::OperandPattern::Register,
+            ],
+        );
+        record.summary = "Transposes one packed b16 matrix fragment across a warp.".into();
+        catalog.intrinsics.push(record);
+
+        validate_renderable(&catalog).unwrap();
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod movmatrix;"));
+        assert!(dialect_mod.contains("movmatrix::register(ctx);"));
+
+        let dialect = render_dialect_movmatrix(&catalog, "test-hash");
+        assert!(dialect.contains("pub struct MovmatrixTransB16Op;"));
+        assert!(dialect.contains("name = \"nvvm.movmatrix_trans_b16\""));
+        assert!(dialect.contains("MovmatrixTransB16Op::register(ctx);"));
+
+        let compatibility = render_compat_movmatrix(&catalog, "test-hash");
+        assert!(compatibility.contains("pub unsafe fn movmatrix_trans_b16(value: u32) -> u32"));
+        assert!(compatibility.contains("All 32 warp lanes must execute the same call"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::wmma::movmatrix_trans_b16"));
+        assert!(importer.contains("MovmatrixTransB16Op::build(ctx, arg0)"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("impl MirToLlvmConversion for MovmatrixTransB16Op"));
+        assert!(lowering.contains("movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;"));
+        assert!(lowering.contains("\"=r,r\""));
+        assert!(lowering.contains("inline_asm_convergent"));
+
+        let probe_record = movmatrix(&catalog).next().unwrap();
+        let probe = render_probe(&catalog, probe_record, "test-hash");
+        assert!(probe.contains("call i32 asm \"movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;\""));
+        assert!(probe.contains("attributes #0 = { convergent }"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/movmatrix.rs"
+        )));
+    }
+
+    #[test]
     fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 304);
+        assert_eq!(catalog.intrinsics.len(), 305);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

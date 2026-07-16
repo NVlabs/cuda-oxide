@@ -22,20 +22,21 @@ use crate::model::{
     IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
     LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
     LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierStateSpace, OverlayBackendLowering, OverlayFile,
-    OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
-    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
-    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
-    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
-    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionFp8Admission,
-    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
-    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
-    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
-    RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
-    RegisterMmaIntegerAdmission, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
-    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator,
-    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    MbarrierBasicOperation, MbarrierStateSpace, MovmatrixAdapter, MovmatrixParticipation,
+    OverlayBackendLowering, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
+    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
+    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
+    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
+    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
+    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
+    PackedConversionFp8Admission, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission,
+    PrmtMode, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaBinaryAdmission,
+    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaIntegerAdmission,
+    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation,
+    RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
@@ -742,7 +743,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -757,6 +758,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.cp_async_control,
             record.cp_async_mbarrier,
             record.mbarrier_basic,
+            record.movmatrix,
             record.register_mma,
             record.sparse_mma,
             record.prmt,
@@ -1169,6 +1171,7 @@ fn validate_policy(
             policy,
             declaration.context("mbarrier_basic requires imported LLVM declaration")?,
         )?,
+        "movmatrix" => validate_movmatrix_policy(policy, source)?,
         "register_mma" => validate_register_mma_policy(
             policy,
             declaration.context("register_mma requires imported LLVM declaration")?,
@@ -1189,6 +1192,11 @@ fn validate_policy(
         "cluster_memory" => validate_cluster_memory_policy(policy, source, declaration)?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
+    ensure!(
+        (policy.family == "movmatrix") == policy.movmatrix.is_some(),
+        "{} mixes the movmatrix contract with another generated family",
+        policy.id
+    );
     ensure!(
         (policy.family == "register_mma") == policy.register_mma.is_some(),
         "{} mixes the register-MMA contract with another generated family",
@@ -1692,6 +1700,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -4027,6 +4036,7 @@ fn expand_special_register_admission(
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -4653,6 +4663,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         cp_async_control: None,
         cp_async_mbarrier: None,
         mbarrier_basic: None,
+        movmatrix: None,
         register_mma: None,
         sparse_mma: None,
         prmt: None,
@@ -5576,6 +5587,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -8242,6 +8254,7 @@ fn packed_conversion_overlay_record(
         cp_async_control: None,
         cp_async_mbarrier: None,
         mbarrier_basic: None,
+        movmatrix: None,
         register_mma: None,
         sparse_mma: None,
         prmt: None,
@@ -9500,6 +9513,7 @@ fn expand_register_mma_integer_admission(
             cp_async_control: None,
             cp_async_mbarrier: None,
             mbarrier_basic: None,
+            movmatrix: None,
             register_mma: Some(mma),
             sparse_mma: None,
             prmt: None,
@@ -9678,6 +9692,7 @@ fn expand_register_mma_binary_admission(
             cp_async_control: None,
             cp_async_mbarrier: None,
             mbarrier_basic: None,
+            movmatrix: None,
             register_mma: Some(mma),
             sparse_mma: None,
             prmt: None,
@@ -10320,6 +10335,7 @@ fn sparse_mma_overlay_record(
         cp_async_control: None,
         cp_async_mbarrier: None,
         mbarrier_basic: None,
+        movmatrix: None,
         register_mma: None,
         sparse_mma: Some(mma),
         prmt: None,
@@ -10758,6 +10774,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: Some(Prmt {
@@ -11107,6 +11124,7 @@ fn expand_cluster_barrier_admission(
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -11467,6 +11485,7 @@ fn expand_debug_control_admission(
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -11976,6 +11995,7 @@ fn expand_cluster_memory_admission(
                 cp_async_control: None,
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
+                movmatrix: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
@@ -12177,6 +12197,70 @@ fn ensure_exact_inline_ptx_backends(
     Ok(())
 }
 
+fn validate_movmatrix_policy(policy: &OverlayIntrinsic, source: &IntrinsicSource) -> Result<()> {
+    let contract = policy
+        .movmatrix
+        .as_ref()
+        .context("movmatrix requires its closed contract")?;
+    ensure!(
+        policy.id == "movmatrix_trans_b16"
+            && policy.operation_key == "movmatrix.m8n8.trans.b16"
+            && matches!(
+                source,
+                IntrinsicSource::PtxNative { instruction }
+                    if instruction == "movmatrix.sync.aligned.m8n8.trans.b16"
+            )
+            && policy.rust_module == "matrix"
+            && policy.rust_name == "movmatrix_trans_b16"
+            && policy.rust_arguments == ["u32"]
+            && policy.rust_result == "u32"
+            && !policy.safe
+            && policy.must_use
+            && policy.public_rust_path == "cuda_intrinsics::matrix::movmatrix_trans_b16"
+            && policy.compatibility_rust_paths == ["cuda_device::wmma::movmatrix_trans_b16"]
+            && policy.dialect_op_type == "MovmatrixTransB16Op"
+            && policy.dialect_op_name == "nvvm.movmatrix_trans_b16"
+            && policy.dialect_operands == ["i32"]
+            && policy.dialect_results == ["i32"]
+            && policy.pure
+            && policy.memory == "none"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "7.8"
+            && policy.minimum_sm.as_deref() == Some("sm_75")
+            && policy.ptx_result == "u32"
+            && policy.targets == "all"
+            && policy.lowering == "generated_movmatrix_inline_ptx"
+            && policy.expected_ptx
+                == InstructionPattern {
+                    mnemonic: "movmatrix".into(),
+                    modifiers: ["sync", "aligned", "m8n8", "trans", "b16"]
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
+                    operands: vec![OperandPattern::Register, OperandPattern::Register],
+                },
+        "{} is outside the closed movmatrix recipe",
+        policy.id
+    );
+    ensure!(
+        contract.participation == MovmatrixParticipation::AllWarpLanesSameInstructionNoExitedLanes
+            && contract.adapter == MovmatrixAdapter::PackedB16x2U32ToPackedB16x2U32,
+        "{} has an unreviewed movmatrix safety or adapter contract",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, "7.8", Some("sm_75")),
+            (IntrinsicBackend::LibNvvm, "7.8", Some("sm_75")),
+        ],
+        "movmatrix",
+    )?;
+    ensure_no_other_family_contract(policy, "movmatrix")?;
+    Ok(())
+}
+
 fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> Result<()> {
     ensure!(
         policy.packed_atomic.is_none()
@@ -12197,6 +12281,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
             && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some()
+            && (policy.family == "movmatrix") == policy.movmatrix.is_some()
             && (policy.family == "register_mma") == policy.register_mma.is_some()
             && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
             && (policy.family == "prmt") == policy.prmt.is_some()
@@ -13515,6 +13600,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(movmatrix) = &policy.movmatrix {
+        match movmatrix.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} movmatrix runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} movmatrix runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     if let Some(bridge) = &policy.cp_async_mbarrier {
         match bridge.runtime_validation {
             RuntimeValidation::Unexecuted => ensure!(
@@ -13732,6 +13833,7 @@ fn materialize_record(
         cp_async_control: policy.cp_async_control.clone(),
         cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
         mbarrier_basic: policy.mbarrier_basic.clone(),
+        movmatrix: policy.movmatrix.clone(),
         register_mma: policy.register_mma.clone(),
         sparse_mma: policy.sparse_mma.clone(),
         prmt: policy.prmt.clone(),
@@ -13855,6 +13957,7 @@ mod tests {
             cp_async_control: None,
             cp_async_mbarrier: None,
             mbarrier_basic: None,
+            movmatrix: None,
             register_mma: None,
             sparse_mma: None,
             prmt: None,
@@ -13884,6 +13987,72 @@ mod tests {
         record.dialect_op_name = "nvvm.read_ptx_sreg_tid_y".into();
         record.llvm_symbol = Some("llvm.nvvm.read.ptx.sreg.tid.y".into());
         record.expected_ptx = sreg_pattern("%tid.y");
+        record
+    }
+
+    fn movmatrix_policy() -> OverlayIntrinsic {
+        let mut record = policy();
+        record.id = "movmatrix_trans_b16".into();
+        record.abi_id = "i0305".into();
+        record.operation_key = "movmatrix.m8n8.trans.b16".into();
+        record.family = "movmatrix".into();
+        record.source = Some(IntrinsicSource::PtxNative {
+            instruction: "movmatrix.sync.aligned.m8n8.trans.b16".into(),
+        });
+        record.source_record = None;
+        record.rust_module = "matrix".into();
+        record.rust_name = "movmatrix_trans_b16".into();
+        record.rust_arguments = vec!["u32".into()];
+        record.rust_result = "u32".into();
+        record.safe = false;
+        record.must_use = true;
+        record.safe_allowlist_reason = None;
+        record.public_rust_path = "cuda_intrinsics::matrix::movmatrix_trans_b16".into();
+        record.compatibility_rust_paths = vec!["cuda_device::wmma::movmatrix_trans_b16".into()];
+        record.dialect_op_type = "MovmatrixTransB16Op".into();
+        record.dialect_op_name = "nvvm.movmatrix_trans_b16".into();
+        record.dialect_operands = vec!["i32".into()];
+        record.dialect_results = vec!["i32".into()];
+        record.llvm_symbol = None;
+        record.resolved_llvm_symbol = None;
+        record.llvm_arguments.clear();
+        record.llvm_results.clear();
+        record.pure = true;
+        record.memory = "none".into();
+        record.convergent = true;
+        record.execution_scope = "warp".into();
+        record.minimum_ptx = "7.8".into();
+        record.minimum_sm = Some("sm_75".into());
+        record.ptx_result = "u32".into();
+        record.targets = "all".into();
+        record.ptx_isa_section =
+            "9.7.15.5.17 Warp-level matrix transpose instruction: movmatrix".into();
+        record.lowering = "generated_movmatrix_inline_ptx".into();
+        record.backend_lowerings = [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm]
+            .into_iter()
+            .map(|backend| OverlayBackendLowering {
+                backend,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: match backend {
+                    IntrinsicBackend::LlvmNvptx => "llvm-test",
+                    IntrinsicBackend::LibNvvm => "libnvvm-test",
+                }
+                .into(),
+                minimum_ptx: Some("7.8".into()),
+                minimum_sm: Some("sm_75".into()),
+            })
+            .collect();
+        record.movmatrix = Some(crate::model::Movmatrix {
+            participation: MovmatrixParticipation::AllWarpLanesSameInstructionNoExitedLanes,
+            adapter: MovmatrixAdapter::PackedB16x2U32ToPackedB16x2U32,
+            runtime_validation: RuntimeValidation::Unexecuted,
+        });
+        record.expected_ptx = InstructionPattern::new(
+            "movmatrix",
+            &["sync", "aligned", "m8n8", "trans", "b16"],
+            vec![OperandPattern::Register, OperandPattern::Register],
+        );
+        record.summary = "Transposes one packed b16 matrix fragment across a warp.".into();
         record
     }
 
@@ -15231,8 +15400,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 40);
-        assert_eq!(overlay.intrinsics.len(), 304);
+        assert_eq!(overlay.shards.len(), 41);
+        assert_eq!(overlay.intrinsics.len(), 305);
         assert_eq!(
             overlay
                 .intrinsics
@@ -18097,6 +18266,40 @@ scope = "system"
                 .to_string()
                 .contains("source kind and imported declaration disagree")
         );
+    }
+
+    #[test]
+    fn movmatrix_recipe_is_exact_and_fails_closed() {
+        let valid = movmatrix_policy();
+        validate_ptx_native_policy(&valid).unwrap();
+
+        let reject = |policy: &OverlayIntrinsic, expected: &str| {
+            let message = validate_ptx_native_policy(policy).unwrap_err().to_string();
+            assert!(message.contains(expected), "unexpected error: {message}");
+        };
+
+        let mut wrong_shape = valid.clone();
+        wrong_shape.expected_ptx.modifiers[2] = "m16n8".into();
+        reject(&wrong_shape, "closed movmatrix recipe");
+
+        let mut wrong_participation = valid.clone();
+        wrong_participation.convergent = false;
+        reject(&wrong_participation, "closed movmatrix recipe");
+
+        let mut wrong_floor = valid.clone();
+        wrong_floor.backend_lowerings[0].minimum_ptx = Some("8.0".into());
+        reject(&wrong_floor, "exact movmatrix floor");
+
+        let mut mixed = valid;
+        mixed.warp_barrier = Some(crate::model::WarpBarrier {
+            participation:
+                WarpBarrierParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+            legacy_pre_sm70: PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive,
+            adapter: WarpBarrierAdapter::DirectMemberMask,
+            mask_encoding: WarpBarrierMaskEncoding::RegisterOrImmediate,
+            memory_ordering: WarpBarrierMemoryOrdering::ParticipatingLanes,
+        });
+        reject(&mixed, "mixes another generated-family contract");
     }
 
     #[test]
