@@ -1,5 +1,5 @@
 {
-  "schema": 33,
+  "schema": 34,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,9 +11,10 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "0f6a6a5242de6008e1d66a99d403423c457e32fc94ce3899b70e6719773afe7d",
-    "abi_ledger_sha256": "9294b3f5ecd7c5a7bf9746ff2420547779f636792e3059009b80fdef8e318f95",
+    "overlay_sha256": "3909df832689f75a6b74d5ea1aa4816c58ef1804b426f29db6b243cca2acbcc5",
+    "abi_ledger_sha256": "bc9dd5dd02d30d96c2d279a74d3fc01ace1c760f56b84ddef942155183625e1b",
     "evidence_sha256": [
+      "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
@@ -34,6 +35,7 @@
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8.json:eac863f6241bf09043f568769de5d98a9b5294c6fcb66a383e2db1e27ebf3f18",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-standard-int4.json:02e3dfd40df03f3d7e39ad1067ac560aafc4bb60cb71a6258f02e92e942b3c96",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
+      "rust-llvm-22.1.2-1cb4e383-cluster-barrier.json:10b857690722e43670121d16b356ea0074105968388aa91f5012e7aaa63fd795",
       "rust-llvm-22.1.2-1cb4e383-cluster-sreg.json:91bad86696394b7eb34261fef0025087550558fe21ecb402e6d9da91fbc09136",
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
@@ -1550,6 +1552,1535 @@
         ]
       },
       "summary": "Returns a mask of named warp lanes whose predicates are true."
+    },
+    {
+      "id": "barrier_cluster_arrive",
+      "operation_key": "cluster.barrier.arrive",
+      "family": "cluster_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cluster_arrive"
+      },
+      "selections": [
+        {
+          "source_record": "barrier_cluster_arrive",
+          "asm": "barrier.cluster.arrive;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0277",
+        "module": "cluster",
+        "name": "barrier_cluster_arrive",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0277",
+        "public_path": "cuda_intrinsics::cluster::barrier_cluster_arrive",
+        "compatibility_paths": [
+          "cuda_device::cluster::barrier_cluster_arrive"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClusterBarrierOp",
+        "op_name": "nvvm.cluster_barrier",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cluster.arrive",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: barrier.cluster",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed declarations for the four PTX 7.8 cluster-barrier records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the convergent nocallback declarations; source IR SHA-256 7e45b48ac5a4963ffc711c20008807fa871f47df35455be3a89e60d6a2f96717 and bitcode SHA-256 7fc4b04573811961a3141aed2aca46f436d38c45dc82d0a7859f64294cfef10c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "one typed probe retaining the four PTX 7.8 cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted each exact instruction once; PTX SHA-256 c567819a2ce45e02fbf006d66232f507bad410d93ed30eed81c4917b580dd909.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX containing the four PTX 7.8 cluster-barrier instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubin SHA-256 188b14eec5d708849572bfa258ae17df6293d02bb224c4638294af18d1a68865.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all six cluster-barrier instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_barrier": {
+        "mode": "arrive",
+        "ordering": "release",
+        "aligned": false
+      },
+      "lowering": "generated_cluster_barrier",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "cluster",
+          "arrive"
+        ],
+        "operands": []
+      },
+      "summary": "Arrives at the cluster barrier with release ordering."
+    },
+    {
+      "id": "barrier_cluster_arrive_aligned",
+      "operation_key": "cluster.barrier.arrive.aligned",
+      "family": "cluster_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cluster_arrive_aligned"
+      },
+      "selections": [
+        {
+          "source_record": "barrier_cluster_arrive_aligned",
+          "asm": "barrier.cluster.arrive.aligned;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0278",
+        "module": "cluster",
+        "name": "barrier_cluster_arrive_aligned",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0278",
+        "public_path": "cuda_intrinsics::cluster::barrier_cluster_arrive_aligned",
+        "compatibility_paths": [
+          "cuda_device::cluster::barrier_cluster_arrive_aligned"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClusterBarrierOp",
+        "op_name": "nvvm.cluster_barrier",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cluster.arrive.aligned",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: barrier.cluster",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed declarations for the four PTX 7.8 cluster-barrier records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the convergent nocallback declarations; source IR SHA-256 7e45b48ac5a4963ffc711c20008807fa871f47df35455be3a89e60d6a2f96717 and bitcode SHA-256 7fc4b04573811961a3141aed2aca46f436d38c45dc82d0a7859f64294cfef10c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "one typed probe retaining the four PTX 7.8 cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted each exact instruction once; PTX SHA-256 c567819a2ce45e02fbf006d66232f507bad410d93ed30eed81c4917b580dd909.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX containing the four PTX 7.8 cluster-barrier instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubin SHA-256 188b14eec5d708849572bfa258ae17df6293d02bb224c4638294af18d1a68865.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all six cluster-barrier instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_barrier": {
+        "mode": "arrive_aligned",
+        "ordering": "release",
+        "aligned": true
+      },
+      "lowering": "generated_cluster_barrier",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "cluster",
+          "arrive",
+          "aligned"
+        ],
+        "operands": []
+      },
+      "summary": "Arrives at the cluster barrier in aligned mode with release ordering."
+    },
+    {
+      "id": "barrier_cluster_arrive_relaxed",
+      "operation_key": "cluster.barrier.arrive.relaxed",
+      "family": "cluster_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cluster_arrive_relaxed"
+      },
+      "selections": [
+        {
+          "source_record": "barrier_cluster_arrive_relaxed",
+          "asm": "barrier.cluster.arrive.relaxed;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0279",
+        "module": "cluster",
+        "name": "barrier_cluster_arrive_relaxed",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0279",
+        "public_path": "cuda_intrinsics::cluster::barrier_cluster_arrive_relaxed",
+        "compatibility_paths": [
+          "cuda_device::cluster::barrier_cluster_arrive_relaxed"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClusterBarrierOp",
+        "op_name": "nvvm.cluster_barrier",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cluster.arrive.relaxed",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: barrier.cluster",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed declarations for the two PTX 8.0 relaxed cluster-barrier records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the convergent nocallback declarations; source IR SHA-256 2e2c065b1abe60a62a61678dca92352084f523640ebf0feb0dd47e0f8417b18f and bitcode SHA-256 7522f3d31dd29407d8c5d8b4c35ad5f38f663067ad3c415effb5d096b4d93463.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "one typed probe retaining the two PTX 8.0 relaxed cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted each exact instruction once; PTX SHA-256 4e8650939b44a80b88fe91ede1a9568ac5526889254c9d6954d52176c10a9714.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX containing the two PTX 8.0 relaxed cluster-barrier instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubin SHA-256 698cf65618fd422030be4645284d6ab56b24f75d0e955a49380ef78bb8e044a8.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all six cluster-barrier instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_barrier": {
+        "mode": "arrive_relaxed",
+        "ordering": "relaxed",
+        "aligned": false
+      },
+      "lowering": "generated_cluster_barrier",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "cluster",
+          "arrive",
+          "relaxed"
+        ],
+        "operands": []
+      },
+      "summary": "Arrives at the cluster barrier without a release guarantee."
+    },
+    {
+      "id": "barrier_cluster_arrive_relaxed_aligned",
+      "operation_key": "cluster.barrier.arrive.relaxed.aligned",
+      "family": "cluster_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cluster_arrive_relaxed_aligned"
+      },
+      "selections": [
+        {
+          "source_record": "barrier_cluster_arrive_relaxed_aligned",
+          "asm": "barrier.cluster.arrive.relaxed.aligned;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0280",
+        "module": "cluster",
+        "name": "barrier_cluster_arrive_relaxed_aligned",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0280",
+        "public_path": "cuda_intrinsics::cluster::barrier_cluster_arrive_relaxed_aligned",
+        "compatibility_paths": [
+          "cuda_device::cluster::barrier_cluster_arrive_relaxed_aligned"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClusterBarrierOp",
+        "op_name": "nvvm.cluster_barrier",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cluster.arrive.relaxed.aligned",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: barrier.cluster",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed declarations for the two PTX 8.0 relaxed cluster-barrier records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the convergent nocallback declarations; source IR SHA-256 2e2c065b1abe60a62a61678dca92352084f523640ebf0feb0dd47e0f8417b18f and bitcode SHA-256 7522f3d31dd29407d8c5d8b4c35ad5f38f663067ad3c415effb5d096b4d93463.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "one typed probe retaining the two PTX 8.0 relaxed cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted each exact instruction once; PTX SHA-256 4e8650939b44a80b88fe91ede1a9568ac5526889254c9d6954d52176c10a9714.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX containing the two PTX 8.0 relaxed cluster-barrier instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubin SHA-256 698cf65618fd422030be4645284d6ab56b24f75d0e955a49380ef78bb8e044a8.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all six cluster-barrier instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_barrier": {
+        "mode": "arrive_relaxed_aligned",
+        "ordering": "relaxed",
+        "aligned": true
+      },
+      "lowering": "generated_cluster_barrier",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "cluster",
+          "arrive",
+          "relaxed",
+          "aligned"
+        ],
+        "operands": []
+      },
+      "summary": "Arrives at the cluster barrier in aligned mode without a release guarantee."
+    },
+    {
+      "id": "barrier_cluster_wait",
+      "operation_key": "cluster.barrier.wait",
+      "family": "cluster_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cluster_wait"
+      },
+      "selections": [
+        {
+          "source_record": "barrier_cluster_wait",
+          "asm": "barrier.cluster.wait;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0281",
+        "module": "cluster",
+        "name": "barrier_cluster_wait",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0281",
+        "public_path": "cuda_intrinsics::cluster::barrier_cluster_wait",
+        "compatibility_paths": [
+          "cuda_device::cluster::barrier_cluster_wait"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClusterBarrierOp",
+        "op_name": "nvvm.cluster_barrier",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cluster.wait",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: barrier.cluster",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed declarations for the four PTX 7.8 cluster-barrier records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the convergent nocallback declarations; source IR SHA-256 7e45b48ac5a4963ffc711c20008807fa871f47df35455be3a89e60d6a2f96717 and bitcode SHA-256 7fc4b04573811961a3141aed2aca46f436d38c45dc82d0a7859f64294cfef10c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "one typed probe retaining the four PTX 7.8 cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted each exact instruction once; PTX SHA-256 c567819a2ce45e02fbf006d66232f507bad410d93ed30eed81c4917b580dd909.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX containing the four PTX 7.8 cluster-barrier instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubin SHA-256 188b14eec5d708849572bfa258ae17df6293d02bb224c4638294af18d1a68865.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all six cluster-barrier instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_barrier": {
+        "mode": "wait",
+        "ordering": "acquire",
+        "aligned": false
+      },
+      "lowering": "generated_cluster_barrier",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "cluster",
+          "wait"
+        ],
+        "operands": []
+      },
+      "summary": "Waits at the cluster barrier with acquire ordering."
+    },
+    {
+      "id": "barrier_cluster_wait_aligned",
+      "operation_key": "cluster.barrier.wait.aligned",
+      "family": "cluster_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cluster_wait_aligned"
+      },
+      "selections": [
+        {
+          "source_record": "barrier_cluster_wait_aligned",
+          "asm": "barrier.cluster.wait.aligned;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0282",
+        "module": "cluster",
+        "name": "barrier_cluster_wait_aligned",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0282",
+        "public_path": "cuda_intrinsics::cluster::barrier_cluster_wait_aligned",
+        "compatibility_paths": [
+          "cuda_device::cluster::barrier_cluster_wait_aligned"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClusterBarrierOp",
+        "op_name": "nvvm.cluster_barrier",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cluster.wait.aligned",
+        "arguments": [],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "Parallel Synchronization and Communication Instructions: barrier.cluster",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed declarations for the four PTX 7.8 cluster-barrier records",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the convergent nocallback declarations; source IR SHA-256 7e45b48ac5a4963ffc711c20008807fa871f47df35455be3a89e60d6a2f96717 and bitcode SHA-256 7fc4b04573811961a3141aed2aca46f436d38c45dc82d0a7859f64294cfef10c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "one typed probe retaining the four PTX 7.8 cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM emitted each exact instruction once; PTX SHA-256 c567819a2ce45e02fbf006d66232f507bad410d93ed30eed81c4917b580dd909.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX containing the four PTX 7.8 cluster-barrier instructions",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced cubin SHA-256 188b14eec5d708849572bfa258ae17df6293d02bb224c4638294af18d1a68865.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining all six cluster-barrier instructions",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_barrier": {
+        "mode": "wait_aligned",
+        "ordering": "acquire",
+        "aligned": true
+      },
+      "lowering": "generated_cluster_barrier",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "cluster",
+          "wait",
+          "aligned"
+        ],
+        "operands": []
+      },
+      "summary": "Waits at the cluster barrier in aligned mode with acquire ordering."
     },
     {
       "id": "block_dim_x",

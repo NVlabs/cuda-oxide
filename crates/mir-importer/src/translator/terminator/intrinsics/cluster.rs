@@ -6,14 +6,13 @@
 //! Thread Block Cluster intrinsics (sm_90+ Hopper).
 //!
 //! Handles translation of cluster operations:
-//! - `cluster_sync()` - Cluster-wide barrier
 //! - `map_shared_rank()` - Distributed shared memory address mapping
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto};
+use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{ClusterSyncOp, DsmemReadU32Op, MapaSharedClusterOp};
+use dialect_nvvm::ops::{DsmemReadU32Op, MapaSharedClusterOp};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -23,50 +22,6 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
 use rustc_public::mir;
-
-// =============================================================================
-// Cluster Synchronization
-// =============================================================================
-
-/// Emit `cluster_sync()`: Cluster-wide barrier synchronization.
-///
-/// All threads in all blocks of the cluster must reach this barrier.
-pub fn emit_cluster_sync(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    let op = Operation::new(
-        ctx,
-        ClusterSyncOp::get_concrete_op_info(),
-        vec![], // No results
-        vec![], // No operands
-        vec![],
-        0,
-    );
-    op.deref_mut(ctx).set_loc(loc.clone());
-
-    let op = if let Some(prev) = prev_op {
-        op.insert_after(ctx, prev);
-        op
-    } else {
-        op.insert_at_front(block_ptr, ctx);
-        op
-    };
-
-    if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, op, block_map, loc);
-        Ok(goto_op)
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported("cluster_sync call without target block".to_string())
-        )
-    }
-}
 
 // =============================================================================
 // Distributed Shared Memory

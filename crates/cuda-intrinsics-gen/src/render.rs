@@ -5,22 +5,22 @@
 
 use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
-    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, CpAsyncCachePolicy,
-    CpAsyncControlOperation, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
-    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
-    DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
-    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
-    LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
-    MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
-    RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
-    SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, VoteAdapter, VoteMode,
-    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, ClusterBarrierMode,
+    ClusterBarrierOrdering, CpAsyncCachePolicy, CpAsyncControlOperation, CpAsyncMbarrierAdapter,
+    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter,
+    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind,
+    ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
+    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter,
+    MbarrierBasicOperation, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
+    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
+    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
+    RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
+    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
+    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
+    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +70,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/cuda-device/src/generated/prmt.rs".into(),
         render_compat_prmt(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/cluster_barrier.rs".into(),
+        render_compat_cluster_barrier(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/cuda-device/src/generated/atomic.rs".into(),
@@ -150,6 +154,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/prmt.rs".into(),
         render_dialect_prmt(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/cluster_barrier.rs".into(),
+        render_dialect_cluster_barrier(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/redux.rs".into(),
@@ -237,6 +245,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "cp_async_control" && record.cp_async_control.is_some())
                     || (record.family == "cp_async_mbarrier" && record.cp_async_mbarrier.is_some())
                     || (record.family == "mbarrier_basic" && record.mbarrier_basic.is_some())
+                    || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -458,6 +467,62 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_prmt"
                     && record.prmt.is_some(),
                 "{} is outside the closed generated prmt recipe",
+                record.id
+            ),
+            "cluster_barrier" => ensure!(
+                matches!(
+                    record.id.as_str(),
+                    "barrier_cluster_arrive"
+                        | "barrier_cluster_arrive_aligned"
+                        | "barrier_cluster_arrive_relaxed"
+                        | "barrier_cluster_arrive_relaxed_aligned"
+                        | "barrier_cluster_wait"
+                        | "barrier_cluster_wait_aligned"
+                )
+                    && record.rust.module == "cluster"
+                    && record.rust.arguments.is_empty()
+                    && record.rust.result == "()"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.dialect.op_type == "ClusterBarrierOp"
+                    && record.dialect.op_name == "nvvm.cluster_barrier"
+                    && record.dialect.operands.is_empty()
+                    && record.dialect.results.is_empty()
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.arguments.is_empty() && llvm.results.is_empty()
+                    })
+                    && record.cluster_barrier.as_ref().is_some_and(|barrier| {
+                        matches!(
+                            (barrier.mode, barrier.ordering, barrier.aligned),
+                            (
+                                ClusterBarrierMode::Arrive,
+                                ClusterBarrierOrdering::Release,
+                                false
+                            ) | (
+                                ClusterBarrierMode::ArriveAligned,
+                                ClusterBarrierOrdering::Release,
+                                true
+                            ) | (
+                                ClusterBarrierMode::ArriveRelaxed,
+                                ClusterBarrierOrdering::Relaxed,
+                                false
+                            ) | (
+                                ClusterBarrierMode::ArriveRelaxedAligned,
+                                ClusterBarrierOrdering::Relaxed,
+                                true
+                            ) | (
+                                ClusterBarrierMode::Wait,
+                                ClusterBarrierOrdering::Acquire,
+                                false
+                            ) | (
+                                ClusterBarrierMode::WaitAligned,
+                                ClusterBarrierOrdering::Acquire,
+                                true
+                            )
+                        )
+                    })
+                    && record.lowering == "generated_cluster_barrier",
+                "{} is outside the closed generated cluster-barrier recipe",
                 record.id
             ),
             "cp_async_copy" => ensure!(
@@ -861,6 +926,37 @@ fn prmts(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
         .intrinsics
         .iter()
         .filter(|record| record.family == "prmt")
+}
+
+fn cluster_barriers(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "cluster_barrier")
+}
+
+fn cluster_barrier_attr(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .cluster_barrier
+        .as_ref()
+        .expect("cluster-barrier contract")
+        .mode
+    {
+        ClusterBarrierMode::Arrive => "ClusterBarrierModeAttr::Arrive",
+        ClusterBarrierMode::ArriveAligned => "ClusterBarrierModeAttr::ArriveAligned",
+        ClusterBarrierMode::ArriveRelaxed => "ClusterBarrierModeAttr::ArriveRelaxed",
+        ClusterBarrierMode::ArriveRelaxedAligned => "ClusterBarrierModeAttr::ArriveRelaxedAligned",
+        ClusterBarrierMode::Wait => "ClusterBarrierModeAttr::Wait",
+        ClusterBarrierMode::WaitAligned => "ClusterBarrierModeAttr::WaitAligned",
+    }
+}
+
+fn cluster_barrier_template(record: &CatalogIntrinsic) -> String {
+    format!(
+        "{}.{};",
+        record.expected_ptx.mnemonic,
+        record.expected_ptx.modifiers.join(".")
+    )
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -1767,6 +1863,24 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// Every active thread in the CTA must reach the same barrier. Calling it from divergent control flow can deadlock the CTA.\n",
                 );
+            } else if record.family == "cluster_barrier" {
+                let barrier = record
+                    .cluster_barrier
+                    .as_ref()
+                    .expect("cluster-barrier contract");
+                output.push_str(
+                    "/// Each non-exited cluster thread must arrive exactly once before the barrier completes, then execute the matching wait.\n",
+                );
+                if barrier.aligned {
+                    output.push_str(
+                        "/// Every non-exited thread in the warp must execute this aligned instruction with identical control flow.\n",
+                    );
+                }
+                if barrier.ordering == ClusterBarrierOrdering::Relaxed {
+                    output.push_str(
+                        "/// This relaxed arrival does not publish earlier memory accesses; add the required cluster-scope fence before it.\n",
+                    );
+                }
             } else if let Some(bridge) = &record.cp_async_mbarrier {
                 output.push_str(
                     "/// `_arg0` must point to a live, initialized, eight-byte-aligned mbarrier object in shared memory.\n\
@@ -2223,6 +2337,44 @@ fn render_compat_prmt(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_cluster_barrier(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::cluster` to keep public paths stable.\n\n");
+    for record in cluster_barriers(catalog) {
+        let barrier = record
+            .cluster_barrier
+            .as_ref()
+            .expect("cluster-barrier contract");
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::cluster::"))
+            .expect("cluster-barrier compatibility path");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        output.push_str(
+            "/// Each non-exited cluster thread must arrive exactly once before completion, then execute the matching wait.\n",
+        );
+        if barrier.aligned {
+            output.push_str(
+                "/// Every non-exited thread in the warp must execute this aligned instruction with identical control flow.\n",
+            );
+        }
+        if barrier.ordering == ClusterBarrierOrdering::Relaxed {
+            output.push_str(
+                "/// This relaxed arrival does not publish earlier memory accesses; use the required cluster-scope fence first.\n",
+            );
+        }
+        output.push_str("#[inline(never)]\n");
+        writeln!(output, "pub unsafe fn {}() {{", record.rust.name).unwrap();
+        writeln!(output, "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")").unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -2654,7 +2806,7 @@ fn render_compat_packed_conversion(
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod cluster_barrier;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cluster_barrier::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cluster_barrier::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -4442,6 +4594,98 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_cluster_barrier(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    if cluster_barriers(catalog).next().is_none() {
+        return output;
+    }
+    output.push_str(
+        r##"//! Generated operations for the closed cluster-barrier family.
+
+use pliron::{
+    attribute::Attribute,
+    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.cluster_barrier_mode", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ClusterBarrierModeAttr {
+    Arrive,
+    ArriveAligned,
+    ArriveRelaxed,
+    ArriveRelaxedAligned,
+    Wait,
+    WaitAligned,
+}
+
+/// Cluster synchronization whose exact spelling is carried by an attribute.
+#[pliron_op(
+    name = "nvvm.cluster_barrier",
+    format,
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+    attributes = (nvvm_cluster_barrier_mode: ClusterBarrierModeAttr)
+)]
+pub struct ClusterBarrierOp;
+
+impl ClusterBarrierOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    pub fn build(ctx: &mut Context, mode: ClusterBarrierModeAttr) -> Ptr<Operation> {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
+        let this = Self { op };
+        this.set_attr_nvvm_cluster_barrier_mode(ctx, mode);
+        this.get_operation()
+    }
+}
+
+impl Verify for ClusterBarrierOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if self.get_attr_nvvm_cluster_barrier_mode(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.cluster_barrier requires a mode attribute");
+        }
+        if op.get_num_operands() != 0 || op.get_num_results() != 0 {
+            return verify_err!(op.loc(), "nvvm.cluster_barrier takes no operands or results");
+        }
+        Ok(())
+    }
+}
+
+/// Compatibility operation for a complete aligned cluster synchronization.
+#[pliron_op(
+    name = "nvvm.cluster_sync",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+)]
+pub struct ClusterSyncOp;
+
+impl ClusterSyncOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    ClusterBarrierModeAttr::register(ctx);
+    ClusterBarrierOp::register(ctx);
+    ClusterSyncOp::register(ctx);
+}
+"##,
+    );
+    output
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -4520,6 +4764,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     if prmts(catalog).next().is_some() {
         output.push_str(", PrmtModeAttr, PrmtOp");
+    }
+    if cluster_barriers(catalog).next().is_some() {
+        output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -5313,6 +5560,75 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    if cluster_barriers(catalog).next().is_some() {
+        let arrive = cluster_barriers(catalog)
+            .find(|record| {
+                record
+                    .cluster_barrier
+                    .as_ref()
+                    .is_some_and(|barrier| barrier.mode == ClusterBarrierMode::ArriveAligned)
+            })
+            .expect("aligned cluster arrival");
+        let wait = cluster_barriers(catalog)
+            .find(|record| {
+                record
+                    .cluster_barrier
+                    .as_ref()
+                    .is_some_and(|barrier| barrier.mode == ClusterBarrierMode::WaitAligned)
+            })
+            .expect("aligned cluster wait");
+        output.push_str(
+            "        \"cuda_device::cluster::cluster_sync\" => {\n            require_arity(name, args.len(), 0, &loc)?;\n            let arrive = ClusterBarrierOp::build(ctx, ClusterBarrierModeAttr::ArriveAligned);\n            arrive.deref_mut(ctx).set_loc(loc.clone());\n",
+        );
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, arrive, {:?});",
+            intrinsic_marker(catalog, arrive)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, arrive, block_ptr, prev_op);\n            let wait = ClusterBarrierOp::build(ctx, ClusterBarrierModeAttr::WaitAligned);\n            wait.deref_mut(ctx).set_loc(loc.clone());\n",
+        );
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, wait, {:?});",
+            intrinsic_marker(catalog, wait)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, wait, block_ptr, Some(arrive));\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, wait, block_map, loc)))\n            } else {\n                input_err!(loc, TranslationErr::unsupported(\"cluster_sync call without target block\".to_owned()))\n            }\n        }\n",
+        );
+    }
+    for record in cluster_barriers(catalog) {
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n            require_arity(name, args.len(), 0, &loc)?;\n");
+        writeln!(
+            output,
+            "            let barrier = ClusterBarrierOp::build(ctx, {});",
+            cluster_barrier_attr(record)
+        )
+        .unwrap();
+        output.push_str("            barrier.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, barrier, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, barrier, block_ptr, prev_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, barrier, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -5817,6 +6133,9 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if prmts(catalog).next().is_some() {
         output.push_str(", PrmtModeAttr, PrmtOp");
     }
+    if cluster_barriers(catalog).next().is_some() {
+        output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp, ClusterSyncOp");
+    }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
@@ -6126,6 +6445,70 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.prmt mode has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_prmt(ctx, rewriter, self.get_operation(), recipe.0, recipe.1)\n    }\n}\n\n",
+        );
+    }
+    if cluster_barriers(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for ClusterBarrierOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match self.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() {\n",
+        );
+        for record in cluster_barriers(catalog) {
+            writeln!(
+                output,
+                "            Some(&{}) => ({:?}, {:?}),",
+                cluster_barrier_attr(record),
+                record.llvm_identifier(),
+                cluster_barrier_template(record)
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.cluster_barrier mode has no generated lowering recipe\",\n            ),\n        };\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n        match context::lowering_options(ctx).intrinsic_backend {\n            IntrinsicBackend::LlvmNvptx => {\n                let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![], false);\n                call_intrinsic(ctx, rewriter, op, recipe.0, function_ty, vec![])?;\n            }\n            IntrinsicBackend::LibNvvm => {\n                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], recipe.1, \"~{memory}\");\n            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
+        );
+
+        let arrive = cluster_barriers(catalog)
+            .find(|record| {
+                record
+                    .cluster_barrier
+                    .as_ref()
+                    .is_some_and(|barrier| barrier.mode == ClusterBarrierMode::ArriveAligned)
+            })
+            .expect("aligned cluster arrival");
+        let wait = cluster_barriers(catalog)
+            .find(|record| {
+                record
+                    .cluster_barrier
+                    .as_ref()
+                    .is_some_and(|barrier| barrier.mode == ClusterBarrierMode::WaitAligned)
+            })
+            .expect("aligned cluster wait");
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for ClusterSyncOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n        match context::lowering_options(ctx).intrinsic_backend {\n            IntrinsicBackend::LlvmNvptx => {\n                let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![], false);\n",
+        );
+        writeln!(
+            output,
+            "                call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![])?;",
+            arrive.llvm_identifier()
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "                call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![])?;",
+            wait.llvm_identifier()
+        )
+        .unwrap();
+        output.push_str("            }\n            IntrinsicBackend::LibNvvm => {\n");
+        writeln!(
+            output,
+            "                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], {:?}, \"~{{memory}}\");",
+            format!(
+                "{} {}",
+                cluster_barrier_template(arrive),
+                cluster_barrier_template(wait)
+            )
+        )
+        .unwrap();
+        output.push_str(
+            "            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
         );
     }
     if packed_atomics(catalog).next().is_some() {
@@ -6568,6 +6951,19 @@ fn generated_selection_alternatives(selections: &[CatalogSelection]) -> String {
 }
 
 fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
+    if let Some(barrier) = &record.cluster_barrier {
+        let mode = match barrier.mode {
+            ClusterBarrierMode::Arrive => "GeneratedClusterBarrierMode::Arrive",
+            ClusterBarrierMode::ArriveAligned => "GeneratedClusterBarrierMode::ArriveAligned",
+            ClusterBarrierMode::ArriveRelaxed => "GeneratedClusterBarrierMode::ArriveRelaxed",
+            ClusterBarrierMode::ArriveRelaxedAligned => {
+                "GeneratedClusterBarrierMode::ArriveRelaxedAligned"
+            }
+            ClusterBarrierMode::Wait => "GeneratedClusterBarrierMode::Wait",
+            ClusterBarrierMode::WaitAligned => "GeneratedClusterBarrierMode::WaitAligned",
+        };
+        return format!("GeneratedIntrinsicVariant::ClusterBarrier {{ mode: {mode} }}");
+    }
     if let Some(prmt) = &record.prmt {
         let mode = match prmt.mode {
             PrmtMode::Generic => "GeneratedPrmtMode::Generic",
@@ -6767,12 +7163,12 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedClusterBarrierMode { Arrive, ArriveAligned, ArriveRelaxed, ArriveRelaxedAligned, Wait, WaitAligned }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
         "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}",
-        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n    Prmt { mode: GeneratedPrmtMode },\n}",
+        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n    Prmt { mode: GeneratedPrmtMode },\n    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n}",
     );
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -6860,8 +7256,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         "        }\n    }\n}\n",
         "        }\n        GeneratedIntrinsicVariant::Prmt { mode } => {\n            let Some(op) = Operation::get_op::<PrmtOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedPrmtMode::Generic => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Generic),\n                GeneratedPrmtMode::F4e => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::F4e),\n                GeneratedPrmtMode::B4e => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::B4e),\n                GeneratedPrmtMode::Rc8 => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Rc8),\n                GeneratedPrmtMode::Ecl => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Ecl),\n                GeneratedPrmtMode::Ecr => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Ecr),\n                GeneratedPrmtMode::Rc16 => op.get_attr_nvvm_prmt_mode(ctx).as_deref() == Some(&PrmtModeAttr::Rc16),\n            }\n        }\n    }\n}\n",
     );
+    replace_exact_render_fragment(
+        &mut output,
+        "        }\n    }\n}\n",
+        "        }\n        GeneratedIntrinsicVariant::ClusterBarrier { mode } => {\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }\n        }\n    }\n}\n",
+    );
     output.push_str(
-        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
+        "\nuse dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
@@ -7176,6 +7577,12 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             writeln!(output, "  call void @{}()", llvm(record).symbol).unwrap();
         }
         output.push_str("  ret void\n}\n");
+    } else if record.cluster_barrier.is_some() {
+        writeln!(output, "declare void @{}() #0", llvm(record).symbol).unwrap();
+        output.push('\n');
+        writeln!(output, "define void @probe_{}() #0 {{", record.id).unwrap();
+        writeln!(output, "  call void @{}() #0", llvm(record).symbol).unwrap();
+        output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
     } else if record.family == "sync" {
         writeln!(output, "declare void @{}(i32)", llvm(record).symbol).unwrap();
         output.push('\n');
@@ -7852,6 +8259,31 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             shuffle.clamp,
         )
         .unwrap();
+    }
+    output.push_str("\n## Cluster-barrier contracts\n\n");
+    for record in cluster_barriers(catalog) {
+        let barrier = record.cluster_barrier.as_ref().unwrap();
+        let ordering = match barrier.ordering {
+            ClusterBarrierOrdering::Release => "release",
+            ClusterBarrierOrdering::Relaxed => "relaxed",
+            ClusterBarrierOrdering::Acquire => "acquire",
+        };
+        let alignment = if barrier.aligned {
+            "Every non-exited warp thread must execute the same aligned instruction in identical control flow."
+        } else {
+            "The instruction is not aligned."
+        };
+        writeln!(
+            output,
+            "- `{}` has {ordering} ordering. Each non-exited cluster thread must arrive exactly once before completion, then execute the matching wait. {alignment}",
+            record.id,
+        )
+        .unwrap();
+    }
+    if cluster_barriers(catalog).next().is_some() {
+        output.push_str(
+            "- `cuda_device::cluster::cluster_sync` is the generated compatibility operation: aligned arrive followed by aligned wait.\n",
+        );
     }
     output.push_str("\n## CTA synchronization contracts\n\n");
     for record in sync_intrinsics(catalog) {
@@ -9238,7 +9670,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 276);
+        assert_eq!(catalog.intrinsics.len(), 282);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -9807,5 +10239,48 @@ mod tests {
 
         let compatibility = render_compat_prmt(&catalog, "test-hash");
         assert_eq!(compatibility.matches("pub fn prmt").count(), 7);
+    }
+
+    #[test]
+    fn cluster_barrier_rendering_owns_compatibility_sync_and_both_backends() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        assert_eq!(cluster_barriers(&catalog).count(), 6);
+
+        let dialect = render_dialect_cluster_barrier(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct ClusterBarrierOp").count(), 1);
+        assert_eq!(dialect.matches("pub struct ClusterSyncOp").count(), 1);
+        assert!(dialect.contains("name = \"nvvm.cluster_sync\""));
+        assert!(dialect.contains("ClusterSyncOp::register(ctx);"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("\"cuda_device::cluster::cluster_sync\" =>"));
+        assert!(importer.contains("ClusterBarrierModeAttr::ArriveAligned"));
+        assert!(importer.contains("ClusterBarrierModeAttr::WaitAligned"));
+        assert!(!importer.contains("ClusterSyncOp"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for ClusterSyncOp")
+                .count(),
+            1
+        );
+        assert!(lowering.contains("llvm_nvvm_barrier_cluster_arrive_aligned"));
+        assert!(lowering.contains("llvm_nvvm_barrier_cluster_wait_aligned"));
+        assert!(lowering.contains("barrier.cluster.arrive.aligned; barrier.cluster.wait.aligned;"));
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## Cluster-barrier contracts"));
+        assert!(reference.contains(
+            "`cuda_device::cluster::cluster_sync` is the generated compatibility operation"
+        ));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains(
+            "GeneratedIntrinsicVariant::ClusterBarrier { mode: GeneratedClusterBarrierMode::ArriveRelaxedAligned }"
+        ));
+        assert!(targets.contains("Operation::get_op::<ClusterBarrierOp>"));
+        assert!(targets.contains("ClusterBarrierModeAttr::WaitAligned"));
     }
 }

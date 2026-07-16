@@ -40,14 +40,14 @@ use dialect_mir::ops::{
 };
 use dialect_nvvm::ops::{
     BreakpointOp, ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp,
-    ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp, ClusterSyncOp,
-    CpAsyncBulkCommitGroupOp, CpAsyncBulkTensorG2sTile1dOp,
-    CpAsyncBulkTensorG2sTile2dMulticastCg2Op, CpAsyncBulkTensorG2sTile2dMulticastOp,
-    CpAsyncBulkTensorG2sTile2dOp, CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp,
-    CpAsyncBulkTensorG2sTile5dOp, CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp,
-    CpAsyncBulkTensorS2gTile3dOp, CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp,
-    CpAsyncBulkWaitGroupOp, CpAsyncBulkWaitGroupReadOp, DsmemReadU32Op, ElectSyncOp,
-    FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
+    ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp, CpAsyncBulkCommitGroupOp,
+    CpAsyncBulkTensorG2sTile1dOp, CpAsyncBulkTensorG2sTile2dMulticastCg2Op,
+    CpAsyncBulkTensorG2sTile2dMulticastOp, CpAsyncBulkTensorG2sTile2dOp,
+    CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp, CpAsyncBulkTensorG2sTile5dOp,
+    CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp, CpAsyncBulkTensorS2gTile3dOp,
+    CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp, CpAsyncBulkWaitGroupOp,
+    CpAsyncBulkWaitGroupReadOp, DsmemReadU32Op, ElectSyncOp, FenceMbarrierInitReleaseClusterOp,
+    FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, InlinePtxOp,
     MapaSharedClusterOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
     MbarrierArriveExpectTxSharedOp, MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp,
@@ -1267,23 +1267,6 @@ impl MirToLlvmConversion for VprintfOp {
 }
 
 // ---- NVVM Cluster ops ------------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClusterSyncOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cluster::convert_cluster_sync(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
 
 #[op_interface_impl]
 impl MirToLlvmConversion for MapaSharedClusterOp {

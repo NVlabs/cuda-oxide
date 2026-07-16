@@ -214,6 +214,8 @@ pub fn cluster_size() -> u32 {
 // Cluster Synchronization
 // =============================================================================
 
+include!("generated/cluster_barrier.rs");
+
 /// Synchronize all blocks in the cluster.
 ///
 /// All threads in all blocks of the cluster must reach this barrier before
@@ -243,10 +245,14 @@ pub fn cluster_size() -> u32 {
 ///
 /// # PTX
 ///
-/// Lowers to: `cluster.sync.aligned`
+/// Lowers to an aligned cluster-barrier arrive followed by wait.
 #[inline(never)]
 pub fn cluster_sync() {
-    unreachable!("cluster_sync called outside CUDA kernel context")
+    // Keep the safe helper while routing both instructions through generated intrinsics.
+    unsafe {
+        barrier_cluster_arrive_aligned();
+        barrier_cluster_wait_aligned();
+    }
 }
 
 // =============================================================================

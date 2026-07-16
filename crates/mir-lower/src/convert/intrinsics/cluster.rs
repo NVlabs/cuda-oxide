@@ -21,26 +21,6 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
-/// Convert cluster_sync to inline PTX.
-pub(crate) fn convert_cluster_sync(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    inline_asm_convergent(
-        ctx,
-        rewriter,
-        void_ty.into(),
-        vec![],
-        "barrier.cluster.arrive.aligned; barrier.cluster.wait.aligned;",
-        "~{memory}",
-    );
-    rewriter.erase_operation(ctx, op);
-    Ok(())
-}
-
 /// Convert `mapa.shared::cluster` to inline PTX.
 pub(crate) fn convert_mapa_shared_cluster(
     ctx: &mut Context,

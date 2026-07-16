@@ -2655,9 +2655,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Thread Block Clusters (from intrinsics::cluster) - sm_90+
         // =================================================================
-        "cuda_device::cluster::cluster_sync" => Ok(Some(intrinsics::cluster::emit_cluster_sync(
-            ctx, target, block_ptr, prev_op, block_map, loc,
-        )?)),
         "cuda_device::cluster::map_shared_rank" => {
             Ok(Some(intrinsics::cluster::emit_map_shared_rank(
                 ctx,

@@ -10,6 +10,7 @@ use crate::model::{
     CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
+    ClusterBarrier, ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering,
     ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter,
     CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
     CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
@@ -48,14 +49,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 34;
+const OVERLAY_SCHEMA: u32 = 35;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 30;
+const OVERLAY_SHARD_SCHEMA: u32 = 31;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
 const CLUSTER_SREG_SHARD_SCHEMA: u32 = 30;
-pub(crate) const CATALOG_SCHEMA: u32 = 33;
+const CLUSTER_BARRIER_SHARD_SCHEMA: u32 = 31;
+pub(crate) const CATALOG_SCHEMA: u32 = 34;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -455,6 +457,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let prmt_admission = shard.prmt.take();
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
         let cluster_sreg_admission = shard.cluster_sreg.take();
+        let cluster_barrier_admission = shard.cluster_barrier.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -519,6 +522,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_cluster_sreg_admission(&admission)?;
         }
+        if let Some(admission) = cluster_barrier_admission {
+            ensure!(
+                shard.family == "cluster_barrier" && shard.intrinsics.is_empty(),
+                "compact cluster-barrier admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_cluster_barrier_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -582,6 +592,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.cluster_sreg.is_none() || shard.schema >= CLUSTER_SREG_SHARD_SCHEMA,
         "compact cluster-sreg admission requires overlay shard schema {}",
         CLUSTER_SREG_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.cluster_barrier.is_none() || shard.schema >= CLUSTER_BARRIER_SHARD_SCHEMA,
+        "compact cluster-barrier admission requires overlay shard schema {}",
+        CLUSTER_BARRIER_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -649,7 +664,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -667,6 +682,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.register_mma,
             record.sparse_mma,
             record.prmt,
+            record.cluster_barrier,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -1085,6 +1101,10 @@ fn validate_policy(
             policy,
             declaration.context("prmt requires imported LLVM declaration")?,
         )?,
+        "cluster_barrier" => validate_cluster_barrier_policy(
+            policy,
+            declaration.context("cluster_barrier requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1100,6 +1120,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "prmt") == policy.prmt.is_some(),
         "{} mixes the prmt contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some(),
+        "{} mixes the cluster-barrier contract with another generated family",
         policy.id
     );
     ensure!(
@@ -2974,6 +2999,7 @@ fn validate_selected_target_predicates(
             | "cp_async_copy"
             | "cp_async_control"
             | "mbarrier_basic"
+            | "cluster_barrier"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -3297,6 +3323,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         register_mma: None,
         sparse_mma: None,
         prmt: None,
+        cluster_barrier: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -6483,6 +6510,7 @@ fn packed_conversion_overlay_record(
         register_mma: None,
         sparse_mma: None,
         prmt: None,
+        cluster_barrier: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -7737,6 +7765,7 @@ fn expand_register_mma_integer_admission(
             register_mma: Some(mma),
             sparse_mma: None,
             prmt: None,
+            cluster_barrier: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -7911,6 +7940,7 @@ fn expand_register_mma_binary_admission(
             register_mma: Some(mma),
             sparse_mma: None,
             prmt: None,
+            cluster_barrier: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -8549,6 +8579,7 @@ fn sparse_mma_overlay_record(
         register_mma: None,
         sparse_mma: Some(mma),
         prmt: None,
+        cluster_barrier: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -8986,6 +9017,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                     mode: variant.mode,
                     adapter: recipe.adapter,
                 }),
+                cluster_barrier: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -9136,6 +9168,350 @@ fn validate_prmt_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct ClusterBarrierRecipe {
+    mode: ClusterBarrierMode,
+    abi_id: &'static str,
+    id: &'static str,
+    suffix: &'static str,
+    minimum_ptx: &'static str,
+    ordering: ClusterBarrierOrdering,
+    aligned: bool,
+    summary: &'static str,
+}
+
+fn cluster_barrier_recipe(mode: ClusterBarrierMode) -> ClusterBarrierRecipe {
+    match mode {
+        ClusterBarrierMode::Arrive => ClusterBarrierRecipe {
+            mode,
+            abi_id: "i0277",
+            id: "barrier_cluster_arrive",
+            suffix: "arrive",
+            minimum_ptx: "7.8",
+            ordering: ClusterBarrierOrdering::Release,
+            aligned: false,
+            summary: "Arrives at the cluster barrier with release ordering.",
+        },
+        ClusterBarrierMode::ArriveAligned => ClusterBarrierRecipe {
+            mode,
+            abi_id: "i0278",
+            id: "barrier_cluster_arrive_aligned",
+            suffix: "arrive.aligned",
+            minimum_ptx: "7.8",
+            ordering: ClusterBarrierOrdering::Release,
+            aligned: true,
+            summary: "Arrives at the cluster barrier in aligned mode with release ordering.",
+        },
+        ClusterBarrierMode::ArriveRelaxed => ClusterBarrierRecipe {
+            mode,
+            abi_id: "i0279",
+            id: "barrier_cluster_arrive_relaxed",
+            suffix: "arrive.relaxed",
+            minimum_ptx: "8.0",
+            ordering: ClusterBarrierOrdering::Relaxed,
+            aligned: false,
+            summary: "Arrives at the cluster barrier without a release guarantee.",
+        },
+        ClusterBarrierMode::ArriveRelaxedAligned => ClusterBarrierRecipe {
+            mode,
+            abi_id: "i0280",
+            id: "barrier_cluster_arrive_relaxed_aligned",
+            suffix: "arrive.relaxed.aligned",
+            minimum_ptx: "8.0",
+            ordering: ClusterBarrierOrdering::Relaxed,
+            aligned: true,
+            summary: "Arrives at the cluster barrier in aligned mode without a release guarantee.",
+        },
+        ClusterBarrierMode::Wait => ClusterBarrierRecipe {
+            mode,
+            abi_id: "i0281",
+            id: "barrier_cluster_wait",
+            suffix: "wait",
+            minimum_ptx: "7.8",
+            ordering: ClusterBarrierOrdering::Acquire,
+            aligned: false,
+            summary: "Waits at the cluster barrier with acquire ordering.",
+        },
+        ClusterBarrierMode::WaitAligned => ClusterBarrierRecipe {
+            mode,
+            abi_id: "i0282",
+            id: "barrier_cluster_wait_aligned",
+            suffix: "wait.aligned",
+            minimum_ptx: "7.8",
+            ordering: ClusterBarrierOrdering::Acquire,
+            aligned: true,
+            summary: "Waits at the cluster barrier in aligned mode with acquire ordering.",
+        },
+    }
+}
+
+fn expand_cluster_barrier_admission(
+    admission: &ClusterBarrierAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "cluster-barrier runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact cluster-barrier admission requires both backend evidence profiles"
+    );
+    let expected_modes = BTreeSet::from([
+        ClusterBarrierMode::Arrive,
+        ClusterBarrierMode::ArriveAligned,
+        ClusterBarrierMode::ArriveRelaxed,
+        ClusterBarrierMode::ArriveRelaxedAligned,
+        ClusterBarrierMode::Wait,
+        ClusterBarrierMode::WaitAligned,
+    ]);
+    let actual_modes: BTreeSet<_> = admission
+        .variants
+        .iter()
+        .map(|variant| variant.mode)
+        .collect();
+    ensure!(
+        admission.variants.len() == expected_modes.len() && actual_modes == expected_modes,
+        "compact cluster-barrier admission must contain each reviewed mode exactly once"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = cluster_barrier_recipe(variant.mode);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let source_record = format!("int_nvvm_barrier_cluster_{}", recipe.suffix.replace('.', "_"));
+            let llvm_symbol = format!("llvm.nvvm.barrier.cluster.{}", recipe.suffix);
+            let modifiers: Vec<String> = recipe.suffix.split('.').map(str::to_owned).collect();
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: format!("cluster.barrier.{}", recipe.suffix),
+                family: "cluster_barrier".into(),
+                source: None,
+                source_record: Some(source_record),
+                rust_module: "cluster".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: vec![],
+                rust_result: "()".into(),
+                safe: false,
+                must_use: false,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::cluster::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::cluster::{}", recipe.id)],
+                dialect_op_type: "ClusterBarrierOp".into(),
+                dialect_op_name: "nvvm.cluster_barrier".into(),
+                dialect_operands: vec![],
+                dialect_results: vec![],
+                llvm_symbol: Some(llvm_symbol),
+                resolved_llvm_symbol: None,
+                llvm_arguments: vec![],
+                llvm_results: vec![],
+                pure: false,
+                memory: "read_write".into(),
+                convergent: true,
+                execution_scope: "cluster".into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: Some("sm_90".into()),
+                ptx_result: "()".into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section:
+                    "Parallel Synchronization and Communication Instructions: barrier.cluster"
+                        .into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster".into(),
+                lowering: "generated_cluster_barrier".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some(recipe.minimum_ptx.into()),
+                        minimum_sm: Some("sm_90".into()),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some(recipe.minimum_ptx.into()),
+                        minimum_sm: Some("sm_90".into()),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: Some(ClusterBarrier {
+                    mode: recipe.mode,
+                    ordering: recipe.ordering,
+                    aligned: recipe.aligned,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "barrier".into(),
+                    modifiers: std::iter::once("cluster".into()).chain(modifiers).collect(),
+                    operands: vec![],
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_cluster_barrier_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let barrier = policy
+        .cluster_barrier
+        .as_ref()
+        .with_context(|| format!("{} has no closed cluster-barrier contract", policy.id))?;
+    let recipe = cluster_barrier_recipe(barrier.mode);
+    let source_record = format!(
+        "int_nvvm_barrier_cluster_{}",
+        recipe.suffix.replace('.', "_")
+    );
+    let llvm_symbol = format!("llvm.nvvm.barrier.cluster.{}", recipe.suffix);
+    ensure!(
+        barrier.ordering == recipe.ordering
+            && barrier.aligned == recipe.aligned
+            && policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == format!("cluster.barrier.{}", recipe.suffix)
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} identity or semantics do not match its closed cluster-barrier recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "cluster"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments.is_empty()
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::cluster::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::cluster::{}", recipe.id)],
+        "{} Rust API does not match its closed cluster-barrier recipe",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "ClusterBarrierOp"
+            && policy.dialect_op_name == "nvvm.cluster_barrier"
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments.is_empty()
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_cluster_barrier",
+        "{} carrier or lowering does not match its closed cluster-barrier recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic"]
+            && declaration.properties == ["IntrConvergent", "IntrNoCallback"]
+            && !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "cluster",
+        "{} effects disagree with the imported cluster-barrier declaration",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.targets == "all"
+            && policy.ptx_result == "()"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "Parallel Synchronization and Communication Instructions: barrier.cluster"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster",
+        "{} target floor or PTX provenance changed",
+        policy.id
+    );
+    let expected_modifiers: Vec<_> = std::iter::once("cluster")
+        .chain(recipe.suffix.split('.'))
+        .collect();
+    ensure!(
+        policy.expected_ptx.mnemonic == "barrier"
+            && policy.expected_ptx.modifiers == expected_modifiers
+            && policy.expected_ptx.operands.is_empty(),
+        "{} expected PTX does not match its exact cluster-barrier spelling",
+        policy.id
+    );
+    ensure!(
+        (recipe.ordering == ClusterBarrierOrdering::Relaxed) == recipe.suffix.contains(".relaxed")
+            && recipe.aligned == recipe.suffix.ends_with(".aligned")
+            && matches!(
+                (recipe.mode, recipe.ordering),
+                (
+                    ClusterBarrierMode::Arrive | ClusterBarrierMode::ArriveAligned,
+                    ClusterBarrierOrdering::Release
+                ) | (
+                    ClusterBarrierMode::ArriveRelaxed | ClusterBarrierMode::ArriveRelaxedAligned,
+                    ClusterBarrierOrdering::Relaxed
+                ) | (
+                    ClusterBarrierMode::Wait | ClusterBarrierMode::WaitAligned,
+                    ClusterBarrierOrdering::Acquire
+                )
+            ),
+        "{} cluster-barrier semantic recipe is inconsistent",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.minimum_ptx.as_deref() == Some(recipe.minimum_ptx)
+                    && lowering.minimum_sm.as_deref() == Some("sm_90")
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must define exactly the reviewed cluster-barrier backend routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "cluster barrier")?;
+    Ok(())
+}
+
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
     requirements: [(IntrinsicBackend, &str, Option<&str>); 2],
@@ -9202,7 +9578,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some()
             && (policy.family == "register_mma") == policy.register_mma.is_some()
             && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
-            && (policy.family == "prmt") == policy.prmt.is_some(),
+            && (policy.family == "prmt") == policy.prmt.is_some()
+            && (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -10036,6 +10413,7 @@ fn validate_evidence(
             validate_typed_llvm_evidence(policy, record)?;
         }
         validate_packed_conversion_backend_evidence(policy, record, lowering)?;
+        validate_cluster_barrier_backend_evidence(policy, record, lowering)?;
         if lowering.backend == IntrinsicBackend::LlvmNvptx
             && matches!(record.status.as_str(), "validated" | "executed")
         {
@@ -10065,6 +10443,41 @@ fn validate_evidence(
             );
         }
     }
+    Ok(())
+}
+
+fn validate_cluster_barrier_backend_evidence(
+    policy: &OverlayIntrinsic,
+    record: &EvidenceRecord,
+    lowering: &crate::model::OverlayBackendLowering,
+) -> Result<()> {
+    if policy.family != "cluster_barrier" || lowering.backend != IntrinsicBackend::LibNvvm {
+        return Ok(());
+    }
+    for stage in [
+        EvidenceStageKind::BackendCodegen,
+        EvidenceStageKind::DeviceLink,
+    ] {
+        ensure!(
+            record.stages.iter().any(|candidate| {
+                candidate.stage == stage
+                    && candidate.mechanism == Some(BackendLoweringMechanism::TypedNvvm)
+                    && candidate.outcome == "failed"
+            }),
+            "{} libNVVM inline-PTX evidence must record the failed typed-NVVM {:?} comparison",
+            policy.id,
+            stage
+        );
+    }
+    ensure!(
+        !record.stages.iter().any(|candidate| {
+            candidate.stage == EvidenceStageKind::DeviceLink
+                && candidate.mechanism == Some(BackendLoweringMechanism::TypedNvvm)
+                && candidate.outcome == "succeeded"
+        }),
+        "{} libNVVM evidence cannot select inline PTX after a successful typed-NVVM terminal",
+        policy.id
+    );
     Ok(())
 }
 
@@ -10658,6 +11071,7 @@ fn materialize_record(
         register_mma: policy.register_mma.clone(),
         sparse_mma: policy.sparse_mma.clone(),
         prmt: policy.prmt.clone(),
+        cluster_barrier: policy.cluster_barrier.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -10777,6 +11191,7 @@ mod tests {
             register_mma: None,
             sparse_mma: None,
             prmt: None,
+            cluster_barrier: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -12146,8 +12561,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 35);
-        assert_eq!(overlay.intrinsics.len(), 276);
+        assert_eq!(overlay.shards.len(), 36);
+        assert_eq!(overlay.intrinsics.len(), 282);
         assert_eq!(
             overlay
                 .intrinsics
@@ -12355,6 +12770,28 @@ mod tests {
         }
     }
 
+    fn test_cluster_barrier_admission() -> ClusterBarrierAdmission {
+        let variants = [
+            ClusterBarrierMode::Arrive,
+            ClusterBarrierMode::ArriveAligned,
+            ClusterBarrierMode::ArriveRelaxed,
+            ClusterBarrierMode::ArriveRelaxedAligned,
+            ClusterBarrierMode::Wait,
+            ClusterBarrierMode::WaitAligned,
+        ]
+        .map(|mode| crate::model::ClusterBarrierAdmissionVariant {
+            abi_id: cluster_barrier_recipe(mode).abi_id.into(),
+            mode,
+        })
+        .into();
+        ClusterBarrierAdmission {
+            llvm_evidence_profile: "llvm-test".into(),
+            libnvvm_evidence_profile: "libnvvm-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants,
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -12369,6 +12806,7 @@ mod tests {
             prmt,
             packed_conversion_fp8: None,
             cluster_sreg: None,
+            cluster_barrier: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -12393,7 +12831,8 @@ mod tests {
         .unwrap();
 
         assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
-        assert!(validate_overlay_shard_schema(&shard(31, None, None), path).is_err());
+        validate_overlay_shard_schema(&shard(31, None, None), path).unwrap();
+        assert!(validate_overlay_shard_schema(&shard(32, None, None), path).is_err());
         let error =
             validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
                 .unwrap_err();
@@ -12423,6 +12862,7 @@ mod tests {
             prmt: None,
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
             cluster_sreg: None,
+            cluster_barrier: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -12431,6 +12871,30 @@ mod tests {
             error
                 .to_string()
                 .contains("requires overlay shard schema 29")
+        );
+
+        let cluster_shard = OverlayShardFile {
+            schema: 31,
+            family: "cluster_barrier".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: Some(test_cluster_barrier_admission()),
+        };
+        validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
+        let mut old_cluster_shard = cluster_shard;
+        old_cluster_shard.schema = 30;
+        assert!(
+            validate_overlay_shard_schema_with_max(&old_cluster_shard, path, 31)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 31")
         );
     }
 
@@ -12648,6 +13112,131 @@ record_count = 14
         let mut executed = test_fp8_conversion_admission();
         executed.runtime_validation = RuntimeValidation::Executed;
         assert!(expand_packed_conversion_fp8_admission(&executed).is_err());
+    }
+
+    #[test]
+    fn compact_cluster_barrier_admission_and_semantics_fail_closed() {
+        let records = expand_cluster_barrier_admission(&test_cluster_barrier_admission()).unwrap();
+        assert_eq!(records.len(), 6);
+
+        let imported: ImportedFile = read_json(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("intrinsics/imported.json"),
+        )
+        .unwrap();
+        for record in &records {
+            let declaration = imported
+                .intrinsics
+                .iter()
+                .find(|declaration| {
+                    Some(declaration.source_record.as_str()) == record.source_record.as_deref()
+                })
+                .unwrap();
+            validate_imported_policy(record, declaration).unwrap();
+        }
+
+        let declaration_for = |record: &OverlayIntrinsic| {
+            imported
+                .intrinsics
+                .iter()
+                .find(|declaration| {
+                    Some(declaration.source_record.as_str()) == record.source_record.as_deref()
+                })
+                .unwrap()
+        };
+        let base = records
+            .iter()
+            .find(|record| {
+                record
+                    .cluster_barrier
+                    .as_ref()
+                    .is_some_and(|barrier| barrier.mode == ClusterBarrierMode::ArriveAligned)
+            })
+            .unwrap();
+
+        let mut wrong_mode = base.clone();
+        wrong_mode.cluster_barrier.as_mut().unwrap().mode = ClusterBarrierMode::WaitAligned;
+        assert!(validate_imported_policy(&wrong_mode, declaration_for(base)).is_err());
+
+        let mut wrong_order = base.clone();
+        wrong_order.cluster_barrier.as_mut().unwrap().ordering = ClusterBarrierOrdering::Relaxed;
+        assert!(validate_imported_policy(&wrong_order, declaration_for(base)).is_err());
+
+        let mut wrong_alignment = base.clone();
+        wrong_alignment.cluster_barrier.as_mut().unwrap().aligned = false;
+        assert!(validate_imported_policy(&wrong_alignment, declaration_for(base)).is_err());
+
+        let mut missing = test_cluster_barrier_admission();
+        missing.variants.pop();
+        assert!(expand_cluster_barrier_admission(&missing).is_err());
+
+        let mut duplicate = test_cluster_barrier_admission();
+        duplicate.variants[5].mode = ClusterBarrierMode::Arrive;
+        assert!(expand_cluster_barrier_admission(&duplicate).is_err());
+
+        let mut wrong_abi = test_cluster_barrier_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_cluster_barrier_admission(&wrong_abi).is_err());
+    }
+
+    #[test]
+    fn cluster_barrier_evidence_validates_both_backend_routes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut admission = test_cluster_barrier_admission();
+        admission.llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383".into();
+        admission.libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-cluster-barrier".into();
+        let policies = expand_cluster_barrier_admission(&admission).unwrap();
+        let evidence_files = vec![
+            read_evidence_file(
+                &repo_root
+                    .join("intrinsics/evidence/rust-llvm-22.1.2-1cb4e383-cluster-barrier.json"),
+            )
+            .unwrap(),
+            read_evidence_file(
+                &repo_root
+                    .join("intrinsics/evidence/cuda-13.3-libnvvm-13.3.33-cluster-barrier.json"),
+            )
+            .unwrap(),
+        ];
+        let indexed =
+            index_evidence(&evidence_files, "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e").unwrap();
+
+        for policy in &policies {
+            for lowering in &policy.backend_lowerings {
+                let evidence = indexed
+                    .get(&(lowering.evidence_profile.as_str(), policy.id.as_str()))
+                    .unwrap();
+                validate_evidence(policy, evidence, Some(lowering)).unwrap();
+            }
+        }
+
+        let mut missing_typed_failure = evidence_files.clone();
+        let libnvvm = missing_typed_failure
+            .iter_mut()
+            .find(|file| file.backend_kind == Some(IntrinsicBackend::LibNvvm))
+            .unwrap();
+        for record in &mut libnvvm.records {
+            record.stages.retain(|stage| {
+                stage.mechanism != Some(BackendLoweringMechanism::TypedNvvm)
+                    || stage.stage != EvidenceStageKind::DeviceLink
+            });
+        }
+        let indexed = index_evidence(
+            &missing_typed_failure,
+            "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
+        )
+        .unwrap();
+        let policy = &policies[0];
+        let lowering = policy
+            .backend_lowerings
+            .iter()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap();
+        let evidence = indexed
+            .get(&(lowering.evidence_profile.as_str(), policy.id.as_str()))
+            .unwrap();
+        assert!(validate_evidence(policy, evidence, Some(lowering)).is_err());
     }
 
     #[test]

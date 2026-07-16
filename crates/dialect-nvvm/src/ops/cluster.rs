@@ -11,7 +11,6 @@
 //! ┌─────────────────────┬───────────────────────────┬────────────────────────────┐
 //! │ Operation           │ PTX instruction           │ Description                │
 //! ├─────────────────────┼───────────────────────────┼────────────────────────────┤
-//! │ ClusterSyncOp       │ barrier.cluster.*         │ Cluster-wide barrier       │
 //! │ MapaSharedClusterOp │ mapa.shared::cluster      │ Distributed memory mapping │
 //! │ DsmemReadU32Op      │ ld.shared::cluster.u32    │ Distributed memory read    │
 //! └─────────────────────┴───────────────────────────┴────────────────────────────┘
@@ -44,33 +43,6 @@ use pliron::{
     verify_err,
 };
 use pliron_derive::pliron_op;
-
-// =============================================================================
-// Cluster Synchronization
-// =============================================================================
-
-/// Cluster-wide barrier synchronization.
-///
-/// All threads in all blocks of the cluster must reach this barrier before any can proceed.
-/// Corresponds to PTX `cluster.sync.aligned`.
-///
-/// # Verification
-///
-/// - Must have 0 operands
-/// - Must have 0 results
-#[pliron_op(
-    name = "nvvm.cluster_sync",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct ClusterSyncOp;
-
-impl ClusterSyncOp {
-    pub fn new(op: Ptr<Operation>) -> Self {
-        ClusterSyncOp { op }
-    }
-}
 
 // =============================================================================
 // Distributed Shared Memory
@@ -164,8 +136,6 @@ impl Verify for DsmemReadU32Op {
 
 /// Register cluster operations with the context.
 pub(super) fn register(ctx: &mut Context) {
-    // Synchronization
-    ClusterSyncOp::register(ctx);
     // Distributed shared memory
     MapaSharedClusterOp::register(ctx);
     DsmemReadU32Op::register(ctx);

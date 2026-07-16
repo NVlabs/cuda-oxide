@@ -165,6 +165,8 @@ pub struct OverlayShardFile {
     pub packed_conversion_fp8: Option<PackedConversionFp8Admission>,
     #[serde(default)]
     pub cluster_sreg: Option<ClusterSregAdmission>,
+    #[serde(default)]
+    pub cluster_barrier: Option<ClusterBarrierAdmission>,
 }
 
 /// Compact admission for Hopper cluster special registers.
@@ -174,6 +176,53 @@ pub struct ClusterSregAdmission {
     pub axes: Vec<String>,
     pub xyz_product_count: usize,
     pub record_count: usize,
+}
+
+/// Compact admission for the six cluster-barrier instructions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterBarrierAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ClusterBarrierAdmissionVariant>,
+}
+
+/// One reviewed cluster-barrier spelling.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterBarrierAdmissionVariant {
+    pub abi_id: String,
+    pub mode: ClusterBarrierMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterBarrierMode {
+    Arrive,
+    ArriveAligned,
+    ArriveRelaxed,
+    ArriveRelaxedAligned,
+    Wait,
+    WaitAligned,
+}
+
+/// Closed semantics for one cluster-barrier spelling.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterBarrier {
+    pub mode: ClusterBarrierMode,
+    pub ordering: ClusterBarrierOrdering,
+    pub aligned: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterBarrierOrdering {
+    Release,
+    Relaxed,
+    Acquire,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -369,6 +418,8 @@ pub struct OverlayIntrinsic {
     pub sparse_mma: Option<SparseMma>,
     #[serde(default)]
     pub prmt: Option<Prmt>,
+    #[serde(default)]
+    pub cluster_barrier: Option<ClusterBarrier>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
@@ -1679,6 +1730,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prmt: Option<Prmt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_barrier: Option<ClusterBarrier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
     pub expected_ptx: InstructionPattern,
@@ -2437,6 +2490,34 @@ runtime_validation = "unexecuted"
         ] {
             assert!(
                 toml::from_str::<CpAsyncMbarrier>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn cluster_barrier_contract_rejects_open_ended_semantics() {
+        let valid = r#"
+mode = "arrive_relaxed_aligned"
+ordering = "relaxed"
+aligned = true
+"#;
+        let parsed = toml::from_str::<ClusterBarrier>(valid).unwrap();
+        assert_eq!(parsed.mode, ClusterBarrierMode::ArriveRelaxedAligned);
+        assert_eq!(parsed.ordering, ClusterBarrierOrdering::Relaxed);
+        assert!(parsed.aligned);
+
+        for invalid in [
+            valid.replace("ordering = \"relaxed\"", "ordering = \"unordered\""),
+            valid.replace("aligned = true", "aligned = \"sometimes\""),
+            valid.replace(
+                "mode = \"arrive_relaxed_aligned\"",
+                "mode = \"arrive_release_aligned\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<ClusterBarrier>(&invalid).is_err(),
                 "{invalid}"
             );
         }

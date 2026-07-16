@@ -5,11 +5,12 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, CpAsyncCa4Op, CpAsyncCaZfill4Op,
-    CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
-    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
-    ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
-    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
+    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp,
+    CpAsyncCa4Op, CpAsyncCaZfill4Op, CpAsyncMbarrierArriveNoIncOp,
+    CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp, CpAsyncMbarrierArriveSharedOp,
+    CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
+    LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
+    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
     MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp,
     MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
     MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
@@ -29,6 +30,47 @@ use dialect_nvvm::ops::{
     StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp,
     VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
+
+#[test]
+fn generated_cluster_barrier_requires_one_closed_mode_and_no_values() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    for mode in [
+        ClusterBarrierModeAttr::Arrive,
+        ClusterBarrierModeAttr::ArriveAligned,
+        ClusterBarrierModeAttr::ArriveRelaxed,
+        ClusterBarrierModeAttr::ArriveRelaxedAligned,
+        ClusterBarrierModeAttr::Wait,
+        ClusterBarrierModeAttr::WaitAligned,
+    ] {
+        let op = ClusterBarrierOp::build(&mut ctx, mode);
+        assert!(verify_op(&ClusterBarrierOp::new(op), &ctx).is_ok());
+    }
+
+    let missing_mode = Operation::new(
+        &mut ctx,
+        ClusterBarrierOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ClusterBarrierOp::new(missing_mode), &ctx).is_err());
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let wrong_shape = Operation::new(
+        &mut ctx,
+        ClusterBarrierOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    ClusterBarrierOp::new(wrong_shape)
+        .set_attr_nvvm_cluster_barrier_mode(&ctx, ClusterBarrierModeAttr::Wait);
+    assert!(verify_op(&ClusterBarrierOp::new(wrong_shape), &ctx).is_err());
+}
 
 #[test]
 fn test_generated_cp_async_accepts_pointer_shapes_and_both_constant_kinds() {

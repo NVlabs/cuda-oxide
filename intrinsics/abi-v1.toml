@@ -1939,3 +1939,45 @@ status = "active"
 catalog_id = "cluster_block_count"
 operation_key = "launch.cluster.block_count"
 raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0277"
+status = "active"
+catalog_id = "barrier_cluster_arrive"
+operation_key = "cluster.barrier.arrive"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0278"
+status = "active"
+catalog_id = "barrier_cluster_arrive_aligned"
+operation_key = "cluster.barrier.arrive.aligned"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0279"
+status = "active"
+catalog_id = "barrier_cluster_arrive_relaxed"
+operation_key = "cluster.barrier.arrive.relaxed"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0280"
+status = "active"
+catalog_id = "barrier_cluster_arrive_relaxed_aligned"
+operation_key = "cluster.barrier.arrive.relaxed.aligned"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0281"
+status = "active"
+catalog_id = "barrier_cluster_wait"
+operation_key = "cluster.barrier.wait"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0282"
+status = "active"
+catalog_id = "barrier_cluster_wait_aligned"
+operation_key = "cluster.barrier.wait.aligned"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }

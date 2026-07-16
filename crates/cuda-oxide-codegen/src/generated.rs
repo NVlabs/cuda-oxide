@@ -1153,4 +1153,72 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn direct_cluster_barrier_arrive_selects_only_i0277() {
+        use dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp};
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let op = ClusterBarrierOp::build(&mut ctx, ClusterBarrierModeAttr::Arrive);
+        let requirements =
+            collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Optional)
+                .unwrap();
+
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].marker, "v1:i0277");
+        assert_eq!(requirements.targets[0].id, "barrier_cluster_arrive");
+        assert_eq!(
+            requirements
+                .requirement(requirements.targets[0])
+                .minimum_ptx
+                .encoded(),
+            78
+        );
+    }
+
+    #[test]
+    fn direct_cluster_barrier_relaxed_selects_only_i0279() {
+        use dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp};
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let op = ClusterBarrierOp::build(&mut ctx, ClusterBarrierModeAttr::ArriveRelaxed);
+        let requirements =
+            collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Optional)
+                .unwrap();
+
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].marker, "v1:i0279");
+        assert_eq!(requirements.targets[0].id, "barrier_cluster_arrive_relaxed");
+        assert_eq!(
+            requirements
+                .requirement(requirements.targets[0])
+                .minimum_ptx
+                .encoded(),
+            80
+        );
+    }
+
+    #[test]
+    fn cluster_barrier_marker_rejects_a_different_mode() {
+        use dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp};
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let op = ClusterBarrierOp::build(&mut ctx, ClusterBarrierModeAttr::Arrive);
+        op.deref_mut(&ctx).attributes.set(
+            Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+            StringAttr::new("v1:i0279".to_string()),
+        );
+
+        let error =
+            collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.contains("does not match the exact variant attributes"),
+            "{error}"
+        );
+    }
 }

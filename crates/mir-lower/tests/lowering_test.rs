@@ -1998,6 +1998,113 @@ fn test_generated_basic_mbarrier_uses_shared_lowering_on_both_backends() -> Resu
     Ok(())
 }
 
+fn lower_cluster_barriers(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    for mode in [
+        nvvm::ClusterBarrierModeAttr::Arrive,
+        nvvm::ClusterBarrierModeAttr::ArriveAligned,
+        nvvm::ClusterBarrierModeAttr::ArriveRelaxed,
+        nvvm::ClusterBarrierModeAttr::ArriveRelaxedAligned,
+        nvvm::ClusterBarrierModeAttr::Wait,
+        nvvm::ClusterBarrierModeAttr::WaitAligned,
+    ] {
+        nvvm::ClusterBarrierOp::build(&mut ctx, mode).insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn generated_cluster_barriers_lower_exactly_on_both_backends() -> Result<(), anyhow::Error> {
+    let recipes = [
+        (
+            "llvm_nvvm_barrier_cluster_arrive",
+            "barrier.cluster.arrive;",
+        ),
+        (
+            "llvm_nvvm_barrier_cluster_arrive_aligned",
+            "barrier.cluster.arrive.aligned;",
+        ),
+        (
+            "llvm_nvvm_barrier_cluster_arrive_relaxed",
+            "barrier.cluster.arrive.relaxed;",
+        ),
+        (
+            "llvm_nvvm_barrier_cluster_arrive_relaxed_aligned",
+            "barrier.cluster.arrive.relaxed.aligned;",
+        ),
+        ("llvm_nvvm_barrier_cluster_wait", "barrier.cluster.wait;"),
+        (
+            "llvm_nvvm_barrier_cluster_wait_aligned",
+            "barrier.cluster.wait.aligned;",
+        ),
+    ];
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let (ctx, module_ptr) = lower_cluster_barriers(backend)?;
+        let mut calls = [0usize; 6];
+        let mut asm = [0usize; 6];
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) {
+                let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+                    continue;
+                };
+                if let Some(index) = recipes
+                    .iter()
+                    .position(|(symbol, _)| callee.to_string() == *symbol)
+                {
+                    calls[index] += 1;
+                }
+            }
+            if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                if let Some(index) = recipes
+                    .iter()
+                    .position(|(_, expected)| template.as_deref() == Some(*expected))
+                {
+                    asm[index] += 1;
+                    assert_eq!(
+                        inline_asm
+                            .get_attr_inline_asm_constraints(&ctx)
+                            .map(|value| String::from((*value).clone()))
+                            .as_deref(),
+                        Some("~{memory}")
+                    );
+                    assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Convergent);
+                }
+            }
+        }
+        match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => {
+                assert_eq!(calls, [1; 6]);
+                assert_eq!(asm, [0; 6]);
+            }
+            mir_lower::IntrinsicBackend::LibNvvm => {
+                assert_eq!(calls, [0; 6]);
+                assert_eq!(asm, [1; 6]);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_cluster_mbarrier_and_fences_lower_to_exact_inline_ptx() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
