@@ -279,6 +279,12 @@ pub fn all_outputs(
         "crates/dialect-nvvm/src/ops/generated/active_mask.rs".into(),
         render_dialect_active_mask(catalog, catalog_sha256),
     );
+    if elect_intrinsics(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/elect.rs".into(),
+            render_dialect_elect(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/cp_async.rs".into(),
         render_dialect_cp_async_copy(catalog, catalog_sha256),
@@ -328,7 +334,7 @@ pub fn all_outputs(
         render_targets(catalog, catalog_sha256),
     );
     for record in &catalog.intrinsics {
-        if record.special_register.is_some() {
+        if record.special_register.is_some() || record.family == "elect" {
             for backend in [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm] {
                 outputs.insert(
                     format!(
@@ -337,7 +343,11 @@ pub fn all_outputs(
                         backend_label(backend)
                     )
                     .into(),
-                    render_special_register_probe(catalog, record, catalog_sha256, backend),
+                    if record.family == "elect" {
+                        render_elect_probe(catalog, record, catalog_sha256, backend)
+                    } else {
+                        render_special_register_probe(catalog, record, catalog_sha256, backend)
+                    },
                 );
             }
         } else {
@@ -370,6 +380,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "redux" && record.redux.is_some())
                     || (record.family == "vote" && record.vote.is_some())
                     || (record.family == "warp_match" && record.warp_match.is_some())
+                    || record.family == "elect"
                     || (record.family == "warp_barrier" && record.warp_barrier.is_some())
                     || (record.family == "warp_shuffle" && record.warp_shuffle.is_some())
                     || (record.family == "cp_async_copy" && record.cp_async_copy.is_some())
@@ -1342,6 +1353,27 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated match.sync recipe",
                 record.id
             ),
+            "elect" => ensure!(
+                record.id == "elect_sync"
+                    && record.rust.module == "warp"
+                    && record.rust.name == "elect_sync"
+                    && record.rust.arguments == ["u32"]
+                    && record.rust.result == "(u32, bool)"
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.symbol == "llvm.nvvm.elect.sync"
+                            && llvm.arguments == ["i32"]
+                            && llvm.results == ["i32", "i1"]
+                    })
+                    && record.dialect.op_type == "ElectSyncOp"
+                    && record.dialect.op_name == "nvvm.elect_sync"
+                    && record.dialect.operands == ["i32"]
+                    && record.dialect.results == ["i32", "i1"]
+                    && record.lowering == "generated_elect",
+                "{} is outside the closed generated elect.sync recipe",
+                record.id
+            ),
             "warp_barrier" => ensure!(
                 record.id == "sync_mask"
                     && record.rust.module == "warp"
@@ -1906,6 +1938,13 @@ fn active_masks(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic
         .intrinsics
         .iter()
         .filter(|record| record.family == "active_mask")
+}
+
+fn elect_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "elect")
 }
 
 fn warp_matches(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2767,6 +2806,11 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
             } else if record.warp_match.is_some() {
                 output.push_str(
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `match.sync` operation with the same qualifiers and mask.\n\
+                     /// Violating this participation contract makes the PTX operation undefined.\n",
+                );
+            } else if record.family == "elect" {
+                output.push_str(
+                    "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `elect.sync` operation with the same mask.\n\
                      /// Violating this participation contract makes the PTX operation undefined.\n",
                 );
             } else if record.vote.is_some() {
@@ -4460,6 +4504,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
                 "    clc::register(ctx);\n    cluster_barrier::register(ctx);",
             );
     }
+    if elect_intrinsics(catalog).next().is_some() {
+        output = output
+            .replace("mod dotprod;", "mod dotprod;\nmod elect;")
+            .replace(
+                "pub use dotprod::*;",
+                "pub use dotprod::*;\npub use elect::*;",
+            )
+            .replace(
+                "    dotprod::register(ctx);",
+                "    dotprod::register(ctx);\n    elect::register(ctx);",
+            );
+    }
     if mbarrier_extended(catalog).next().is_some() {
         output = output.replace(
             "mod mbarrier_basic;\n",
@@ -4504,6 +4560,31 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
                 "    sync::register(ctx);\n    tcgen05::register(ctx);",
             );
     }
+    output
+}
+
+fn render_dialect_elect(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated warp leader-election operation.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+    );
+    for record in elect_intrinsics(catalog) {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<1>, NResultsInterface<2>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in elect_intrinsics(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
     output
 }
 
@@ -7324,6 +7405,76 @@ fn render_importer_pure_value_dispatch(
     output.push_str("        }\n");
 }
 
+fn render_importer_elect_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    output.push_str(
+        "            require_arity(name, args.len(), 1, &loc)?;\n\
+         \n\
+                     let tuple_ty = crate::translator::types::translate_type(\n\
+                         ctx, &body.locals()[destination.local].ty,\n\
+                     )?;\n\
+                     let (leader_ty, elected_ty) = {\n\
+                         let ty = tuple_ty.deref(ctx);\n\
+                         match ty.downcast_ref::<MirTupleType>() {\n\
+                             Some(tuple) if tuple.get_types().len() == 2 => {\n\
+                                 (tuple.get_types()[0], tuple.get_types()[1])\n\
+                             }\n\
+                             _ => {\n\
+                                 return input_err!(\n\
+                                     loc.clone(),\n\
+                                     TranslationErr::unsupported(\n\
+                                         \"warp::elect_sync destination must be a (u32, bool) tuple\"\n\
+                                             .to_owned(),\n\
+                                     ),\n\
+                                 );\n\
+                             }\n\
+                         }\n\
+                     };\n\
+                     let (mask, last_op) = rvalue::translate_operand(\n\
+                         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n\
+                     )?;\n",
+    );
+    writeln!(
+        output,
+        "            let elect = Operation::new(\n                ctx, {}::get_concrete_op_info(), vec![leader_ty, elected_ty],\n                vec![mask], vec![], 0,\n            );",
+        record.dialect.op_type
+    )
+    .unwrap();
+    output.push_str("            elect.deref_mut(ctx).set_loc(loc.clone());\n");
+    writeln!(
+        output,
+        "            helpers::set_generated_intrinsic_marker(ctx, elect, {:?});",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    output.push_str(
+        "            helpers::insert_op(ctx, elect, block_ptr, last_op);\n\
+                     let tuple = Operation::new(\n\
+                         ctx, MirConstructTupleOp::get_concrete_op_info(), vec![tuple_ty],\n\
+                         vec![elect.deref(ctx).get_result(0), elect.deref(ctx).get_result(1)],\n\
+                         vec![], 0,\n\
+                     );\n\
+                     tuple.deref_mut(ctx).set_loc(loc.clone());\n\
+                     tuple.insert_after(ctx, elect);\n\
+                     let result = tuple.deref(ctx).get_result(0);\n",
+    );
+    writeln!(
+        output,
+        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, tuple, value_map, block_map, loc,\n                {:?},\n            )?))",
+        format!("{} call without target block", record.rust.name)
+    )
+    .unwrap();
+    output.push_str("        }\n");
+}
+
 fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -7425,6 +7576,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             }
             output.push_str(&record.dialect.op_type);
         }
+    }
+    for record in elect_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     if warp_barriers(catalog).next().is_some() {
         output.push_str(", ");
@@ -7585,6 +7740,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output = output.replace(
             "use crate::translator::{rvalue, terminator::helpers};",
             "use crate::translator::{rvalue, terminator::helpers, types};",
+        );
+    }
+    if elect_intrinsics(catalog).next().is_some() {
+        output.push_str(
+            "use dialect_mir::{ops::MirConstructTupleOp, types::MirTupleType};\nuse pliron::r#type::Typed as _;\n\n",
         );
     }
     writeln!(
@@ -8048,6 +8208,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("        }\n");
+    }
+    for record in elect_intrinsics(catalog) {
+        render_importer_elect_dispatch(&mut output, catalog, record);
     }
     for record in warp_barriers(catalog) {
         debug_assert_eq!(
@@ -9534,6 +9697,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
         );
     }
+    if elect_intrinsics(catalog).next().is_some() {
+        output = output.replace(
+            "warp::{convert_active_mask,",
+            "warp::{convert_active_mask, convert_elect_sync_inline, convert_elect_sync_typed,",
+        );
+    }
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
             output.push_str(", ");
@@ -9636,6 +9805,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             }
             output.push_str(&record.dialect.op_type);
         }
+    }
+    for record in elect_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     if warp_barriers(catalog).next().is_some() {
         output.push_str(", ");
@@ -10401,6 +10574,42 @@ fn convert_generated_tcgen05_load(
         )
         .unwrap();
         output.push_str("    }\n}\n\n");
+    }
+    for record in elect_intrinsics(catalog) {
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        match context::lowering_options(ctx).intrinsic_backend {\n",
+        );
+        for (backend, variant) in [
+            (IntrinsicBackend::LlvmNvptx, "LlvmNvptx"),
+            (IntrinsicBackend::LibNvvm, "LibNvvm"),
+        ] {
+            let mechanism = record
+                .backend_lowerings
+                .iter()
+                .find(|route| route.backend == backend)
+                .expect("elect backend route")
+                .mechanism;
+            writeln!(output, "            IntrinsicBackend::{variant} => {{").unwrap();
+            match mechanism {
+                BackendLoweringMechanism::TypedNvvm => writeln!(
+                    output,
+                    "                convert_elect_sync_typed(ctx, rewriter, self.get_operation(), operands_info, {:?})",
+                    record.llvm_identifier()
+                )
+                .unwrap(),
+                BackendLoweringMechanism::InlinePtx => output.push_str(
+                    "                convert_elect_sync_inline(ctx, rewriter, self.get_operation(), operands_info)\n",
+                ),
+            }
+            output.push_str("            }\n");
+        }
+        output.push_str("        }\n    }\n}\n\n");
     }
     for record in warp_barriers(catalog) {
         debug_assert_eq!(
@@ -11767,6 +11976,78 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
     output
 }
 
+fn render_elect_probe(
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+    hash: &str,
+    backend: IntrinsicBackend,
+) -> String {
+    let mut output = llvm_header(catalog, hash);
+    output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+    let mechanism = record
+        .backend_lowerings
+        .iter()
+        .find(|route| route.backend == backend)
+        .expect("elect backend route")
+        .mechanism;
+    match mechanism {
+        BackendLoweringMechanism::TypedNvvm => {
+            writeln!(
+                output,
+                "declare {{ i32, i1 }} @{}(i32) #0\n",
+                llvm(record).symbol
+            )
+            .unwrap();
+            for (suffix, parameters, mask) in
+                [("register", "i32 %mask", "%mask"), ("immediate", "", "-1")]
+            {
+                writeln!(
+                    output,
+                    "define {{ i32, i1 }} @probe_{}_{}_{suffix}({parameters}) #0 {{",
+                    record.id,
+                    backend_label(backend)
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  %result = call {{ i32, i1 }} @{}(i32 {mask}) #0",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                output.push_str("  ret { i32, i1 } %result\n}\n");
+            }
+        }
+        BackendLoweringMechanism::InlinePtx => {
+            for (suffix, parameters, mask) in
+                [("register", "i32 %mask", "%mask"), ("immediate", "", "-1")]
+            {
+                writeln!(
+                    output,
+                    "define {{ i32, i1 }} @probe_{}_{}_{suffix}({parameters}) #0 {{",
+                    record.id,
+                    backend_label(backend)
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  %raw = call {{ i32, i32 }} asm sideeffect \"{{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }}\", \"=r,=r,r\"(i32 {mask}) #0"
+                )
+                .unwrap();
+                output.push_str(
+                    "  %leader = extractvalue { i32, i32 } %raw, 0\n\
+                     \x20 %predicate.i32 = extractvalue { i32, i32 } %raw, 1\n\
+                     \x20 %predicate = trunc i32 %predicate.i32 to i1\n\
+                     \x20 %result.0 = insertvalue { i32, i1 } poison, i32 %leader, 0\n\
+                     \x20 %result.1 = insertvalue { i32, i1 } %result.0, i1 %predicate, 1\n\
+                     \x20 ret { i32, i1 } %result.1\n}\n",
+                );
+            }
+        }
+    }
+    output.push_str("\nattributes #0 = { convergent }\n");
+    output
+}
+
 pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
     if record.special_register.is_some() {
         return render_special_register_probe(catalog, record, hash, IntrinsicBackend::LlvmNvptx);
@@ -11776,6 +12057,9 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     }
     if record.tcgen05.is_some() {
         return render_tcgen05_probe(catalog, record, hash);
+    }
+    if record.family == "elect" {
+        return render_elect_probe(catalog, record, hash, IntrinsicBackend::LlvmNvptx);
     }
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");

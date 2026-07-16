@@ -929,7 +929,7 @@ impl MirToLlvmConversion for ElectSyncOp {
         rewriter: &mut DialectConversionRewriter,
         operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::warp::convert_elect_sync(
+        super::intrinsics::warp::convert_elect_sync_inline(
             ctx,
             rewriter,
             self.get_operation(),

@@ -658,6 +658,9 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.warp_match.is_some() {
         validate_two_register_and_immediate_forms(&record.expected_ptx, 1, "7", 2, "-1", ptx)?;
     }
+    if record.family == "elect" {
+        validate_register_and_immediate_forms(&record.expected_ptx, 1, "-1", ptx)?;
+    }
     if record.warp_barrier.is_some() {
         validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
     }

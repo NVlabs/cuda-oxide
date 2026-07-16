@@ -1522,6 +1522,10 @@ fn validate_policy(
             policy,
             declaration.context("warp_match requires imported LLVM declaration")?,
         )?,
+        "elect" => validate_elect_policy(
+            policy,
+            declaration.context("elect requires imported LLVM declaration")?,
+        )?,
         "warp_barrier" => validate_warp_barrier_policy(
             policy,
             declaration.context("warp_barrier requires imported LLVM declaration")?,
@@ -1777,7 +1781,7 @@ fn validate_policy(
             .filter(|selection| selection_matches_policy(policy, selection))
             .collect();
         let expected_selection_count = match policy.family.as_str() {
-            "vote" | "warp_barrier" => 2,
+            "vote" | "warp_barrier" | "elect" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
             "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" | "stmatrix" => 0,
@@ -1922,6 +1926,13 @@ fn selection_matches_policy(
             .selections
             .contains(&selection.source_record.as_str())
             && policy.expected_ptx.matches(&selection.asm)
+            && selection.constraints.is_empty();
+    }
+
+    if policy.family == "elect" {
+        return ["INT_ELECT_SYNC_I", "INT_ELECT_SYNC_R"]
+            .contains(&selection.source_record.as_str())
+            && selection.asm == "elect.sync \t$dest|$pred, $mask;"
             && selection.constraints.is_empty();
     }
 
@@ -5561,6 +5572,152 @@ fn validate_warp_match_policy(
     Ok(())
 }
 
+fn validate_elect_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    ensure!(
+        policy.id == "elect_sync"
+            && policy.abi_id == "i0367"
+            && policy.operation_key == "warp.elect.sync"
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some("int_nvvm_elect_sync")
+            && policy.llvm_symbol.as_deref() == Some("llvm.nvvm.elect.sync")
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} elect identity does not match the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "warp"
+            && policy.rust_name == "elect_sync"
+            && policy.rust_arguments == ["u32"]
+            && policy.rust_result == "(u32, bool)"
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == "cuda_intrinsics::warp::elect_sync"
+            && policy.compatibility_rust_paths == ["cuda_device::warp::elect_sync"],
+        "{} must keep its unsafe raw API and stable compatibility path",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "ElectSyncOp"
+            && policy.dialect_op_name == "nvvm.elect_sync"
+            && policy.dialect_operands == ["i32"]
+            && policy.dialect_results == ["i32", "i1"]
+            && policy.llvm_arguments == ["i32"]
+            && policy.llvm_results == ["i32", "i1"]
+            && policy.lowering == "generated_elect",
+        "{} is outside the closed elect lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "inaccessible_read_write"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "8.0"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.ptx_result == "(u32, bool)"
+            && policy.targets == "all",
+        "{} elect effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.13 Parallel Synchronization and Communication Instructions: elect.sync"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-elect-sync",
+        "{} elect PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic", "DefaultAttrsIntrinsic"]
+            && declaration.properties == ["IntrConvergent", "IntrInaccessibleMemOnly"]
+            && declaration.arguments == ["i32"]
+            && declaration.results == ["i32", "i1"],
+        "{} elect declaration facts changed",
+        policy.id
+    );
+    ensure!(
+        declaration.selections.len() == 2
+            && declaration.selections.iter().all(|selection| {
+                ["INT_ELECT_SYNC_I", "INT_ELECT_SYNC_R"].contains(&selection.source_record.as_str())
+                    && selection.asm == "elect.sync \t$dest|$pred, $mask;"
+                    && selection.predicates
+                        == [
+                            "Subtarget->getPTXVersion() >= 80",
+                            "Subtarget->getSmVersion() >= 90",
+                        ]
+                    && selection.constraints.is_empty()
+            }),
+        "{} elect selections changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "elect"
+            && policy.expected_ptx.modifiers == ["sync"]
+            && policy.expected_ptx.operands
+                == [
+                    OperandPattern::RegisterPredicatePair,
+                    OperandPattern::RegisterOrImmediate,
+                ],
+        "{} expected PTX does not match elect.sync",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LlvmNvptx
+                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.minimum_ptx.as_deref() == Some("8.0")
+                    && route.minimum_sm.as_deref() == Some("sm_90")
+                    && !route.evidence_profile.trim().is_empty()
+            })
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LibNvvm
+                    && route.mechanism == BackendLoweringMechanism::InlinePtx
+                    && route.minimum_ptx.as_deref() == Some("8.0")
+                    && route.minimum_sm.as_deref() == Some("sm_90")
+                    && !route.evidence_profile.trim().is_empty()
+            }),
+        "{} must keep the LLVM typed and libNVVM inline-PTX routes explicit",
+        policy.id
+    );
+    ensure!(
+        policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
+            && policy.dot_product.is_none()
+            && policy.packed_alu.is_none()
+            && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
+            && policy.cp_async_mbarrier.is_none()
+            && policy.mbarrier_basic.is_none()
+            && policy.movmatrix.is_none()
+            && policy.mbarrier_extended.is_none()
+            && policy.register_mma.is_none()
+            && policy.sparse_mma.is_none()
+            && policy.prmt.is_none()
+            && policy.cluster_barrier.is_none()
+            && policy.wgmma_control.is_none()
+            && policy.special_register.is_none()
+            && policy.debug_control.is_none()
+            && policy.cluster_memory.is_none()
+            && policy.clc.is_none()
+            && policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with elect",
+        policy.id
+    );
+    Ok(())
+}
+
 fn validate_warp_barrier_policy(
     policy: &OverlayIntrinsic,
     declaration: &ImportedIntrinsic,
@@ -6514,6 +6671,7 @@ fn validate_selected_target_predicates(
         "vote"
             | "active_mask"
             | "warp_match"
+            | "elect"
             | "warp_barrier"
             | "warp_shuffle"
             | "cp_async_copy"
@@ -17297,8 +17455,10 @@ fn validate_inline_ptx_fallback_evidence(
     record: &EvidenceRecord,
     lowering: &crate::model::OverlayBackendLowering,
 ) -> Result<()> {
-    if !matches!(policy.family.as_str(), "cluster_barrier" | "wgmma_control")
-        || lowering.backend != IntrinsicBackend::LibNvvm
+    if !matches!(
+        policy.family.as_str(),
+        "cluster_barrier" | "wgmma_control" | "elect"
+    ) || lowering.backend != IntrinsicBackend::LibNvvm
     {
         return Ok(());
     }
