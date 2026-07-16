@@ -183,6 +183,8 @@ pub struct OverlayShardFile {
     pub clc: Option<ClcAdmission>,
     #[serde(default)]
     pub wgmma_controls: Option<WgmmaControlAdmission>,
+    #[serde(default)]
+    pub tma: Option<TmaAdmission>,
 }
 
 /// Compact admission for the four existing `stmatrix` stores.
@@ -465,6 +467,25 @@ pub struct ClcAdmissionVariant {
     pub operation: ClcOperation,
 }
 
+/// Compact admission for the existing TMA copy and group operations.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TmaAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<TmaAdmissionVariant>,
+}
+
+/// One reviewed TMA operation and its reserved ABI ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TmaAdmissionVariant {
+    pub abi_id: String,
+    pub operation: TmaOperation,
+}
+
 /// Compact admission for the closed `prmt` family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -675,6 +696,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub clc: Option<Clc>,
     #[serde(default)]
+    pub tma: Option<Tma>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -785,6 +808,61 @@ pub enum ClcAdapter {
     GenericPointersToShared,
     PairU64ToI128BoolToU32,
     PairU64ToI128U32,
+}
+
+/// Closed semantic contract for a TMA operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tma {
+    pub operation: TmaOperation,
+    pub adapter: TmaAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TmaOperation {
+    G2sTile1d,
+    G2sTile2d,
+    G2sTile2dMulticast,
+    G2sTile2dMulticastCg2,
+    G2sTile3d,
+    G2sTile4d,
+    G2sTile5d,
+    S2gTile1d,
+    S2gTile2d,
+    S2gTile3d,
+    S2gTile4d,
+    S2gTile5d,
+    CommitGroup,
+    WaitGroup,
+    WaitGroupRead,
+}
+
+impl TmaOperation {
+    pub const fn dimensions(self) -> Option<usize> {
+        match self {
+            Self::G2sTile1d | Self::S2gTile1d => Some(1),
+            Self::G2sTile2d
+            | Self::G2sTile2dMulticast
+            | Self::G2sTile2dMulticastCg2
+            | Self::S2gTile2d => Some(2),
+            Self::G2sTile3d | Self::S2gTile3d => Some(3),
+            Self::G2sTile4d | Self::S2gTile4d => Some(4),
+            Self::G2sTile5d | Self::S2gTile5d => Some(5),
+            Self::CommitGroup | Self::WaitGroup | Self::WaitGroupRead => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TmaAdapter {
+    G2sPointersCoordinatesBarrierInjectDefaults,
+    G2sPointersCoordinatesBarrierMaskInjectDefaults,
+    S2gPointersCoordinatesInjectDefaults,
+    NoOperands,
+    CompileTimeConstantMaxPending,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2208,6 +2286,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clc: Option<Clc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tma: Option<Tma>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
     pub expected_ptx: InstructionPattern,
@@ -3205,6 +3285,36 @@ runtime_validation = "unexecuted"
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<Clc>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn tma_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "g2s_tile2d_multicast"
+adapter = "g2s_pointers_coordinates_barrier_mask_inject_defaults"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<Tma>(valid).unwrap();
+        assert_eq!(parsed.operation, TmaOperation::G2sTile2dMulticast);
+        assert_eq!(
+            parsed.adapter,
+            TmaAdapter::G2sPointersCoordinatesBarrierMaskInjectDefaults
+        );
+
+        for invalid in [
+            valid.replace("g2s_tile2d_multicast", "g2s_multicast"),
+            valid.replace(
+                "g2s_pointers_coordinates_barrier_mask_inject_defaults",
+                "direct",
+            ),
+            valid.replace(
+                "runtime_validation = \"unexecuted\"",
+                "runtime_validation = \"assumed\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<Tma>(&invalid).is_err(), "{invalid}");
         }
     }
 }

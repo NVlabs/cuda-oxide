@@ -45,12 +45,12 @@ use crate::model::{
     SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, ThreadfenceAdmission,
-    ThreadfenceScope, VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter,
-    WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
-    WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
-    WarpShuffleValueKind, WgmmaControl, WgmmaControlAdapter, WgmmaControlAdmission,
-    WgmmaControlMode, WgmmaControlParticipation,
+    ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation, VoteAdapter, VoteMode,
+    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
+    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
+    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
+    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind, WgmmaControl,
+    WgmmaControlAdapter, WgmmaControlAdmission, WgmmaControlMode, WgmmaControlParticipation,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -61,7 +61,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 39;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 40;
+const OVERLAY_SHARD_SCHEMA: u32 = 41;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -73,6 +73,7 @@ const THREADFENCE_SHARD_SCHEMA: u32 = 34;
 const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
 const CLC_SHARD_SCHEMA: u32 = 40;
+const TMA_SHARD_SCHEMA: u32 = 41;
 const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 pub(crate) const CATALOG_SCHEMA: u32 = 38;
@@ -233,6 +234,85 @@ pub(crate) fn test_catalog_with_clc(repo_root: &Path) -> Result<CatalogFile> {
                 target_triple: "nvptx64-nvidia-cuda".into(),
                 gpu_target: "sm_100".into(),
                 ptx_feature: "+ptx86".into(),
+            },
+            backend_lowerings,
+            catalog.intrinsic_abi,
+        )?);
+    }
+    catalog
+        .intrinsics
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(catalog)
+}
+
+#[cfg(test)]
+pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
+    let mut catalog = resolve(repo_root)?;
+    let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
+    let imported_by_record = index_imported_intrinsics(&imported)?;
+    let operations = [
+        TmaOperation::G2sTile1d,
+        TmaOperation::G2sTile2d,
+        TmaOperation::G2sTile2dMulticast,
+        TmaOperation::G2sTile2dMulticastCg2,
+        TmaOperation::G2sTile3d,
+        TmaOperation::G2sTile4d,
+        TmaOperation::G2sTile5d,
+        TmaOperation::S2gTile1d,
+        TmaOperation::S2gTile2d,
+        TmaOperation::S2gTile3d,
+        TmaOperation::S2gTile4d,
+        TmaOperation::S2gTile5d,
+        TmaOperation::CommitGroup,
+        TmaOperation::WaitGroup,
+        TmaOperation::WaitGroupRead,
+    ];
+    let admission = TmaAdmission {
+        llvm_evidence_profile: "llvm-tma-test".into(),
+        libnvvm_evidence_profile: "libnvvm-tma-test".into(),
+        runtime_validation: RuntimeValidation::Unexecuted,
+        variants: operations
+            .into_iter()
+            .map(|operation| crate::model::TmaAdmissionVariant {
+                abi_id: tma_recipe(operation).abi_id.into(),
+                operation,
+            })
+            .collect(),
+    };
+    for policy in expand_tma_admission(&admission)? {
+        let source = resolve_policy_source(&policy)?;
+        let declaration = resolve_imported_declaration(&policy, &source, &imported_by_record)?;
+        validate_policy(&policy, &source, declaration, catalog.intrinsic_abi)?;
+        let backend_lowerings = policy
+            .backend_lowerings
+            .iter()
+            .map(|lowering| {
+                Ok(CatalogBackendLowering {
+                    backend: lowering.backend,
+                    mechanism: lowering.mechanism,
+                    evidence_profile: lowering.evidence_profile.clone(),
+                    target: backend_target_requirement(&policy, lowering)?,
+                    version: "test".into(),
+                    sha256: "0".repeat(64),
+                    artifact_path: None,
+                    build_id_prefix: None,
+                    status: "validated".into(),
+                    stages: vec![],
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        catalog.intrinsics.push(materialize_record(
+            &policy,
+            source,
+            declaration,
+            CatalogBackend {
+                profile: "tma-test".into(),
+                version: "test".into(),
+                sha256: "0".repeat(64),
+                status: "validated".into(),
+                target_triple: "nvptx64-nvidia-cuda".into(),
+                gpu_target: "sm_90".into(),
+                ptx_feature: "+ptx80".into(),
             },
             backend_lowerings,
             catalog.intrinsic_abi,
@@ -568,6 +648,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let stmatrix_admission = shard.stmatrix.take();
         let clc_admission = shard.clc.take();
         let wgmma_control_admission = shard.wgmma_controls.take();
+        let tma_admission = shard.tma.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -695,6 +776,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_wgmma_control_admission(&admission)?;
         }
+        if let Some(admission) = tma_admission {
+            ensure!(
+                shard.family == "tma" && shard.intrinsics.is_empty(),
+                "compact TMA admission must be the only content of a tma shard"
+            );
+            shard.intrinsics = expand_tma_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -793,6 +881,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.clc.is_none() || shard.schema >= CLC_SHARD_SCHEMA,
         "compact CLC admission requires overlay shard schema {}",
         CLC_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.tma.is_none() || shard.schema >= TMA_SHARD_SCHEMA,
+        "compact TMA admission requires overlay shard schema {}",
+        TMA_SHARD_SCHEMA
     );
     ensure!(
         shard.mbarrier_extended.is_none() || shard.schema >= MBARRIER_EXTENDED_SHARD_SCHEMA,
@@ -1327,6 +1420,10 @@ fn validate_policy(
             policy,
             declaration.context("wgmma_control requires imported LLVM declaration")?,
         )?,
+        "tma" => validate_tma_policy(
+            policy,
+            declaration.context("tma requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1365,6 +1462,11 @@ fn validate_policy(
         policy.id
     );
     ensure!(
+        (policy.family == "tma") == policy.tma.is_some(),
+        "{} mixes the TMA contract with another generated family",
+        policy.id
+    );
+    ensure!(
         policy.special_register.is_none() || policy.family == "sreg",
         "{} mixes the special-register contract with another generated family",
         policy.id
@@ -1382,6 +1484,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "clc") == policy.clc.is_some(),
         "{} mixes the CLC contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "tma") == policy.tma.is_some(),
+        "{} mixes the TMA contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1583,6 +1690,10 @@ fn selection_matches_policy(
             && selection.constraints.is_empty();
     }
 
+    if policy.family == "tma" {
+        return selection_matches_tma_policy(policy, selection);
+    }
+
     if policy.family == "sync" {
         if policy.id == "sync_threads" {
             return selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
@@ -1718,6 +1829,121 @@ fn selection_matches_policy(
                 && selection.constraints.immediate_bindings[0].value == 0
         }
     }
+}
+
+fn selection_matches_tma_policy(
+    policy: &OverlayIntrinsic,
+    selection: &crate::model::ImportedSelection,
+) -> bool {
+    let Some(tma) = &policy.tma else {
+        return false;
+    };
+    let operation = tma.operation;
+    let (source_record, asm) = match operation {
+        TmaOperation::G2sTile1d => (
+            "TMA_G2S_TILE_CG0_1D",
+            "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0}}], [$mbar];",
+        ),
+        TmaOperation::G2sTile2d => (
+            "TMA_G2S_TILE_CG0_2D",
+            "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar];",
+        ),
+        TmaOperation::G2sTile2dMulticast => (
+            "TMA_G2S_TILE_CG0_2D_MC",
+            "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $mc;",
+        ),
+        TmaOperation::G2sTile2dMulticastCg2 => (
+            "TMA_G2S_TILE_2D_MC",
+            "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $mc;",
+        ),
+        TmaOperation::G2sTile3d => (
+            "TMA_G2S_TILE_CG0_3D",
+            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar];",
+        ),
+        TmaOperation::G2sTile4d => (
+            "TMA_G2S_TILE_CG0_4D",
+            "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar];",
+        ),
+        TmaOperation::G2sTile5d => (
+            "TMA_G2S_TILE_CG0_5D",
+            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar];",
+        ),
+        TmaOperation::S2gTile1d => (
+            "TMA_TENSOR_S2G_TILE_1D",
+            "cp.async.bulk.tensor.1d.global.shared::cta.tile.bulk_group [$tmap, {{$d0}}], [$src];",
+        ),
+        TmaOperation::S2gTile2d => (
+            "TMA_TENSOR_S2G_TILE_2D",
+            "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1}}], [$src];",
+        ),
+        TmaOperation::S2gTile3d => (
+            "TMA_TENSOR_S2G_TILE_3D",
+            "cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1, $d2}}], [$src];",
+        ),
+        TmaOperation::S2gTile4d => (
+            "TMA_TENSOR_S2G_TILE_4D",
+            "cp.async.bulk.tensor.4d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1, $d2, $d3}}], [$src];",
+        ),
+        TmaOperation::S2gTile5d => (
+            "TMA_TENSOR_S2G_TILE_5D",
+            "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$src];",
+        ),
+        TmaOperation::CommitGroup => ("CP_ASYNC_BULK_COMMIT_GROUP", "cp.async.bulk.commit_group;"),
+        TmaOperation::WaitGroup => ("CP_ASYNC_BULK_WAIT_GROUP", "cp.async.bulk.wait_group \t$n;"),
+        TmaOperation::WaitGroupRead => (
+            "CP_ASYNC_BULK_WAIT_GROUP_READ",
+            "cp.async.bulk.wait_group.read \t$n;",
+        ),
+    };
+
+    let mut immediate_bindings = Vec::new();
+    if matches!(
+        operation,
+        TmaOperation::G2sTile1d
+            | TmaOperation::G2sTile2d
+            | TmaOperation::G2sTile2dMulticast
+            | TmaOperation::G2sTile2dMulticastCg2
+            | TmaOperation::G2sTile3d
+            | TmaOperation::G2sTile4d
+            | TmaOperation::G2sTile5d
+    ) {
+        let dimensions = operation.dimensions().unwrap();
+        immediate_bindings.push(crate::model::ImportedImmediateBinding {
+            argument_index: dimensions + 5,
+            value: if matches!(
+                operation,
+                TmaOperation::G2sTile2dMulticast | TmaOperation::G2sTile2dMulticastCg2
+            ) {
+                -1
+            } else {
+                0
+            },
+        });
+        immediate_bindings.push(crate::model::ImportedImmediateBinding {
+            argument_index: dimensions + 6,
+            value: 0,
+        });
+    } else if matches!(
+        operation,
+        TmaOperation::S2gTile1d
+            | TmaOperation::S2gTile2d
+            | TmaOperation::S2gTile3d
+            | TmaOperation::S2gTile4d
+            | TmaOperation::S2gTile5d
+    ) {
+        immediate_bindings.push(crate::model::ImportedImmediateBinding {
+            argument_index: operation.dimensions().unwrap() + 3,
+            value: 0,
+        });
+    }
+
+    selection.source_record == source_record
+        && selection.asm == asm
+        && selection.constraints
+            == crate::model::ImportedSelectionConstraints {
+                address_space: None,
+                immediate_bindings,
+            }
 }
 
 #[derive(Clone, Copy)]
@@ -1921,6 +2147,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -2381,6 +2608,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                     adapter: recipe.adapter,
                     runtime_validation: admission.runtime_validation,
                 }),
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -2504,6 +2732,620 @@ fn validate_clc_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
     );
     ensure_no_other_family_contract(policy, "CLC")?;
     Ok(())
+}
+
+struct TmaRecipe {
+    operation: TmaOperation,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_arguments: Vec<&'static str>,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: Vec<&'static str>,
+    llvm_arguments: Vec<&'static str>,
+    adapter: TmaAdapter,
+    safe: bool,
+    safe_reason: Option<&'static str>,
+    convergent: bool,
+    minimum_ptx: &'static str,
+    minimum_sm: Option<&'static str>,
+    targets: &'static str,
+    modifiers: Vec<String>,
+    operands: Vec<OperandPattern>,
+    summary: &'static str,
+}
+
+fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
+    let (abi_id, id, operation_key, source_record, llvm_symbol, op_type, op_name) = match operation
+    {
+        TmaOperation::G2sTile1d => (
+            "i0328",
+            "cp_async_bulk_tensor_1d_g2s",
+            "memory.copy.async.bulk.tensor.g2s.tile.1d",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_1d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.1d",
+            "CpAsyncBulkTensorG2sTile1dOp",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_1d",
+        ),
+        TmaOperation::G2sTile2d => (
+            "i0329",
+            "cp_async_bulk_tensor_2d_g2s",
+            "memory.copy.async.bulk.tensor.g2s.tile.2d",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+            "CpAsyncBulkTensorG2sTile2dOp",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_2d",
+        ),
+        TmaOperation::G2sTile2dMulticast => (
+            "i0330",
+            "cp_async_bulk_tensor_2d_g2s_multicast",
+            "memory.copy.async.bulk.tensor.g2s.tile.2d.multicast",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+            "CpAsyncBulkTensorG2sTile2dMulticastOp",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_2d_multicast",
+        ),
+        TmaOperation::G2sTile2dMulticastCg2 => (
+            "i0331",
+            "cp_async_bulk_tensor_2d_g2s_multicast_cg2",
+            "memory.copy.async.bulk.tensor.g2s.tile.2d.multicast.cta_group_2",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+            "CpAsyncBulkTensorG2sTile2dMulticastCg2Op",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_2d_multicast_cg2",
+        ),
+        TmaOperation::G2sTile3d => (
+            "i0332",
+            "cp_async_bulk_tensor_3d_g2s",
+            "memory.copy.async.bulk.tensor.g2s.tile.3d",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_3d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.3d",
+            "CpAsyncBulkTensorG2sTile3dOp",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_3d",
+        ),
+        TmaOperation::G2sTile4d => (
+            "i0333",
+            "cp_async_bulk_tensor_4d_g2s",
+            "memory.copy.async.bulk.tensor.g2s.tile.4d",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_4d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.4d",
+            "CpAsyncBulkTensorG2sTile4dOp",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_4d",
+        ),
+        TmaOperation::G2sTile5d => (
+            "i0334",
+            "cp_async_bulk_tensor_5d_g2s",
+            "memory.copy.async.bulk.tensor.g2s.tile.5d",
+            "int_nvvm_cp_async_bulk_tensor_g2s_tile_5d",
+            "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.5d",
+            "CpAsyncBulkTensorG2sTile5dOp",
+            "nvvm.cp_async_bulk_tensor_g2s_tile_5d",
+        ),
+        TmaOperation::S2gTile1d => (
+            "i0335",
+            "cp_async_bulk_tensor_1d_s2g",
+            "memory.copy.async.bulk.tensor.s2g.tile.1d",
+            "int_nvvm_cp_async_bulk_tensor_s2g_tile_1d",
+            "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.1d",
+            "CpAsyncBulkTensorS2gTile1dOp",
+            "nvvm.cp_async_bulk_tensor_s2g_tile_1d",
+        ),
+        TmaOperation::S2gTile2d => (
+            "i0336",
+            "cp_async_bulk_tensor_2d_s2g",
+            "memory.copy.async.bulk.tensor.s2g.tile.2d",
+            "int_nvvm_cp_async_bulk_tensor_s2g_tile_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.2d",
+            "CpAsyncBulkTensorS2gTile2dOp",
+            "nvvm.cp_async_bulk_tensor_s2g_tile_2d",
+        ),
+        TmaOperation::S2gTile3d => (
+            "i0337",
+            "cp_async_bulk_tensor_3d_s2g",
+            "memory.copy.async.bulk.tensor.s2g.tile.3d",
+            "int_nvvm_cp_async_bulk_tensor_s2g_tile_3d",
+            "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.3d",
+            "CpAsyncBulkTensorS2gTile3dOp",
+            "nvvm.cp_async_bulk_tensor_s2g_tile_3d",
+        ),
+        TmaOperation::S2gTile4d => (
+            "i0338",
+            "cp_async_bulk_tensor_4d_s2g",
+            "memory.copy.async.bulk.tensor.s2g.tile.4d",
+            "int_nvvm_cp_async_bulk_tensor_s2g_tile_4d",
+            "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.4d",
+            "CpAsyncBulkTensorS2gTile4dOp",
+            "nvvm.cp_async_bulk_tensor_s2g_tile_4d",
+        ),
+        TmaOperation::S2gTile5d => (
+            "i0339",
+            "cp_async_bulk_tensor_5d_s2g",
+            "memory.copy.async.bulk.tensor.s2g.tile.5d",
+            "int_nvvm_cp_async_bulk_tensor_s2g_tile_5d",
+            "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.5d",
+            "CpAsyncBulkTensorS2gTile5dOp",
+            "nvvm.cp_async_bulk_tensor_s2g_tile_5d",
+        ),
+        TmaOperation::CommitGroup => (
+            "i0340",
+            "cp_async_bulk_commit_group",
+            "memory.copy.async.bulk.group.commit",
+            "int_nvvm_cp_async_bulk_commit_group",
+            "llvm.nvvm.cp.async.bulk.commit.group",
+            "CpAsyncBulkCommitGroupOp",
+            "nvvm.cp_async_bulk_commit_group",
+        ),
+        TmaOperation::WaitGroup => (
+            "i0341",
+            "cp_async_bulk_wait_group",
+            "memory.copy.async.bulk.group.wait_max_pending",
+            "int_nvvm_cp_async_bulk_wait_group",
+            "llvm.nvvm.cp.async.bulk.wait.group",
+            "CpAsyncBulkWaitGroupOp",
+            "nvvm.cp_async_bulk_wait_group",
+        ),
+        TmaOperation::WaitGroupRead => (
+            "i0342",
+            "cp_async_bulk_wait_group_read",
+            "memory.copy.async.bulk.group.wait_read_max_pending",
+            "int_nvvm_cp_async_bulk_wait_group_read",
+            "llvm.nvvm.cp.async.bulk.wait.group.read",
+            "CpAsyncBulkWaitGroupReadOp",
+            "nvvm.cp_async_bulk_wait_group_read",
+        ),
+    };
+
+    let dimensions = operation.dimensions();
+    let is_g2s = matches!(
+        operation,
+        TmaOperation::G2sTile1d
+            | TmaOperation::G2sTile2d
+            | TmaOperation::G2sTile2dMulticast
+            | TmaOperation::G2sTile2dMulticastCg2
+            | TmaOperation::G2sTile3d
+            | TmaOperation::G2sTile4d
+            | TmaOperation::G2sTile5d
+    );
+    let is_s2g = matches!(
+        operation,
+        TmaOperation::S2gTile1d
+            | TmaOperation::S2gTile2d
+            | TmaOperation::S2gTile3d
+            | TmaOperation::S2gTile4d
+            | TmaOperation::S2gTile5d
+    );
+    let multicast = matches!(
+        operation,
+        TmaOperation::G2sTile2dMulticast | TmaOperation::G2sTile2dMulticastCg2
+    );
+    let cg2 = operation == TmaOperation::G2sTile2dMulticastCg2;
+
+    let mut rust_arguments = Vec::new();
+    let mut dialect_operands = Vec::new();
+    let mut llvm_arguments = Vec::new();
+    let (adapter, safe, safe_reason, convergent, summary) = if is_g2s {
+        rust_arguments.extend(["*mut u8", "*const u8"]);
+        rust_arguments.extend(std::iter::repeat_n("i32", dimensions.unwrap()));
+        rust_arguments.push("*mut u64");
+        if multicast {
+            rust_arguments.push("u16");
+        }
+        dialect_operands.extend(["ptr", "ptr", "ptr"]);
+        dialect_operands.extend(std::iter::repeat_n("i32", dimensions.unwrap()));
+        dialect_operands.extend(["i16", "i64"]);
+        llvm_arguments.extend(["shared_cluster_ptr", "shared_ptr", "ptr"]);
+        llvm_arguments.extend(std::iter::repeat_n("i32", dimensions.unwrap()));
+        llvm_arguments.extend(["i16", "i64", "i1", "i1", "i32"]);
+        (
+            if multicast {
+                TmaAdapter::G2sPointersCoordinatesBarrierMaskInjectDefaults
+            } else {
+                TmaAdapter::G2sPointersCoordinatesBarrierInjectDefaults
+            },
+            false,
+            None,
+            true,
+            if multicast {
+                "Starts a multicast TMA tile copy from global to cluster shared memory."
+            } else {
+                "Starts a TMA tile copy from global to cluster shared memory."
+            },
+        )
+    } else if is_s2g {
+        rust_arguments.extend(["*const u8", "*const u8"]);
+        rust_arguments.extend(std::iter::repeat_n("i32", dimensions.unwrap()));
+        dialect_operands.extend(["ptr", "ptr"]);
+        dialect_operands.extend(std::iter::repeat_n("i32", dimensions.unwrap()));
+        llvm_arguments.extend(["shared_ptr", "ptr"]);
+        llvm_arguments.extend(std::iter::repeat_n("i32", dimensions.unwrap()));
+        llvm_arguments.extend(["i64", "i1"]);
+        (
+            TmaAdapter::S2gPointersCoordinatesInjectDefaults,
+            false,
+            None,
+            true,
+            "Starts a TMA tile copy from shared to global memory.",
+        )
+    } else if operation == TmaOperation::CommitGroup {
+        (
+            TmaAdapter::NoOperands,
+            true,
+            Some(
+                "committing this thread's pending bulk-copy group has no Rust memory-safety precondition.",
+            ),
+            false,
+            "Commits this thread's pending asynchronous bulk copies as one group.",
+        )
+    } else {
+        rust_arguments.push("u32");
+        dialect_operands.push("i32");
+        llvm_arguments.push("i32");
+        (
+            TmaAdapter::CompileTimeConstantMaxPending,
+            true,
+            Some(
+                "waiting on this thread's bulk-copy groups has no Rust memory-safety precondition.",
+            ),
+            false,
+            if operation == TmaOperation::WaitGroupRead {
+                "Waits for bulk-copy groups and completes their reads."
+            } else {
+                "Waits until at most the requested bulk-copy groups remain pending."
+            },
+        )
+    };
+
+    let mut modifiers = vec!["async".into(), "bulk".into()];
+    let operands = if is_g2s {
+        modifiers.extend([
+            "tensor".into(),
+            format!("{}d", dimensions.unwrap()),
+            "shared::cluster".into(),
+            "global".into(),
+            "tile".into(),
+            "mbarrier::complete_tx::bytes".into(),
+        ]);
+        if multicast {
+            modifiers.push("multicast::cluster".into());
+        }
+        if cg2 {
+            modifiers.push("cta_group::2".into());
+        }
+        let mut operands = vec![
+            OperandPattern::Address,
+            OperandPattern::Address,
+            OperandPattern::Address,
+        ];
+        if multicast {
+            operands.push(OperandPattern::Register);
+        }
+        operands
+    } else if is_s2g {
+        modifiers.extend([
+            "tensor".into(),
+            format!("{}d", dimensions.unwrap()),
+            "global".into(),
+            "shared::cta".into(),
+            "tile".into(),
+            "bulk_group".into(),
+        ]);
+        vec![OperandPattern::Address, OperandPattern::Address]
+    } else if operation == TmaOperation::CommitGroup {
+        modifiers.push("commit_group".into());
+        vec![]
+    } else {
+        modifiers.push("wait_group".into());
+        if operation == TmaOperation::WaitGroupRead {
+            modifiers.push("read".into());
+        }
+        vec![OperandPattern::Immediate]
+    };
+
+    TmaRecipe {
+        operation,
+        abi_id,
+        id,
+        operation_key,
+        source_record,
+        llvm_symbol,
+        rust_arguments,
+        dialect_op_type: op_type,
+        dialect_op_name: op_name,
+        dialect_operands,
+        llvm_arguments,
+        adapter,
+        safe,
+        safe_reason,
+        convergent,
+        minimum_ptx: if cg2 { "8.6" } else { "8.0" },
+        minimum_sm: if cg2 { None } else { Some("sm_90") },
+        targets: if cg2 { "sm_100a|sm_101a" } else { "all" },
+        modifiers,
+        operands,
+        summary,
+    }
+}
+
+fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "TMA runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact TMA admission requires both backend evidence profiles"
+    );
+    let expected = [
+        TmaOperation::G2sTile1d,
+        TmaOperation::G2sTile2d,
+        TmaOperation::G2sTile2dMulticast,
+        TmaOperation::G2sTile2dMulticastCg2,
+        TmaOperation::G2sTile3d,
+        TmaOperation::G2sTile4d,
+        TmaOperation::G2sTile5d,
+        TmaOperation::S2gTile1d,
+        TmaOperation::S2gTile2d,
+        TmaOperation::S2gTile3d,
+        TmaOperation::S2gTile4d,
+        TmaOperation::S2gTile5d,
+        TmaOperation::CommitGroup,
+        TmaOperation::WaitGroup,
+        TmaOperation::WaitGroupRead,
+    ];
+    ensure!(
+        admission
+            .variants
+            .iter()
+            .map(|variant| variant.operation)
+            .eq(expected),
+        "compact TMA admission must list all 15 operations in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = tma_recipe(variant.operation);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "tma".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "tma".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: recipe.rust_arguments.iter().map(|value| (*value).into()).collect(),
+                rust_result: "()".into(),
+                safe: recipe.safe,
+                must_use: false,
+                safe_allowlist_reason: recipe.safe_reason.map(Into::into),
+                public_rust_path: format!("cuda_intrinsics::tma::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::tma::{}", recipe.id)],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: recipe.dialect_operands.iter().map(|value| (*value).into()).collect(),
+                dialect_results: vec![],
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments: recipe.llvm_arguments.iter().map(|value| (*value).into()).collect(),
+                llvm_results: vec![],
+                pure: false,
+                memory: "read_write".into(),
+                convergent: recipe.convergent,
+                execution_scope: "thread".into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: recipe.minimum_sm.map(Into::into),
+                ptx_result: "()".into(),
+                targets: recipe.targets.into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: "9.7.9.26.5 Asynchronous bulk tensor copy".into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor".into(),
+                lowering: "generated_tma".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some(recipe.minimum_ptx.into()),
+                        minimum_sm: recipe.minimum_sm.map(Into::into),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some(recipe.minimum_ptx.into()),
+                        minimum_sm: recipe.minimum_sm.map(Into::into),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                mbarrier_extended: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                wgmma_control: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: None,
+                tma: Some(Tma {
+                    operation: recipe.operation,
+                    adapter: recipe.adapter,
+                    runtime_validation: admission.runtime_validation,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "cp".into(),
+                    modifiers: recipe.modifiers,
+                    operands: recipe.operands,
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    let tma = policy
+        .tma
+        .as_ref()
+        .with_context(|| format!("{} has no closed TMA contract", policy.id))?;
+    let recipe = tma_recipe(tma.operation);
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == recipe.source_record
+            && declaration.llvm_name == recipe.llvm_symbol,
+        "{} TMA identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "tma"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == "()"
+            && policy.safe == recipe.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.as_deref() == recipe.safe_reason
+            && policy.public_rust_path == format!("cuda_intrinsics::tma::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::tma::{}", recipe.id)],
+        "{} TMA Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results.is_empty()
+            && declaration.arguments == recipe.llvm_arguments
+            && declaration.results.is_empty()
+            && policy.lowering == "generated_tma",
+        "{} TMA carrier or LLVM adapter changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent == recipe.convergent
+            && policy.execution_scope == "thread"
+            && tma.adapter == recipe.adapter
+            && tma.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} TMA semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
+            && policy.targets == recipe.targets
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_result == "()"
+            && policy.expected_ptx.mnemonic == "cp"
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands == recipe.operands,
+        "{} TMA target or PTX contract changed",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings.iter().all(|route| {
+                route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.minimum_ptx.as_deref() == Some(recipe.minimum_ptx)
+                    && route.minimum_sm.as_deref() == recipe.minimum_sm
+                    && !route.evidence_profile.trim().is_empty()
+            }),
+        "{} TMA backend route changed",
+        policy.id
+    );
+    let expected_properties = tma_imported_properties(tma.operation);
+    ensure!(
+        declaration.properties == expected_properties,
+        "{} imported TMA declaration changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "TMA")?;
+    Ok(())
+}
+
+fn tma_imported_properties(operation: TmaOperation) -> Vec<String> {
+    let dimensions = operation.dimensions();
+    if matches!(
+        operation,
+        TmaOperation::G2sTile1d
+            | TmaOperation::G2sTile2d
+            | TmaOperation::G2sTile2dMulticast
+            | TmaOperation::G2sTile2dMulticastCg2
+            | TmaOperation::G2sTile3d
+            | TmaOperation::G2sTile4d
+            | TmaOperation::G2sTile5d
+    ) {
+        let dimensions = dimensions.unwrap();
+        let mut properties = vec![
+            format!("ImmArg<arg{}>", dimensions + 5),
+            format!("ImmArg<arg{}>", dimensions + 6),
+            format!("ImmArg<arg{}>", dimensions + 7),
+            "IntrConvergent".into(),
+            format!("Range<arg{},0,3>", dimensions + 7),
+            "ReadOnly<arg2>".into(),
+            "WriteOnly<arg0>".into(),
+        ];
+        properties.sort();
+        return properties;
+    }
+    if matches!(
+        operation,
+        TmaOperation::S2gTile1d
+            | TmaOperation::S2gTile2d
+            | TmaOperation::S2gTile3d
+            | TmaOperation::S2gTile4d
+            | TmaOperation::S2gTile5d
+    ) {
+        return vec![
+            format!("ImmArg<arg{}>", dimensions.unwrap() + 3),
+            "IntrConvergent".into(),
+            "ReadOnly<arg0>".into(),
+            "ReadOnly<arg1>".into(),
+        ];
+    }
+    if operation == TmaOperation::CommitGroup {
+        vec![]
+    } else {
+        vec!["ImmArg<arg0>".into()]
+    }
 }
 
 fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
@@ -4055,6 +4897,7 @@ fn validate_selected_target_predicates(
     let mut imported_sm = None;
     let mut has_dot_instructions = false;
     let mut has_clc_multicast_support = false;
+    let mut has_tma_blackwell_support = false;
     for predicate in &selection.predicates {
         if let Some(value) = predicate.strip_prefix("Subtarget->getPTXVersion() >= ") {
             ensure!(
@@ -4107,6 +4950,25 @@ fn validate_selected_target_predicates(
                 policy.id
             );
             has_clc_multicast_support = true;
+        } else if predicate == "Subtarget->hasTMABlackwellSupport()" {
+            ensure!(
+                policy.family == "tma"
+                    && policy.tma.as_ref().is_some_and(|tma| {
+                        tma.operation == TmaOperation::G2sTile2dMulticastCg2
+                    }),
+                "{} uses the Blackwell TMA target predicate outside the cta_group::2 operation",
+                policy.id
+            );
+            ensure!(
+                !has_tma_blackwell_support
+                    && imported_ptx.is_none()
+                    && imported_sm.is_none()
+                    && !has_dot_instructions
+                    && !has_clc_multicast_support,
+                "{} has duplicate or conflicting Blackwell TMA target predicates",
+                policy.id
+            );
+            has_tma_blackwell_support = true;
         } else {
             bail!(
                 "{} selected instruction has unsupported target predicate {predicate:?}; target gates must fail closed",
@@ -4189,6 +5051,32 @@ fn validate_selected_target_predicates(
                 "{} query operation unexpectedly has an instruction selection",
                 policy.id
             ),
+        }
+    } else if policy.family == "tma" {
+        if policy
+            .tma
+            .as_ref()
+            .is_some_and(|tma| tma.operation == TmaOperation::G2sTile2dMulticastCg2)
+        {
+            ensure!(
+                has_tma_blackwell_support
+                    && selection.predicates.len() == 1
+                    && parse_hardware_target(policy)?
+                        == CatalogHardwareTarget::AnyOf {
+                            alternatives: vec![
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                            ],
+                        },
+                "{} Blackwell TMA predicate must map to the reviewed PTX 8.6/8.7 accelerated architectures",
+                policy.id
+            );
+        } else {
+            ensure!(
+                imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
+                "{} TMA selection must carry exactly its PTX and SM predicates",
+                policy.id
+            );
         }
     } else if matches!(
         policy.family.as_str(),
@@ -4770,6 +5658,7 @@ fn expand_special_register_admission(
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -5400,6 +6289,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         debug_control: None,
         cluster_memory: None,
         clc: None,
+        tma: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -6327,6 +7217,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -8997,6 +9888,7 @@ fn packed_conversion_overlay_record(
         debug_control: None,
         cluster_memory: None,
         clc: None,
+        tma: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -10259,6 +11151,7 @@ fn expand_register_mma_integer_admission(
             debug_control: None,
             cluster_memory: None,
             clc: None,
+            tma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -10441,6 +11334,7 @@ fn expand_register_mma_binary_admission(
             debug_control: None,
             cluster_memory: None,
             clc: None,
+            tma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -11087,6 +11981,7 @@ fn sparse_mma_overlay_record(
         debug_control: None,
         cluster_memory: None,
         clc: None,
+        tma: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -11532,6 +12427,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -11886,6 +12782,7 @@ fn expand_cluster_barrier_admission(
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -12317,6 +13214,7 @@ fn expand_debug_control_admission(
                 }),
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -12690,6 +13588,7 @@ fn expand_cluster_memory_admission(
                     runtime_validation: admission.runtime_validation,
                 }),
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -13514,6 +14413,7 @@ fn expand_mbarrier_extended_admission(
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -13765,6 +14665,7 @@ fn expand_wgmma_control_admission(
                 debug_control: None,
                 cluster_memory: None,
                 clc: None,
+                tma: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -14046,7 +14947,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "wgmma_control") == policy.wgmma_control.is_some()
             && (policy.family == "debug_control") == policy.debug_control.is_some()
             && (policy.family == "cluster_memory") == policy.cluster_memory.is_some()
-            && (policy.family == "clc") == policy.clc.is_some(),
+            && (policy.family == "clc") == policy.clc.is_some()
+            && (policy.family == "tma") == policy.tma.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -15677,6 +16579,7 @@ fn materialize_record(
         debug_control: policy.debug_control.clone(),
         cluster_memory: policy.cluster_memory.clone(),
         clc: policy.clc.clone(),
+        tma: policy.tma.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -15804,6 +16707,7 @@ mod tests {
             debug_control: None,
             cluster_memory: None,
             clc: None,
+            tma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -17568,6 +18472,38 @@ mod tests {
         }
     }
 
+    fn test_tma_admission() -> TmaAdmission {
+        let operations = [
+            TmaOperation::G2sTile1d,
+            TmaOperation::G2sTile2d,
+            TmaOperation::G2sTile2dMulticast,
+            TmaOperation::G2sTile2dMulticastCg2,
+            TmaOperation::G2sTile3d,
+            TmaOperation::G2sTile4d,
+            TmaOperation::G2sTile5d,
+            TmaOperation::S2gTile1d,
+            TmaOperation::S2gTile2d,
+            TmaOperation::S2gTile3d,
+            TmaOperation::S2gTile4d,
+            TmaOperation::S2gTile5d,
+            TmaOperation::CommitGroup,
+            TmaOperation::WaitGroup,
+            TmaOperation::WaitGroupRead,
+        ];
+        TmaAdmission {
+            llvm_evidence_profile: "llvm-tma-test".into(),
+            libnvvm_evidence_profile: "libnvvm-tma-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: operations
+                .into_iter()
+                .map(|operation| crate::model::TmaAdmissionVariant {
+                    abi_id: tma_recipe(operation).abi_id.into(),
+                    operation,
+                })
+                .collect(),
+        }
+    }
+
     fn test_threadfence_admission() -> ThreadfenceAdmission {
         ThreadfenceAdmission {
             llvm_evidence_profile: "llvm-test".into(),
@@ -17689,6 +18625,7 @@ mod tests {
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -17763,6 +18700,7 @@ mod tests {
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -17794,6 +18732,7 @@ mod tests {
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -17826,6 +18765,7 @@ mod tests {
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         validate_overlay_shard_schema_with_max(
             &extended_shard,
@@ -18058,6 +18998,7 @@ record_count = 14
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -18685,6 +19626,7 @@ scope = "system"
             stmatrix: None,
             clc: Some(test_clc_admission()),
             wgmma_controls: None,
+            tma: None,
         };
         let path = Path::new("intrinsics/overlay/clc.toml");
         validate_overlay_shard_schema_with_max(&shard(CLC_SHARD_SCHEMA), path, CLC_SHARD_SCHEMA)
@@ -18698,6 +19640,119 @@ scope = "system"
             .unwrap_err()
             .to_string()
             .contains("requires overlay shard schema 40")
+        );
+    }
+
+    #[test]
+    fn compact_tma_admission_matches_llvm_and_fails_closed() {
+        let records = expand_tma_admission(&test_tma_admission()).unwrap();
+        assert_eq!(records.len(), 15);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0328", "cp_async_bulk_tensor_1d_g2s"),
+                ("i0329", "cp_async_bulk_tensor_2d_g2s"),
+                ("i0330", "cp_async_bulk_tensor_2d_g2s_multicast"),
+                ("i0331", "cp_async_bulk_tensor_2d_g2s_multicast_cg2"),
+                ("i0332", "cp_async_bulk_tensor_3d_g2s"),
+                ("i0333", "cp_async_bulk_tensor_4d_g2s"),
+                ("i0334", "cp_async_bulk_tensor_5d_g2s"),
+                ("i0335", "cp_async_bulk_tensor_1d_s2g"),
+                ("i0336", "cp_async_bulk_tensor_2d_s2g"),
+                ("i0337", "cp_async_bulk_tensor_3d_s2g"),
+                ("i0338", "cp_async_bulk_tensor_4d_s2g"),
+                ("i0339", "cp_async_bulk_tensor_5d_s2g"),
+                ("i0340", "cp_async_bulk_commit_group"),
+                ("i0341", "cp_async_bulk_wait_group"),
+                ("i0342", "cp_async_bulk_wait_group_read"),
+            ]
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+        }
+
+        assert_eq!(
+            parse_hardware_target(&records[3]).unwrap(),
+            CatalogHardwareTarget::AnyOf {
+                alternatives: vec![
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                ],
+            }
+        );
+
+        let mut missing = test_tma_admission();
+        missing.variants.pop();
+        assert!(expand_tma_admission(&missing).is_err());
+
+        let mut reordered = test_tma_admission();
+        reordered.variants.swap(0, 1);
+        assert!(expand_tma_admission(&reordered).is_err());
+
+        let mut wrong_abi = test_tma_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_tma_admission(&wrong_abi).is_err());
+
+        let mut executed = test_tma_admission();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_tma_admission(&executed).is_err());
+
+        let declaration = declarations[records[0].source_record.as_deref().unwrap()];
+        let mut wrong_adapter = records[0].clone();
+        wrong_adapter.tma.as_mut().unwrap().adapter = TmaAdapter::NoOperands;
+        assert!(validate_imported_policy(&wrong_adapter, declaration).is_err());
+    }
+
+    #[test]
+    fn tma_compact_schema_is_reserved_for_aggregation() {
+        let shard = |schema| OverlayShardFile {
+            schema,
+            family: "tma".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            mbarrier_extended: None,
+            special_registers: None,
+            debug_control: None,
+            threadfence: None,
+            cluster_memory: None,
+            stmatrix: None,
+            clc: None,
+            wgmma_controls: None,
+            tma: Some(test_tma_admission()),
+        };
+        let path = Path::new("intrinsics/overlay/tma.toml");
+        validate_overlay_shard_schema_with_max(&shard(TMA_SHARD_SCHEMA), path, TMA_SHARD_SCHEMA)
+            .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(TMA_SHARD_SCHEMA - 1),
+                path,
+                TMA_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 41")
         );
     }
 
@@ -18724,6 +19779,7 @@ scope = "system"
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
@@ -18759,6 +19815,7 @@ scope = "system"
             stmatrix: None,
             clc: None,
             wgmma_controls: None,
+            tma: None,
         };
         let path = Path::new("intrinsics/overlay/cluster_memory.toml");
         validate_overlay_shard_schema_with_max(
@@ -19191,6 +20248,7 @@ scope = "system"
             stmatrix: None,
             clc: None,
             wgmma_controls: Some(test_wgmma_control_admission()),
+            tma: None,
         };
         let path = Path::new("intrinsics/overlay/wgmma_control.toml");
         validate_overlay_shard_schema_with_max(&shard, path, WGMMA_CONTROL_SHARD_SCHEMA).unwrap();

@@ -23,8 +23,8 @@ use crate::model::{
     SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
     SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
     SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
-    StmatrixLayout, StmatrixMultiplicity, VoteAdapter, VoteMode, WarpBarrierAdapter,
-    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    StmatrixLayout, StmatrixMultiplicity, TmaAdapter, TmaOperation, VoteAdapter, VoteMode,
+    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
     WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode,
     WgmmaControlParticipation,
 };
@@ -185,6 +185,16 @@ pub fn all_outputs(
         outputs.insert(
             "crates/dialect-nvvm/src/ops/generated/clc.rs".into(),
             render_dialect_clc(catalog, catalog_sha256),
+        );
+    }
+    if tma_intrinsics(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/tma.rs".into(),
+            render_compat_tma(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/tma.rs".into(),
+            render_dialect_tma(catalog, catalog_sha256),
         );
     }
     outputs.insert(
@@ -362,6 +372,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "cluster_memory" && record.cluster_memory.is_some())
                     || (record.family == "clc" && record.clc.is_some())
                     || (record.family == "wgmma_control" && record.wgmma_control.is_some())
+                    || (record.family == "tma" && record.tma.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -968,6 +979,51 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated WGMMA-control recipe",
                 record.id
             ),
+            "tma" => ensure!(
+                record.rust.module == "tma"
+                    && record.rust.result == "()"
+                    && !record.rust.must_use
+                    && record.dialect.results.is_empty()
+                    && record.llvm.as_ref().is_some_and(|llvm| llvm.results.is_empty())
+                    && record.semantics.memory == "read_write"
+                    && record.lowering == "generated_tma"
+                    && record.tma.as_ref().is_some_and(|tma| {
+                        tma.runtime_validation == RuntimeValidation::Unexecuted
+                            && match (tma.operation, tma.adapter) {
+                                (
+                                    TmaOperation::G2sTile1d
+                                    | TmaOperation::G2sTile2d
+                                    | TmaOperation::G2sTile3d
+                                    | TmaOperation::G2sTile4d
+                                    | TmaOperation::G2sTile5d,
+                                    TmaAdapter::G2sPointersCoordinatesBarrierInjectDefaults,
+                                ) => !record.rust.safe && record.semantics.convergent,
+                                (
+                                    TmaOperation::G2sTile2dMulticast
+                                    | TmaOperation::G2sTile2dMulticastCg2,
+                                    TmaAdapter::G2sPointersCoordinatesBarrierMaskInjectDefaults,
+                                ) => !record.rust.safe && record.semantics.convergent,
+                                (
+                                    TmaOperation::S2gTile1d
+                                    | TmaOperation::S2gTile2d
+                                    | TmaOperation::S2gTile3d
+                                    | TmaOperation::S2gTile4d
+                                    | TmaOperation::S2gTile5d,
+                                    TmaAdapter::S2gPointersCoordinatesInjectDefaults,
+                                ) => !record.rust.safe && record.semantics.convergent,
+                                (TmaOperation::CommitGroup, TmaAdapter::NoOperands) => {
+                                    record.rust.safe && !record.semantics.convergent
+                                }
+                                (
+                                    TmaOperation::WaitGroup | TmaOperation::WaitGroupRead,
+                                    TmaAdapter::CompileTimeConstantMaxPending,
+                                ) => record.rust.safe && !record.semantics.convergent,
+                                _ => false,
+                            }
+                    }),
+                "{} is outside the closed generated TMA recipe",
+                record.id
+            ),
             "cp_async_copy" => ensure!(
                 record.rust.module == "async_copy"
                     && record.rust.result == "()"
@@ -1547,6 +1603,13 @@ fn clc_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "clc")
+}
+
+fn tma_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "tma")
 }
 
 fn wgmma_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2579,6 +2642,20 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                         "/// `_arg0` must be a compile-time constant shared by the whole warpgroup.\n",
                     ),
                 }
+            } else if let Some(tma) = &record.tma {
+                match tma.adapter {
+                    TmaAdapter::G2sPointersCoordinatesBarrierInjectDefaults
+                    | TmaAdapter::G2sPointersCoordinatesBarrierMaskInjectDefaults => output
+                        .push_str(
+                            "/// The destination and barrier must be valid shared-memory objects, and the tensor map must be a live descriptor for this dimensionality.\n\
+                             /// Keep every object alive until the asynchronous copy completes. Only the designated issuing thread may start this transfer.\n",
+                        ),
+                    TmaAdapter::S2gPointersCoordinatesInjectDefaults => output.push_str(
+                        "/// The source must name a live shared-memory tile, and the tensor map must be a live descriptor for this dimensionality.\n\
+                         /// Keep both objects alive until the committed bulk-copy group completes.\n",
+                    ),
+                    TmaAdapter::NoOperands | TmaAdapter::CompileTimeConstantMaxPending => {}
+                }
             } else if let Some(bridge) = &record.cp_async_mbarrier {
                 output.push_str(
                     "/// `_arg0` must point to a live, initialized, eight-byte-aligned mbarrier object in shared memory.\n\
@@ -3415,6 +3492,111 @@ fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::tma` to keep its public API stable.\n\n");
+    for record in tma_intrinsics(catalog) {
+        let operation = record.tma.as_ref().expect("TMA contract").operation;
+        writeln!(output, "/// {}", record.summary).unwrap();
+        let dimensions = operation.dimensions();
+        let is_g2s = matches!(
+            operation,
+            TmaOperation::G2sTile1d
+                | TmaOperation::G2sTile2d
+                | TmaOperation::G2sTile2dMulticast
+                | TmaOperation::G2sTile2dMulticastCg2
+                | TmaOperation::G2sTile3d
+                | TmaOperation::G2sTile4d
+                | TmaOperation::G2sTile5d
+        );
+        let is_s2g = matches!(
+            operation,
+            TmaOperation::S2gTile1d
+                | TmaOperation::S2gTile2d
+                | TmaOperation::S2gTile3d
+                | TmaOperation::S2gTile4d
+                | TmaOperation::S2gTile5d
+        );
+        if is_g2s || is_s2g {
+            output.push_str("///\n/// # Safety\n");
+            if is_g2s {
+                output.push_str(
+                    "/// `dst`, `tensor_map`, and `barrier` must remain valid until the copy completes.\n",
+                );
+            } else {
+                output.push_str(
+                    "/// `src` and `tensor_map` must remain valid until the committed copy group completes.\n",
+                );
+            }
+        }
+        output.push_str("#[inline(never)]\n");
+        if is_g2s {
+            let dimensions = dimensions.unwrap();
+            let mut arguments = vec![
+                "dst: *mut u8".to_owned(),
+                "tensor_map: *const TmaDescriptor".to_owned(),
+            ];
+            let mut values = vec!["dst".to_owned(), "tensor_map".to_owned()];
+            for index in 0..dimensions {
+                arguments.push(format!("coord{index}: i32"));
+                values.push(format!("coord{index}"));
+            }
+            arguments.push("barrier: *mut Barrier".into());
+            values.push("barrier".into());
+            if matches!(
+                operation,
+                TmaOperation::G2sTile2dMulticast | TmaOperation::G2sTile2dMulticastCg2
+            ) {
+                arguments.push("cta_mask: u16".into());
+                values.push("cta_mask".into());
+            }
+            if arguments.len() > 7 {
+                output.push_str("#[allow(clippy::too_many_arguments)]\n");
+            }
+            writeln!(
+                output,
+                "pub unsafe fn {}({}) {{",
+                record.rust.name,
+                arguments.join(", ")
+            )
+            .unwrap();
+            writeln!(output, "    let _ = ({});", values.join(", ")).unwrap();
+        } else if is_s2g {
+            let dimensions = dimensions.unwrap();
+            let mut arguments = vec![
+                "src: *const u8".to_owned(),
+                "tensor_map: *const TmaDescriptor".to_owned(),
+            ];
+            let mut values = vec!["src".to_owned(), "tensor_map".to_owned()];
+            for index in 0..dimensions {
+                arguments.push(format!("coord{index}: i32"));
+                values.push(format!("coord{index}"));
+            }
+            writeln!(
+                output,
+                "pub unsafe fn {}({}) {{",
+                record.rust.name,
+                arguments.join(", ")
+            )
+            .unwrap();
+            writeln!(output, "    let _ = ({});", values.join(", ")).unwrap();
+        } else if operation == TmaOperation::CommitGroup {
+            writeln!(output, "pub fn {}() {{", record.rust.name).unwrap();
+        } else {
+            writeln!(output, "pub fn {}(n: u32) {{", record.rust.name).unwrap();
+            output.push_str("    let _ = n;\n");
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_wgmma_control(catalog: &CatalogFile, hash: &str) -> String {
     assert_eq!(wgmma_controls(catalog).count(), 3);
     let mut output = rust_header(catalog, hash);
@@ -4041,6 +4223,15 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    warp_shuffle::register(ctx);",
                 "    warp_shuffle::register(ctx);\n    wgmma_control::register(ctx);",
+            );
+    }
+    if tma_intrinsics(catalog).next().is_some() {
+        output = output
+            .replace("mod sync;", "mod sync;\nmod tma;")
+            .replace("pub use sync::*;", "pub use sync::*;\npub use tma::*;")
+            .replace(
+                "    sync::register(ctx);",
+                "    sync::register(ctx);\n    tma::register(ctx);",
             );
     }
     output
@@ -6755,6 +6946,33 @@ fn render_dialect_clc(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(tma_intrinsics(catalog).count(), 15);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated Tensor Memory Accelerator operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+    );
+    for record in tma_intrinsics(catalog) {
+        let operand_count = record.dialect.operands.len();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in tma_intrinsics(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -6856,6 +7074,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
         );
+    }
+    for record in tma_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -8395,6 +8617,79 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    for record in tma_intrinsics(catalog) {
+        let operation = record.tma.as_ref().unwrap().operation;
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        if matches!(
+            operation,
+            TmaOperation::WaitGroup | TmaOperation::WaitGroupRead
+        ) {
+            output.push_str(
+                "            if !matches!(&args[0], mir::Operand::Constant(_)) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"TMA wait-group count must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+            );
+        }
+        let marker = intrinsic_marker(catalog, record);
+        match operation {
+            TmaOperation::G2sTile1d
+            | TmaOperation::G2sTile2d
+            | TmaOperation::G2sTile3d
+            | TmaOperation::G2sTile4d
+            | TmaOperation::G2sTile5d => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tma::emit_tma_g2s(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
+                    operation.dimensions().unwrap()
+                )
+                .unwrap();
+            }
+            TmaOperation::G2sTile2dMulticast => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tma::emit_tma_g2s_multicast(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
+                )
+                .unwrap();
+            }
+            TmaOperation::G2sTile2dMulticastCg2 => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tma::emit_tma_g2s_multicast_cg2(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
+                )
+                .unwrap();
+            }
+            TmaOperation::S2gTile1d
+            | TmaOperation::S2gTile2d
+            | TmaOperation::S2gTile3d
+            | TmaOperation::S2gTile4d
+            | TmaOperation::S2gTile5d => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tma::emit_tma_s2g(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
+                    operation.dimensions().unwrap()
+                )
+                .unwrap();
+            }
+            TmaOperation::CommitGroup => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tma::emit_tma_commit_group(\n                ctx, args, target, block_ptr, prev_op, block_map, loc, {marker:?},\n            )?))"
+                )
+                .unwrap();
+            }
+            TmaOperation::WaitGroup | TmaOperation::WaitGroupRead => {
+                writeln!(
+                    output,
+                    "            Ok(Some(super::tma::emit_tma_wait_group(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
+                    operation == TmaOperation::WaitGroupRead
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("        }\n");
+    }
     output.push_str("        _ => Ok(None),\n    }\n}\n\n");
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
@@ -8693,6 +8988,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output = output.replace(
             "cp_async::{",
             "clc::{convert_generated_clc_query, convert_generated_clc_try_cancel}, cp_async::{",
+        );
+    }
+    if tma_intrinsics(catalog).next().is_some() {
+        output = output.replace(
+            "prmt::convert_generated_prmt, warp::{",
+            "prmt::convert_generated_prmt, tma::{convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
         );
     }
     for (index, record) in sregs(catalog).enumerate() {
@@ -9863,6 +10164,74 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("    }\n}\n\n");
     }
+    for record in tma_intrinsics(catalog) {
+        let operation = record.tma.as_ref().unwrap().operation;
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        match operation {
+            TmaOperation::G2sTile1d
+            | TmaOperation::G2sTile2d
+            | TmaOperation::G2sTile3d
+            | TmaOperation::G2sTile4d
+            | TmaOperation::G2sTile5d => {
+                writeln!(
+                    output,
+                    "        convert_g2s(ctx, rewriter, self.get_operation(), operands_info, {}, false)",
+                    operation.dimensions().unwrap()
+                )
+                .unwrap();
+            }
+            TmaOperation::G2sTile2dMulticast => output.push_str(
+                "        convert_g2s(ctx, rewriter, self.get_operation(), operands_info, 2, true)\n",
+            ),
+            TmaOperation::G2sTile2dMulticastCg2 => output.push_str(
+                "        convert_g2s_multicast_cg2(ctx, rewriter, self.get_operation(), operands_info)\n",
+            ),
+            TmaOperation::S2gTile1d
+            | TmaOperation::S2gTile2d
+            | TmaOperation::S2gTile3d
+            | TmaOperation::S2gTile4d
+            | TmaOperation::S2gTile5d => {
+                writeln!(
+                    output,
+                    "        convert_s2g(ctx, rewriter, self.get_operation(), operands_info, {})",
+                    operation.dimensions().unwrap()
+                )
+                .unwrap();
+            }
+            TmaOperation::CommitGroup | TmaOperation::WaitGroup | TmaOperation::WaitGroupRead => {
+                let arguments = if operation == TmaOperation::CommitGroup {
+                    "vec![]"
+                } else {
+                    "vec![IntegerType::get(ctx, 32, Signedness::Signless).into()]"
+                };
+                output.push_str("        let op = self.get_operation();\n");
+                output.push_str(
+                    "        let void_ty = llvm_types::VoidType::get(ctx);\n        let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), ",
+                );
+                output.push_str(arguments);
+                output.push_str(", false);\n");
+                output.push_str("        let operands = op.deref(ctx).operands().collect();\n");
+                writeln!(
+                    output,
+                    "        let call = call_intrinsic(ctx, rewriter, op, {:?}, function_ty, operands)?;",
+                    record.llvm_identifier()
+                )
+                .unwrap();
+                output.push_str(
+                    "        rewriter.replace_operation(ctx, op, call);\n        Ok(())\n",
+                );
+            }
+        }
+        output.push_str("    }\n}\n\n");
+    }
     for record in debug_controls(catalog) {
         writeln!(
             output,
@@ -10453,9 +10822,134 @@ fn render_special_register_probe(
     output
 }
 
+fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
+    let operation = record.tma.as_ref().expect("TMA contract").operation;
+    let symbol = &llvm(record).symbol;
+    let mut output = llvm_header(catalog, hash);
+    output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+    if let Some(dimensions) = operation.dimensions() {
+        let is_g2s = matches!(
+            operation,
+            TmaOperation::G2sTile1d
+                | TmaOperation::G2sTile2d
+                | TmaOperation::G2sTile2dMulticast
+                | TmaOperation::G2sTile2dMulticastCg2
+                | TmaOperation::G2sTile3d
+                | TmaOperation::G2sTile4d
+                | TmaOperation::G2sTile5d
+        );
+        let coordinates = std::iter::repeat_n("i32", dimensions)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let coordinate_parameters = (0..dimensions)
+            .map(|index| format!("i32 %coord{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let coordinate_arguments = (0..dimensions)
+            .map(|index| format!("i32 %coord{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if is_g2s {
+            let multicast = matches!(
+                operation,
+                TmaOperation::G2sTile2dMulticast | TmaOperation::G2sTile2dMulticastCg2
+            );
+            let declaration_coordinates = if coordinates.is_empty() {
+                String::new()
+            } else {
+                format!(", {coordinates}")
+            };
+            writeln!(
+                output,
+                "declare void @{symbol}(ptr addrspace(7), ptr addrspace(3), ptr{declaration_coordinates}, i16, i64, i1, i1, i32) #0\n"
+            )
+            .unwrap();
+            let parameters = if coordinate_parameters.is_empty() {
+                String::new()
+            } else {
+                format!(", {coordinate_parameters}")
+            };
+            let mask_parameter = if multicast { ", i16 %cta_mask" } else { "" };
+            writeln!(
+                output,
+                "define void @probe_{}(ptr %dst_generic, ptr %barrier_generic, ptr %tensor_map{parameters}{mask_parameter}) #0 {{",
+                record.id
+            )
+            .unwrap();
+            output.push_str(
+                "  %dst = addrspacecast ptr %dst_generic to ptr addrspace(7)\n  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n",
+            );
+            let arguments = if coordinate_arguments.is_empty() {
+                String::new()
+            } else {
+                format!(", {coordinate_arguments}")
+            };
+            let mask = if multicast { "%cta_mask" } else { "0" };
+            let group = if operation == TmaOperation::G2sTile2dMulticastCg2 {
+                2
+            } else {
+                0
+            };
+            writeln!(
+                output,
+                "  call void @{symbol}(ptr addrspace(7) %dst, ptr addrspace(3) %barrier, ptr %tensor_map{arguments}, i16 {mask}, i64 0, i1 {multicast}, i1 false, i32 {group}) #0"
+            )
+            .unwrap();
+        } else {
+            let declaration_coordinates = if coordinates.is_empty() {
+                String::new()
+            } else {
+                format!(", {coordinates}")
+            };
+            writeln!(
+                output,
+                "declare void @{symbol}(ptr addrspace(3), ptr{declaration_coordinates}, i64, i1) #0\n"
+            )
+            .unwrap();
+            let parameters = if coordinate_parameters.is_empty() {
+                String::new()
+            } else {
+                format!(", {coordinate_parameters}")
+            };
+            writeln!(
+                output,
+                "define void @probe_{}(ptr %src_generic, ptr %tensor_map{parameters}) #0 {{",
+                record.id
+            )
+            .unwrap();
+            output.push_str("  %src = addrspacecast ptr %src_generic to ptr addrspace(3)\n");
+            let arguments = if coordinate_arguments.is_empty() {
+                String::new()
+            } else {
+                format!(", {coordinate_arguments}")
+            };
+            writeln!(
+                output,
+                "  call void @{symbol}(ptr addrspace(3) %src, ptr %tensor_map{arguments}, i64 0, i1 false) #0"
+            )
+            .unwrap();
+        }
+        output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+    } else if operation == TmaOperation::CommitGroup {
+        writeln!(output, "declare void @{symbol}()\n").unwrap();
+        writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
+        writeln!(output, "  call void @{symbol}()").unwrap();
+        output.push_str("  ret void\n}\n");
+    } else {
+        writeln!(output, "declare void @{symbol}(i32)\n").unwrap();
+        writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
+        writeln!(output, "  call void @{symbol}(i32 0)").unwrap();
+        output.push_str("  ret void\n}\n");
+    }
+    output
+}
+
 pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
     if record.special_register.is_some() {
         return render_special_register_probe(catalog, record, hash, IntrinsicBackend::LlvmNvptx);
+    }
+    if record.tma.is_some() {
+        return render_tma_probe(catalog, record, hash);
     }
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
@@ -12102,6 +12596,13 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_clc(&repo_root).unwrap();
         assert_eq!(clc_intrinsics(&catalog).count(), 6);
+        catalog
+    }
+
+    fn catalog_with_tma() -> CatalogFile {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::test_catalog_with_tma(&repo_root).unwrap();
+        assert_eq!(tma_intrinsics(&catalog).count(), 15);
         catalog
     }
 
@@ -14725,6 +15226,89 @@ mod tests {
             .as_mut()
             .unwrap()
             .adapter = ClcAdapter::PairU64ToI128U32;
+        assert!(validate_renderable(&wrong_adapter).is_err());
+    }
+
+    #[test]
+    fn tma_rendering_preserves_api_and_injects_backend_defaults() {
+        let catalog = catalog_with_tma();
+        validate_renderable(&catalog).unwrap();
+
+        let compatibility = render_compat_tma(&catalog, "test-hash");
+        assert!(compatibility.contains(
+            "pub unsafe fn cp_async_bulk_tensor_1d_g2s(dst: *mut u8, tensor_map: *const TmaDescriptor, coord0: i32, barrier: *mut Barrier)"
+        ));
+        assert!(compatibility.contains(
+            "pub unsafe fn cp_async_bulk_tensor_2d_g2s_multicast(dst: *mut u8, tensor_map: *const TmaDescriptor, coord0: i32, coord1: i32, barrier: *mut Barrier, cta_mask: u16)"
+        ));
+        assert!(compatibility.contains(
+            "pub unsafe fn cp_async_bulk_tensor_5d_s2g(src: *const u8, tensor_map: *const TmaDescriptor, coord0: i32, coord1: i32, coord2: i32, coord3: i32, coord4: i32)"
+        ));
+        assert!(compatibility.contains("pub fn cp_async_bulk_commit_group()"));
+        assert!(compatibility.contains("pub fn cp_async_bulk_wait_group(n: u32)"));
+
+        let dialect = render_dialect_tma(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct CpAsyncBulk").count(), 15);
+        assert_eq!(dialect.matches("NResultsInterface<0>").count(), 15);
+        assert!(dialect.contains("NOpdsInterface<10>"));
+        assert!(dialect.contains("CpAsyncBulkWaitGroupReadOp::register(ctx)"));
+
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod tma;"));
+        assert!(dialect_mod.contains("pub use tma::*;"));
+        assert!(dialect_mod.contains("tma::register(ctx);"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::tma::cp_async_bulk_tensor_1d_g2s"));
+        assert!(importer.contains("super::tma::emit_tma_g2s("));
+        assert!(importer.contains("super::tma::emit_tma_g2s_multicast_cg2("));
+        assert!(importer.contains("super::tma::emit_tma_s2g("));
+        assert!(importer.contains("TMA wait-group count must be a compile-time constant"));
+        assert!(importer.contains("\"v1:i0328\""));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("tma::{convert_g2s, convert_g2s_multicast_cg2, convert_s2g}"));
+        assert!(
+            lowering.contains(
+                "convert_g2s(ctx, rewriter, self.get_operation(), operands_info, 5, false)"
+            )
+        );
+        assert!(
+            lowering.contains("convert_s2g(ctx, rewriter, self.get_operation(), operands_info, 5)")
+        );
+        assert!(lowering.contains(
+            "call_intrinsic(ctx, rewriter, op, \"llvm_nvvm_cp_async_bulk_commit_group\""
+        ));
+
+        let g2s = tma_intrinsics(&catalog)
+            .find(|record| record.id == "cp_async_bulk_tensor_2d_g2s_multicast_cg2")
+            .unwrap();
+        let g2s_probe = render_probe(&catalog, g2s, "test-hash");
+        assert!(g2s_probe.contains("i16 %cta_mask, i64 0, i1 true, i1 false, i32 2"));
+        assert!(g2s_probe.contains("addrspacecast ptr %dst_generic to ptr addrspace(7)"));
+
+        let s2g = tma_intrinsics(&catalog)
+            .find(|record| record.id == "cp_async_bulk_tensor_2d_s2g")
+            .unwrap();
+        let s2g_probe = render_probe(&catalog, s2g, "test-hash");
+        assert!(s2g_probe.contains("ptr %tensor_map, i32 %coord0, i32 %coord1, i64 0, i1 false"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/tma.rs")));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/tma.rs"
+        )));
+
+        let mut wrong_adapter = catalog;
+        wrong_adapter
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "cp_async_bulk_tensor_1d_g2s")
+            .unwrap()
+            .tma
+            .as_mut()
+            .unwrap()
+            .adapter = TmaAdapter::NoOperands;
         assert!(validate_renderable(&wrong_adapter).is_err());
     }
 
