@@ -157,6 +157,8 @@ pub struct OverlayShardFile {
     pub register_mma_b1: Option<RegisterMmaBinaryAdmission>,
     #[serde(default, alias = "sparse_mma_int8")]
     pub sparse_mma_integer: Option<SparseMmaIntegerAdmission>,
+    #[serde(default)]
+    pub sparse_mma_f8f6f4_f32: Option<SparseMmaF8F6F4Admission>,
 }
 
 /// Compact admission for a closed dense integer register-MMA family.
@@ -219,6 +221,18 @@ pub struct SparseMmaIntegerVariant {
     pub a_element: SparseMmaElement,
     pub b_element: SparseMmaElement,
     pub overflow: SparseMmaOverflow,
+}
+
+/// Compact admission for ordered sparse `kind::f8f6f4` F32 MMA.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaF8F6F4Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub a_elements: Vec<SparseMmaElement>,
+    pub b_elements: Vec<SparseMmaElement>,
+    pub product_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -579,12 +593,18 @@ pub enum SparseMmaShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaAccumulator {
+    F32,
     S32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaElement {
+    E2m1,
+    E2m3,
+    E3m2,
+    E4m3,
+    E5m2,
     S4,
     U4,
     S8,
@@ -601,6 +621,7 @@ pub enum SparseMmaLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaOverflow {
+    NotApplicable,
     Wrapping,
     Satfinite,
 }
@@ -629,6 +650,7 @@ pub enum SparseMmaParticipation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaAdapter {
+    C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32,
     C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32,
     C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32,
 }
@@ -637,6 +659,7 @@ pub enum SparseMmaAdapter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaLlvmAdapter {
+    A4I32B4I32C4F32MetadataI32SelectorI32ToD4F32,
     A2I32B2I32C4I32MetadataI32SelectorI32ToD4I32,
     A4I32B4I32C4I32MetadataI32SelectorI32ToD4I32,
 }

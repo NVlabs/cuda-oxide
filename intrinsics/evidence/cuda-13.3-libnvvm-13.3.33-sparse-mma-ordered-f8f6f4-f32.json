@@ -1,0 +1,88 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32", "i32", "i32"],
+    "llvm_results": ["f32", "f32", "f32", "f32"],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_120a",
+    "ptx_feature": "PTX ISA 8.7 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "ordered_f8f6f4_f32_compute120a_ptx93",
+      "coverage_count": 25,
+      "stages": [
+        {
+          "targets": ["compute_120a", "ptx93"],
+          "representation": "convergent ordered kind::f8f6f4 F32 inline PTX in public C, A, B, metadata, selector order",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained the exact 25-form matrix in 11,910-byte PTX (SHA-256 a096494f6b066927107cf222f784d1a586ed1cf3ab766669b741e429f03f4427) and produced 14,052-byte LTOIR (SHA-256 99941daa24a78884788ed0908a3764f596c527e6ab621d6085c549aea9575377)."
+        },
+        {
+          "targets": ["sm_120a", "ptx93"],
+          "representation": "libNVVM-emitted ordered kind::f8f6f4 F32 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 12,144-byte cubin (SHA-256 7769d4fe1de8cdf6644b911bc3654ab220f4dd28cc44a83e28793a5d3f381cf3) retaining all 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_120a", "ptx93"],
+          "representation": "libNVVM LTOIR retaining the ordered kind::f8f6f4 F32 matrix",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 12,144-byte cubin (SHA-256 62457debbb99023b09b3701e14974a97cfc5761f931ebf9f0d9e2bada3e3a642); its 38,172-byte SASS dump (SHA-256 34df448cb5d7367b36657270961981955bb76cc1dd5dd221f673f174c6e10b0a) retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {"name": "a_element", "values": ["e2m1", "e2m3", "e3m2", "e4m3", "e5m2"]},
+        {"name": "b_element", "values": ["e2m1", "e2m3", "e3m2", "e4m3", "e5m2"]}
+      ],
+      "product_count": 25,
+      "fixtures": ["ordered_f8f6f4_f32_compute120a_ptx93"],
+      "template": {
+        "id": "mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f32_${a_element}_${b_element}_f32",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_kind_f8f6f4_f32_${a_element}_${b_element}_f32",
+        "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.kind.f8f6f4.f32.${a_element}.${b_element}.f32",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k64", "row", "col", "kind::f8f6f4", "f32", "${a_element}", "${b_element}", "f32"],
+          "operands": [
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register"},
+            {"kind": "immediate"}
+          ]
+        }
+      }
+    }
+  ]
+}

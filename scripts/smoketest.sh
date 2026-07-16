@@ -27,6 +27,8 @@
 #   auto-nvvm    -- runs without NVVM or architecture flags to check automatic
 #                   libdevice and target selection. Compile-only CI supplies a
 #                   target because no GPU is available.
+#   blackwell-compile -- compile-only coverage pinned to exact sm_120a. These
+#                   kernels are never launched.
 #   NVVM_VERIFY_EXAMPLES are compiled through the real libNVVM verifier and
 #                   compiler in compile-only mode.
 #
@@ -44,7 +46,8 @@ TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64)
+BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 classify() {
@@ -53,6 +56,7 @@ classify() {
     for cat in "${WGMMA_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo wgmma;       return; }; done
     for cat in "${LTOIR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo ltoir;       return; }; done
     for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
+    for cat in "${BLACKWELL_COMPILE_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo blackwell-compile; return; }; done
     for cat in "${ERROR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo error;       return; }; done
     echo standard
 }
@@ -517,6 +521,49 @@ verdict_compile() {
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
+    # This exact-target batch must pass both compiler routes. The second build
+    # may replace the first artifact, so preserve both exit codes in one gate.
+    if [[ "${cat}" == "blackwell-compile" ]]; then
+        local -a llvm_args=("build" "${ex}" "--arch=sm_120a")
+        local -a nvvm_args=("emit-ltoir" "${ex}" "--arch=sm_120a")
+        local llvm_ec
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide "${llvm_args[@]}" 2>&1 | tee "${log}"
+            llvm_ec=${PIPESTATUS[0]}
+        else
+            cargo oxide "${llvm_args[@]}" >"${log}" 2>&1
+            llvm_ec=$?
+        fi
+        if [[ ${llvm_ec} -ne 0 ]]; then
+            CARGO_EC=${llvm_ec}
+            return
+        fi
+        local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local instruction_re='mma\.sp::ordered_metadata\.sync\.aligned\.m16n8k64\.row\.col\.kind::f8f6f4\.f32\.[[:alnum:]]+\.[[:alnum:]]+\.f32'
+        local instruction_count unique_instruction_count
+        instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
+        unique_instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
+        if [[ ! -s "${llvm_ptx}" ]] \
+            || ! grep -qx '\.version 8\.7' "${llvm_ptx}" \
+            || ! grep -qx '\.target sm_120a' "${llvm_ptx}" \
+            || [[ ${instruction_count} -ne 25 || ${unique_instruction_count} -ne 25 ]]; then
+            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 unique f8f6f4 instructions\n' >>"${log}"
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 unique f8f6f4 instructions\n'
+            fi
+            CARGO_EC=1
+            return
+        fi
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide "${nvvm_args[@]}" 2>&1 | tee -a "${log}"
+            CARGO_EC=${PIPESTATUS[0]}
+        else
+            cargo oxide "${nvvm_args[@]}" >>"${log}" 2>&1
+            CARGO_EC=$?
+        fi
+        return
+    fi
+
     # Designated NVVM examples use `emit-ltoir` in compile-only mode so CI
     # checks both textual export and real libNVVM compilation. Other examples
     # use `build`.
@@ -608,7 +655,7 @@ for ex in "${selected[@]}"; do
     if [[ ! -f "${log}" ]]; then
         verdict="FAIL (log missing: ${log})"
         status=1
-    elif [[ ${COMPILE_ONLY} -eq 1 && "${cat}" != "error" ]]; then
+    elif [[ ( ${COMPILE_ONLY} -eq 1 || "${cat}" == "blackwell-compile" ) && "${cat}" != "error" ]]; then
         # Compile-only collapses the GPU-gated categories: with nothing
         # executed, "PTX (or NVVM IR) compiled" is the bar for everything
         # except error examples, which must still fail with a diagnostic.
