@@ -3,11 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warpgroup Matrix Multiply-Accumulate (WGMMA) for Hopper+ architectures.
+//! Warpgroup Matrix Multiply-Accumulate (WGMMA) for Hopper `sm_90a`.
 //!
 //! WGMMA operates at the warpgroup level (128 threads = 4 warps) to perform
 //! efficient tensor core matrix multiplication. Unlike WMMA which operates
 //! per-warp (32 threads), WGMMA leverages the full warpgroup for larger tiles.
+//!
+//! The control and descriptor helpers are available. MMA calls remain
+//! unsupported until pending accumulator registers can stay live through
+//! `commit_group` and `wait_group`.
 //!
 //! # Architecture
 //!
@@ -60,9 +64,7 @@
 //!
 //! # Hardware Support
 //!
-//! - **sm_90 (Hopper)**: H100, H200
-//! - **sm_100+ (Blackwell)**: B100, B200
-//! - **sm_120 (Blackwell)**: RTX 5090
+//! - **sm_90a (Hopper)**: H100, H200
 
 // =============================================================================
 // WGMMA Synchronization Primitives
@@ -182,7 +184,7 @@ pub unsafe fn make_smem_desc_custom(
 ///
 /// - Descriptors must be valid SMEM descriptors
 /// - Must be called by all threads in a warpgroup
-/// - Must be called from within a CUDA kernel context on sm_90a+
+/// - Must be called from within a CUDA kernel context on sm_90a
 ///
 /// # Example
 ///
@@ -214,7 +216,7 @@ pub unsafe fn wgmma_mma_m64n64k16_f32_bf16(acc: &mut [[f32; 8]; 4], desc_a: u64,
 ///
 /// - Descriptors must be valid SMEM descriptors
 /// - Must be called by all threads in a warpgroup
-/// - Must be called from within a CUDA kernel context on sm_90a+
+/// - Must be called from within a CUDA kernel context on sm_90a
 #[inline(never)]
 pub unsafe fn wgmma_mma_m64n64k16_f32_f16(acc: &mut [[f32; 8]; 4], desc_a: u64, desc_b: u64) {
     let _ = (acc, desc_a, desc_b);
@@ -230,7 +232,7 @@ pub unsafe fn wgmma_mma_m64n64k16_f32_f16(acc: &mut [[f32; 8]; 4], desc_a: u64, 
 ///
 /// - Descriptors must be valid SMEM descriptors
 /// - Must be called by all threads in a warpgroup
-/// - Must be called from within a CUDA kernel context on sm_90a+
+/// - Must be called from within a CUDA kernel context on sm_90a
 #[inline(never)]
 pub unsafe fn wgmma_mma_m64n64k16_f32_tf32(acc: &mut [[f32; 8]; 4], desc_a: u64, desc_b: u64) {
     let _ = (acc, desc_a, desc_b);
