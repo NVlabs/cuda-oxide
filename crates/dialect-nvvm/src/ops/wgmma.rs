@@ -36,12 +36,21 @@
 //! - **Architecture**: sm_90+ (Hopper)
 //! - **Execution**: Warpgroup-synchronous (128 threads must execute together)
 
+use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
-    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{IntegerType, Signedness},
+    },
+    common_traits::Verify,
     context::Context,
     context::Ptr,
+    location::Located,
     op::Op,
     operation::Operation,
+    result::Error,
+    r#type::Typed,
+    verify_err,
 };
 use pliron_derive::pliron_op;
 
@@ -62,11 +71,10 @@ use pliron_derive::pliron_op;
 ///
 /// # Results
 ///
-/// - `desc` (i64): 64-bit WGMMA descriptor
+/// - `desc` (u64): 64-bit WGMMA descriptor
 #[pliron_op(
     name = "nvvm.wgmma_make_smem_desc",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
 )]
 pub struct WgmmaMakeSmemDescOp;
@@ -75,6 +83,47 @@ impl WgmmaMakeSmemDescOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
         WgmmaMakeSmemDescOp { op }
+    }
+}
+
+fn is_u64(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| {
+            integer.width() == 64 && integer.signedness() == Signedness::Unsigned
+        })
+}
+
+impl Verify for WgmmaMakeSmemDescOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 1 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_make_smem_desc requires one operand and one result"
+            );
+        }
+        let pointer_ty = op.get_operand(0).get_type(ctx);
+        let pointer_ty_obj = pointer_ty.deref(ctx);
+        let Some(pointer_ty) = pointer_ty_obj.downcast_ref::<MirPtrType>() else {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_make_smem_desc operand must be a MIR pointer"
+            );
+        };
+        if !matches!(
+            pointer_ty.address_space,
+            address_space::GENERIC | address_space::SHARED
+        ) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_make_smem_desc operand must point to generic or shared memory"
+            );
+        }
+        if !is_u64(ctx, op.get_result(0).get_type(ctx)) {
+            return verify_err!(op.loc(), "nvvm.wgmma_make_smem_desc result must be u64");
+        }
+        Ok(())
     }
 }
 
@@ -94,8 +143,8 @@ impl WgmmaMakeSmemDescOp {
 /// # Operands
 ///
 /// - `acc_ptr` (ptr): pointer to accumulator array (32 f32 values, read-modify-write)
-/// - `desc_a` (i64): SMEM descriptor for matrix A
-/// - `desc_b` (i64): SMEM descriptor for matrix B
+/// - `desc_a` (u64): SMEM descriptor for matrix A
+/// - `desc_b` (u64): SMEM descriptor for matrix B
 ///
 /// # Results
 ///
@@ -103,7 +152,6 @@ impl WgmmaMakeSmemDescOp {
 #[pliron_op(
     name = "nvvm.wgmma_mma_m64n64k16_f32_bf16",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
 )]
 pub struct WgmmaMmaM64N64K16F32Bf16Op;
@@ -112,6 +160,38 @@ impl WgmmaMmaM64N64K16F32Bf16Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
         WgmmaMmaM64N64K16F32Bf16Op { op }
+    }
+}
+
+impl Verify for WgmmaMmaM64N64K16F32Bf16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 3 || op.get_num_results() != 0 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k16_f32_bf16 requires three operands and no results"
+            );
+        }
+        let accumulator_ty = op.get_operand(0).get_type(ctx);
+        if accumulator_ty
+            .deref(ctx)
+            .downcast_ref::<MirPtrType>()
+            .is_none()
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k16_f32_bf16 accumulator must be a MIR pointer"
+            );
+        }
+        if !is_u64(ctx, op.get_operand(1).get_type(ctx))
+            || !is_u64(ctx, op.get_operand(2).get_type(ctx))
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k16_f32_bf16 descriptors must be u64"
+            );
+        }
+        Ok(())
     }
 }
 

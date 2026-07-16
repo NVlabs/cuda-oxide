@@ -5,34 +5,37 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp,
-    CpAsyncCa4Op, CpAsyncCaZfill4Op, CpAsyncMbarrierArriveNoIncOp,
-    CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp, CpAsyncMbarrierArriveSharedOp,
-    CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
-    LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
-    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op,
-    LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
-    MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp,
-    MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
-    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
-    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
-    PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr,
-    PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr,
-    ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
-    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNclusterIdOp, ReadPtxSregNsmIdOp,
-    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
-    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
-    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr,
-    RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr,
-    RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ScalarArithmeticFormatAttr, ScalarArithmeticOp,
+    ActiveMaskOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp, Barrier0Op,
+    ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
+    CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
+    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
+    ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
+    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp,
+    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op,
+    MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp,
+    MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op,
+    MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op,
+    MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp,
+    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PackedAtomicAddOp,
+    PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
+    PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
+    PackedAtomicSubnormalAttr, ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp,
+    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
+    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp,
+    ReadPtxSregNclusterIdOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp,
+    ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp, ReduxSyncAddOp,
+    ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr,
+    RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr,
+    RegisterMmaShapeAttr, ScalarArithmeticFormatAttr, ScalarArithmeticOp,
     ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr,
     ScalarArithmeticSubnormalAttr, ScalarConversionOp, ScalarConversionRoundingAttr,
     ScalarConversionSaturationAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
     ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr,
     SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr,
     SparseMmaShapeAttr, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
-    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
+    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp,
+    WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -3875,4 +3878,324 @@ fn test_shfl_sync_i64_construct_and_verify() {
     check_mode!(ShflSyncBflyI64Op);
     check_mode!(ShflSyncDownI64Op);
     check_mode!(ShflSyncUpI64Op);
+}
+
+#[test]
+fn handwritten_atomic_carriers_reject_malformed_ir() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let f32_ty = FP32Type::get(&ctx);
+    let generic_ptr = MirPtrType::get_generic(&mut ctx, u32_ty.into(), false);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            generic_ptr.into(),
+            u32_ty.into(),
+            i32_ty.into(),
+            f32_ty.into(),
+        ],
+    );
+    let pointer = block.deref(&ctx).get_argument(0);
+    let u32_value = block.deref(&ctx).get_argument(1);
+    let i32_value = block.deref(&ctx).get_argument(2);
+    let f32_value = block.deref(&ctx).get_argument(3);
+
+    assert!(
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            pointer,
+            u32_ty.into(),
+            AtomicOrdering::Acquire,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+    assert!(
+        NvvmAtomicStoreOp::build(
+            &mut ctx,
+            u32_value,
+            pointer,
+            AtomicOrdering::Release,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            pointer,
+            u32_value,
+            u32_ty.into(),
+            AtomicRmwKind::Add,
+            AtomicOrdering::AcqRel,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            pointer,
+            f32_value,
+            f32_ty.into(),
+            AtomicRmwKind::FAdd,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+    assert!(
+        NvvmAtomicCmpxchgOp::build(
+            &mut ctx,
+            pointer,
+            u32_value,
+            u32_value,
+            u32_ty.into(),
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Acquire,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+
+    for invalid in [
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            pointer,
+            u32_ty.into(),
+            AtomicOrdering::Release,
+            AtomicScope::Device,
+        ),
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            u32_value,
+            u32_ty.into(),
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        ),
+    ] {
+        assert!(invalid.verify(&ctx).is_err());
+    }
+    assert!(
+        NvvmAtomicStoreOp::build(
+            &mut ctx,
+            u32_value,
+            pointer,
+            AtomicOrdering::Acquire,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            pointer,
+            u32_value,
+            u64_ty.into(),
+            AtomicRmwKind::Add,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            pointer,
+            u32_value,
+            u32_ty.into(),
+            AtomicRmwKind::FAdd,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            pointer,
+            i32_value,
+            i32_ty.into(),
+            AtomicRmwKind::UMin,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        NvvmAtomicCmpxchgOp::build(
+            &mut ctx,
+            pointer,
+            f32_value,
+            f32_value,
+            f32_ty.into(),
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        NvvmAtomicCmpxchgOp::build(
+            &mut ctx,
+            pointer,
+            u32_value,
+            i32_value,
+            u32_ty.into(),
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        NvvmAtomicCmpxchgOp::build(
+            &mut ctx,
+            pointer,
+            u32_value,
+            u32_value,
+            u32_ty.into(),
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Release,
+            AtomicScope::Device,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+
+    let missing_attributes = Operation::new(
+        &mut ctx,
+        NvvmAtomicRmwOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![pointer, u32_value],
+        vec![],
+        0,
+    );
+    assert!(
+        NvvmAtomicRmwOp::new(missing_attributes)
+            .verify(&ctx)
+            .is_err()
+    );
+    let bad_count = Operation::new(
+        &mut ctx,
+        NvvmAtomicCmpxchgOp::get_concrete_op_info(),
+        vec![],
+        vec![pointer, u32_value],
+        vec![],
+        0,
+    );
+    assert!(NvvmAtomicCmpxchgOp::new(bad_count).verify(&ctx).is_err());
+}
+
+#[test]
+fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let pointer_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let global_pointer_ty = MirPtrType::get_global(&mut ctx, u8_ty.into(), false);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            pointer_ty.into(),
+            global_pointer_ty.into(),
+            u32_ty.into(),
+            u64_ty.into(),
+        ],
+    );
+    let pointer = block.deref(&ctx).get_argument(0);
+    let global_pointer = block.deref(&ctx).get_argument(1);
+    let u32_value = block.deref(&ctx).get_argument(2);
+    let u64_value = block.deref(&ctx).get_argument(3);
+
+    let vprintf = VprintfOp::build(&mut ctx, pointer, pointer);
+    assert!(VprintfOp::new(vprintf).verify(&ctx).is_ok());
+    let bad_vprintf = Operation::new(
+        &mut ctx,
+        VprintfOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![pointer, u32_value],
+        vec![],
+        0,
+    );
+    assert!(VprintfOp::new(bad_vprintf).verify(&ctx).is_err());
+
+    let descriptor = Operation::new(
+        &mut ctx,
+        WgmmaMakeSmemDescOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![pointer],
+        vec![],
+        0,
+    );
+    assert!(WgmmaMakeSmemDescOp::new(descriptor).verify(&ctx).is_ok());
+    for (operands, results) in [
+        (vec![u32_value], vec![u64_ty.into()]),
+        (vec![global_pointer], vec![u64_ty.into()]),
+        (vec![pointer], vec![u32_ty.into()]),
+        (vec![], vec![u64_ty.into()]),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            WgmmaMakeSmemDescOp::get_concrete_op_info(),
+            results,
+            operands,
+            vec![],
+            0,
+        );
+        assert!(WgmmaMakeSmemDescOp::new(invalid).verify(&ctx).is_err());
+    }
+
+    let mma = Operation::new(
+        &mut ctx,
+        WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![pointer, u64_value, u64_value],
+        vec![],
+        0,
+    );
+    assert!(WgmmaMmaM64N64K16F32Bf16Op::new(mma).verify(&ctx).is_ok());
+    for (operands, results) in [
+        (vec![u32_value, u64_value, u64_value], vec![]),
+        (vec![pointer, u32_value, u64_value], vec![]),
+        (vec![pointer, u64_value], vec![]),
+        (vec![pointer, u64_value, u64_value], vec![u32_ty.into()]),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+            results,
+            operands,
+            vec![],
+            0,
+        );
+        assert!(
+            WgmmaMmaM64N64K16F32Bf16Op::new(invalid)
+                .verify(&ctx)
+                .is_err()
+        );
+    }
 }

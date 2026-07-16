@@ -18,6 +18,7 @@
 //! └──────────────────────────┴──────────────────────────────┴─────────────────────────┘
 //! ```
 
+use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
     builtin::types::{IntegerType, Signedness},
@@ -101,6 +102,19 @@ impl VprintfOp {
 impl Verify for VprintfOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = &*self.get_operation().deref(ctx);
+
+        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.vprintf requires two operands and one result"
+            );
+        }
+        for operand in 0..2 {
+            let ty = op.get_operand(operand).get_type(ctx);
+            if ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+                return verify_err!(op.loc(), "nvvm.vprintf operands must be MIR pointers");
+            }
+        }
 
         let res = op.get_result(0);
         let ty = res.get_type(ctx);
