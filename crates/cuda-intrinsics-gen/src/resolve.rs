@@ -13,7 +13,8 @@ use crate::model::{
     CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter, CpAsyncControlOperation,
     CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace,
     CpAsyncSourceSize, DotProductAdapter, DotProductOperation, DotProductSignedness,
-    EvidenceArtifactKind, EvidenceFile, EvidenceRecord, EvidenceStageKind, ImportedAddressSpace,
+    EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix, EvidenceMatrixTemplate,
+    EvidenceRecord, EvidenceRecordDefaults, EvidenceStage, EvidenceStageKind, ImportedAddressSpace,
     ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter,
     LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
     LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
@@ -7702,6 +7703,541 @@ fn backend_target_requirement(
     })
 }
 
+fn read_evidence_file(path: &Path) -> Result<EvidenceFile> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    parse_evidence_bytes(&bytes, &path.display().to_string())
+}
+
+fn parse_evidence_bytes(bytes: &[u8], source: &str) -> Result<EvidenceFile> {
+    #[derive(serde::Deserialize)]
+    struct Schema {
+        schema: u32,
+    }
+
+    let schema: Schema =
+        serde_json::from_slice(bytes).with_context(|| format!("parse JSON {source}"))?;
+    match schema.schema {
+        2..=5 => serde_json::from_slice(bytes)
+            .with_context(|| format!("parse legacy evidence JSON {source}")),
+        6 => {
+            let file: EvidenceFileV6 = serde_json::from_slice(bytes)
+                .with_context(|| format!("parse matrix evidence JSON {source}"))?;
+            expand_evidence_file_v6(file)
+                .with_context(|| format!("expand matrix evidence {source}"))
+        }
+        _ => bail!("unsupported evidence schema in {source}"),
+    }
+}
+
+fn expand_evidence_file_v6(file: EvidenceFileV6) -> Result<EvidenceFile> {
+    ensure!(file.schema == 6, "matrix evidence must use schema 6");
+    ensure!(
+        !file.records.is_empty() || !file.matrices.is_empty(),
+        "schema-6 evidence contains no records or matrices"
+    );
+    reject_default_placeholders(&file.defaults, "evidence defaults", false)?;
+
+    let mut fixture_by_id = BTreeMap::new();
+    let mut fixture_coverage = BTreeMap::new();
+    for fixture in &file.fixtures {
+        ensure!(
+            is_safe_matrix_token(&fixture.id),
+            "evidence fixture ID {:?} is not a safe token",
+            fixture.id
+        );
+        ensure!(
+            fixture.coverage_count > 0 && !fixture.stages.is_empty(),
+            "evidence fixture {} has no coverage or stages",
+            fixture.id
+        );
+        reject_stage_placeholders(&fixture.stages, &format!("fixture {}", fixture.id))?;
+        ensure!(
+            fixture_by_id.insert(fixture.id.as_str(), fixture).is_none(),
+            "duplicate evidence fixture ID {}",
+            fixture.id
+        );
+        fixture_coverage.insert(fixture.id.as_str(), 0usize);
+    }
+
+    let mut records = file.records;
+    let mut record_ids = BTreeSet::new();
+    for record in &records {
+        ensure!(
+            record_ids.insert(record.id.clone()),
+            "duplicate expanded evidence ID {}",
+            record.id
+        );
+        validate_stage_pairs(&record.stages, &record.id)?;
+    }
+
+    for matrix in &file.matrices {
+        let (expanded, referenced_fixtures) =
+            expand_evidence_matrix(matrix, &file.defaults, &fixture_by_id)?;
+        for fixture_id in referenced_fixtures {
+            *fixture_coverage
+                .get_mut(fixture_id.as_str())
+                .expect("validated fixture reference") += expanded.len();
+        }
+        for record in expanded {
+            ensure!(
+                record_ids.insert(record.id.clone()),
+                "duplicate expanded evidence ID {}",
+                record.id
+            );
+            records.push(record);
+        }
+    }
+
+    for fixture in &file.fixtures {
+        let actual = fixture_coverage[fixture.id.as_str()];
+        ensure!(
+            actual > 0,
+            "evidence fixture {} is not referenced by any matrix",
+            fixture.id
+        );
+        ensure!(
+            actual == fixture.coverage_count,
+            "evidence fixture {} covers {actual} expanded records, expected {}",
+            fixture.id,
+            fixture.coverage_count
+        );
+    }
+
+    Ok(EvidenceFile {
+        schema: file.schema,
+        backend_profile: file.backend_profile,
+        backend_kind: file.backend_kind,
+        llvm_revision: file.llvm_revision,
+        backend_version: file.backend_version,
+        backend_sha256: file.backend_sha256,
+        artifact_path: file.artifact_path,
+        build_id_prefix: file.build_id_prefix,
+        nvvm_ir_version: file.nvvm_ir_version,
+        debug_ir_version: file.debug_ir_version,
+        records,
+    })
+}
+
+fn expand_evidence_matrix(
+    matrix: &EvidenceMatrix,
+    defaults: &EvidenceRecordDefaults,
+    fixtures: &BTreeMap<&str, &crate::model::EvidenceFixture>,
+) -> Result<(Vec<EvidenceRecord>, Vec<String>)> {
+    ensure!(!matrix.axes.is_empty(), "evidence matrix has no axes");
+    let mut previous_axis: Option<&str> = None;
+    let mut product_count = 1usize;
+    let mut bindings = vec![BTreeMap::<String, String>::new()];
+    for axis in &matrix.axes {
+        ensure!(
+            is_safe_matrix_token(&axis.name),
+            "evidence matrix axis {:?} is not a safe token",
+            axis.name
+        );
+        if let Some(previous) = previous_axis {
+            ensure!(
+                previous < axis.name.as_str(),
+                "evidence matrix axes must be unique and sorted: {} follows {}",
+                axis.name,
+                previous
+            );
+        }
+        previous_axis = Some(&axis.name);
+        ensure!(
+            !axis.values.is_empty(),
+            "evidence matrix axis {} has no values",
+            axis.name
+        );
+        let mut values = BTreeSet::new();
+        for value in &axis.values {
+            ensure!(
+                is_safe_matrix_token(value),
+                "evidence matrix axis {} has unsafe value {:?}",
+                axis.name,
+                value
+            );
+            ensure!(
+                values.insert(value.as_str()),
+                "evidence matrix axis {} has duplicate value {:?}",
+                axis.name,
+                value
+            );
+        }
+        product_count = product_count
+            .checked_mul(axis.values.len())
+            .context("evidence matrix product count overflow")?;
+        let mut next = Vec::with_capacity(product_count);
+        for binding in bindings {
+            for value in &axis.values {
+                let mut expanded = binding.clone();
+                expanded.insert(axis.name.clone(), value.clone());
+                next.push(expanded);
+            }
+        }
+        bindings = next;
+    }
+    ensure!(
+        product_count == matrix.product_count,
+        "evidence matrix expands to {product_count} records, expected {}",
+        matrix.product_count
+    );
+    ensure!(
+        !matrix.fixtures.is_empty(),
+        "evidence matrix references no shared fixture"
+    );
+
+    let mut fixture_ids = BTreeSet::new();
+    let mut previous_fixture: Option<&str> = None;
+    let mut fixture_stages = Vec::new();
+    for fixture_id in &matrix.fixtures {
+        if let Some(previous) = previous_fixture {
+            ensure!(
+                previous < fixture_id.as_str(),
+                "evidence matrix fixtures must be unique and sorted: {fixture_id} follows {previous}"
+            );
+        }
+        previous_fixture = Some(fixture_id);
+        let fixture = fixtures
+            .get(fixture_id.as_str())
+            .with_context(|| format!("evidence matrix references unknown fixture {fixture_id}"))?;
+        fixture_ids.insert(fixture_id.clone());
+        fixture_stages.extend(fixture.stages.iter().cloned());
+    }
+
+    reject_default_placeholders(&matrix.template.facts, "matrix template facts", true)?;
+    validate_matrix_identity(&matrix.template)?;
+    let axis_names = matrix
+        .axes
+        .iter()
+        .map(|axis| axis.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut used_axes = BTreeSet::new();
+    let mut records = Vec::with_capacity(product_count);
+    for binding in &bindings {
+        let record = materialize_evidence_record(
+            &matrix.template,
+            defaults,
+            binding,
+            &mut used_axes,
+            &fixture_stages,
+        )?;
+        validate_stage_pairs(&record.stages, &record.id)?;
+        records.push(record);
+    }
+    for axis in axis_names {
+        ensure!(
+            used_axes.contains(axis),
+            "evidence matrix declares unused axis {axis}"
+        );
+    }
+    Ok((records, fixture_ids.into_iter().collect()))
+}
+
+fn validate_matrix_identity(template: &EvidenceMatrixTemplate) -> Result<()> {
+    ensure!(
+        !template.id.is_empty(),
+        "evidence matrix template has an empty ID"
+    );
+    match (&template.source, &template.source_record) {
+        (Some(_), None) | (None, Some(_)) => {}
+        (Some(_), Some(_)) => bail!("evidence matrix template mixes source forms"),
+        (None, None) => bail!("evidence matrix template has no source"),
+    }
+    reject_disallowed_placeholder(&template.expected_ptx.mnemonic, "PTX mnemonic")?;
+    for operand in &template.expected_ptx.operands {
+        if let OperandPattern::Exact { value } = operand {
+            reject_disallowed_placeholder(value, "exact PTX operand")?;
+        }
+    }
+    Ok(())
+}
+
+fn materialize_evidence_record(
+    template: &EvidenceMatrixTemplate,
+    defaults: &EvidenceRecordDefaults,
+    bindings: &BTreeMap<String, String>,
+    used_axes: &mut BTreeSet<String>,
+    fixture_stages: &[EvidenceStage],
+) -> Result<EvidenceRecord> {
+    let id = expand_axis_placeholders(&template.id, bindings, used_axes, "evidence ID")?;
+    let source = template
+        .source
+        .as_ref()
+        .map(|source| expand_evidence_source(source, bindings, used_axes))
+        .transpose()?;
+    let source_record = template
+        .source_record
+        .as_deref()
+        .map(|value| expand_axis_placeholders(value, bindings, used_axes, "source record"))
+        .transpose()?;
+    let llvm_symbol = template
+        .llvm_symbol
+        .as_deref()
+        .map(|value| expand_axis_placeholders(value, bindings, used_axes, "LLVM symbol"))
+        .transpose()?;
+    validate_expanded_matrix_identity(
+        &id,
+        source.as_ref(),
+        source_record.as_deref(),
+        llvm_symbol.as_deref(),
+    )?;
+    let resolved_llvm_symbol = select_fact(
+        &template.facts.resolved_llvm_symbol,
+        &defaults.resolved_llvm_symbol,
+    )
+    .map(|value| expand_axis_placeholders(&value, bindings, used_axes, "resolved LLVM symbol"))
+    .transpose()?;
+    let mut expected_ptx = template.expected_ptx.clone();
+    for modifier in &mut expected_ptx.modifiers {
+        *modifier = expand_axis_placeholders(modifier, bindings, used_axes, "PTX modifier")?;
+    }
+
+    let mut stages = defaults.stages.clone();
+    stages.extend(template.facts.stages.iter().cloned());
+    stages.extend(fixture_stages.iter().cloned());
+    let target_triple = required_fact(
+        select_fact(&template.facts.target_triple, &defaults.target_triple),
+        &id,
+        "target triple",
+    )?;
+    let gpu_target = required_fact(
+        select_fact(&template.facts.gpu_target, &defaults.gpu_target),
+        &id,
+        "GPU target",
+    )?;
+    let ptx_feature = required_fact(
+        select_fact(&template.facts.ptx_feature, &defaults.ptx_feature),
+        &id,
+        "PTX feature",
+    )?;
+    let status = required_fact(
+        select_fact(&template.facts.status, &defaults.status),
+        &id,
+        "status",
+    )?;
+    Ok(EvidenceRecord {
+        id,
+        source,
+        source_record,
+        llvm_symbol,
+        resolved_llvm_symbol,
+        llvm_arguments: select_fact(&template.facts.llvm_arguments, &defaults.llvm_arguments)
+            .unwrap_or_default(),
+        llvm_results: select_fact(&template.facts.llvm_results, &defaults.llvm_results)
+            .unwrap_or_default(),
+        concrete_llvm_arguments: select_fact(
+            &template.facts.concrete_llvm_arguments,
+            &defaults.concrete_llvm_arguments,
+        )
+        .unwrap_or_default(),
+        concrete_llvm_results: select_fact(
+            &template.facts.concrete_llvm_results,
+            &defaults.concrete_llvm_results,
+        )
+        .unwrap_or_default(),
+        target_triple,
+        gpu_target,
+        ptx_feature,
+        status,
+        stages,
+        declaration_attributes_canonicalized: template
+            .facts
+            .declaration_attributes_canonicalized
+            .or(defaults.declaration_attributes_canonicalized),
+        runtime_validation: template
+            .facts
+            .runtime_validation
+            .or(defaults.runtime_validation),
+        expected_ptx,
+    })
+}
+
+fn validate_expanded_matrix_identity(
+    id: &str,
+    source: Option<&IntrinsicSource>,
+    source_record: Option<&str>,
+    llvm_symbol: Option<&str>,
+) -> Result<()> {
+    ensure!(!id.is_empty(), "expanded evidence has an empty ID");
+    let imported_source = match (source, source_record) {
+        (Some(IntrinsicSource::LlvmImported { source_record }), None) => {
+            ensure!(
+                !source_record.is_empty(),
+                "expanded evidence {id} has an empty source record"
+            );
+            true
+        }
+        (Some(IntrinsicSource::PtxNative { instruction }), None) => {
+            ensure!(
+                !instruction.is_empty(),
+                "expanded evidence {id} has an empty PTX source"
+            );
+            false
+        }
+        (None, Some(source_record)) => {
+            ensure!(
+                !source_record.is_empty(),
+                "expanded evidence {id} has an empty source record"
+            );
+            true
+        }
+        _ => unreachable!("matrix source shape was validated before expansion"),
+    };
+    if imported_source {
+        ensure!(
+            llvm_symbol.is_some_and(|symbol| !symbol.is_empty()),
+            "expanded imported evidence {id} has no LLVM symbol"
+        );
+    } else {
+        ensure!(
+            llvm_symbol.is_none(),
+            "expanded PTX-native evidence {id} invents an LLVM symbol"
+        );
+    }
+    Ok(())
+}
+
+fn select_fact<T: Clone>(specific: &Option<T>, default: &Option<T>) -> Option<T> {
+    specific.clone().or_else(|| default.clone())
+}
+
+fn required_fact(value: Option<String>, id: &str, field: &str) -> Result<String> {
+    let value = value.with_context(|| format!("expanded evidence {id} has no {field}"))?;
+    ensure!(
+        !value.trim().is_empty(),
+        "expanded evidence {id} has an empty {field}"
+    );
+    Ok(value)
+}
+
+fn expand_evidence_source(
+    source: &IntrinsicSource,
+    bindings: &BTreeMap<String, String>,
+    used_axes: &mut BTreeSet<String>,
+) -> Result<IntrinsicSource> {
+    Ok(match source {
+        IntrinsicSource::LlvmImported { source_record } => IntrinsicSource::LlvmImported {
+            source_record: expand_axis_placeholders(
+                source_record,
+                bindings,
+                used_axes,
+                "tagged source record",
+            )?,
+        },
+        IntrinsicSource::PtxNative { instruction } => IntrinsicSource::PtxNative {
+            instruction: expand_axis_placeholders(
+                instruction,
+                bindings,
+                used_axes,
+                "PTX-native source",
+            )?,
+        },
+    })
+}
+
+fn expand_axis_placeholders(
+    value: &str,
+    bindings: &BTreeMap<String, String>,
+    used_axes: &mut BTreeSet<String>,
+    field: &str,
+) -> Result<String> {
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(position) = rest.find('$') {
+        output.push_str(&rest[..position]);
+        let placeholder = &rest[position..];
+        ensure!(
+            placeholder.starts_with("${"),
+            "{field} contains malformed matrix placeholder {value:?}"
+        );
+        let close = placeholder
+            .find('}')
+            .with_context(|| format!("{field} contains an unterminated matrix placeholder"))?;
+        let axis = &placeholder[2..close];
+        ensure!(
+            is_safe_matrix_token(axis),
+            "{field} contains malformed matrix axis {axis:?}"
+        );
+        let replacement = bindings
+            .get(axis)
+            .with_context(|| format!("{field} references unknown matrix axis {axis}"))?;
+        output.push_str(replacement);
+        used_axes.insert(axis.to_owned());
+        rest = &placeholder[close + 1..];
+    }
+    output.push_str(rest);
+    Ok(output)
+}
+
+fn is_safe_matrix_token(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn reject_default_placeholders(
+    defaults: &EvidenceRecordDefaults,
+    context: &str,
+    allow_resolved_symbol: bool,
+) -> Result<()> {
+    if !allow_resolved_symbol && let Some(value) = &defaults.resolved_llvm_symbol {
+        reject_disallowed_placeholder(value, context)?;
+    }
+    for value in defaults
+        .target_triple
+        .iter()
+        .chain(defaults.gpu_target.iter())
+        .chain(defaults.ptx_feature.iter())
+        .chain(defaults.status.iter())
+        .chain(defaults.llvm_arguments.iter().flatten())
+        .chain(defaults.llvm_results.iter().flatten())
+        .chain(defaults.concrete_llvm_arguments.iter().flatten())
+        .chain(defaults.concrete_llvm_results.iter().flatten())
+    {
+        reject_disallowed_placeholder(value, context)?;
+    }
+    reject_stage_placeholders(&defaults.stages, context)
+}
+
+fn reject_stage_placeholders(stages: &[EvidenceStage], context: &str) -> Result<()> {
+    for stage in stages {
+        for value in stage
+            .targets
+            .iter()
+            .chain(std::iter::once(&stage.representation))
+            .chain(std::iter::once(&stage.detail))
+            .chain(stage.tool_path.iter())
+            .chain(stage.tool_version.iter())
+            .chain(stage.tool_sha256.iter())
+        {
+            reject_disallowed_placeholder(value, context)?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_disallowed_placeholder(value: &str, field: &str) -> Result<()> {
+    ensure!(
+        !value.contains("${"),
+        "{field} cannot contain matrix placeholders"
+    );
+    Ok(())
+}
+
+fn validate_stage_pairs(stages: &[EvidenceStage], id: &str) -> Result<()> {
+    let mut pairs = Vec::new();
+    for stage in stages {
+        let pair = (stage.stage, stage.mechanism);
+        ensure!(
+            !pairs.contains(&pair),
+            "expanded evidence {id} has conflicting duplicate {:?}/{:?} stages",
+            stage.stage,
+            stage.mechanism
+        );
+        pairs.push(pair);
+    }
+    Ok(())
+}
+
 fn read_evidence(repo_root: &Path) -> Result<(Vec<EvidenceFile>, Vec<String>)> {
     let directory = repo_root.join("intrinsics/evidence");
     let mut paths: Vec<PathBuf> = fs::read_dir(&directory)
@@ -7718,12 +8254,7 @@ fn read_evidence(repo_root: &Path) -> Result<(Vec<EvidenceFile>, Vec<String>)> {
     let mut files = Vec::with_capacity(paths.len());
     let mut hashes = Vec::with_capacity(paths.len());
     for path in paths {
-        let file: EvidenceFile = read_json(&path)?;
-        ensure!(
-            matches!(file.schema, 2..=5),
-            "unsupported evidence schema in {}",
-            path.display()
-        );
+        let file = read_evidence_file(&path)?;
         let name = path.file_name().unwrap().to_string_lossy();
         hashes.push(format!("{name}:{}", sha256_file(&path)?));
         files.push(file);
@@ -8673,6 +9204,150 @@ mod tests {
         validate_evidence(policy, &indexed, None)
     }
 
+    fn shared_matrix_stage() -> EvidenceStage {
+        EvidenceStage {
+            targets: vec!["sm_80".into(), "ptx71".into()],
+            representation: "shared fixture".into(),
+            stage: EvidenceStageKind::BackendCodegen,
+            mechanism: Some(BackendLoweringMechanism::InlinePtx),
+            outcome: "succeeded".into(),
+            detail: "$dst remains fixture text".into(),
+            artifact_kind: None,
+            tool_path: None,
+            tool_version: None,
+            tool_sha256: None,
+        }
+    }
+
+    fn synthetic_matrix_json() -> serde_json::Value {
+        serde_json::json!({
+            "schema": 6,
+            "backend_profile": "matrix-test",
+            "backend_kind": "llvm_nvptx",
+            "llvm_revision": "test",
+            "backend_version": "LLVM matrix test",
+            "backend_sha256": "0123456789abcdef",
+            "defaults": {
+                "llvm_arguments": ["i32"],
+                "llvm_results": ["i32"],
+                "target_triple": "nvptx64-nvidia-cuda",
+                "gpu_target": "sm_80",
+                "ptx_feature": "+ptx71",
+                "status": "lowered"
+            },
+            "fixtures": [{
+                "id": "shared",
+                "coverage_count": 2,
+                "stages": [{
+                    "targets": ["sm_80", "ptx71"],
+                    "representation": "shared fixture",
+                    "stage": "backend_codegen",
+                    "mechanism": "inline_ptx",
+                    "outcome": "succeeded",
+                    "detail": "$dst remains fixture text"
+                }]
+            }],
+            "matrices": [{
+                "axes": [{
+                    "name": "element",
+                    "values": ["s8", "u8"]
+                }],
+                "product_count": 2,
+                "fixtures": ["shared"],
+                "template": {
+                    "id": "synthetic_${element}",
+                    "source_record": "int_synthetic_${element}",
+                    "llvm_symbol": "llvm.synthetic.${element}",
+                    "expected_ptx": {
+                        "mnemonic": "mma",
+                        "modifiers": ["sync", "${element}"],
+                        "operands": [{"kind": "register"}]
+                    }
+                }
+            }],
+            "records": [{
+                "id": "synthetic_explicit",
+                "source_record": "int_synthetic_explicit",
+                "llvm_symbol": "llvm.synthetic.explicit",
+                "llvm_arguments": ["i32"],
+                "llvm_results": ["i32"],
+                "target_triple": "nvptx64-nvidia-cuda",
+                "gpu_target": "sm_80",
+                "ptx_feature": "+ptx71",
+                "status": "lowered",
+                "expected_ptx": {
+                    "mnemonic": "mma",
+                    "modifiers": ["sync", "explicit"],
+                    "operands": [{"kind": "register"}]
+                }
+            }]
+        })
+    }
+
+    fn policy_matrix_json() -> serde_json::Value {
+        serde_json::json!({
+            "schema": 6,
+            "backend_profile": "matrix-test",
+            "llvm_revision": "test",
+            "backend_version": "LLVM matrix test",
+            "backend_sha256": "0123456789abcdef",
+            "defaults": {
+                "llvm_arguments": [],
+                "llvm_results": ["i32"],
+                "target_triple": "nvptx64-nvidia-cuda",
+                "gpu_target": "sm_70",
+                "ptx_feature": "+ptx60",
+                "status": "lowered"
+            },
+            "fixtures": [{
+                "id": "policy_fixture",
+                "coverage_count": 1,
+                "stages": [{
+                    "targets": ["sm_70", "ptx60"],
+                    "representation": "policy fixture",
+                    "stage": "backend_codegen",
+                    "mechanism": "typed_nvvm",
+                    "outcome": "succeeded",
+                    "detail": "shared policy fixture"
+                }]
+            }],
+            "matrices": [{
+                "axes": [{
+                    "name": "axis",
+                    "values": ["x"]
+                }],
+                "product_count": 1,
+                "fixtures": ["policy_fixture"],
+                "template": {
+                    "id": "thread_idx_${axis}",
+                    "source_record": "int_nvvm_read_ptx_sreg_tid_${axis}",
+                    "llvm_symbol": "llvm.nvvm.read.ptx.sreg.tid.${axis}",
+                    "expected_ptx": {
+                        "mnemonic": "mov",
+                        "modifiers": ["u32"],
+                        "operands": [
+                            {"kind": "register"},
+                            {"kind": "exact", "value": "%tid.x"}
+                        ]
+                    }
+                }
+            }]
+        })
+    }
+
+    fn parse_synthetic_evidence(value: &serde_json::Value) -> Result<EvidenceFile> {
+        parse_evidence_bytes(&serde_json::to_vec(value).unwrap(), "synthetic evidence")
+    }
+
+    fn assert_synthetic_evidence_error(value: &serde_json::Value, expected: &str) {
+        let error = parse_synthetic_evidence(value).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(expected),
+            "expected {expected:?} in {message:?}"
+        );
+    }
+
     fn overlay_file(records: Vec<OverlayIntrinsic>) -> OverlayFile {
         OverlayFile {
             schema: OVERLAY_SCHEMA,
@@ -9538,6 +10213,238 @@ mod tests {
         insert_unique(&mut values, "thread_idx_x", "catalog ID").unwrap();
         let error = insert_unique(&mut values, "thread_idx_x", "catalog ID").unwrap_err();
         assert!(error.to_string().contains("duplicate catalog ID"));
+    }
+
+    #[test]
+    fn legacy_evidence_schema_is_unchanged_and_rejects_matrix_fields() {
+        let legacy = EvidenceFile {
+            schema: 5,
+            backend_profile: "legacy".into(),
+            backend_kind: None,
+            llvm_revision: "test".into(),
+            backend_version: "LLVM legacy test".into(),
+            backend_sha256: "0123456789abcdef".into(),
+            artifact_path: None,
+            build_id_prefix: None,
+            nvvm_ir_version: None,
+            debug_ir_version: None,
+            records: vec![evidence()],
+        };
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        assert_eq!(parse_evidence_bytes(&bytes, "legacy").unwrap(), legacy);
+
+        let mut with_matrix_field = serde_json::to_value(&legacy).unwrap();
+        with_matrix_field["matrices"] = serde_json::json!([]);
+        let error = parse_synthetic_evidence(&with_matrix_field).unwrap_err();
+        assert!(error.to_string().contains("legacy evidence"));
+        assert!(format!("{error:#}").contains("unknown field"));
+    }
+
+    #[test]
+    fn compact_evidence_matrix_equals_explicit_records() {
+        let expanded = parse_synthetic_evidence(&synthetic_matrix_json()).unwrap();
+        let mut expected = vec![EvidenceRecord {
+            id: "synthetic_explicit".into(),
+            source: None,
+            source_record: Some("int_synthetic_explicit".into()),
+            llvm_symbol: Some("llvm.synthetic.explicit".into()),
+            resolved_llvm_symbol: None,
+            llvm_arguments: vec!["i32".into()],
+            llvm_results: vec!["i32".into()],
+            concrete_llvm_arguments: vec![],
+            concrete_llvm_results: vec![],
+            target_triple: "nvptx64-nvidia-cuda".into(),
+            gpu_target: "sm_80".into(),
+            ptx_feature: "+ptx71".into(),
+            status: "lowered".into(),
+            stages: vec![],
+            declaration_attributes_canonicalized: None,
+            runtime_validation: None,
+            expected_ptx: InstructionPattern {
+                mnemonic: "mma".into(),
+                modifiers: vec!["sync".into(), "explicit".into()],
+                operands: vec![OperandPattern::Register],
+            },
+        }];
+        expected.extend(["s8", "u8"].into_iter().map(|element| EvidenceRecord {
+            id: format!("synthetic_{element}"),
+            source: None,
+            source_record: Some(format!("int_synthetic_{element}")),
+            llvm_symbol: Some(format!("llvm.synthetic.{element}")),
+            resolved_llvm_symbol: None,
+            llvm_arguments: vec!["i32".into()],
+            llvm_results: vec!["i32".into()],
+            concrete_llvm_arguments: vec![],
+            concrete_llvm_results: vec![],
+            target_triple: "nvptx64-nvidia-cuda".into(),
+            gpu_target: "sm_80".into(),
+            ptx_feature: "+ptx71".into(),
+            status: "lowered".into(),
+            stages: vec![shared_matrix_stage()],
+            declaration_attributes_canonicalized: None,
+            runtime_validation: None,
+            expected_ptx: InstructionPattern {
+                mnemonic: "mma".into(),
+                modifiers: vec!["sync".into(), element.into()],
+                operands: vec![OperandPattern::Register],
+            },
+        }));
+        assert_eq!(expanded.schema, 6);
+        assert_eq!(expanded.records, expected);
+    }
+
+    #[test]
+    fn matrix_identity_mutations_reach_existing_evidence_validation() {
+        let mut expanded = parse_synthetic_evidence(&policy_matrix_json()).unwrap();
+        let record = expanded.records.pop().unwrap();
+        validate_test_evidence(&policy(), record.clone()).unwrap();
+
+        let mut wrong_source = record.clone();
+        wrong_source.source_record = Some("int_nvvm_read_ptx_sreg_tid_y".into());
+        assert!(
+            validate_test_evidence(&policy(), wrong_source)
+                .unwrap_err()
+                .to_string()
+                .contains("source provenance mismatch")
+        );
+
+        let mut wrong_symbol = record.clone();
+        wrong_symbol.llvm_symbol = Some("llvm.nvvm.read.ptx.sreg.tid.y".into());
+        assert!(
+            validate_test_evidence(&policy(), wrong_symbol)
+                .unwrap_err()
+                .to_string()
+                .contains("signature mismatch")
+        );
+
+        let mut wrong_signature = record.clone();
+        wrong_signature.llvm_arguments.push("i32".into());
+        assert!(
+            validate_test_evidence(&policy(), wrong_signature)
+                .unwrap_err()
+                .to_string()
+                .contains("signature mismatch")
+        );
+
+        let mut wrong_ptx = record;
+        wrong_ptx.expected_ptx.modifiers.push("changed".into());
+        assert!(
+            validate_test_evidence(&policy(), wrong_ptx)
+                .unwrap_err()
+                .to_string()
+                .contains("PTX expectation mismatch")
+        );
+    }
+
+    #[test]
+    fn evidence_matrix_rejects_bad_counts_fixtures_placeholders_and_collisions() {
+        let base = synthetic_matrix_json();
+
+        let mut bad_product = base.clone();
+        bad_product["matrices"][0]["product_count"] = 3.into();
+        assert_synthetic_evidence_error(&bad_product, "expands to 2 records");
+
+        let mut unknown_fixture = base.clone();
+        unknown_fixture["matrices"][0]["fixtures"][0] = "missing".into();
+        assert_synthetic_evidence_error(&unknown_fixture, "unknown fixture");
+
+        let mut uncovered_fixture = base.clone();
+        let extra = uncovered_fixture["fixtures"][0].clone();
+        uncovered_fixture["fixtures"]
+            .as_array_mut()
+            .unwrap()
+            .push(extra);
+        uncovered_fixture["fixtures"][1]["id"] = "unused".into();
+        assert_synthetic_evidence_error(&uncovered_fixture, "not referenced");
+
+        let mut wrong_coverage = base.clone();
+        wrong_coverage["fixtures"][0]["coverage_count"] = 1.into();
+        assert_synthetic_evidence_error(&wrong_coverage, "covers 2 expanded records");
+
+        let mut malformed = base.clone();
+        malformed["matrices"][0]["template"]["id"] = "synthetic_$element".into();
+        assert_synthetic_evidence_error(&malformed, "malformed matrix placeholder");
+
+        let mut unknown_axis = base.clone();
+        unknown_axis["matrices"][0]["template"]["id"] = "synthetic_${other}".into();
+        assert_synthetic_evidence_error(&unknown_axis, "unknown matrix axis");
+
+        let mut collision = base.clone();
+        collision["matrices"][0]["template"]["id"] = "synthetic".into();
+        assert_synthetic_evidence_error(&collision, "duplicate expanded evidence ID");
+    }
+
+    #[test]
+    fn evidence_matrix_rejects_bad_axes_fixture_ids_and_stage_conflicts() {
+        let base = synthetic_matrix_json();
+
+        let mut no_fixture = base.clone();
+        no_fixture["matrices"][0]["fixtures"] = serde_json::json!([]);
+        assert_synthetic_evidence_error(&no_fixture, "references no shared fixture");
+
+        let mut empty_axes = base.clone();
+        empty_axes["matrices"][0]["axes"] = serde_json::json!([]);
+        assert_synthetic_evidence_error(&empty_axes, "has no axes");
+
+        let mut duplicate_axis = base.clone();
+        let axis = duplicate_axis["matrices"][0]["axes"][0].clone();
+        duplicate_axis["matrices"][0]["axes"]
+            .as_array_mut()
+            .unwrap()
+            .push(axis);
+        duplicate_axis["matrices"][0]["product_count"] = 4.into();
+        assert_synthetic_evidence_error(&duplicate_axis, "axes must be unique and sorted");
+
+        let mut empty_values = base.clone();
+        empty_values["matrices"][0]["axes"][0]["values"] = serde_json::json!([]);
+        assert_synthetic_evidence_error(&empty_values, "has no values");
+
+        let mut empty_axis_name = base.clone();
+        empty_axis_name["matrices"][0]["axes"][0]["name"] = "".into();
+        assert_synthetic_evidence_error(&empty_axis_name, "is not a safe token");
+
+        let mut empty_value = base.clone();
+        empty_value["matrices"][0]["axes"][0]["values"][0] = "".into();
+        assert_synthetic_evidence_error(&empty_value, "unsafe value");
+
+        let mut duplicate_value = base.clone();
+        duplicate_value["matrices"][0]["axes"][0]["values"][1] = "s8".into();
+        assert_synthetic_evidence_error(&duplicate_value, "duplicate value");
+
+        let mut unsafe_value = base.clone();
+        unsafe_value["matrices"][0]["axes"][0]["values"][0] = "../s8".into();
+        assert_synthetic_evidence_error(&unsafe_value, "unsafe value");
+
+        let mut unused_axis = base.clone();
+        unused_axis["matrices"][0]["axes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"name": "other", "values": ["x"]}));
+        assert_synthetic_evidence_error(&unused_axis, "unused axis");
+
+        let mut duplicate_fixture = base.clone();
+        let fixture = duplicate_fixture["fixtures"][0].clone();
+        duplicate_fixture["fixtures"]
+            .as_array_mut()
+            .unwrap()
+            .push(fixture);
+        assert_synthetic_evidence_error(&duplicate_fixture, "duplicate evidence fixture ID");
+
+        let mut fixture_placeholder = base.clone();
+        fixture_placeholder["fixtures"][0]["stages"][0]["detail"] = "covers ${element}".into();
+        assert_synthetic_evidence_error(&fixture_placeholder, "cannot contain matrix placeholders");
+
+        let mut missing_symbol = base.clone();
+        missing_symbol["matrices"][0]["template"]
+            .as_object_mut()
+            .unwrap()
+            .remove("llvm_symbol");
+        assert_synthetic_evidence_error(&missing_symbol, "missing field `llvm_symbol`");
+
+        let mut conflicting_stage = base;
+        conflicting_stage["matrices"][0]["template"]["facts"]["stages"] =
+            conflicting_stage["fixtures"][0]["stages"].clone();
+        assert_synthetic_evidence_error(&conflicting_stage, "conflicting duplicate");
     }
 
     #[test]

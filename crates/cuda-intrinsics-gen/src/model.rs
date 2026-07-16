@@ -1320,6 +1320,116 @@ pub struct EvidenceFile {
     pub records: Vec<EvidenceRecord>,
 }
 
+/// Schema-6 evidence before matrix expansion.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceFileV6 {
+    pub schema: u32,
+    pub backend_profile: String,
+    #[serde(default)]
+    pub backend_kind: Option<IntrinsicBackend>,
+    pub llvm_revision: String,
+    pub backend_version: String,
+    pub backend_sha256: String,
+    #[serde(default)]
+    pub artifact_path: Option<String>,
+    #[serde(default)]
+    pub build_id_prefix: Option<String>,
+    #[serde(default)]
+    pub nvvm_ir_version: Option<String>,
+    #[serde(default)]
+    pub debug_ir_version: Option<String>,
+    #[serde(default)]
+    pub defaults: EvidenceRecordDefaults,
+    #[serde(default)]
+    pub fixtures: Vec<EvidenceFixture>,
+    #[serde(default)]
+    pub matrices: Vec<EvidenceMatrix>,
+    #[serde(default)]
+    pub records: Vec<EvidenceRecord>,
+}
+
+/// Facts shared by every record in one evidence matrix.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceRecordDefaults {
+    #[serde(default)]
+    pub resolved_llvm_symbol: Option<String>,
+    #[serde(default)]
+    pub llvm_arguments: Option<Vec<String>>,
+    #[serde(default)]
+    pub llvm_results: Option<Vec<String>>,
+    #[serde(default)]
+    pub concrete_llvm_arguments: Option<Vec<String>>,
+    #[serde(default)]
+    pub concrete_llvm_results: Option<Vec<String>>,
+    #[serde(default)]
+    pub target_triple: Option<String>,
+    #[serde(default)]
+    pub gpu_target: Option<String>,
+    #[serde(default)]
+    pub ptx_feature: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub stages: Vec<EvidenceStage>,
+    #[serde(default)]
+    pub declaration_attributes_canonicalized: Option<bool>,
+    #[serde(default)]
+    pub runtime_validation: Option<RuntimeValidation>,
+}
+
+/// One shared fixture and the number of records it covers.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceFixture {
+    pub id: String,
+    pub coverage_count: usize,
+    pub stages: Vec<EvidenceStage>,
+}
+
+/// One Cartesian evidence matrix.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceMatrix {
+    pub axes: Vec<EvidenceMatrixAxis>,
+    pub product_count: usize,
+    #[serde(default)]
+    pub fixtures: Vec<String>,
+    pub template: EvidenceMatrixTemplate,
+}
+
+/// One named matrix axis.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceMatrixAxis {
+    pub name: String,
+    pub values: Vec<String>,
+}
+
+/// Identity and matrix-specific facts for one record template.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceMatrixTemplate {
+    pub id: String,
+    #[serde(default)]
+    pub source: Option<IntrinsicSource>,
+    #[serde(default)]
+    pub source_record: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_optional_string")]
+    pub llvm_symbol: Option<String>,
+    pub expected_ptx: InstructionPattern,
+    #[serde(default)]
+    pub facts: EvidenceRecordDefaults,
+}
+
+fn deserialize_required_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRecord {
