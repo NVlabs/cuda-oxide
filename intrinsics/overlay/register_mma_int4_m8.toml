@@ -1,6 +1,6 @@
 # Reviewed m8n8k32 INT4 register-MMA family.
 
-schema = 23
+schema = 24
 family = "register_mma"
 
 [register_mma_int4]

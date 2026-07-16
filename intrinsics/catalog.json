@@ -1,5 +1,5 @@
 {
-  "schema": 26,
+  "schema": 27,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "fbe7241c4cab6d8dd29a58e66bb7c19ab1d557af231c20fa0d5fb65b48f5545e",
-    "abi_ledger_sha256": "f9fd969fbf2dcac90e811bdbfc7b24c911ab0f0993707deebf9a854d0adee10f",
+    "overlay_sha256": "07b730a2adc9a88876d0e9ddd3912d928479b98531815f7e0f27d9d9fd3f2978",
+    "abi_ledger_sha256": "1239056fcdceda9ef72ab06b5d30e97c5a907fc25dfdf61a7db878be916acc38",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
@@ -25,6 +25,7 @@
       "cuda-13.3-libnvvm-13.3.33-register-mma.json:05f89b4d37b319d35a88eee6bd9c321fce8c913adae0ca91b394708d1fd22b2a",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-int8-m16n8k64.json:74b5dec9a9db352ea7eb1ee0b1470ba5a56f84f0ed55bf034a60fc29790b6d95",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-int8.json:ff0fd4a21e609d10993df1ce96a20e959dfbf2c9da0d397579957b18d2ad8a3f",
+      "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int4-m16n8k64.json:65c69eb0ca9c1a2423d1241232c25669ae406c8329831ea7890421f5fc936187",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8-m16n8k64.json:b5d907929b64795b7e32890433cf78f322c0c0f76a47107c69bb0725fe4701ad",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8.json:eac863f6241bf09043f568769de5d98a9b5294c6fcb66a383e2db1e27ebf3f18",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
@@ -39,6 +40,7 @@
       "rust-llvm-22.1.2-1cb4e383-register-mma.json:6d81f18c407b60773dcc03a1e1a07d6dc69bd2320d135f03a0bf0059ac84c855",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-int8-m16n8k64.json:16782300af2c019cef7219a6ed98fc562eb72c0aae2aa074d4c76605c5e49175",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-int8.json:b5d4277d5de3e04e4af46801c0b88e560a2c231a549f2bbe131a1e14a6d31811",
+      "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int4-m16n8k64.json:3a25857e4aff52c347d464c96e22c185a61170612ada52dd9aaa5b43596b067b",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int8-m16n8k64.json:69b1970ef38c0e667fe8c96665b7b2a088eef4c64e0c7adbcf935b03e3c4aa14",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int8.json:524e0e0651ef3c0db9eadd6d4a563095430f57656557c01080b24c49f0f110bb",
       "rust-llvm-22.1.2-1cb4e383.json:618de5e9edb60f43a8b00d2923ddff6e5a373fc0e9f4ea6f525dca03c4e9bde5"
@@ -36860,6 +36862,1140 @@
       "summary": "Multiplies warp-distributed sparse unsigned A and unsigned B INT8 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
     },
     {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_s4",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.wrapping.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0195",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_s4",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0195",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_s4"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 8,107-byte combined inline-PTX probe (SHA-256 ce31bb4c5d7f083ae8e1293a0a3e5196575482427a041d549f9ecd3862e46942) used public C, A, B, metadata, selector order and covered all eight variants with both selector values. Pinned LLVM emitted 8,453-byte PTX (SHA-256 7a8bb0261fd16c1941b47500d70f3cff95a1acb95c51e52480af15a4effc8818) with exactly 16 ordered m16n8k64 INT4 instructions. An auxiliary 6,948-byte typed LLVM comparison (SHA-256 379488c94c4e3d6b1806928d72723845b7bd329857f4dfc3caf8f74d7a5c6649) used source A, B, C, metadata, selector order and emitted 22,330-byte PTX (SHA-256 913b74cc0dba68779655073b83e5a534bcf076fa5e6a1d1d6029ef951b0fc1cd) with the same 16 forms; this record retained wrapping s4-by-s4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted all 16 instructions and produced a 4,008-byte cubin with SHA-256 a6df23e0492e6f26ede3da7f7fab6c9fdab2693c5c2d6bda12339948cba640ec containing exactly 16 IMMA.SP.16864 instructions. LLVM and ptxas rejected selector 2 and dynamic selectors; ptxas also rejected PTX 8.4 and sm_75.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production generated_intrinsics route produced 294,949-byte compute_80 NVVM IR with SHA-256 787025e167bb7bb790fab0af002f838502536834145304ce8df3fc75227059d2 and 82,648-byte LTOIR with SHA-256 eb6516ac258f3c70d20879de097822b13ab73e00288691ae9a13e17bc7fe0d1a. All eight raw variants use selectors 0 and 1. An auxiliary 8,107-byte combined probe with SHA-256 ce31bb4c5d7f083ae8e1293a0a3e5196575482427a041d549f9ecd3862e46942 separately covered every variant with both selectors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 26,600-byte cubin with SHA-256 1837a2742ce837ccf16b4900b50a72fb018a49bd1850bafe62b3a2a31f550406. Disassembly contained 50 IMMA.SP instructions in total, exactly 30 IMMA.SP.16864 instructions, and exactly 10 ordered m16n8k64 INT4 forms: all eight raw variants plus two compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "s4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse signed A and signed B INT4 fragments with ordered sparsity metadata and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_s4_satfinite",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.satfinite.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0199",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_s4_satfinite",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0199",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_s4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained saturating s4-by-s4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained saturating s4-by-s4 PTX with selector 0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "s4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse signed A and signed B INT4 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_s4_u4",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.wrapping.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_s4_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0196",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_s4_u4",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0196",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4_u4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_s4_u4"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.s4.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained wrapping s4-by-u4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained wrapping s4-by-u4 PTX with selector 1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "s4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse signed A and unsigned B INT4 fragments with ordered sparsity metadata and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_s4_u4_satfinite",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.satfinite.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_s4_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0200",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_s4_u4_satfinite",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0200",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4_u4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_s4_u4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.s4.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained saturating s4-by-u4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained saturating s4-by-u4 PTX with selector 1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "s4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse signed A and unsigned B INT4 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
+    },
+    {
       "id": "mma_sp_ordered_metadata_m16n8k64_s32_s8",
       "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.s8.s8.s32.wrapping.ordered_metadata",
       "family": "sparse_mma",
@@ -38024,6 +39160,1140 @@
         ]
       },
       "summary": "Multiplies warp-distributed sparse signed A and unsigned B INT8 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_u4",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.wrapping.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0197",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_u4",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0197",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_u4"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained wrapping u4-by-u4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained wrapping u4-by-u4 PTX with selector 0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "u4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse unsigned A and unsigned B INT4 fragments with ordered sparsity metadata and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_u4_s4",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.wrapping.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_u4_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0198",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_u4_s4",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0198",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4_s4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_u4_s4"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.u4.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained wrapping u4-by-s4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained wrapping u4-by-s4 PTX with selector 1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "u4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse unsigned A and signed B INT4 fragments with ordered sparsity metadata and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_u4_s4_satfinite",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.satfinite.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_u4_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0202",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_u4_s4_satfinite",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0202",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4_s4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_u4_s4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.u4.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained saturating u4-by-s4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained saturating u4-by-s4 PTX with selector 1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "u4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse unsigned A and signed B INT4 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k64_s32_u4_satfinite",
+      "operation_key": "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.satfinite.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0201",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k64_s32_u4_satfinite",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0201",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k64_s32_u4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX with selectors 0 and 1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The combined inline-PTX and typed LLVM probes described by the first record each emitted all eight variants with both selector values; this record retained saturating u4-by-u4 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor ordered sparse m16n8k64 INT4 PTX",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 4,008-byte combined cubin and the selector and target negative boundaries described by the first record.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent ordered sparse m16n8k64 INT4 inline PTX in the generated coverage kernel",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production artifacts described by the first record retained saturating u4-by-u4 PTX with selector 0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated sparse-MMA coverage kernel with ordered m16n8k64 INT4 calls",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The 26,600-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k64",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "u4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed sparse unsigned A and unsigned B INT4 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
     },
     {
       "id": "mma_sp_ordered_metadata_m16n8k64_s32_u8",

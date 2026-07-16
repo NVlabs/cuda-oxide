@@ -1272,6 +1272,8 @@ fn sparse_mma_attr_variants(
         SparseMmaAccumulator::S32 => "SparseMmaAccumulatorAttr::S32",
     };
     let element = |element| match element {
+        SparseMmaElement::S4 => "SparseMmaElementAttr::S4",
+        SparseMmaElement::U4 => "SparseMmaElementAttr::U4",
         SparseMmaElement::S8 => "SparseMmaElementAttr::S8",
         SparseMmaElement::U8 => "SparseMmaElementAttr::U8",
     };
@@ -3671,7 +3673,7 @@ pub enum SparseMmaAccumulatorAttr { S32 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaElementAttr { S8, U8 }
+pub enum SparseMmaElementAttr { S4, U4, S8, U8 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_layout", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -6142,6 +6144,8 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             SparseMmaAccumulator::S32 => "GeneratedSparseMmaAccumulator::S32",
         };
         let element = |element| match element {
+            SparseMmaElement::S4 => "GeneratedSparseMmaElement::S4",
+            SparseMmaElement::U4 => "GeneratedSparseMmaElement::U4",
             SparseMmaElement::S8 => "GeneratedSparseMmaElement::S8",
             SparseMmaElement::U8 => "GeneratedSparseMmaElement::U8",
         };
@@ -6252,7 +6256,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -6328,7 +6332,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "                && overflow_matches\n        }\n    }\n}\n",
-        "                && overflow_matches\n        }\n        GeneratedIntrinsicVariant::SparseMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow, metadata, selector } => {\n            let Some(op) = Operation::get_op::<SparseMmaOp>(operation, ctx) else { return false; };\n            let element_matches = |expected, actual: Option<&SparseMmaElementAttr>| match expected {\n                GeneratedSparseMmaElement::S8 => actual == Some(&SparseMmaElementAttr::S8),\n                GeneratedSparseMmaElement::U8 => actual == Some(&SparseMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&SparseMmaLayoutAttr>| match expected {\n                GeneratedSparseMmaLayout::Row => actual == Some(&SparseMmaLayoutAttr::Row),\n                GeneratedSparseMmaLayout::Col => actual == Some(&SparseMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedSparseMmaOverflow::Wrapping => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Wrapping),\n                GeneratedSparseMmaOverflow::Satfinite => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Satfinite),\n            };\n            let metadata_matches = match metadata {\n                GeneratedSparseMmaMetadata::Standard => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Standard),\n                GeneratedSparseMmaMetadata::Ordered => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Ordered),\n            };\n            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)\n                && element_matches(a_element, op.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n                && metadata_matches\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)\n        }\n    }\n}\n",
+        "                && overflow_matches\n        }\n        GeneratedIntrinsicVariant::SparseMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow, metadata, selector } => {\n            let Some(op) = Operation::get_op::<SparseMmaOp>(operation, ctx) else { return false; };\n            let element_matches = |expected, actual: Option<&SparseMmaElementAttr>| match expected {\n                GeneratedSparseMmaElement::S4 => actual == Some(&SparseMmaElementAttr::S4),\n                GeneratedSparseMmaElement::U4 => actual == Some(&SparseMmaElementAttr::U4),\n                GeneratedSparseMmaElement::S8 => actual == Some(&SparseMmaElementAttr::S8),\n                GeneratedSparseMmaElement::U8 => actual == Some(&SparseMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&SparseMmaLayoutAttr>| match expected {\n                GeneratedSparseMmaLayout::Row => actual == Some(&SparseMmaLayoutAttr::Row),\n                GeneratedSparseMmaLayout::Col => actual == Some(&SparseMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedSparseMmaOverflow::Wrapping => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Wrapping),\n                GeneratedSparseMmaOverflow::Satfinite => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Satfinite),\n            };\n            let metadata_matches = match metadata {\n                GeneratedSparseMmaMetadata::Standard => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Standard),\n                GeneratedSparseMmaMetadata::Ordered => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Ordered),\n            };\n            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)\n                && element_matches(a_element, op.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n                && metadata_matches\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)\n        }\n    }\n}\n",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -8596,7 +8600,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 194);
+        assert_eq!(catalog.intrinsics.len(), 202);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -8818,7 +8822,7 @@ mod tests {
             .filter(|record| record.sparse_mma.as_ref().unwrap().shape == SparseMmaShape::M16n8k32)
             .count();
         let k64 = records.len() - k32;
-        assert_eq!((records.len(), k32, k64), (32, 16, 16));
+        assert_eq!((records.len(), k32, k64), (40, 16, 24));
         let standard_k64 = records
             .iter()
             .copied()
@@ -8840,6 +8844,27 @@ mod tests {
             sparse_mma_constraints(standard_k64),
             "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n"
         );
+        let ordered_int4_k64 = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mma_sp_ordered_metadata_m16n8k64_s32_s4")
+            .unwrap();
+        assert_eq!(
+            ordered_int4_k64.sparse_mma.as_ref().unwrap().adapter,
+            SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
+        );
+        assert_eq!(
+            ordered_int4_k64.sparse_mma.as_ref().unwrap().llvm_adapter,
+            crate::model::SparseMmaLlvmAdapter::A2I32B2I32C4I32MetadataI32SelectorI32ToD4I32
+        );
+        assert_eq!(
+            sparse_mma_template(ordered_int4_k64),
+            "mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32 {$0, $1, $2, $3}, {$8, $9}, {$10, $11}, {$4, $5, $6, $7}, $12, $13;"
+        );
+        assert_eq!(
+            sparse_mma_constraints(ordered_int4_k64),
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,n"
+        );
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
@@ -8853,7 +8878,7 @@ mod tests {
         }
 
         let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 32);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 40);
         assert!(
             compatibility
                 .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
@@ -8870,6 +8895,8 @@ mod tests {
         assert!(dialect.contains("operands.len() != expected_operands"));
         assert!(dialect.contains("SparseMmaShapeAttr { M16n8k32, M16n8k64 }"));
         assert!(dialect.contains("SparseMmaSelectorAttr { ImmediateZeroOrOne, ImmediateZero }"));
+        assert!(dialect.contains("SparseMmaElementAttr::S4"));
+        assert!(dialect.contains("SparseMmaElementAttr::U4"));
         assert!(dialect.contains("SparseMmaElementAttr::S8"));
         assert!(dialect.contains("SparseMmaElementAttr::U8"));
         assert!(dialect.contains("SparseMmaOverflowAttr::Wrapping"));
@@ -8912,11 +8939,15 @@ mod tests {
         assert!(targets.contains("GeneratedSparseMmaSelector::ImmediateZero"));
         assert!(targets.contains("GeneratedSparseMmaShape::M16n8k64"));
         assert!(targets.contains("SparseMmaShapeAttr::M16n8k64"));
+        assert!(targets.contains("GeneratedSparseMmaElement::S4"));
+        assert!(targets.contains("GeneratedSparseMmaElement::U4"));
+        assert!(targets.contains("SparseMmaElementAttr::S4"));
+        assert!(targets.contains("SparseMmaElementAttr::U4"));
         assert!(targets.contains("GeneratedSparseMmaMetadata::Ordered"));
         assert!(targets.contains("SparseMmaMetadataAttr::Ordered"));
 
         assert_eq!(raw.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(), 16);
-        assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 16);
+        assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 24);
         assert_eq!(
             compatibility
                 .matches(SPARSE_MMA_STANDARD_METADATA_RULE)
@@ -8927,7 +8958,7 @@ mod tests {
             compatibility
                 .matches(SPARSE_MMA_ORDERED_METADATA_RULE)
                 .count(),
-            16
+            24
         );
         assert!(
             lowering
@@ -8936,6 +8967,10 @@ mod tests {
         assert!(
             lowering
                 .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32")
+        );
+        assert!(
+            lowering
+                .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32")
         );
         assert!(lowering.contains("mma.sp.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32"));
 
@@ -8963,7 +8998,7 @@ mod tests {
         );
         assert_eq!(
             reference.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(),
-            16
+            24
         );
         for record in &records {
             assert!(reference.contains(&format!("- `{}`: runtime `unexecuted`", record.id)));

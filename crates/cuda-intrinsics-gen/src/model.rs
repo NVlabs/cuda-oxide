@@ -155,8 +155,8 @@ pub struct OverlayShardFile {
     pub register_mma_int8: Option<RegisterMmaIntegerAdmission>,
     #[serde(default)]
     pub register_mma_b1: Option<RegisterMmaBinaryAdmission>,
-    #[serde(default)]
-    pub sparse_mma_int8: Option<SparseMmaIntegerAdmission>,
+    #[serde(default, alias = "sparse_mma_int8")]
+    pub sparse_mma_integer: Option<SparseMmaIntegerAdmission>,
 }
 
 /// Compact admission for a closed dense integer register-MMA family.
@@ -199,7 +199,7 @@ pub struct RegisterMmaBinaryVariant {
     pub operation: RegisterMmaOperation,
 }
 
-/// Compact admission for a sparse INT8 register-MMA family.
+/// Compact admission for a sparse integer register-MMA family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SparseMmaIntegerAdmission {
@@ -211,7 +211,7 @@ pub struct SparseMmaIntegerAdmission {
     pub variants: Vec<SparseMmaIntegerVariant>,
 }
 
-/// One reviewed member of a sparse INT8 register-MMA family.
+/// One reviewed member of a sparse integer register-MMA family.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SparseMmaIntegerVariant {
@@ -584,6 +584,8 @@ pub enum SparseMmaAccumulator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaElement {
+    S4,
+    U4,
     S8,
     U8,
 }
@@ -2124,6 +2126,14 @@ runtime_validation = "unexecuted"
             SparseMmaLlvmAdapter::A4I32B4I32C4I32MetadataI32SelectorI32ToD4I32
         );
 
+        let int4 = ordered
+            .replace("shape = \"m16n8k32\"", "shape = \"m16n8k64\"")
+            .replace("a_element = \"s8\"", "a_element = \"s4\"")
+            .replace("b_element = \"u8\"", "b_element = \"u4\"");
+        let parsed_int4 = toml::from_str::<SparseMma>(&int4).unwrap();
+        assert_eq!(parsed_int4.a_element, SparseMmaElement::S4);
+        assert_eq!(parsed_int4.b_element, SparseMmaElement::U4);
+
         for invalid in [
             valid.replace(
                 "selector = \"immediate_zero_or_one\"",
@@ -2139,6 +2149,39 @@ runtime_validation = "unexecuted"
         ] {
             assert!(toml::from_str::<SparseMma>(&invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn sparse_mma_admission_accepts_the_canonical_name_and_legacy_alias() {
+        let canonical = r#"
+schema = 24
+family = "sparse_mma"
+
+[sparse_mma_integer]
+llvm_evidence_profile = "llvm"
+libnvvm_evidence_profile = "libnvvm"
+runtime_validation = "unexecuted"
+metadata = "ordered"
+
+[[sparse_mma_integer.variant]]
+shape = "m16n8k64"
+a_element = "s4"
+b_element = "u4"
+overflow = "wrapping"
+"#;
+        let parsed = toml::from_str::<OverlayShardFile>(canonical).unwrap();
+        assert_eq!(
+            parsed.sparse_mma_integer.unwrap().variants[0].b_element,
+            SparseMmaElement::U4
+        );
+
+        let legacy = canonical.replace("sparse_mma_integer", "sparse_mma_int8");
+        assert!(
+            toml::from_str::<OverlayShardFile>(&legacy)
+                .unwrap()
+                .sparse_mma_integer
+                .is_some()
+        );
     }
 
     #[test]

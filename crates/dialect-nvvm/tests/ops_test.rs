@@ -1726,6 +1726,10 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
         .get_operation()
         .deref(&ctx)
         .get_result(0);
+    let two = ConstantOp::new(&mut ctx, integer(2).into())
+        .get_operation()
+        .deref(&ctx)
+        .get_result(0);
 
     macro_rules! k64_mma {
         ($operands:expr, $metadata:expr) => {{
@@ -1807,6 +1811,133 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
     let mut wrong_type = operands(zero);
     wrong_type[4] = signless_i32_value;
     assert!(verify_op(&k64_mma!(wrong_type, SparseMmaMetadataAttr::Standard), &ctx).is_err());
+
+    macro_rules! ordered_int4_mma {
+        ($operands:expr, $a:expr, $b:expr, $overflow:expr, $metadata:expr) => {{
+            let operation = Operation::new(
+                &mut ctx,
+                SparseMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); 4],
+                $operands,
+                vec![],
+                0,
+            );
+            let mma = SparseMmaOp::new(operation);
+            mma.set_attr_nvvm_sparse_mma_shape(&ctx, SparseMmaShapeAttr::M16n8k64);
+            mma.set_attr_nvvm_sparse_mma_accumulator(&ctx, SparseMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_sparse_mma_a_element(&ctx, $a);
+            mma.set_attr_nvvm_sparse_mma_b_element(&ctx, $b);
+            mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, SparseMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_sparse_mma_overflow(&ctx, $overflow);
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, $metadata);
+            mma.set_attr_nvvm_sparse_mma_selector(&ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
+            mma
+        }};
+    }
+
+    let int4_variants = [
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+    ];
+    let int4_operands =
+        |selector| [vec![i32_value; 4], vec![u32_value; 5], vec![selector]].concat();
+    for (index, (a, b, overflow)) in int4_variants.into_iter().enumerate() {
+        let selector = if index % 2 == 0 { zero } else { one };
+        assert!(
+            verify_op(
+                &ordered_int4_mma!(
+                    int4_operands(selector),
+                    a,
+                    b,
+                    overflow,
+                    SparseMmaMetadataAttr::Ordered
+                ),
+                &ctx,
+            )
+            .is_ok()
+        );
+    }
+
+    assert!(
+        verify_op(
+            &ordered_int4_mma!(
+                int4_operands(zero),
+                SparseMmaElementAttr::S4,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Ordered
+            ),
+            &ctx,
+        )
+        .is_err()
+    );
+    assert!(
+        verify_op(
+            &ordered_int4_mma!(
+                int4_operands(zero),
+                SparseMmaElementAttr::S4,
+                SparseMmaElementAttr::S4,
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard
+            ),
+            &ctx,
+        )
+        .is_err()
+    );
+    for selector in [two, u32_value] {
+        assert!(
+            verify_op(
+                &ordered_int4_mma!(
+                    int4_operands(selector),
+                    SparseMmaElementAttr::S4,
+                    SparseMmaElementAttr::U4,
+                    SparseMmaOverflowAttr::Wrapping,
+                    SparseMmaMetadataAttr::Ordered
+                ),
+                &ctx,
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]
