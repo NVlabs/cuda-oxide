@@ -1,57 +1,58 @@
-# Reviewed m8n8k16 INT8 register-MMA family.
+# Reviewed sparse m16n8k64 INT8 register-MMA family.
 
 schema = 23
-family = "register_mma"
+family = "sparse_mma"
 
-[register_mma_int8]
+[sparse_mma_int8]
 llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33"
 runtime_validation = "unexecuted"
+metadata = "standard"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "s8"
 b_element = "s8"
 overflow = "wrapping"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "s8"
 b_element = "u8"
 overflow = "wrapping"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "u8"
 b_element = "u8"
 overflow = "wrapping"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "u8"
 b_element = "s8"
 overflow = "wrapping"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "s8"
 b_element = "s8"
 overflow = "satfinite"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "s8"
 b_element = "u8"
 overflow = "satfinite"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "u8"
 b_element = "u8"
 overflow = "satfinite"
 
-[[register_mma_int8.variant]]
-shape = "m8n8k16"
+[[sparse_mma_int8.variant]]
+shape = "m16n8k64"
 a_element = "u8"
 b_element = "s8"
 overflow = "satfinite"

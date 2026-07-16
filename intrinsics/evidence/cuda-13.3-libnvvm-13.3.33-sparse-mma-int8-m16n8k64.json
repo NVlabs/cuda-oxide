@@ -1,0 +1,810 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "mma_sp_m16n8k64_s32_s8",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_s8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.s8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 signed INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "s8",
+          "s8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_s8_u8",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_s8_u8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.s8.u8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 mixed-sign INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "s8",
+          "u8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_u8",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_u8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.u8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 unsigned INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "u8",
+          "u8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_u8_s8",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_u8_s8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.u8.s8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 mixed-sign INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "s32",
+          "u8",
+          "s8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_s8_satfinite",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 signed saturating INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "s8",
+          "s8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_s8_u8_satfinite",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s8_u8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s8.u8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 mixed-sign saturating INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "s8",
+          "u8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_u8_satfinite",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 unsigned saturating INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "u8",
+          "u8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mma_sp_m16n8k64_s32_u8_s8_satfinite",
+      "source_record": "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u8_s8",
+      "llvm_symbol": "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u8.s8",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "convergent base sparse m16n8k64 mixed-sign saturating INT8 inline PTX in the combined coverage kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 269,916-byte compute_80 NVVM IR with SHA-256 976d4c2cb32144fc4c6c9923096685fbe1f34306bdcfd2b9b706764508183b78 and 75,912-byte LTOIR with SHA-256 bf01957e2400a1ba5a82246a85b584c1964536bf529a581b64ef4192e2b8a157. All eight raw variants and two compatibility-path calls use compile-time selector 0."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "combined sparse INT8 coverage kernel with standard m16n8k64 calls",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 25,192-byte cubin with SHA-256 c1f9df611c9a113b3830ee6f837232382b95f104c4928668af27a181162afebb. Disassembly contained 40 IMMA.SP instructions: exactly 20 IMMA.SP.16864 instructions (10 new standard calls plus 10 existing ordered calls) and 20 IMMA.SP.16832 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp",
+          "sync",
+          "aligned",
+          "m16n8k64",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "u8",
+          "s8",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1645,5 +1645,17 @@ attributes #0 = { nounwind }
         assert!(
             validate_sparse_mma_selectors(&k64, &[0], &format!("{k64_zero}\n{k64_one}")).is_err()
         );
+
+        let standard_k64 = InstructionPattern::new(
+            "mma",
+            &[
+                "sp", "sync", "aligned", "m16n8k64", "row", "col", "s32", "s8", "u8", "s32",
+            ],
+            k64.operands.clone(),
+        );
+        let standard_k64_zero = k64_zero.replace("sp::ordered_metadata", "sp");
+        validate_sparse_mma_selectors(&standard_k64, &[0], &standard_k64_zero).unwrap();
+        assert!(validate_sparse_mma_selectors(&standard_k64, &[0], k64_zero).is_err());
+        assert!(validate_sparse_mma_selectors(&k64, &[0], &standard_k64_zero).is_err());
     }
 }

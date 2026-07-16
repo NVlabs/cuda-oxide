@@ -113,28 +113,86 @@ mod kernels {
                 matrix::mma_m16n8k256_s32_b1_and_popc([0; 4], [0; 4], [0; 2])[0],
             ]
         };
+        let standard_sparse_metadata = 0x1111_1111;
         // Keep every base sparse INT8 MMA form in the generated path.
         let sparse_int8 = unsafe {
             [
-                matrix::mma_sp_m16n8k32_s32_s8([0; 4], [0; 2], [0; 2], 0, 0)[0],
-                matrix::mma_sp_m16n8k32_s32_s8_u8([0; 4], [0; 2], [0; 2], 0, 1)[0],
-                matrix::mma_sp_m16n8k32_s32_u8([0; 4], [0; 2], [0; 2], 0, 0)[0],
-                matrix::mma_sp_m16n8k32_s32_u8_s8([0; 4], [0; 2], [0; 2], 0, 1)[0],
-                matrix::mma_sp_m16n8k32_s32_s8_satfinite([0; 4], [0; 2], [0; 2], 0, 0)[0],
+                matrix::mma_sp_m16n8k32_s32_s8(
+                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                )[0],
+                matrix::mma_sp_m16n8k32_s32_s8_u8(
+                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                )[0],
+                matrix::mma_sp_m16n8k32_s32_u8(
+                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                )[0],
+                matrix::mma_sp_m16n8k32_s32_u8_s8(
+                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                )[0],
+                matrix::mma_sp_m16n8k32_s32_s8_satfinite(
+                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                )[0],
                 matrix::mma_sp_m16n8k32_s32_s8_u8_satfinite(
                     [0; 4],
                     [0; 2],
                     [0; 2],
-                    0,
+                    standard_sparse_metadata,
                     1,
                 )[0],
-                matrix::mma_sp_m16n8k32_s32_u8_satfinite([0; 4], [0; 2], [0; 2], 0, 0)[0],
+                matrix::mma_sp_m16n8k32_s32_u8_satfinite(
+                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                )[0],
                 matrix::mma_sp_m16n8k32_s32_u8_s8_satfinite(
                     [0; 4],
                     [0; 2],
                     [0; 2],
-                    0,
+                    standard_sparse_metadata,
                     1,
+                )[0],
+            ]
+        };
+        // Keep every base sparse m16n8k64 INT8 form in the generated path.
+        let sparse_int8_k64 = unsafe {
+            [
+                matrix::mma_sp_m16n8k64_s32_s8(
+                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_s8_u8(
+                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_u8(
+                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_u8_s8(
+                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_s8_satfinite(
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_s8_u8_satfinite(
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_u8_satfinite(
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
+                )[0],
+                matrix::mma_sp_m16n8k64_s32_u8_s8_satfinite(
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
             ]
         };
@@ -219,15 +277,29 @@ mod kernels {
                     [0; 4],
                     [0; 2],
                     [0; 2],
-                    0,
+                    standard_sparse_metadata,
                     0,
                 )[0],
                 cuda_device::wmma::mma_sp_m16n8k32_s32_u8_s8_satfinite(
                     [0; 4],
                     [0; 2],
                     [0; 2],
-                    0,
+                    standard_sparse_metadata,
                     1,
+                )[0],
+                cuda_device::wmma::mma_sp_m16n8k64_s32_s8(
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
+                )[0],
+                cuda_device::wmma::mma_sp_m16n8k64_s32_u8_s8_satfinite(
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_s32_s8(
                     [0; 4],
@@ -273,6 +345,9 @@ mod kernels {
             checksum ^= u64::from(value as u32);
         }
         for value in sparse_int8 {
+            checksum ^= u64::from(value as u32);
+        }
+        for value in sparse_int8_k64 {
             checksum ^= u64::from(value as u32);
         }
         for value in ordered_sparse_int8 {

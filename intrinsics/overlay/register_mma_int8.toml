@@ -1,6 +1,6 @@
 # Reviewed dense INT8 register-MMA family.
 
-schema = 22
+schema = 23
 family = "register_mma"
 
 [register_mma_int8]

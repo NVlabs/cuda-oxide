@@ -1728,7 +1728,7 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
         .get_result(0);
 
     macro_rules! k64_mma {
-        ($operands:expr) => {{
+        ($operands:expr, $metadata:expr) => {{
             let operation = Operation::new(
                 &mut ctx,
                 SparseMmaOp::get_concrete_op_info(),
@@ -1745,23 +1745,68 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
             mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, SparseMmaLayoutAttr::Row);
             mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Col);
             mma.set_attr_nvvm_sparse_mma_overflow(&ctx, SparseMmaOverflowAttr::Wrapping);
-            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, SparseMmaMetadataAttr::Ordered);
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, $metadata);
             mma.set_attr_nvvm_sparse_mma_selector(&ctx, SparseMmaSelectorAttr::ImmediateZero);
             mma
         }};
     }
 
     let operands = |selector| [vec![i32_value; 4], vec![u32_value; 9], vec![selector]].concat();
-    assert!(verify_op(&k64_mma!(operands(zero)), &ctx).is_ok());
-    assert!(verify_op(&k64_mma!(operands(one)), &ctx).is_err());
-    assert!(verify_op(&k64_mma!(operands(u32_value)), &ctx).is_err());
+    assert!(
+        verify_op(
+            &k64_mma!(operands(zero), SparseMmaMetadataAttr::Standard),
+            &ctx
+        )
+        .is_ok()
+    );
+    assert!(
+        verify_op(
+            &k64_mma!(operands(zero), SparseMmaMetadataAttr::Ordered),
+            &ctx
+        )
+        .is_ok()
+    );
+    assert!(
+        verify_op(
+            &k64_mma!(operands(one), SparseMmaMetadataAttr::Standard),
+            &ctx
+        )
+        .is_err()
+    );
+    assert!(
+        verify_op(
+            &k64_mma!(operands(one), SparseMmaMetadataAttr::Ordered),
+            &ctx
+        )
+        .is_err()
+    );
+    assert!(
+        verify_op(
+            &k64_mma!(operands(u32_value), SparseMmaMetadataAttr::Standard),
+            &ctx
+        )
+        .is_err()
+    );
+    assert!(
+        verify_op(
+            &k64_mma!(operands(u32_value), SparseMmaMetadataAttr::Ordered),
+            &ctx
+        )
+        .is_err()
+    );
 
     let wrong_count = [vec![i32_value; 4], vec![u32_value; 8], vec![zero]].concat();
-    assert!(verify_op(&k64_mma!(wrong_count), &ctx).is_err());
+    assert!(
+        verify_op(
+            &k64_mma!(wrong_count, SparseMmaMetadataAttr::Standard),
+            &ctx
+        )
+        .is_err()
+    );
 
     let mut wrong_type = operands(zero);
     wrong_type[4] = signless_i32_value;
-    assert!(verify_op(&k64_mma!(wrong_type), &ctx).is_err());
+    assert!(verify_op(&k64_mma!(wrong_type, SparseMmaMetadataAttr::Standard), &ctx).is_err());
 }
 
 #[test]

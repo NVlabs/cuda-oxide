@@ -15,7 +15,7 @@ use crate::model::{
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
     PackedConversionSaturation, PackedConversionSourceFormat, ReduxAdapter, RegisterMmaAccumulator,
     RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
     SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
     SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
     VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
@@ -1229,6 +1229,16 @@ fn sparse_mma_selector_error(record: &CatalogIntrinsic) -> &'static str {
     }
 }
 
+const SPARSE_MMA_STANDARD_METADATA_RULE: &str = "Every 4-bit metadata group must encode two distinct 2-bit indices; `0x0`, `0x5`, `0xa`, and `0xf` are undefined behavior.";
+const SPARSE_MMA_ORDERED_METADATA_RULE: &str = "Every 4-bit metadata group must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.";
+
+fn sparse_mma_metadata_rule(mma: &SparseMma) -> &'static str {
+    match mma.metadata {
+        SparseMmaMetadata::Standard => SPARSE_MMA_STANDARD_METADATA_RULE,
+        SparseMmaMetadata::Ordered => SPARSE_MMA_ORDERED_METADATA_RULE,
+    }
+}
+
 fn sparse_mma_import_adapter(record: &CatalogIntrinsic) -> &'static str {
     match record.sparse_mma.as_ref().unwrap().adapter {
         SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32 => {
@@ -1513,11 +1523,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 )
                 .unwrap();
                 output.push_str("/// The operation is register-only and is not a memory fence.\n");
-                if mma.metadata == SparseMmaMetadata::Ordered {
-                    output.push_str(
-                        "/// Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.\n",
-                    );
-                }
+                writeln!(output, "/// {}", sparse_mma_metadata_rule(mma)).unwrap();
                 writeln!(
                     output,
                     "/// See the [PTX sparse MMA fragment layouts]({}).",
@@ -1839,11 +1845,7 @@ fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
             "/// `c`, `a`, and `b` must contain this lane's {c_count}-, {a_count}-, and {b_count}-register fragments; `metadata` must contain its sparse metadata."
         )
         .unwrap();
-        if mma.metadata == SparseMmaMetadata::Ordered {
-            output.push_str(
-                "/// Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.\n",
-            );
-        }
+        writeln!(output, "/// {}", sparse_mma_metadata_rule(mma)).unwrap();
         writeln!(
             output,
             "/// `selector` must be {}.",
@@ -7127,15 +7129,10 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             RuntimeValidation::Unexecuted => "not executed on a GPU",
             RuntimeValidation::Executed => "executed on a GPU",
         };
-        let metadata = match mma.metadata {
-            SparseMmaMetadata::Standard => "",
-            SparseMmaMetadata::Ordered => {
-                " Each 4-bit metadata index pair must be 0x4, 0x8, 0x9, 0xc, 0xd, or 0xe; any other value is undefined behavior."
-            }
-        };
+        let metadata = sparse_mma_metadata_rule(mma);
         writeln!(
             output,
-            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. The selector must be {}. Every non-exited warp lane must execute the same instruction and qualifiers.{metadata} Integer overflow is {overflow}; runtime validation is {runtime}.",
+            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. Its LLVM source record uses A, B, C, metadata, selector order. The selector must be {}. Every non-exited warp lane must execute the same instruction and qualifiers. {metadata} Integer overflow is {overflow}; runtime validation is {runtime}.",
             record.id,
             sparse_mma_ptx_head(record),
             sparse_mma_selector_description(record),
@@ -8599,7 +8596,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 186);
+        assert_eq!(catalog.intrinsics.len(), 194);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -8821,7 +8818,28 @@ mod tests {
             .filter(|record| record.sparse_mma.as_ref().unwrap().shape == SparseMmaShape::M16n8k32)
             .count();
         let k64 = records.len() - k32;
-        assert_eq!((records.len(), k32, k64), (24, 16, 8));
+        assert_eq!((records.len(), k32, k64), (32, 16, 16));
+        let standard_k64 = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mma_sp_m16n8k64_s32_s8")
+            .unwrap();
+        assert_eq!(
+            standard_k64.sparse_mma.as_ref().unwrap().adapter,
+            SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32
+        );
+        assert_eq!(
+            standard_k64.sparse_mma.as_ref().unwrap().llvm_adapter,
+            crate::model::SparseMmaLlvmAdapter::A4I32B4I32C4I32MetadataI32SelectorI32ToD4I32
+        );
+        assert_eq!(
+            sparse_mma_template(standard_k64),
+            "mma.sp.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13, $14, $15}, {$4, $5, $6, $7}, $16, $17;"
+        );
+        assert_eq!(
+            sparse_mma_constraints(standard_k64),
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n"
+        );
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
@@ -8835,7 +8853,7 @@ mod tests {
         }
 
         let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 24);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 32);
         assert!(
             compatibility
                 .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
@@ -8863,6 +8881,12 @@ mod tests {
         assert!(importer.contains("sparse MMA selector must be the compile-time constant 0"));
         assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32"));
         assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A4U32B4U32ToD4I32"));
+        assert!(importer.contains("let (c_array, last_op) = rvalue::translate_operand("));
+        assert!(importer.contains("ctx, body, &args[0], value_map"));
+        assert!(importer.contains("let (a_value, last_after_a) = rvalue::translate_operand("));
+        assert!(importer.contains("ctx, body, &args[1], value_map"));
+        assert!(importer.contains("let (b_value, last_after_b) = rvalue::translate_operand("));
+        assert!(importer.contains("ctx, body, &args[2], value_map"));
         assert!(importer.contains("operands.push(metadata)"));
         assert!(importer.contains("operands.push(selector_value)"));
         assert!(importer.contains("SparseMmaOp::get_concrete_op_info"));
@@ -8891,9 +8915,20 @@ mod tests {
         assert!(targets.contains("GeneratedSparseMmaMetadata::Ordered"));
         assert!(targets.contains("SparseMmaMetadataAttr::Ordered"));
 
-        assert!(compatibility.contains(
-            "Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior."
-        ));
+        assert_eq!(raw.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(), 16);
+        assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 16);
+        assert_eq!(
+            compatibility
+                .matches(SPARSE_MMA_STANDARD_METADATA_RULE)
+                .count(),
+            16
+        );
+        assert_eq!(
+            compatibility
+                .matches(SPARSE_MMA_ORDERED_METADATA_RULE)
+                .count(),
+            16
+        );
         assert!(
             lowering
                 .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32")
@@ -8902,6 +8937,7 @@ mod tests {
             lowering
                 .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32")
         );
+        assert!(lowering.contains("mma.sp.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32"));
 
         for record in &records {
             let probe = render_probe(&catalog, record, "test-hash");
@@ -8920,6 +8956,15 @@ mod tests {
         let reference = render_reference(&catalog, "test-hash");
         assert!(reference.contains("## Sparse-MMA contracts"));
         assert!(reference.contains("C, A, B, metadata, selector order"));
+        assert!(reference.contains("LLVM source record uses A, B, C, metadata, selector order"));
+        assert_eq!(
+            reference.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(),
+            16
+        );
+        assert_eq!(
+            reference.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(),
+            16
+        );
         for record in &records {
             assert!(reference.contains(&format!("- `{}`: runtime `unexecuted`", record.id)));
         }
