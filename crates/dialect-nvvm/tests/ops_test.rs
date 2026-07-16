@@ -290,6 +290,17 @@ fn generated_scalar_arithmetic_accepts_only_admitted_shapes_and_types() {
     );
     assert!(verify_op(&ScalarArithmeticOp::new(valid_f64), &ctx).is_ok());
 
+    let valid_add = ScalarArithmeticOp::build(
+        &mut ctx,
+        vec![f32_value, f32_value],
+        ScalarArithmeticFormatAttr::F32,
+        ScalarArithmeticOperationAttr::Add,
+        ScalarArithmeticRoundingAttr::Rp,
+        ScalarArithmeticSubnormalAttr::Ftz,
+        ScalarArithmeticSaturationAttr::Sat,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(valid_add), &ctx).is_ok());
+
     let f64_ftz = ScalarArithmeticOp::build(
         &mut ctx,
         vec![f64_value, f64_value],

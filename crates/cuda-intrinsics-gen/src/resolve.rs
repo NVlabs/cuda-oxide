@@ -65,9 +65,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 40;
+const OVERLAY_SCHEMA: u32 = 41;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 44;
+const OVERLAY_SHARD_SCHEMA: u32 = 45;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -84,8 +84,8 @@ const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
 const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
-const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 44;
-pub(crate) const CATALOG_SCHEMA: u32 = 40;
+const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 45;
+pub(crate) const CATALOG_SCHEMA: u32 = 41;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
 const BLACKWELL_LDMATRIX_LIBNVVM_TARGETS: &str = BLACKWELL_LDMATRIX_LLVM_TARGETS;
@@ -12352,13 +12352,13 @@ type ScalarArithmeticVariant = (
 
 fn canonical_scalar_arithmetic_variants() -> Vec<ScalarArithmeticVariant> {
     use ScalarArithmeticFormat::{F32, F64};
-    use ScalarArithmeticOperation::{Div, Fma, Mul};
+    use ScalarArithmeticOperation::{Add, Div, Fma, Mul};
     use ScalarArithmeticRounding::{Rm, Rn, Rp, Rz};
     use ScalarArithmeticSaturation::{None, Sat};
     use ScalarArithmeticSubnormal::{Ftz, Preserve};
 
     let roundings = [Rn, Rz, Rm, Rp];
-    let mut variants = Vec::with_capacity(44);
+    let mut variants = Vec::with_capacity(64);
     for operation in [Mul, Div, Fma] {
         for rounding in roundings {
             variants.push((F64, operation, rounding, Preserve, None));
@@ -12376,6 +12376,15 @@ fn canonical_scalar_arithmetic_variants() -> Vec<ScalarArithmeticVariant> {
         variants.push((F32, Fma, rounding, Preserve, Sat));
         variants.push((F32, Fma, rounding, Ftz, Sat));
     }
+    for rounding in roundings {
+        variants.push((F64, Add, rounding, Preserve, None));
+    }
+    for rounding in roundings {
+        variants.push((F32, Add, rounding, Preserve, None));
+        variants.push((F32, Add, rounding, Ftz, None));
+        variants.push((F32, Add, rounding, Preserve, Sat));
+        variants.push((F32, Add, rounding, Ftz, Sat));
+    }
     variants
 }
 
@@ -12391,6 +12400,7 @@ fn scalar_arithmetic_operation_name(operation: ScalarArithmeticOperation) -> &'s
         ScalarArithmeticOperation::Mul => "mul",
         ScalarArithmeticOperation::Div => "div",
         ScalarArithmeticOperation::Fma => "fma",
+        ScalarArithmeticOperation::Add => "add",
     }
 }
 
@@ -12430,7 +12440,14 @@ fn scalar_arithmetic_recipe(variant: ScalarArithmeticVariant) -> Option<ScalarAr
     let id = format!("{operation_name}_{modifier_id}_{format_name}");
     let source_record = format!("int_nvvm_{operation_name}_{modifier_id}_{source_format}");
     let llvm_symbol = format!("llvm.nvvm.{operation_name}.{modifier_symbol}.{source_format}");
-    let ptx_modifiers = modifier_names
+    let mut ptx_modifier_names = modifier_names.clone();
+    if operation == ScalarArithmeticOperation::Add
+        && subnormal == ScalarArithmeticSubnormal::Ftz
+        && saturation == ScalarArithmeticSaturation::Sat
+    {
+        ptx_modifier_names.swap(1, 2);
+    }
+    let ptx_modifiers = ptx_modifier_names
         .iter()
         .copied()
         .chain(std::iter::once(format_name))
@@ -12446,6 +12463,13 @@ fn scalar_arithmetic_recipe(variant: ScalarArithmeticVariant) -> Option<ScalarAr
             modifier_id.to_ascii_uppercase(),
             source_format.to_ascii_uppercase()
         ),
+        ScalarArithmeticOperation::Add => {
+            let selection_modifier = ptx_modifier_names.join("_").to_ascii_uppercase();
+            format!(
+                "INT_NVVM_ADD_{selection_modifier}_{}",
+                source_format.to_ascii_uppercase()
+            )
+        }
     };
     let argument_count = if operation == ScalarArithmeticOperation::Fma {
         3
@@ -12456,10 +12480,11 @@ fn scalar_arithmetic_recipe(variant: ScalarArithmeticVariant) -> Option<ScalarAr
         .map(|argument| format!("$src{argument}"))
         .collect::<Vec<_>>()
         .join(", ");
+    let ptx_modifier_symbol = ptx_modifier_names.join(".");
     let selection_asm =
-        format!("{operation_name}.{modifier_symbol}.{format_name} \t$dst, {operands};");
+        format!("{operation_name}.{ptx_modifier_symbol}.{format_name} \t$dst, {operands};");
     let properties = match (operation, format) {
-        (ScalarArithmeticOperation::Mul, _) => {
+        (ScalarArithmeticOperation::Mul | ScalarArithmeticOperation::Add, _) => {
             vec!["Commutative", "IntrNoMem", "IntrSpeculatable"]
         }
         (ScalarArithmeticOperation::Div, _) => vec!["IntrNoMem"],
@@ -12482,6 +12507,10 @@ fn scalar_arithmetic_recipe(variant: ScalarArithmeticVariant) -> Option<ScalarAr
         ScalarArithmeticOperation::Div => (
             "9.7.3.8 Floating Point Instructions: div",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-div",
+        ),
+        ScalarArithmeticOperation::Add => (
+            "9.7.3.3 Floating Point Instructions: add",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add",
         ),
     };
 
@@ -12527,7 +12556,7 @@ fn expand_scalar_arithmetic_admission(
         .collect::<Vec<_>>();
     ensure!(
         actual == expected,
-        "compact scalar-arithmetic admission must list the canonical 44 variants"
+        "compact scalar-arithmetic admission must list the canonical 64 variants"
     );
 
     admission
@@ -12736,10 +12765,79 @@ fn validate_scalar_arithmetic_policy(
         "{} direct scalar-arithmetic selection changed",
         policy.id
     );
-    let has_mixed_alternatives = arithmetic.format == ScalarArithmeticFormat::F32
+    if arithmetic.operation == ScalarArithmeticOperation::Add {
+        let rounding = scalar_arithmetic_rounding_name(arithmetic.rounding);
+        let source_modifiers = [
+            Some(rounding),
+            (arithmetic.subnormal == ScalarArithmeticSubnormal::Ftz).then_some("ftz"),
+            (arithmetic.saturation == ScalarArithmeticSaturation::Sat).then_some("sat"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("_");
+        let mut expected = Vec::new();
+        if arithmetic.format == ScalarArithmeticFormat::F32
+            && arithmetic.subnormal == ScalarArithmeticSubnormal::Preserve
+        {
+            let saturation = if arithmetic.saturation == ScalarArithmeticSaturation::Sat {
+                "_sat"
+            } else {
+                ""
+            };
+            for instruction in ["ADD", "SUB"] {
+                for input_format in ["bf16", "f16"] {
+                    expected.push((
+                        format!(
+                            "INT_NVVM_MIXED_{instruction}_{rounding}{saturation}_f32_{input_format}"
+                        ),
+                        format!(
+                            "{}.{rounding}{}.f32.{input_format} \t$dst, $a, $b;",
+                            instruction.to_ascii_lowercase(),
+                            if arithmetic.saturation == ScalarArithmeticSaturation::Sat {
+                                ".sat"
+                            } else {
+                                ""
+                            }
+                        ),
+                        vec![
+                            "Subtarget->getSmVersion() >= 100".to_owned(),
+                            "Subtarget->getPTXVersion() >= 86".to_owned(),
+                        ],
+                    ));
+                }
+            }
+        }
+        let source_format = match arithmetic.format {
+            ScalarArithmeticFormat::F32 => "F",
+            ScalarArithmeticFormat::F64 => "D",
+        };
+        expected.push((
+            format!("INT_NVVM_SUB_{source_modifiers}_{source_format}"),
+            format!("sub.{} \t$dst, $a, $b;", recipe.ptx_modifiers.join(".")),
+            Vec::new(),
+        ));
+        ensure!(
+            declaration.selections.len() == expected.len() + 1,
+            "{} must retain one direct add and the reviewed non-add alternatives",
+            policy.id
+        );
+        for (selection, (source_record, asm, predicates)) in
+            declaration.selections[1..].iter().zip(expected)
+        {
+            ensure!(
+                selection.source_record == source_record
+                    && selection.asm == asm
+                    && selection.predicates == predicates
+                    && selection.constraints.is_empty(),
+                "{} non-add scalar selection changed",
+                policy.id
+            );
+        }
+    } else if arithmetic.format == ScalarArithmeticFormat::F32
         && arithmetic.operation == ScalarArithmeticOperation::Fma
-        && arithmetic.subnormal == ScalarArithmeticSubnormal::Preserve;
-    if has_mixed_alternatives {
+        && arithmetic.subnormal == ScalarArithmeticSubnormal::Preserve
+    {
         ensure!(
             declaration.selections.len() == 3,
             "{} must retain one direct and two mixed-input selections",
@@ -21266,14 +21364,14 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 51);
-        assert_eq!(overlay.intrinsics.len(), 433);
+        assert_eq!(overlay.intrinsics.len(), 453);
         assert_eq!(
             overlay
                 .intrinsics
                 .iter()
                 .filter(|record| record.family == "scalar_arithmetic")
                 .count(),
-            44
+            64
         );
         assert_eq!(
             overlay
@@ -27928,11 +28026,11 @@ scope = "system"
                 .collect(),
         };
         let records = expand_scalar_arithmetic_admission(&admission).unwrap();
-        assert_eq!(records.len(), 44);
+        assert_eq!(records.len(), 64);
         assert_eq!(records.first().unwrap().id, "mul_rn_f64");
         assert_eq!(records.first().unwrap().abi_id, "i0390");
-        assert_eq!(records.last().unwrap().id, "fma_rp_ftz_sat_f32");
-        assert_eq!(records.last().unwrap().abi_id, "i0433");
+        assert_eq!(records.last().unwrap().id, "add_rp_ftz_sat_f32");
+        assert_eq!(records.last().unwrap().abi_id, "i0453");
         validate_unique_overlay(&records, 1).unwrap();
 
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -27944,6 +28042,8 @@ scope = "system"
             .map(|record| (record.source_record.clone(), record))
             .collect::<BTreeMap<_, _>>();
         let mut mixed_count = 0;
+        let mut add_two_selection_count = 0;
+        let mut add_six_selection_count = 0;
         for record in &records {
             let declaration = &declarations[record.source_record.as_ref().unwrap()];
             validate_imported_policy(record, declaration).unwrap();
@@ -27956,8 +28056,29 @@ scope = "system"
             if declaration.selections.len() == 3 {
                 mixed_count += 1;
             }
+            if record
+                .scalar_arithmetic
+                .as_ref()
+                .is_some_and(|contract| contract.operation == ScalarArithmeticOperation::Add)
+            {
+                match declaration.selections.len() {
+                    2 => add_two_selection_count += 1,
+                    6 => add_six_selection_count += 1,
+                    count => panic!("unexpected add selection count {count}"),
+                }
+            }
         }
         assert_eq!(mixed_count, 8);
+        assert_eq!(add_two_selection_count, 12);
+        assert_eq!(add_six_selection_count, 8);
+        let add_ftz_sat = records
+            .iter()
+            .find(|record| record.id == "add_rn_ftz_sat_f32")
+            .unwrap();
+        assert_eq!(
+            add_ftz_sat.expected_ptx.modifiers,
+            ["rn", "sat", "ftz", "f32"]
+        );
 
         let mut reordered = admission.clone();
         reordered.variants.swap(0, 1);
@@ -27965,7 +28086,7 @@ scope = "system"
             expand_scalar_arithmetic_admission(&reordered)
                 .unwrap_err()
                 .to_string()
-                .contains("canonical 44 variants")
+                .contains("canonical 64 variants")
         );
         assert!(
             scalar_arithmetic_recipe((

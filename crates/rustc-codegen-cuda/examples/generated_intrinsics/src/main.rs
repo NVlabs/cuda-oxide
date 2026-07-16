@@ -61,6 +61,10 @@ mod kernels {
             device_float::fma_rz_f64(a64, b64, c64),
             raw_float::fma_rm_f64(a64, b64, c64),
             device_float::fma_rp_f64(a64, b64, c64),
+            raw_float::add_rn_f64(a64, b64),
+            device_float::add_rz_f64(a64, b64),
+            raw_float::add_rm_f64(a64, b64),
+            device_float::add_rp_f64(a64, b64),
         ];
         let values_f32 = [
             raw_float::mul_rn_f32(a32, b32),
@@ -95,6 +99,22 @@ mod kernels {
             device_float::fma_rp_ftz_f32(a32, b32, c32),
             device_float::fma_rp_sat_f32(a32, b32, c32),
             device_float::fma_rp_ftz_sat_f32(a32, b32, c32),
+            raw_float::add_rn_f32(a32, b32),
+            raw_float::add_rn_ftz_f32(a32, b32),
+            raw_float::add_rn_sat_f32(a32, b32),
+            raw_float::add_rn_ftz_sat_f32(a32, b32),
+            device_float::add_rz_f32(a32, b32),
+            device_float::add_rz_ftz_f32(a32, b32),
+            device_float::add_rz_sat_f32(a32, b32),
+            device_float::add_rz_ftz_sat_f32(a32, b32),
+            raw_float::add_rm_f32(a32, b32),
+            raw_float::add_rm_ftz_f32(a32, b32),
+            raw_float::add_rm_sat_f32(a32, b32),
+            raw_float::add_rm_ftz_sat_f32(a32, b32),
+            device_float::add_rp_f32(a32, b32),
+            device_float::add_rp_ftz_f32(a32, b32),
+            device_float::add_rp_sat_f32(a32, b32),
+            device_float::add_rp_ftz_sat_f32(a32, b32),
         ];
         for (index, value) in values_f32.into_iter().enumerate() {
             if index < output_f32.len() {

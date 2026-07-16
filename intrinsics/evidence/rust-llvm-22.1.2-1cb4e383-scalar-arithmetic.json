@@ -47,6 +47,40 @@
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         }
       ]
+    },
+    {
+      "id": "scalar_add_sm80_ptx70",
+      "coverage_count": 20,
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "20 typed LLVM add candidate declarations at the Ampere admission floor",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llvm-as and llvm-dis canonicalized all 20 declarations and matched every imported signature and property set. The canonical manifest bundle has SHA-256 0ea3fb5767d9527b171de379b7ce5fdaeaee8c433e278cda0f67bb4973e1ac60; a physical audit matched all 100 payloads in the artifact index with SHA-256 7523944499f326a8eb1090c4c82a5efe3b7ff319dd806d997b814508d61dff3a."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "20 typed llvm.nvvm.add calls",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llc emitted every direct add form exactly once. The sorted catalog-ID, instruction-head, and operand-count index has SHA-256 5dcbdc5af2a1d246222e549b948fdf525f75951ea78877c7ef2b1f78bffc4842. No subtraction or mixed f16/bf16 selection was admitted."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "20 typed LLVM add PTX outputs assembled at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all 20 fresh sm_80/PTX 7.0 outputs.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
     }
   ],
   "matrices": [
@@ -277,6 +311,111 @@
           "llvm_arguments": ["f32", "f32", "f32"],
           "llvm_results": ["f32"],
           "concrete_llvm_arguments": ["f32", "f32", "f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_sm80_ptx70"],
+      "template": {
+        "id": "add_${rounding}_f64",
+        "source_record": "int_nvvm_add_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f64", "f64"],
+          "llvm_results": ["f64"],
+          "concrete_llvm_arguments": ["f64", "f64"],
+          "concrete_llvm_results": ["f64"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_sm80_ptx70"],
+      "template": {
+        "id": "add_${rounding}_f32",
+        "source_record": "int_nvvm_add_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32", "f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32", "f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_sm80_ptx70"],
+      "template": {
+        "id": "add_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_add_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32", "f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32", "f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_sm80_ptx70"],
+      "template": {
+        "id": "add_${rounding}_sat_f32",
+        "source_record": "int_nvvm_add_${rounding}_sat_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.sat.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "sat", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32", "f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32", "f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_sm80_ptx70"],
+      "template": {
+        "id": "add_${rounding}_ftz_sat_f32",
+        "source_record": "int_nvvm_add_${rounding}_ftz_sat_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.ftz.sat.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "sat", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32", "f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32", "f32"],
           "concrete_llvm_results": ["f32"]
         }
       }

@@ -1,6 +1,6 @@
 # Reviewed scalar floating-point arithmetic.
 
-schema = 44
+schema = 45
 family = "scalar_arithmetic"
 
 [scalar_arithmetic]
@@ -356,6 +356,166 @@ saturation = "sat"
 abi_id = "i0433"
 format = "f32"
 operation = "fma"
+rounding = "rp"
+subnormal = "ftz"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0434"
+format = "f64"
+operation = "add"
+rounding = "rn"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0435"
+format = "f64"
+operation = "add"
+rounding = "rz"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0436"
+format = "f64"
+operation = "add"
+rounding = "rm"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0437"
+format = "f64"
+operation = "add"
+rounding = "rp"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0438"
+format = "f32"
+operation = "add"
+rounding = "rn"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0439"
+format = "f32"
+operation = "add"
+rounding = "rn"
+subnormal = "ftz"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0440"
+format = "f32"
+operation = "add"
+rounding = "rn"
+subnormal = "preserve"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0441"
+format = "f32"
+operation = "add"
+rounding = "rn"
+subnormal = "ftz"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0442"
+format = "f32"
+operation = "add"
+rounding = "rz"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0443"
+format = "f32"
+operation = "add"
+rounding = "rz"
+subnormal = "ftz"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0444"
+format = "f32"
+operation = "add"
+rounding = "rz"
+subnormal = "preserve"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0445"
+format = "f32"
+operation = "add"
+rounding = "rz"
+subnormal = "ftz"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0446"
+format = "f32"
+operation = "add"
+rounding = "rm"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0447"
+format = "f32"
+operation = "add"
+rounding = "rm"
+subnormal = "ftz"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0448"
+format = "f32"
+operation = "add"
+rounding = "rm"
+subnormal = "preserve"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0449"
+format = "f32"
+operation = "add"
+rounding = "rm"
+subnormal = "ftz"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0450"
+format = "f32"
+operation = "add"
+rounding = "rp"
+subnormal = "preserve"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0451"
+format = "f32"
+operation = "add"
+rounding = "rp"
+subnormal = "ftz"
+saturation = "none"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0452"
+format = "f32"
+operation = "add"
+rounding = "rp"
+subnormal = "preserve"
+saturation = "sat"
+
+[[scalar_arithmetic.variant]]
+abi_id = "i0453"
+format = "f32"
+operation = "add"
 rounding = "rp"
 subnormal = "ftz"
 saturation = "sat"

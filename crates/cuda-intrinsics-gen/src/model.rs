@@ -1934,6 +1934,7 @@ pub enum ScalarArithmeticOperation {
     Mul,
     Div,
     Fma,
+    Add,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

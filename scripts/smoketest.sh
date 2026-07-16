@@ -623,16 +623,16 @@ run_cargo() {
             return
         fi
 
-        local scalar_ptx_re='((mul|div)\.(rn|rz|rm|rp)(\.ftz)?\.f32|fma\.(rn|rz|rm|rp)(\.ftz)?(\.sat)?\.f32|(mul|div|fma)\.(rn|rz|rm|rp)\.f64)'
+        local scalar_ptx_re='((mul|div)\.(rn|rz|rm|rp)(\.ftz)?\.f32|fma\.(rn|rz|rm|rp)(\.ftz)?(\.sat)?\.f32|add\.(rn|rz|rm|rp)(\.sat)?(\.ftz)?\.f32|(mul|div|fma|add)\.(rn|rz|rm|rp)\.f64)'
         local scalar_ptx_body scalar_ptx_count scalar_ptx_unique
         scalar_ptx_body="$(awk '/^\.visible \.entry compile_scalar_explicit_rounding\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
         scalar_ptx_count="$(grep -oE "${scalar_ptx_re}" <<<"${scalar_ptx_body}" | wc -l)"
         scalar_ptx_unique="$(grep -oE "${scalar_ptx_re}" <<<"${scalar_ptx_body}" | sort -u | wc -l)"
         if [[ ! -s "${llvm_ptx}" || -z "${scalar_ptx_body}" ]] \
             || ! grep -qx '\.target sm_80' "${llvm_ptx}" \
-            || [[ ${scalar_ptx_count} -ne 44 || ${scalar_ptx_unique} -ne 44 ]] \
-            || grep -qE '(\.extern|call)[^;]*llvm[.$]nvvm[.$](mul|div|fma)[.$](rn|rz|rm|rp)' "${llvm_ptx}"; then
-            printf 'generated_intrinsics LLVM route expected 44 exact unique scalar arithmetic instructions; got %s total, %s unique\n' \
+            || [[ ${scalar_ptx_count} -ne 64 || ${scalar_ptx_unique} -ne 64 ]] \
+            || grep -qE '(\.extern|call)[^;]*llvm[.$]nvvm[.$](mul|div|fma|add)[.$](rn|rz|rm|rp)' "${llvm_ptx}"; then
+            printf 'generated_intrinsics LLVM route expected 64 exact unique scalar arithmetic instructions; got %s total, %s unique\n' \
                 "${scalar_ptx_count}" "${scalar_ptx_unique}" >>"${log}"
             CARGO_EC=1
             return
@@ -653,9 +653,9 @@ run_cargo() {
         local nvvm_ll="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
         local scalar_ir_body
         scalar_ir_body="$(awk '/^define .*@compile_scalar_explicit_rounding\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
-        local f32_binary_re='call float asm "(mul|div)\.(rn|rz|rm|rp)(\.ftz)?\.f32 \$0, \$1, \$2;", "=f,f,f"'
+        local f32_binary_re='call float asm "((mul|div)\.(rn|rz|rm|rp)(\.ftz)?|add\.(rn|rz|rm|rp)(\.sat)?(\.ftz)?)\.f32 \$0, \$1, \$2;", "=f,f,f"'
         local f32_fma_re='call float asm "fma\.(rn|rz|rm|rp)(\.ftz)?(\.sat)?\.f32 \$0, \$1, \$2, \$3;", "=f,f,f,f"'
-        local f64_binary_re='call double asm "(mul|div)\.(rn|rz|rm|rp)\.f64 \$0, \$1, \$2;", "=d,d,d"'
+        local f64_binary_re='call double asm "(mul|div|add)\.(rn|rz|rm|rp)\.f64 \$0, \$1, \$2;", "=d,d,d"'
         local f64_fma_re='call double asm "fma\.(rn|rz|rm|rp)\.f64 \$0, \$1, \$2, \$3;", "=d,d,d,d"'
         local f32_binary_count f32_binary_unique f32_fma_count f32_fma_unique
         local f64_binary_count f64_binary_unique f64_fma_count f64_fma_unique
@@ -668,12 +668,12 @@ run_cargo() {
         f64_fma_count="$(grep -oE "${f64_fma_re}" <<<"${scalar_ir_body}" | wc -l)"
         f64_fma_unique="$(grep -oE "${f64_fma_re}" <<<"${scalar_ir_body}" | sort -u | wc -l)"
         if [[ ! -s "${nvvm_ll}" || -z "${scalar_ir_body}" ]] \
-            || [[ ${f32_binary_count} -ne 16 || ${f32_binary_unique} -ne 16 ]] \
+            || [[ ${f32_binary_count} -ne 32 || ${f32_binary_unique} -ne 32 ]] \
             || [[ ${f32_fma_count} -ne 16 || ${f32_fma_unique} -ne 16 ]] \
-            || [[ ${f64_binary_count} -ne 8 || ${f64_binary_unique} -ne 8 ]] \
+            || [[ ${f64_binary_count} -ne 12 || ${f64_binary_unique} -ne 12 ]] \
             || [[ ${f64_fma_count} -ne 4 || ${f64_fma_unique} -ne 4 ]] \
-            || grep -qE 'llvm\.nvvm\.(mul|div|fma)\.(rn|rz|rm|rp)' "${nvvm_ll}"; then
-            printf 'generated_intrinsics libNVVM route expected exact constrained scalar forms f32-bin=16, f32-fma=16, f64-bin=8, f64-fma=4; got %s/%s, %s/%s, %s/%s, %s/%s total/unique\n' \
+            || grep -qE 'llvm\.nvvm\.(mul|div|fma|add)\.(rn|rz|rm|rp)' "${nvvm_ll}"; then
+            printf 'generated_intrinsics libNVVM route expected exact constrained scalar forms f32-bin=32, f32-fma=16, f64-bin=12, f64-fma=4; got %s/%s, %s/%s, %s/%s, %s/%s total/unique\n' \
                 "${f32_binary_count}" "${f32_binary_unique}" \
                 "${f32_fma_count}" "${f32_fma_unique}" \
                 "${f64_binary_count}" "${f64_binary_unique}" \

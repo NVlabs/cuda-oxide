@@ -3038,3 +3038,143 @@ status = "active"
 catalog_id = "fma_rp_ftz_sat_f32"
 operation_key = "scalar.arithmetic.fma.rp.ftz.sat.f32"
 raw_rust_signature = { safe = true, arguments = ["f32", "f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0434"
+status = "active"
+catalog_id = "add_rn_f64"
+operation_key = "scalar.arithmetic.add.rn.f64"
+raw_rust_signature = { safe = true, arguments = ["f64", "f64"], result = "f64" }
+
+[[entry]]
+abi_id = "i0435"
+status = "active"
+catalog_id = "add_rz_f64"
+operation_key = "scalar.arithmetic.add.rz.f64"
+raw_rust_signature = { safe = true, arguments = ["f64", "f64"], result = "f64" }
+
+[[entry]]
+abi_id = "i0436"
+status = "active"
+catalog_id = "add_rm_f64"
+operation_key = "scalar.arithmetic.add.rm.f64"
+raw_rust_signature = { safe = true, arguments = ["f64", "f64"], result = "f64" }
+
+[[entry]]
+abi_id = "i0437"
+status = "active"
+catalog_id = "add_rp_f64"
+operation_key = "scalar.arithmetic.add.rp.f64"
+raw_rust_signature = { safe = true, arguments = ["f64", "f64"], result = "f64" }
+
+[[entry]]
+abi_id = "i0438"
+status = "active"
+catalog_id = "add_rn_f32"
+operation_key = "scalar.arithmetic.add.rn.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0439"
+status = "active"
+catalog_id = "add_rn_ftz_f32"
+operation_key = "scalar.arithmetic.add.rn.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0440"
+status = "active"
+catalog_id = "add_rn_sat_f32"
+operation_key = "scalar.arithmetic.add.rn.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0441"
+status = "active"
+catalog_id = "add_rn_ftz_sat_f32"
+operation_key = "scalar.arithmetic.add.rn.ftz.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0442"
+status = "active"
+catalog_id = "add_rz_f32"
+operation_key = "scalar.arithmetic.add.rz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0443"
+status = "active"
+catalog_id = "add_rz_ftz_f32"
+operation_key = "scalar.arithmetic.add.rz.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0444"
+status = "active"
+catalog_id = "add_rz_sat_f32"
+operation_key = "scalar.arithmetic.add.rz.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0445"
+status = "active"
+catalog_id = "add_rz_ftz_sat_f32"
+operation_key = "scalar.arithmetic.add.rz.ftz.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0446"
+status = "active"
+catalog_id = "add_rm_f32"
+operation_key = "scalar.arithmetic.add.rm.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0447"
+status = "active"
+catalog_id = "add_rm_ftz_f32"
+operation_key = "scalar.arithmetic.add.rm.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0448"
+status = "active"
+catalog_id = "add_rm_sat_f32"
+operation_key = "scalar.arithmetic.add.rm.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0449"
+status = "active"
+catalog_id = "add_rm_ftz_sat_f32"
+operation_key = "scalar.arithmetic.add.rm.ftz.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0450"
+status = "active"
+catalog_id = "add_rp_f32"
+operation_key = "scalar.arithmetic.add.rp.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0451"
+status = "active"
+catalog_id = "add_rp_ftz_f32"
+operation_key = "scalar.arithmetic.add.rp.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0452"
+status = "active"
+catalog_id = "add_rp_sat_f32"
+operation_key = "scalar.arithmetic.add.rp.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0453"
+status = "active"
+catalog_id = "add_rp_ftz_sat_f32"
+operation_key = "scalar.arithmetic.add.rp.ftz.sat.f32"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }

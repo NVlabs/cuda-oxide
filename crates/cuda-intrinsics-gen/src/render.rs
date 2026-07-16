@@ -702,7 +702,9 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                         ScalarArithmeticFormat::F64 => "f64",
                     };
                     let arity = match arithmetic.operation {
-                        ScalarArithmeticOperation::Mul | ScalarArithmeticOperation::Div => 2,
+                        ScalarArithmeticOperation::Mul
+                        | ScalarArithmeticOperation::Div
+                        | ScalarArithmeticOperation::Add => 2,
                         ScalarArithmeticOperation::Fma => 3,
                     };
                     record.rust.arguments == vec![ty; arity]
@@ -1755,6 +1757,7 @@ fn scalar_arithmetic_operation_attr(record: &CatalogIntrinsic) -> &'static str {
         ScalarArithmeticOperation::Mul => "ScalarArithmeticOperationAttr::Mul",
         ScalarArithmeticOperation::Div => "ScalarArithmeticOperationAttr::Div",
         ScalarArithmeticOperation::Fma => "ScalarArithmeticOperationAttr::Fma",
+        ScalarArithmeticOperation::Add => "ScalarArithmeticOperationAttr::Add",
     }
 }
 
@@ -1783,7 +1786,9 @@ fn scalar_arithmetic_saturation_attr(record: &CatalogIntrinsic) -> &'static str 
 
 fn scalar_arithmetic_arity(record: &CatalogIntrinsic) -> usize {
     match scalar_arithmetic_contract(record).operation {
-        ScalarArithmeticOperation::Mul | ScalarArithmeticOperation::Div => 2,
+        ScalarArithmeticOperation::Mul
+        | ScalarArithmeticOperation::Div
+        | ScalarArithmeticOperation::Add => 2,
         ScalarArithmeticOperation::Fma => 3,
     }
 }
@@ -7343,7 +7348,7 @@ pub enum ScalarArithmeticFormatAttr { F32, F64 }
 
 #[pliron_attr(name = "nvvm.scalar_arithmetic_operation", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum ScalarArithmeticOperationAttr { Mul, Div, Fma }
+pub enum ScalarArithmeticOperationAttr { Mul, Div, Fma, Add }
 
 #[pliron_attr(name = "nvvm.scalar_arithmetic_rounding", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -7449,7 +7454,9 @@ impl Verify for ScalarArithmeticOp {
             return verify_err!(op.loc(), "nvvm.scalar_arithmetic variant is not admitted");
         }
         let expected_operands = match &*operation {
-            ScalarArithmeticOperationAttr::Mul | ScalarArithmeticOperationAttr::Div => 2,
+            ScalarArithmeticOperationAttr::Mul
+            | ScalarArithmeticOperationAttr::Div
+            | ScalarArithmeticOperationAttr::Add => 2,
             ScalarArithmeticOperationAttr::Fma => 3,
         };
         if op.get_num_operands() != expected_operands || op.get_num_results() != 1 {
@@ -12351,6 +12358,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             ScalarArithmeticOperation::Mul => "GeneratedScalarArithmeticOperation::Mul",
             ScalarArithmeticOperation::Div => "GeneratedScalarArithmeticOperation::Div",
             ScalarArithmeticOperation::Fma => "GeneratedScalarArithmeticOperation::Fma",
+            ScalarArithmeticOperation::Add => "GeneratedScalarArithmeticOperation::Add",
         };
         let rounding = match arithmetic.rounding {
             ScalarArithmeticRounding::Rn => "GeneratedScalarArithmeticRounding::Rn",
@@ -12521,7 +12529,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         replace_exact_render_fragment(
             &mut output,
             "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticFormat { F32, F64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticOperation { Mul, Div, Fma }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticRounding { Rn, Rz, Rm, Rp }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticSubnormal { Preserve, Ftz }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticSaturation { None, Sat }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticFormat { F32, F64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticOperation { Mul, Div, Fma, Add }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticRounding { Rn, Rz, Rm, Rp }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticSubnormal { Preserve, Ftz }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticSaturation { None, Sat }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
         );
         if wgmma_controls(catalog).next().is_some() {
             replace_exact_render_fragment(
@@ -12716,6 +12724,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
                 GeneratedScalarArithmeticOperation::Mul => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Mul),
                 GeneratedScalarArithmeticOperation::Div => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Div),
                 GeneratedScalarArithmeticOperation::Fma => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Fma),
+                GeneratedScalarArithmeticOperation::Add => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Add),
             };
             let rounding_matches = match rounding {
                 GeneratedScalarArithmeticRounding::Rn => op.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref() == Some(&ScalarArithmeticRoundingAttr::Rn),
@@ -16886,7 +16895,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 433);
+        assert_eq!(catalog.intrinsics.len(), 453);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -18046,7 +18055,7 @@ mod tests {
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         let records = scalar_arithmetics(&catalog).collect::<Vec<_>>();
-        assert_eq!(records.len(), 44);
+        assert_eq!(records.len(), 64);
         assert!(records.iter().all(|record| {
             record.semantics.pure
                 == (record.scalar_arithmetic.as_ref().unwrap().operation
@@ -18059,7 +18068,8 @@ mod tests {
             compatibility
                 .contains("pub fn fma_rp_ftz_sat_f32(arg0: f32, arg1: f32, arg2: f32) -> f32")
         );
-        assert_eq!(compatibility.matches("#[must_use]").count(), 44);
+        assert!(compatibility.contains("pub fn add_rp_ftz_sat_f32(arg0: f32, arg1: f32) -> f32"));
+        assert_eq!(compatibility.matches("#[must_use]").count(), 64);
 
         let dialect = render_dialect_scalar_arithmetic(&catalog, "test-hash");
         assert_eq!(dialect.matches("pub struct ScalarArithmeticOp").count(), 1);
@@ -18079,9 +18089,10 @@ mod tests {
         let importer = render_importer(&catalog, "test-hash");
         assert_eq!(
             importer.matches("ScalarArithmeticOp::build(ctx").count(),
-            44
+            64
         );
         assert!(importer.contains("cuda_device::float::fma_rp_ftz_sat_f32"));
+        assert!(importer.contains("cuda_device::float::add_rp_ftz_sat_f32"));
 
         let lowering = render_lowering(&catalog, "test-hash");
         assert_eq!(
@@ -18092,6 +18103,8 @@ mod tests {
         );
         assert!(lowering.contains("llvm_nvvm_mul_rn_d"));
         assert!(lowering.contains("fma.rp.ftz.sat.f32"));
+        assert!(lowering.contains("llvm_nvvm_add_rn_d"));
+        assert!(lowering.contains("add.rp.sat.ftz.f32"));
         assert!(lowering.contains("recipe.0, recipe.1, recipe.2"));
 
         let targets = render_targets(&catalog, "test-hash");
