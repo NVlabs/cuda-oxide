@@ -19,37 +19,39 @@ use crate::model::{
     DebugControlAdmission, DebugControlOperation, DotProductAdapter, DotProductOperation,
     DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix,
     EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
-    EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
-    IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
-    LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierExtended, MbarrierExtendedAdapter, MbarrierExtendedAdmission,
-    MbarrierExtendedOperation, MbarrierExtendedSourceContract, MbarrierStateSpace,
-    MovmatrixAdapter, MovmatrixParticipation, OverlayBackendLowering, OverlayFile,
-    OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
-    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
-    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
-    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
-    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionFp8Admission,
-    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
-    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
-    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
-    RegisterMmaAmpereFloatAdmission, RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission,
-    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaF8F6F4Admission,
-    RegisterMmaFp8Admission, RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape,
-    RuntimeValidation, ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat,
-    ScalarArithmeticOperation, ScalarArithmeticRounding, ScalarArithmeticSaturation,
-    ScalarArithmeticSubnormal, ScalarConversion, ScalarConversionAdapter,
-    ScalarConversionAdmission, ScalarConversionDestinationFormat,
-    ScalarConversionResultRepresentation, ScalarConversionRounding, ScalarConversionSaturation,
-    ScalarConversionSourceFormat, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
-    SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
-    SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
-    SparseMmaShape, SpecialRegister, SpecialRegisterAdmission, SpecialRegisterKind,
-    SpecialRegisterLlvmExclusion, SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
+    EvidenceStageKind, ExtendedMinMax, ExtendedMinMaxAdapter, ExtendedMinMaxAdmission,
+    ExtendedMinMaxFormat, ExtendedMinMaxNan, ExtendedMinMaxOperation, ExtendedMinMaxSubnormal,
+    ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource,
+    LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
+    LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
+    MatchOperandEncoding, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierExtended,
+    MbarrierExtendedAdapter, MbarrierExtendedAdmission, MbarrierExtendedOperation,
+    MbarrierExtendedSourceContract, MbarrierStateSpace, MovmatrixAdapter, MovmatrixParticipation,
+    OverlayBackendLowering, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
+    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
+    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
+    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
+    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
+    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
+    PackedConversionFp8Admission, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission,
+    PrmtMode, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaAmpereFloatAdmission,
+    RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource,
+    RegisterMmaElement, RegisterMmaF8F6F4Admission, RegisterMmaFp8Admission,
+    RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation,
+    RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation,
+    ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat, ScalarArithmeticOperation,
+    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
+    ScalarConversion, ScalarConversionAdapter, ScalarConversionAdmission,
+    ScalarConversionDestinationFormat, ScalarConversionResultRepresentation,
+    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, SparseMma,
+    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
+    SparseMmaF8F6F4Admission, SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission,
+    SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata, SparseMmaOverflow,
+    SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
+    SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
+    SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05Adapter,
     Tcgen05Admission, Tcgen05Operation, Tcgen05SourceContract, ThreadfenceAdmission,
@@ -69,7 +71,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 43;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 50;
+const OVERLAY_SHARD_SCHEMA: u32 = 51;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -92,6 +94,7 @@ const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
 const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
 const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 45;
+const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 51;
 pub(crate) const CATALOG_SCHEMA: u32 = 43;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
@@ -781,6 +784,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
         let scalar_conversion_admission = shard.scalar_conversion.take();
         let scalar_arithmetic_admission = shard.scalar_arithmetic.take();
+        let extended_minmax_admission = shard.extended_minmax.take();
         let cluster_sreg_admission = shard.cluster_sreg.take();
         let cluster_barrier_admission = shard.cluster_barrier.take();
         let mbarrier_extended_admission = shard.mbarrier_extended.take();
@@ -905,6 +909,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact scalar-arithmetic admission must be the only content of its shard"
             );
             shard.intrinsics = expand_scalar_arithmetic_admission(&admission)?;
+        }
+        if let Some(admission) = extended_minmax_admission {
+            ensure!(
+                shard.family == "extended_minmax" && shard.intrinsics.is_empty(),
+                "compact extended-minmax admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_extended_minmax_admission(&admission)?;
         }
         if let Some(admission) = cluster_sreg_admission {
             ensure!(
@@ -1087,6 +1098,11 @@ fn validate_overlay_shard_schema_with_max(
         SCALAR_ARITHMETIC_SHARD_SCHEMA
     );
     ensure!(
+        shard.extended_minmax.is_none() || shard.schema >= EXTENDED_MINMAX_SHARD_SCHEMA,
+        "compact extended-minmax admission requires overlay shard schema {}",
+        EXTENDED_MINMAX_SHARD_SCHEMA
+    );
+    ensure!(
         shard.cluster_sreg.is_none() || shard.schema >= CLUSTER_SREG_SHARD_SCHEMA,
         "compact cluster-sreg admission requires overlay shard schema {}",
         CLUSTER_SREG_SHARD_SCHEMA
@@ -1236,7 +1252,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -1260,6 +1276,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.cluster_memory,
             record.scalar_conversion,
             record.scalar_arithmetic,
+            record.extended_minmax,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -1670,6 +1687,10 @@ fn validate_policy(
             policy,
             declaration.context("scalar_arithmetic requires imported LLVM declaration")?,
         )?,
+        "extended_minmax" => validate_extended_minmax_policy(
+            policy,
+            declaration.context("extended_minmax requires imported LLVM declaration")?,
+        )?,
         "cp_async_copy" => validate_cp_async_copy_policy(
             policy,
             declaration.context("cp_async_copy requires imported LLVM declaration")?,
@@ -1805,6 +1826,11 @@ fn validate_policy(
         policy.id
     );
     ensure!(
+        (policy.family == "extended_minmax") == policy.extended_minmax.is_some(),
+        "{} mixes the extended-minmax contract with another generated family",
+        policy.id
+    );
+    ensure!(
         !policy.execution_scope.trim().is_empty(),
         "{} has no execution scope",
         policy.id
@@ -1835,11 +1861,13 @@ fn validate_policy(
                     .classes
                     .iter()
                     .any(|class| class == "NVVMPureIntrinsic")
-                    || (matches!(policy.family.as_str(), "packed_alu" | "scalar_arithmetic")
-                        && declaration
-                            .properties
-                            .iter()
-                            .any(|property| property == "IntrNoMem")
+                    || (matches!(
+                        policy.family.as_str(),
+                        "packed_alu" | "scalar_arithmetic" | "extended_minmax"
+                    ) && declaration
+                        .properties
+                        .iter()
+                        .any(|property| property == "IntrNoMem")
                         && declaration
                             .properties
                             .iter()
@@ -2493,6 +2521,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -2955,6 +2984,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -3553,6 +3583,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -4655,6 +4686,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -7499,6 +7531,7 @@ fn expand_special_register_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -8133,6 +8166,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
+        extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -9066,6 +9100,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -11838,6 +11873,7 @@ fn packed_conversion_overlay_record(
         packed_conversion: Some(conversion.clone()),
         scalar_conversion: None,
         scalar_arithmetic: None,
+        extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -12329,6 +12365,7 @@ fn scalar_conversion_overlay_record(
             runtime_validation: admission.runtime_validation,
         }),
         scalar_arithmetic: None,
+        extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -12832,6 +12869,7 @@ fn scalar_arithmetic_overlay_record(
             saturation,
             runtime_validation: admission.runtime_validation,
         }),
+        extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -13116,6 +13154,551 @@ fn validate_scalar_arithmetic_policy(
     );
     validate_selected_target_predicates(policy, direct)?;
     ensure_no_other_family_contract(policy, "scalar arithmetic")?;
+    Ok(())
+}
+
+type ExtendedMinMaxVariant = (
+    ExtendedMinMaxFormat,
+    ExtendedMinMaxOperation,
+    ExtendedMinMaxSubnormal,
+    ExtendedMinMaxNan,
+    bool,
+);
+
+struct ExtendedMinMaxRecipe {
+    id: String,
+    abi_id: String,
+    operation_key: String,
+    source_record: String,
+    llvm_symbol: String,
+    llvm_type: &'static str,
+    rust_module: &'static str,
+    rust_type: &'static str,
+    dialect_type: &'static str,
+    adapter: ExtendedMinMaxAdapter,
+    selection_record: String,
+    selection_asm: String,
+    predicates: Vec<String>,
+    classes: Vec<&'static str>,
+    modifiers: Vec<String>,
+    minimum_ptx: &'static str,
+    minimum_sm: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+}
+
+fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
+    use ExtendedMinMaxFormat::{Bf16x2, F16x2, F32};
+    use ExtendedMinMaxNan::{Nan, Number};
+    use ExtendedMinMaxOperation::{Max, Min};
+    use ExtendedMinMaxSubnormal::{Ftz, Preserve};
+
+    let one_operation = |operation| {
+        [
+            (F16x2, operation, Ftz, Number, false),
+            (F16x2, operation, Ftz, Nan, false),
+            (F32, operation, Ftz, Nan, true),
+            (F16x2, operation, Ftz, Nan, true),
+            (F32, operation, Ftz, Number, true),
+            (F16x2, operation, Ftz, Number, true),
+            (Bf16x2, operation, Preserve, Nan, false),
+            (F16x2, operation, Preserve, Nan, false),
+            (Bf16x2, operation, Preserve, Nan, true),
+            (F32, operation, Preserve, Nan, true),
+            (F16x2, operation, Preserve, Nan, true),
+            (Bf16x2, operation, Preserve, Number, true),
+            (F32, operation, Preserve, Number, true),
+            (F16x2, operation, Preserve, Number, true),
+        ]
+    };
+    one_operation(Min)
+        .into_iter()
+        .chain(one_operation(Max))
+        .collect()
+}
+
+fn extended_minmax_format_name(format: ExtendedMinMaxFormat) -> &'static str {
+    match format {
+        ExtendedMinMaxFormat::F32 => "f32",
+        ExtendedMinMaxFormat::F16x2 => "f16x2",
+        ExtendedMinMaxFormat::Bf16x2 => "bf16x2",
+    }
+}
+
+fn extended_minmax_operation_name(operation: ExtendedMinMaxOperation) -> &'static str {
+    match operation {
+        ExtendedMinMaxOperation::Min => "min",
+        ExtendedMinMaxOperation::Max => "max",
+    }
+}
+
+fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinMaxRecipe> {
+    let index = canonical_extended_minmax_variants()
+        .iter()
+        .position(|candidate| *candidate == variant)?;
+    let (format, operation, subnormal, nan, xorsign_abs) = variant;
+    let operation_name = extended_minmax_operation_name(operation);
+    let format_name = extended_minmax_format_name(format);
+    let source_type = if format == ExtendedMinMaxFormat::F32 {
+        "f"
+    } else {
+        format_name
+    };
+    let mut source_modifiers = Vec::new();
+    let mut ptx_modifiers = Vec::new();
+    if subnormal == ExtendedMinMaxSubnormal::Ftz {
+        source_modifiers.push("ftz");
+        ptx_modifiers.push("ftz".to_owned());
+    }
+    if nan == ExtendedMinMaxNan::Nan {
+        source_modifiers.push("nan");
+        ptx_modifiers.push("NaN".to_owned());
+    }
+    if xorsign_abs {
+        source_modifiers.extend(["xorsign", "abs"]);
+        ptx_modifiers.extend(["xorsign".to_owned(), "abs".to_owned()]);
+    }
+    let source_modifier = source_modifiers.join("_");
+    let llvm_modifier = source_modifiers.join(".");
+    let id = format!("{operation_name}_{source_modifier}_{format_name}");
+    let source_record = format!("int_nvvm_f{operation_name}_{source_modifier}_{source_type}");
+    let llvm_symbol = format!("llvm.nvvm.f{operation_name}.{llvm_modifier}.{source_type}");
+    let selection_record = if format == ExtendedMinMaxFormat::F32 {
+        format!(
+            "INT_NVVM_{}",
+            source_record
+                .trim_start_matches("int_nvvm_")
+                .to_ascii_uppercase()
+        )
+    } else {
+        let prefix = match operation {
+            ExtendedMinMaxOperation::Min => "INT_NVVM_FMIN",
+            ExtendedMinMaxOperation::Max => "INT_NVVM_FMAN",
+        };
+        let selection_modifiers = source_modifiers
+            .iter()
+            .map(|modifier| if *modifier == "nan" { "NaN" } else { modifier })
+            .collect::<Vec<_>>()
+            .join("_");
+        format!("{prefix}_{selection_modifiers}_{format_name}")
+    };
+    let ptx_format = if format == ExtendedMinMaxFormat::F32 {
+        "f32"
+    } else {
+        format_name
+    };
+    ptx_modifiers.push(ptx_format.to_owned());
+    let selection_asm = format!(
+        "{operation_name}.{} \t$dst, $src0, $src1;",
+        ptx_modifiers.join(".")
+    );
+    let (minimum_ptx, minimum_sm, predicates) = if xorsign_abs {
+        (
+            "7.2",
+            "sm_86",
+            vec![
+                "Subtarget->getPTXVersion() >= 72".to_owned(),
+                "Subtarget->getSmVersion() >= 86".to_owned(),
+            ],
+        )
+    } else {
+        (
+            "7.0",
+            "sm_80",
+            vec![
+                "Subtarget->getSmVersion() >= 80".to_owned(),
+                "Subtarget->getPTXVersion() >= 70".to_owned(),
+            ],
+        )
+    };
+    let (llvm_type, rust_module, rust_type, dialect_type, adapter, classes) = match format {
+        ExtendedMinMaxFormat::F32 => (
+            "f32",
+            "float",
+            "f32",
+            "f32",
+            ExtendedMinMaxAdapter::DirectF32,
+            vec![
+                "ClangBuiltin",
+                "NVVMBuiltin",
+                "SDPatternOperator",
+                "Intrinsic",
+                "DefaultAttrsIntrinsic",
+            ],
+        ),
+        ExtendedMinMaxFormat::F16x2 => (
+            "v2f16",
+            "f16x2",
+            "u32",
+            "i32",
+            ExtendedMinMaxAdapter::DirectPackedU32,
+            vec!["SDPatternOperator", "Intrinsic", "DefaultAttrsIntrinsic"],
+        ),
+        ExtendedMinMaxFormat::Bf16x2 => (
+            "v2bf16",
+            "bf16x2",
+            "u32",
+            "i32",
+            ExtendedMinMaxAdapter::DirectPackedU32,
+            vec![
+                "ClangBuiltin",
+                "NVVMBuiltin",
+                "SDPatternOperator",
+                "Intrinsic",
+                "DefaultAttrsIntrinsic",
+            ],
+        ),
+    };
+    let (ptx_isa_section, ptx_isa_url) = match (format, operation) {
+        (ExtendedMinMaxFormat::F32, ExtendedMinMaxOperation::Min) => (
+            "9.7.3.9 Floating Point Instructions: min",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-min",
+        ),
+        (ExtendedMinMaxFormat::F32, ExtendedMinMaxOperation::Max) => (
+            "9.7.3.10 Floating Point Instructions: max",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-max",
+        ),
+        (_, ExtendedMinMaxOperation::Min) => (
+            "9.7.4.7 Half Precision Floating Point Instructions: min",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-min",
+        ),
+        (_, ExtendedMinMaxOperation::Max) => (
+            "9.7.4.8 Half Precision Floating Point Instructions: max",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-max",
+        ),
+    };
+    Some(ExtendedMinMaxRecipe {
+        id,
+        abi_id: format!("i{:04}", 550 + index),
+        operation_key: format!(
+            "floating.minmax.{format_name}.{operation_name}.{}.{}.{}",
+            match subnormal {
+                ExtendedMinMaxSubnormal::Preserve => "preserve",
+                ExtendedMinMaxSubnormal::Ftz => "ftz",
+            },
+            match nan {
+                ExtendedMinMaxNan::Number => "number",
+                ExtendedMinMaxNan::Nan => "nan",
+            },
+            if xorsign_abs { "xorsign_abs" } else { "direct" }
+        ),
+        source_record,
+        llvm_symbol,
+        llvm_type,
+        rust_module,
+        rust_type,
+        dialect_type,
+        adapter,
+        selection_record,
+        selection_asm,
+        predicates,
+        classes,
+        modifiers: ptx_modifiers,
+        minimum_ptx,
+        minimum_sm,
+        ptx_isa_section,
+        ptx_isa_url,
+    })
+}
+
+fn expand_extended_minmax_admission(
+    admission: &ExtendedMinMaxAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "extended-minmax runtime may be marked executed only with GPU evidence"
+    );
+    let expected = canonical_extended_minmax_variants();
+    let actual = admission
+        .variants
+        .iter()
+        .map(|variant| {
+            (
+                variant.format,
+                variant.operation,
+                variant.subnormal,
+                variant.nan,
+                variant.xorsign_abs,
+            )
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        actual == expected,
+        "compact extended-minmax admission must list the exact canonical 28 variants"
+    );
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let identity = (
+                variant.format,
+                variant.operation,
+                variant.subnormal,
+                variant.nan,
+                variant.xorsign_abs,
+            );
+            let recipe = extended_minmax_recipe(identity)
+                .context("extended min/max is outside the closed recipe set")?;
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must reserve ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            extended_minmax_overlay_record(recipe, admission, identity)
+        })
+        .collect()
+}
+
+fn extended_minmax_overlay_record(
+    recipe: ExtendedMinMaxRecipe,
+    admission: &ExtendedMinMaxAdmission,
+    variant: ExtendedMinMaxVariant,
+) -> Result<OverlayIntrinsic> {
+    let (format, operation, subnormal, nan, xorsign_abs) = variant;
+    let rust_arguments = vec![recipe.rust_type.to_owned(); 2];
+    let dialect_operands = vec![recipe.dialect_type.to_owned(); 2];
+    Ok(OverlayIntrinsic {
+        id: recipe.id.clone(),
+        abi_id: recipe.abi_id,
+        operation_key: recipe.operation_key,
+        family: "extended_minmax".into(),
+        source: None,
+        source_record: Some(recipe.source_record),
+        rust_module: recipe.rust_module.into(),
+        rust_name: recipe.id.clone(),
+        rust_arguments: rust_arguments.clone(),
+        rust_result: recipe.rust_type.into(),
+        safe: true,
+        must_use: true,
+        safe_allowlist_reason: Some("Floating-point min/max has no caller obligations.".into()),
+        public_rust_path: format!("cuda_intrinsics::{}::{}", recipe.rust_module, recipe.id),
+        compatibility_rust_paths: vec![format!(
+            "cuda_device::{}::{}",
+            recipe.rust_module, recipe.id
+        )],
+        dialect_op_type: "ExtendedMinMaxOp".into(),
+        dialect_op_name: "nvvm.extended_minmax".into(),
+        dialect_operands: dialect_operands.clone(),
+        dialect_results: vec![recipe.dialect_type.into()],
+        llvm_symbol: Some(recipe.llvm_symbol),
+        resolved_llvm_symbol: None,
+        llvm_arguments: vec![recipe.llvm_type.into(); 2],
+        llvm_results: vec![recipe.llvm_type.into()],
+        pure: true,
+        memory: "none".into(),
+        convergent: false,
+        execution_scope: "thread".into(),
+        minimum_ptx: recipe.minimum_ptx.into(),
+        minimum_sm: Some(recipe.minimum_sm.into()),
+        ptx_result: recipe.rust_type.into(),
+        targets: "all".into(),
+        ptx_isa_version: "9.3".into(),
+        ptx_isa_section: recipe.ptx_isa_section.into(),
+        ptx_isa_url: recipe.ptx_isa_url.into(),
+        lowering: "generated_extended_minmax".into(),
+        backend_lowerings: [
+            (
+                IntrinsicBackend::LlvmNvptx,
+                &admission.llvm_evidence_profile,
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                &admission.libnvvm_evidence_profile,
+            ),
+        ]
+        .into_iter()
+        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+            backend,
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            evidence_profile: evidence_profile.clone(),
+            targets: None,
+            minimum_ptx: Some(recipe.minimum_ptx.into()),
+            minimum_sm: Some(recipe.minimum_sm.into()),
+        })
+        .collect(),
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        scalar_conversion: None,
+        scalar_arithmetic: None,
+        extended_minmax: Some(ExtendedMinMax {
+            format,
+            operation,
+            subnormal,
+            nan,
+            xorsign_abs,
+            adapter: recipe.adapter,
+            runtime_validation: admission.runtime_validation,
+        }),
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        movmatrix: None,
+        mbarrier_extended: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        cluster_barrier: None,
+        wgmma_control: None,
+        special_register: None,
+        debug_control: None,
+        cluster_memory: None,
+        clc: None,
+        tma: None,
+        tcgen05: None,
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: InstructionPattern {
+            mnemonic: extended_minmax_operation_name(operation).into(),
+            modifiers: recipe.modifiers,
+            operands: vec![OperandPattern::Register; 3],
+        },
+        summary: format!(
+            "Computes extended {} for {} values.",
+            extended_minmax_operation_name(operation),
+            extended_minmax_format_name(format)
+        ),
+    })
+}
+
+fn validate_extended_minmax_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let minmax = policy
+        .extended_minmax
+        .as_ref()
+        .with_context(|| format!("{} has no extended-minmax contract", policy.id))?;
+    let identity = (
+        minmax.format,
+        minmax.operation,
+        minmax.subnormal,
+        minmax.nan,
+        minmax.xorsign_abs,
+    );
+    let recipe = extended_minmax_recipe(identity)
+        .with_context(|| format!("{} is outside the closed extended-minmax recipe", policy.id))?;
+    ensure!(
+        minmax.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} extended-minmax runtime may be executed only with GPU evidence",
+        policy.id
+    );
+    let expected_adapter = if minmax.format == ExtendedMinMaxFormat::F32 {
+        ExtendedMinMaxAdapter::DirectF32
+    } else {
+        ExtendedMinMaxAdapter::DirectPackedU32
+    };
+    ensure!(
+        minmax.adapter == expected_adapter,
+        "{} extended-minmax adapter does not match its format",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none()
+            && policy.llvm_arguments == vec![recipe.llvm_type; 2]
+            && policy.llvm_results == [recipe.llvm_type],
+        "{} extended-minmax identity or LLVM source changed",
+        policy.id
+    );
+    ensure!(
+        declaration.classes == recipe.classes
+            && declaration.properties == ["Commutative", "IntrNoMem", "IntrSpeculatable"]
+            && declaration.selections.len() == 1,
+        "{} imported extended-minmax classes, properties, or selection count changed",
+        policy.id
+    );
+    let selection = &declaration.selections[0];
+    ensure!(
+        selection.source_record == recipe.selection_record
+            && selection.asm == recipe.selection_asm
+            && selection.predicates == recipe.predicates
+            && selection.constraints.is_empty(),
+        "{} imported extended-minmax instruction selection changed",
+        policy.id
+    );
+    let rust_arguments = vec![recipe.rust_type; 2];
+    let dialect_operands = vec![recipe.dialect_type; 2];
+    ensure!(
+        policy.rust_module == recipe.rust_module
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == recipe.rust_type
+            && policy.safe
+            && policy.must_use
+            && policy.public_rust_path
+                == format!("cuda_intrinsics::{}::{}", recipe.rust_module, recipe.id)
+            && policy.compatibility_rust_paths
+                == [format!(
+                    "cuda_device::{}::{}",
+                    recipe.rust_module, recipe.id
+                )]
+            && policy.dialect_op_type == "ExtendedMinMaxOp"
+            && policy.dialect_op_name == "nvvm.extended_minmax"
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results == [recipe.dialect_type]
+            && policy.lowering == "generated_extended_minmax",
+        "{} changed its extended-minmax API, carrier, or lowering",
+        policy.id
+    );
+    ensure!(
+        policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
+            && policy.ptx_result == recipe.rust_type
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url,
+        "{} extended-minmax effects, provenance, or target floor changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: extended_minmax_operation_name(minmax.operation).into(),
+                modifiers: recipe.modifiers,
+                operands: vec![OperandPattern::Register; 3],
+            },
+        "{} expected extended-minmax PTX changed",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (
+                IntrinsicBackend::LlvmNvptx,
+                recipe.minimum_ptx,
+                Some(recipe.minimum_sm),
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                recipe.minimum_ptx,
+                Some(recipe.minimum_sm),
+            ),
+        ],
+        "extended-minmax",
+    )?;
+    validate_selected_target_predicates(policy, selection)?;
+    ensure_no_other_family_contract(policy, "extended min/max")?;
     Ok(())
 }
 
@@ -14377,6 +14960,7 @@ fn expand_register_mma_integer_admission(
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cp_async_copy: None,
             cp_async_control: None,
             cp_async_mbarrier: None,
@@ -14695,6 +15279,7 @@ fn expand_register_mma_f8f6f4_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -14986,6 +15571,7 @@ fn expand_register_mma_fp8_admission(
                         packed_conversion: None,
                         scalar_conversion: None,
                         scalar_arithmetic: None,
+                        extended_minmax: None,
                         cp_async_copy: None,
                         cp_async_control: None,
                         cp_async_mbarrier: None,
@@ -15180,6 +15766,7 @@ fn expand_register_mma_ampere_float_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -15365,6 +15952,7 @@ fn expand_register_mma_binary_admission(
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cp_async_copy: None,
             cp_async_control: None,
             cp_async_mbarrier: None,
@@ -16180,6 +16768,7 @@ fn sparse_mma_overlay_record(
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
+        extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -17072,6 +17661,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -17431,6 +18021,7 @@ fn expand_cluster_barrier_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -17868,6 +18459,7 @@ fn expand_debug_control_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -18245,6 +18837,7 @@ fn expand_cluster_memory_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -19074,6 +19667,7 @@ fn expand_mbarrier_extended_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -19332,6 +19926,7 @@ fn expand_wgmma_control_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -19623,6 +20218,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
             && (policy.family == "scalar_conversion") == policy.scalar_conversion.is_some()
             && (policy.family == "scalar_arithmetic") == policy.scalar_arithmetic.is_some()
+            && (policy.family == "extended_minmax") == policy.extended_minmax.is_some()
             && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
@@ -21537,6 +22133,7 @@ fn materialize_record(
         packed_conversion: policy.packed_conversion.clone(),
         scalar_conversion: policy.scalar_conversion.clone(),
         scalar_arithmetic: policy.scalar_arithmetic.clone(),
+        extended_minmax: policy.extended_minmax.clone(),
         cp_async_copy: policy.cp_async_copy.clone(),
         cp_async_control: policy.cp_async_control.clone(),
         cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
@@ -21668,6 +22265,7 @@ mod tests {
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cp_async_copy: None,
             cp_async_control: None,
             cp_async_mbarrier: None,
@@ -23127,8 +23725,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 56);
-        assert_eq!(overlay.intrinsics.len(), 549);
+        assert_eq!(overlay.shards.len(), 57);
+        assert_eq!(overlay.intrinsics.len(), 577);
         assert_eq!(
             overlay
                 .intrinsics
@@ -23719,6 +24317,7 @@ mod tests {
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -23838,6 +24437,7 @@ mod tests {
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -23878,6 +24478,7 @@ mod tests {
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: Some(test_cluster_barrier_admission()),
             mbarrier_extended: None,
@@ -23919,6 +24520,7 @@ mod tests {
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: Some(test_mbarrier_extended_admission()),
@@ -24160,6 +24762,7 @@ record_count = 14
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -25644,6 +26247,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -25776,6 +26380,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -25927,6 +26532,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -25979,6 +26585,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -26023,6 +26630,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -26464,6 +27072,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -31126,6 +31735,150 @@ scope = "system"
             ))
             .is_none()
         );
+    }
+
+    #[test]
+    fn extended_minmax_admission_is_exact_and_fail_closed() {
+        let variants = canonical_extended_minmax_variants();
+        let admission = ExtendedMinMaxAdmission {
+            llvm_evidence_profile: "llvm-extended-minmax".into(),
+            libnvvm_evidence_profile: "libnvvm-extended-minmax".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: variants
+                .iter()
+                .copied()
+                .map(|variant| {
+                    let recipe = extended_minmax_recipe(variant).unwrap();
+                    crate::model::ExtendedMinMaxAdmissionVariant {
+                        abi_id: recipe.abi_id,
+                        format: variant.0,
+                        operation: variant.1,
+                        subnormal: variant.2,
+                        nan: variant.3,
+                        xorsign_abs: variant.4,
+                    }
+                })
+                .collect(),
+        };
+        let records = expand_extended_minmax_admission(&admission).unwrap();
+        assert_eq!(records.len(), 28);
+        assert_eq!(records.first().unwrap().id, "min_ftz_f16x2");
+        assert_eq!(records.first().unwrap().abi_id, "i0550");
+        assert_eq!(records.last().unwrap().id, "max_xorsign_abs_f16x2");
+        assert_eq!(records.last().unwrap().abi_id, "i0577");
+        validate_unique_overlay(&records, 1).unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.minimum_sm.as_deref() == Some("sm_80"))
+                .count(),
+            8
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.minimum_sm.as_deref() == Some("sm_86"))
+                .count(),
+            20
+        );
+        assert!(records.iter().all(|record| {
+            record.backend_lowerings.len() == 2
+                && record
+                    .backend_lowerings
+                    .iter()
+                    .all(|lowering| lowering.mechanism == BackendLoweringMechanism::InlinePtx)
+        }));
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .into_iter()
+            .map(|record| (record.source_record.clone(), record))
+            .collect::<BTreeMap<_, _>>();
+        for record in &records {
+            let declaration = &declarations[record.source_record.as_ref().unwrap()];
+            assert_eq!(declaration.selections.len(), 1, "{}", record.id);
+            validate_imported_policy(record, declaration).unwrap();
+            assert_eq!(
+                declaration
+                    .selections
+                    .iter()
+                    .filter(|selection| selection_matches_policy(record, selection))
+                    .count(),
+                1,
+                "{}",
+                record.id
+            );
+        }
+        let packed_max = records
+            .iter()
+            .find(|record| record.id == "max_nan_bf16x2")
+            .unwrap();
+        assert_eq!(
+            declarations[packed_max.source_record.as_ref().unwrap()].selections[0].source_record,
+            "INT_NVVM_FMAN_NaN_bf16x2"
+        );
+        assert_eq!(
+            declarations["int_nvvm_fmax_ftz_nan_xorsign_abs_f"].selections[0].source_record,
+            "INT_NVVM_FMAX_FTZ_NAN_XORSIGN_ABS_F"
+        );
+        assert!(
+            declarations["int_nvvm_fmax_ftz_nan_xorsign_abs_f"].selections[0]
+                .asm
+                .contains(".NaN.")
+        );
+        for excluded in [
+            "int_nvvm_fmin_ftz_bf16x2",
+            "int_nvvm_fmax_ftz_nan_bf16x2",
+            "int_nvvm_fmin_f",
+            "int_nvvm_fmax_nan_f",
+        ] {
+            assert!(declarations[excluded].selections.is_empty(), "{excluded}");
+            assert!(
+                records
+                    .iter()
+                    .all(|record| record.source_record.as_deref() != Some(excluded)),
+                "{excluded} was admitted without an instruction selection"
+            );
+        }
+
+        let catalog: CatalogFile = read_json(&repo_root.join("intrinsics/catalog.json")).unwrap();
+        for id in ["min_f16x2", "max_f16x2", "min_bf16x2", "max_bf16x2"] {
+            assert_eq!(
+                catalog
+                    .intrinsics
+                    .iter()
+                    .find(|record| record.id == id)
+                    .unwrap()
+                    .family,
+                "packed_alu"
+            );
+            assert!(records.iter().all(|record| record.id != id));
+        }
+
+        let mut reordered = admission.clone();
+        reordered.variants.swap(0, 1);
+        assert!(
+            expand_extended_minmax_admission(&reordered)
+                .unwrap_err()
+                .to_string()
+                .contains("exact canonical 28 variants")
+        );
+        assert!(
+            extended_minmax_recipe((
+                ExtendedMinMaxFormat::Bf16x2,
+                ExtendedMinMaxOperation::Min,
+                ExtendedMinMaxSubnormal::Ftz,
+                ExtendedMinMaxNan::Nan,
+                false,
+            ))
+            .is_none()
+        );
+        let mut changed = declarations["int_nvvm_fmin_ftz_f16x2"].clone();
+        changed.selections[0].predicates.swap(0, 1);
+        assert!(validate_imported_policy(&records[0], &changed).is_err());
     }
 
     struct CandidateTestRepo(PathBuf);

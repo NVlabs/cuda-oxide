@@ -9,9 +9,9 @@
 //! directly. This covers the raw path instead of only `cuda-device` wrappers.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::float as device_float;
+use cuda_device::{bf16x2 as device_bf16x2, f16x2 as device_f16x2, float as device_float};
 use cuda_device::{DisjointSlice, cuda_module, kernel};
-use cuda_intrinsics::float as raw_float;
+use cuda_intrinsics::{bf16x2 as raw_bf16x2, f16x2 as raw_f16x2, float as raw_float};
 use cuda_intrinsics::matrix;
 use cuda_intrinsics::prmt::{prmt, prmt_b4e, prmt_ecl, prmt_ecr, prmt_f4e, prmt_rc8, prmt_rc16};
 use cuda_intrinsics::sreg::{
@@ -126,6 +126,67 @@ mod kernels {
             if index < output_f64.len() {
                 // SAFETY: the bounds check covers this unique output slot.
                 unsafe { *output_f64.get_unchecked_mut(index) = value };
+            }
+        }
+    }
+
+    /// Keeps every generated extended min/max intrinsic in the module.
+    ///
+    /// This coverage kernel is compiled but not launched by the example.
+    #[kernel]
+    pub fn compile_extended_minmax(
+        mut output_f32: DisjointSlice<f32>,
+        mut output_packed: DisjointSlice<u32>,
+        a32: f32,
+        b32: f32,
+        a_packed: u32,
+        b_packed: u32,
+    ) {
+        if cuda_device::thread::index_1d().get() != 0 {
+            return;
+        }
+        let values_f32 = [
+            raw_float::min_ftz_nan_xorsign_abs_f32(a32, b32),
+            device_float::min_ftz_xorsign_abs_f32(a32, b32),
+            raw_float::min_nan_xorsign_abs_f32(a32, b32),
+            device_float::min_xorsign_abs_f32(a32, b32),
+            raw_float::max_ftz_nan_xorsign_abs_f32(a32, b32),
+            device_float::max_ftz_xorsign_abs_f32(a32, b32),
+            raw_float::max_nan_xorsign_abs_f32(a32, b32),
+            device_float::max_xorsign_abs_f32(a32, b32),
+        ];
+        let values_packed = [
+            raw_f16x2::min_ftz_f16x2(a_packed, b_packed),
+            device_f16x2::min_ftz_nan_f16x2(a_packed, b_packed),
+            raw_f16x2::min_ftz_nan_xorsign_abs_f16x2(a_packed, b_packed),
+            device_f16x2::min_ftz_xorsign_abs_f16x2(a_packed, b_packed),
+            raw_bf16x2::min_nan_bf16x2(a_packed, b_packed),
+            device_f16x2::min_nan_f16x2(a_packed, b_packed),
+            device_bf16x2::min_nan_xorsign_abs_bf16x2(a_packed, b_packed),
+            device_f16x2::min_nan_xorsign_abs_f16x2(a_packed, b_packed),
+            raw_bf16x2::min_xorsign_abs_bf16x2(a_packed, b_packed),
+            device_f16x2::min_xorsign_abs_f16x2(a_packed, b_packed),
+            raw_f16x2::max_ftz_f16x2(a_packed, b_packed),
+            device_f16x2::max_ftz_nan_f16x2(a_packed, b_packed),
+            raw_f16x2::max_ftz_nan_xorsign_abs_f16x2(a_packed, b_packed),
+            device_f16x2::max_ftz_xorsign_abs_f16x2(a_packed, b_packed),
+            device_bf16x2::max_nan_bf16x2(a_packed, b_packed),
+            device_f16x2::max_nan_f16x2(a_packed, b_packed),
+            raw_bf16x2::max_nan_xorsign_abs_bf16x2(a_packed, b_packed),
+            device_f16x2::max_nan_xorsign_abs_f16x2(a_packed, b_packed),
+            device_bf16x2::max_xorsign_abs_bf16x2(a_packed, b_packed),
+            device_f16x2::max_xorsign_abs_f16x2(a_packed, b_packed),
+        ];
+        for (index, value) in values_f32.into_iter().enumerate() {
+            if index < output_f32.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_f32.get_unchecked_mut(index) = value };
+            }
+        }
+        for (index, value) in values_packed.into_iter().enumerate() {
+            if index < output_packed.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_packed.get_unchecked_mut(index) = value };
             }
         }
     }

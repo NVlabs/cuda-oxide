@@ -79,6 +79,7 @@ pub mod common;
 pub mod cp_async;
 pub mod debug;
 pub mod dotprod;
+pub mod extended_minmax;
 pub mod ldmatrix;
 pub mod mbarrier;
 pub mod packed;

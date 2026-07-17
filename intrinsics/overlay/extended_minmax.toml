@@ -1,0 +1,233 @@
+# Exact LLVM 22 extended floating-point min/max forms.
+
+schema = 51
+family = "extended_minmax"
+
+[extended_minmax]
+llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-extended-minmax"
+runtime_validation = "unexecuted"
+
+[[extended_minmax.variant]]
+abi_id = "i0550"
+format = "f16x2"
+operation = "min"
+subnormal = "ftz"
+nan = "number"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0551"
+format = "f16x2"
+operation = "min"
+subnormal = "ftz"
+nan = "nan"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0552"
+format = "f32"
+operation = "min"
+subnormal = "ftz"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0553"
+format = "f16x2"
+operation = "min"
+subnormal = "ftz"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0554"
+format = "f32"
+operation = "min"
+subnormal = "ftz"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0555"
+format = "f16x2"
+operation = "min"
+subnormal = "ftz"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0556"
+format = "bf16x2"
+operation = "min"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0557"
+format = "f16x2"
+operation = "min"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0558"
+format = "bf16x2"
+operation = "min"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0559"
+format = "f32"
+operation = "min"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0560"
+format = "f16x2"
+operation = "min"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0561"
+format = "bf16x2"
+operation = "min"
+subnormal = "preserve"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0562"
+format = "f32"
+operation = "min"
+subnormal = "preserve"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0563"
+format = "f16x2"
+operation = "min"
+subnormal = "preserve"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0564"
+format = "f16x2"
+operation = "max"
+subnormal = "ftz"
+nan = "number"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0565"
+format = "f16x2"
+operation = "max"
+subnormal = "ftz"
+nan = "nan"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0566"
+format = "f32"
+operation = "max"
+subnormal = "ftz"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0567"
+format = "f16x2"
+operation = "max"
+subnormal = "ftz"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0568"
+format = "f32"
+operation = "max"
+subnormal = "ftz"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0569"
+format = "f16x2"
+operation = "max"
+subnormal = "ftz"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0570"
+format = "bf16x2"
+operation = "max"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0571"
+format = "f16x2"
+operation = "max"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = false
+
+[[extended_minmax.variant]]
+abi_id = "i0572"
+format = "bf16x2"
+operation = "max"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0573"
+format = "f32"
+operation = "max"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0574"
+format = "f16x2"
+operation = "max"
+subnormal = "preserve"
+nan = "nan"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0575"
+format = "bf16x2"
+operation = "max"
+subnormal = "preserve"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0576"
+format = "f32"
+operation = "max"
+subnormal = "preserve"
+nan = "number"
+xorsign_abs = true
+
+[[extended_minmax.variant]]
+abi_id = "i0577"
+format = "f16x2"
+operation = "max"
+subnormal = "preserve"
+nan = "number"
+xorsign_abs = true

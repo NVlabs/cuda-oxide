@@ -11,11 +11,12 @@ use crate::model::{
     CpAsyncControlOperation, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
     CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControlAdapter, DebugControlOperation,
     DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
-    EvidenceStageKind, ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement,
-    LdmatrixLayout, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace,
-    MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierExtendedAdapter,
-    MbarrierExtendedOperation, MbarrierExtendedSourceContract, MbarrierStateSpace,
-    PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
+    EvidenceStageKind, ExtendedMinMaxAdapter, ExtendedMinMaxFormat, ExtendedMinMaxNan,
+    ExtendedMinMaxOperation, ExtendedMinMaxSubnormal, ImportedAddressSpace, IntrinsicBackend,
+    IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity, LdmatrixParticipation,
+    LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
+    MbarrierExtendedAdapter, MbarrierExtendedOperation, MbarrierExtendedSourceContract,
+    MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
     PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
     RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
@@ -170,10 +171,13 @@ pub fn all_outputs(
             ("lo", "hi"),
         ),
     );
-    if scalar_arithmetics(catalog).next().is_some() {
+    if let Some((path, source)) = render_compat_float_output(catalog, catalog_sha256) {
+        outputs.insert(path, source);
+    }
+    if extended_minmax(catalog).next().is_some() {
         outputs.insert(
-            "crates/cuda-device/src/generated/float.rs".into(),
-            render_compat_scalar_arithmetic(catalog, catalog_sha256),
+            "crates/dialect-nvvm/src/ops/generated/extended_minmax.rs".into(),
+            render_dialect_extended_minmax(catalog, catalog_sha256),
         );
     }
     if debug_controls(catalog).next().is_some() {
@@ -724,6 +728,46 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && !record.semantics.convergent
                     && record.lowering == "generated_scalar_arithmetic",
                 "{} is outside the closed generated scalar-arithmetic recipe",
+                record.id
+            ),
+            "extended_minmax" => ensure!(
+                record.extended_minmax.as_ref().is_some_and(|minmax| {
+                    let (module, rust_type, dialect_type, adapter) = match minmax.format {
+                        ExtendedMinMaxFormat::F32 => (
+                            "float",
+                            "f32",
+                            "f32",
+                            ExtendedMinMaxAdapter::DirectF32,
+                        ),
+                        ExtendedMinMaxFormat::F16x2 => (
+                            "f16x2",
+                            "u32",
+                            "i32",
+                            ExtendedMinMaxAdapter::DirectPackedU32,
+                        ),
+                        ExtendedMinMaxFormat::Bf16x2 => (
+                            "bf16x2",
+                            "u32",
+                            "i32",
+                            ExtendedMinMaxAdapter::DirectPackedU32,
+                        ),
+                    };
+                    record.rust.module == module
+                        && record.rust.arguments == [rust_type, rust_type]
+                        && record.rust.result == rust_type
+                        && record.dialect.operands == [dialect_type, dialect_type]
+                        && record.dialect.results == [dialect_type]
+                        && minmax.adapter == adapter
+                })
+                    && record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.op_type == "ExtendedMinMaxOp"
+                    && record.dialect.op_name == "nvvm.extended_minmax"
+                    && record.semantics.pure
+                    && record.semantics.memory == "none"
+                    && !record.semantics.convergent
+                    && record.lowering == "generated_extended_minmax",
+                "{} is outside the closed generated extended-minmax recipe",
                 record.id
             ),
             "prmt" => ensure!(
@@ -1737,6 +1781,72 @@ fn scalar_arithmetics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .intrinsics
         .iter()
         .filter(|record| record.family == "scalar_arithmetic")
+}
+
+fn extended_minmax(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "extended_minmax")
+}
+
+fn extended_minmax_contract(record: &CatalogIntrinsic) -> &crate::model::ExtendedMinMax {
+    record
+        .extended_minmax
+        .as_ref()
+        .expect("extended-minmax contract")
+}
+
+fn extended_minmax_format_attr(record: &CatalogIntrinsic) -> &'static str {
+    match extended_minmax_contract(record).format {
+        ExtendedMinMaxFormat::F32 => "ExtendedMinMaxFormatAttr::F32",
+        ExtendedMinMaxFormat::F16x2 => "ExtendedMinMaxFormatAttr::F16x2",
+        ExtendedMinMaxFormat::Bf16x2 => "ExtendedMinMaxFormatAttr::Bf16x2",
+    }
+}
+
+fn extended_minmax_operation_attr(record: &CatalogIntrinsic) -> &'static str {
+    match extended_minmax_contract(record).operation {
+        ExtendedMinMaxOperation::Min => "ExtendedMinMaxOperationAttr::Min",
+        ExtendedMinMaxOperation::Max => "ExtendedMinMaxOperationAttr::Max",
+    }
+}
+
+fn extended_minmax_subnormal_attr(record: &CatalogIntrinsic) -> &'static str {
+    match extended_minmax_contract(record).subnormal {
+        ExtendedMinMaxSubnormal::Preserve => "ExtendedMinMaxSubnormalAttr::Preserve",
+        ExtendedMinMaxSubnormal::Ftz => "ExtendedMinMaxSubnormalAttr::Ftz",
+    }
+}
+
+fn extended_minmax_nan_attr(record: &CatalogIntrinsic) -> &'static str {
+    match extended_minmax_contract(record).nan {
+        ExtendedMinMaxNan::Number => "ExtendedMinMaxNanAttr::Number",
+        ExtendedMinMaxNan::Nan => "ExtendedMinMaxNanAttr::Nan",
+    }
+}
+
+fn extended_minmax_xorsign_abs_attr(record: &CatalogIntrinsic) -> &'static str {
+    if extended_minmax_contract(record).xorsign_abs {
+        "ExtendedMinMaxXorSignAbsAttr::Enabled"
+    } else {
+        "ExtendedMinMaxXorSignAbsAttr::Disabled"
+    }
+}
+
+fn extended_minmax_rust_type(record: &CatalogIntrinsic) -> &'static str {
+    match extended_minmax_contract(record).format {
+        ExtendedMinMaxFormat::F32 => "f32",
+        ExtendedMinMaxFormat::F16x2 | ExtendedMinMaxFormat::Bf16x2 => "u32",
+    }
+}
+
+fn extended_minmax_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
+    format!(
+        "{}.{}",
+        record.expected_ptx.mnemonic,
+        record.expected_ptx.modifiers.join(".")
+    )
 }
 
 fn scalar_arithmetic_contract(record: &CatalogIntrinsic) -> &crate::model::ScalarArithmetic {
@@ -4705,7 +4815,35 @@ fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAlu
         .unwrap();
         output.push_str("}\n\n");
     }
+    render_compat_extended_minmax_into(&mut output, catalog, module);
     output
+}
+
+fn render_compat_extended_minmax_into(output: &mut String, catalog: &CatalogFile, module: &str) {
+    for record in extended_minmax(catalog).filter(|record| record.rust.module == module) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with(&format!("cuda_device::{module}::")))
+            .expect("extended-minmax compatibility path");
+        let ty = extended_minmax_rust_type(record);
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub fn {}(a: {ty}, b: {ty}) -> {ty} {{",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("    let _ = (a, b);\n");
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
 }
 
 fn render_compat_packed_conversion(
@@ -4778,7 +4916,7 @@ fn render_compat_packed_conversion(
     output
 }
 
-fn render_compat_scalar_arithmetic(catalog: &CatalogFile, hash: &str) -> String {
+fn render_compat_float(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::float`.\n\n");
     for record in scalar_arithmetics(catalog) {
@@ -4814,7 +4952,18 @@ fn render_compat_scalar_arithmetic(catalog: &CatalogFile, hash: &str) -> String 
         .unwrap();
         output.push_str("}\n\n");
     }
+    render_compat_extended_minmax_into(&mut output, catalog, "float");
     output
+}
+
+fn render_compat_float_output(catalog: &CatalogFile, hash: &str) -> Option<(PathBuf, String)> {
+    (scalar_arithmetics(catalog).next().is_some() || extended_minmax(catalog).next().is_some())
+        .then(|| {
+            (
+                "crates/cuda-device/src/generated/float.rs".into(),
+                render_compat_float(catalog, hash),
+            )
+        })
 }
 
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
@@ -4844,6 +4993,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    redux::register(ctx);",
                 "    redux::register(ctx);\n    scalar_arithmetic::register(ctx);",
+            );
+    }
+    if extended_minmax(catalog).next().is_some() {
+        output = output
+            .replace("mod dotprod;", "mod dotprod;\nmod extended_minmax;")
+            .replace(
+                "pub use dotprod::*;",
+                "pub use dotprod::*;\npub use extended_minmax::*;",
+            )
+            .replace(
+                "    dotprod::register(ctx);",
+                "    dotprod::register(ctx);\n    extended_minmax::register(ctx);",
             );
     }
     if debug_controls(catalog).next().is_some() {
@@ -7607,6 +7768,174 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_extended_minmax(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r##"//! One structural operation for extended floating-point min/max.
+
+use pliron::{
+    attribute::Attribute,
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{FP32Type, IntegerType, Signedness},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.extended_minmax_format", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ExtendedMinMaxFormatAttr { F32, F16x2, Bf16x2 }
+
+#[pliron_attr(name = "nvvm.extended_minmax_operation", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ExtendedMinMaxOperationAttr { Min, Max }
+
+#[pliron_attr(name = "nvvm.extended_minmax_subnormal", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ExtendedMinMaxSubnormalAttr { Preserve, Ftz }
+
+#[pliron_attr(name = "nvvm.extended_minmax_nan", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ExtendedMinMaxNanAttr { Number, Nan }
+
+#[pliron_attr(name = "nvvm.extended_minmax_xorsign_abs", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ExtendedMinMaxXorSignAbsAttr { Disabled, Enabled }
+
+/// Extended min/max with exact PTX modifiers.
+#[pliron_op(
+    name = "nvvm.extended_minmax",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+    attributes = (
+        nvvm_extended_minmax_format: ExtendedMinMaxFormatAttr,
+        nvvm_extended_minmax_operation: ExtendedMinMaxOperationAttr,
+        nvvm_extended_minmax_subnormal: ExtendedMinMaxSubnormalAttr,
+        nvvm_extended_minmax_nan: ExtendedMinMaxNanAttr,
+        nvvm_extended_minmax_xorsign_abs: ExtendedMinMaxXorSignAbsAttr
+    )
+)]
+pub struct ExtendedMinMaxOp;
+
+impl ExtendedMinMaxOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build(
+        ctx: &mut Context,
+        a: Value,
+        b: Value,
+        format: ExtendedMinMaxFormatAttr,
+        operation: ExtendedMinMaxOperationAttr,
+        subnormal: ExtendedMinMaxSubnormalAttr,
+        nan: ExtendedMinMaxNanAttr,
+        xorsign_abs: ExtendedMinMaxXorSignAbsAttr,
+    ) -> Ptr<Operation> {
+        let result_ty = match &format {
+            ExtendedMinMaxFormatAttr::F32 => FP32Type::get(ctx).into(),
+            ExtendedMinMaxFormatAttr::F16x2 | ExtendedMinMaxFormatAttr::Bf16x2 => {
+                IntegerType::get(ctx, 32, Signedness::Unsigned).into()
+            }
+        };
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty],
+            vec![a, b],
+            vec![],
+            0,
+        );
+        let this = Self { op };
+        this.set_attr_nvvm_extended_minmax_format(ctx, format);
+        this.set_attr_nvvm_extended_minmax_operation(ctx, operation);
+        this.set_attr_nvvm_extended_minmax_subnormal(ctx, subnormal);
+        this.set_attr_nvvm_extended_minmax_nan(ctx, nan);
+        this.set_attr_nvvm_extended_minmax_xorsign_abs(ctx, xorsign_abs);
+        this.get_operation()
+    }
+}
+
+impl Verify for ExtendedMinMaxOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let Some(format) = self.get_attr_nvvm_extended_minmax_format(ctx) else {
+            return verify_err!(op.loc(), "nvvm.extended_minmax requires a format");
+        };
+        let Some(operation) = self.get_attr_nvvm_extended_minmax_operation(ctx) else {
+            return verify_err!(op.loc(), "nvvm.extended_minmax requires an operation");
+        };
+        let Some(subnormal) = self.get_attr_nvvm_extended_minmax_subnormal(ctx) else {
+            return verify_err!(op.loc(), "nvvm.extended_minmax requires a subnormal mode");
+        };
+        let Some(nan) = self.get_attr_nvvm_extended_minmax_nan(ctx) else {
+            return verify_err!(op.loc(), "nvvm.extended_minmax requires a NaN mode");
+        };
+        let Some(xorsign_abs) = self.get_attr_nvvm_extended_minmax_xorsign_abs(ctx) else {
+            return verify_err!(op.loc(), "nvvm.extended_minmax requires an xorsign.abs mode");
+        };
+        let admitted = matches!(
+            (&*format, &*operation, &*subnormal, &*nan, &*xorsign_abs),
+"##,
+    );
+    for (index, record) in extended_minmax(catalog).enumerate() {
+        if index != 0 {
+            output.push_str(" |\n");
+        }
+        writeln!(
+            output,
+            "            ({}, {}, {}, {}, {})",
+            extended_minmax_format_attr(record),
+            extended_minmax_operation_attr(record),
+            extended_minmax_subnormal_attr(record),
+            extended_minmax_nan_attr(record),
+            extended_minmax_xorsign_abs_attr(record),
+        )
+        .unwrap();
+    }
+    output.push_str(
+        r##"        );
+        if !admitted {
+            return verify_err!(op.loc(), "nvvm.extended_minmax variant is not admitted");
+        }
+        let type_matches = |ty: pliron::r#type::TypeHandle| match &*format {
+            ExtendedMinMaxFormatAttr::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
+            ExtendedMinMaxFormatAttr::F16x2 | ExtendedMinMaxFormatAttr::Bf16x2 => ty
+                .deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 32),
+        };
+        if !type_matches(op.get_operand(0).get_type(ctx))
+            || !type_matches(op.get_operand(1).get_type(ctx))
+            || !type_matches(op.get_result(0).get_type(ctx))
+        {
+            return verify_err!(op.loc(), "nvvm.extended_minmax types do not match its format");
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    ExtendedMinMaxFormatAttr::register(ctx);
+    ExtendedMinMaxOperationAttr::register(ctx);
+    ExtendedMinMaxSubnormalAttr::register(ctx);
+    ExtendedMinMaxNanAttr::register(ctx);
+    ExtendedMinMaxXorSignAbsAttr::register(ctx);
+    ExtendedMinMaxOp::register(ctx);
+}
+"##,
+    );
+    output
+}
+
 fn render_dialect_prmt(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -8393,6 +8722,55 @@ fn render_importer_scalar_arithmetic_dispatch(
     output.push_str("        }\n");
 }
 
+fn render_importer_extended_minmax_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    output.push_str(
+        "            require_arity(name, args.len(), 2, &loc)?;\n\
+                     let (a, last_op) = rvalue::translate_operand(\n\
+                         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n\
+                     )?;\n\
+                     let (b, last_op) = rvalue::translate_operand(\n\
+                         ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n\
+                     )?;\n",
+    );
+    writeln!(
+        output,
+        "            let intrinsic = ExtendedMinMaxOp::build(ctx, a, b, {}, {}, {}, {}, {});",
+        extended_minmax_format_attr(record),
+        extended_minmax_operation_attr(record),
+        extended_minmax_subnormal_attr(record),
+        extended_minmax_nan_attr(record),
+        extended_minmax_xorsign_abs_attr(record),
+    )
+    .unwrap();
+    output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+    writeln!(
+        output,
+        "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    output.push_str(
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+                     let result = intrinsic.deref(ctx).get_result(0);\n",
+    );
+    writeln!(
+        output,
+        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        format!("{} call without target block", record.rust.name)
+    )
+    .unwrap();
+    output.push_str("        }\n");
+}
+
 fn render_importer_elect_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -8503,6 +8881,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     if scalar_arithmetics(catalog).next().is_some() {
         output.push_str(
             ", ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr",
+        );
+    }
+    if extended_minmax(catalog).next().is_some() {
+        output.push_str(
+            ", ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp, ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -9356,6 +9739,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     for record in scalar_arithmetics(catalog) {
         render_importer_scalar_arithmetic_dispatch(&mut output, catalog, record);
+    }
+    for record in extended_minmax(catalog) {
+        render_importer_extended_minmax_dispatch(&mut output, catalog, record);
     }
     for record in movmatrix(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
@@ -10737,6 +11123,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "prmt::convert_generated_prmt, scalar_arithmetic::convert_generated_scalar_arithmetic, ",
         );
     }
+    if extended_minmax(catalog).next().is_some() {
+        output = output.replace(
+            "dotprod::convert_generated_dot_product, ",
+            "dotprod::convert_generated_dot_product, extended_minmax::convert_generated_extended_minmax, ",
+        );
+    }
     if elect_intrinsics(catalog).next().is_some() {
         output = output.replace(
             "warp::{convert_active_mask,",
@@ -10788,6 +11180,11 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if scalar_arithmetics(catalog).next().is_some() {
         output.push_str(
             ", ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr",
+        );
+    }
+    if extended_minmax(catalog).next().is_some() {
+        output.push_str(
+            ", ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp, ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -11475,6 +11872,28 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_arithmetic variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_arithmetic(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3,\n        )\n    }\n}\n\n",
+        );
+    }
+    if extended_minmax(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for ExtendedMinMaxOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_extended_minmax_format(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_operation(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_subnormal(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_nan(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_xorsign_abs(ctx).as_deref(),\n        ) {\n",
+        );
+        for record in extended_minmax(catalog) {
+            writeln!(
+                output,
+                "            (Some(&{}), Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {}),",
+                extended_minmax_format_attr(record),
+                extended_minmax_operation_attr(record),
+                extended_minmax_subnormal_attr(record),
+                extended_minmax_nan_attr(record),
+                extended_minmax_xorsign_abs_attr(record),
+                extended_minmax_ptx_mnemonic(record),
+                extended_minmax_contract(record).format != ExtendedMinMaxFormat::F32,
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.extended_minmax variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_extended_minmax(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1,\n        )\n    }\n}\n\n",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -12546,6 +12965,29 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             "GeneratedIntrinsicVariant::ScalarArithmetic {{ format: {format}, operation: {operation}, rounding: {rounding}, subnormal: {subnormal}, saturation: {saturation} }}"
         );
     }
+    if let Some(minmax) = &record.extended_minmax {
+        let format = match minmax.format {
+            ExtendedMinMaxFormat::F32 => "GeneratedExtendedMinMaxFormat::F32",
+            ExtendedMinMaxFormat::F16x2 => "GeneratedExtendedMinMaxFormat::F16x2",
+            ExtendedMinMaxFormat::Bf16x2 => "GeneratedExtendedMinMaxFormat::Bf16x2",
+        };
+        let operation = match minmax.operation {
+            ExtendedMinMaxOperation::Min => "GeneratedExtendedMinMaxOperation::Min",
+            ExtendedMinMaxOperation::Max => "GeneratedExtendedMinMaxOperation::Max",
+        };
+        let subnormal = match minmax.subnormal {
+            ExtendedMinMaxSubnormal::Preserve => "GeneratedExtendedMinMaxSubnormal::Preserve",
+            ExtendedMinMaxSubnormal::Ftz => "GeneratedExtendedMinMaxSubnormal::Ftz",
+        };
+        let nan = match minmax.nan {
+            ExtendedMinMaxNan::Number => "GeneratedExtendedMinMaxNan::Number",
+            ExtendedMinMaxNan::Nan => "GeneratedExtendedMinMaxNan::Nan",
+        };
+        return format!(
+            "GeneratedIntrinsicVariant::ExtendedMinMax {{ format: {format}, operation: {operation}, subnormal: {subnormal}, nan: {nan}, xorsign_abs: {} }}",
+            minmax.xorsign_abs
+        );
+    }
     if let Some(conversion) = &record.scalar_conversion {
         let rounding = match conversion.rounding {
             ScalarConversionRounding::NearestAway => {
@@ -12712,6 +13154,18 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
                 "    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n    ScalarArithmetic { format: GeneratedScalarArithmeticFormat, operation: GeneratedScalarArithmeticOperation, rounding: GeneratedScalarArithmeticRounding, subnormal: GeneratedScalarArithmeticSubnormal, saturation: GeneratedScalarArithmeticSaturation },\n}",
             );
         }
+    }
+    if extended_minmax(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedExtendedMinMaxFormat { F32, F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedExtendedMinMaxOperation { Min, Max }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedExtendedMinMaxSubnormal { Preserve, Ftz }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedExtendedMinMaxNan { Number, Nan }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        );
+        replace_exact_render_fragment(
+            &mut output,
+            "}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget",
+            "    ExtendedMinMax { format: GeneratedExtendedMinMaxFormat, operation: GeneratedExtendedMinMaxOperation, subnormal: GeneratedExtendedMinMaxSubnormal, nan: GeneratedExtendedMinMaxNan, xorsign_abs: bool },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget",
+        );
     }
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -12924,6 +13378,38 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             ),
         );
     }
+    if extended_minmax(catalog).next().is_some() {
+        let minmax_match = r#"        GeneratedIntrinsicVariant::ExtendedMinMax { format, operation: minmax_operation, subnormal, nan, xorsign_abs } => {
+            let Some(op) = Operation::get_op::<ExtendedMinMaxOp>(operation, ctx) else { return false; };
+            let format_matches = match format {
+                GeneratedExtendedMinMaxFormat::F32 => op.get_attr_nvvm_extended_minmax_format(ctx).as_deref() == Some(&ExtendedMinMaxFormatAttr::F32),
+                GeneratedExtendedMinMaxFormat::F16x2 => op.get_attr_nvvm_extended_minmax_format(ctx).as_deref() == Some(&ExtendedMinMaxFormatAttr::F16x2),
+                GeneratedExtendedMinMaxFormat::Bf16x2 => op.get_attr_nvvm_extended_minmax_format(ctx).as_deref() == Some(&ExtendedMinMaxFormatAttr::Bf16x2),
+            };
+            let operation_matches = match minmax_operation {
+                GeneratedExtendedMinMaxOperation::Min => op.get_attr_nvvm_extended_minmax_operation(ctx).as_deref() == Some(&ExtendedMinMaxOperationAttr::Min),
+                GeneratedExtendedMinMaxOperation::Max => op.get_attr_nvvm_extended_minmax_operation(ctx).as_deref() == Some(&ExtendedMinMaxOperationAttr::Max),
+            };
+            let subnormal_matches = match subnormal {
+                GeneratedExtendedMinMaxSubnormal::Preserve => op.get_attr_nvvm_extended_minmax_subnormal(ctx).as_deref() == Some(&ExtendedMinMaxSubnormalAttr::Preserve),
+                GeneratedExtendedMinMaxSubnormal::Ftz => op.get_attr_nvvm_extended_minmax_subnormal(ctx).as_deref() == Some(&ExtendedMinMaxSubnormalAttr::Ftz),
+            };
+            let nan_matches = match nan {
+                GeneratedExtendedMinMaxNan::Number => op.get_attr_nvvm_extended_minmax_nan(ctx).as_deref() == Some(&ExtendedMinMaxNanAttr::Number),
+                GeneratedExtendedMinMaxNan::Nan => op.get_attr_nvvm_extended_minmax_nan(ctx).as_deref() == Some(&ExtendedMinMaxNanAttr::Nan),
+            };
+            let xorsign_abs_matches = match xorsign_abs {
+                false => op.get_attr_nvvm_extended_minmax_xorsign_abs(ctx).as_deref() == Some(&ExtendedMinMaxXorSignAbsAttr::Disabled),
+                true => op.get_attr_nvvm_extended_minmax_xorsign_abs(ctx).as_deref() == Some(&ExtendedMinMaxXorSignAbsAttr::Enabled),
+            };
+            format_matches && operation_matches && subnormal_matches && nan_matches && xorsign_abs_matches
+        }
+"#;
+        let match_end = output
+            .rfind("    }\n}\n")
+            .expect("generated target matcher terminator");
+        output.insert_str(match_end, minmax_match);
+    }
     output.push_str(
         "\nuse dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaKindAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
@@ -12946,6 +13432,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             &mut output,
             "SparseMmaSelectorAttr, SparseMmaShapeAttr",
             "ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr",
+        );
+    }
+    if extended_minmax(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr",
+            "ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp, ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr",
         );
     }
     output.push_str(
@@ -14430,6 +14923,24 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 .unwrap();
             }
         }
+        writeln!(output, "  ret {ty} %result\n}}").unwrap();
+    } else if record.extended_minmax.is_some() {
+        let packed = extended_minmax_contract(record).format != ExtendedMinMaxFormat::F32;
+        let ty = if packed { "i32" } else { "float" };
+        let register = if packed { "r" } else { "f" };
+        writeln!(
+            output,
+            "define {ty} @probe_{}({ty} %a, {ty} %b) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  %result = call {ty} asm {:?}, {:?}({ty} %a, {ty} %b)",
+            format!("{} $0, $1, $2;", extended_minmax_ptx_mnemonic(record)),
+            format!("={register},{register},{register}"),
+        )
+        .unwrap();
         writeln!(output, "  ret {ty} %result\n}}").unwrap();
     } else if record.scalar_conversion.is_some() {
         writeln!(output, "declare i32 @{}(float)", llvm(record).symbol).unwrap();
@@ -17100,7 +17611,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 549);
+        assert_eq!(catalog.intrinsics.len(), 577);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -18482,14 +18993,14 @@ mod tests {
                     != ScalarArithmeticOperation::Div)
         }));
 
-        let compatibility = render_compat_scalar_arithmetic(&catalog, "test-hash");
+        let compatibility = render_compat_float(&catalog, "test-hash");
         assert!(compatibility.contains("pub fn mul_rn_f64(arg0: f64, arg1: f64) -> f64"));
         assert!(
             compatibility
                 .contains("pub fn fma_rp_ftz_sat_f32(arg0: f32, arg1: f32, arg2: f32) -> f32")
         );
         assert!(compatibility.contains("pub fn add_rp_ftz_sat_f32(arg0: f32, arg1: f32) -> f32"));
-        assert_eq!(compatibility.matches("#[must_use]").count(), 64);
+        assert_eq!(compatibility.matches("#[must_use]").count(), 72);
 
         let dialect = render_dialect_scalar_arithmetic(&catalog, "test-hash");
         assert_eq!(dialect.matches("pub struct ScalarArithmeticOp").count(), 1);
@@ -18557,5 +19068,151 @@ mod tests {
         assert!(outputs.contains_key(&PathBuf::from(
             "crates/dialect-nvvm/src/ops/generated/scalar_arithmetic.rs"
         )));
+    }
+
+    #[test]
+    fn extended_minmax_rendering_is_closed_pure_and_exact() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let records = extended_minmax(&catalog).collect::<Vec<_>>();
+        assert_eq!(records.len(), 28);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.target.minimum_ptx.encoded() == 70)
+                .count(),
+            8
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.target.minimum_ptx.encoded() == 72)
+                .count(),
+            20
+        );
+        for id in ["min_f16x2", "max_f16x2", "min_bf16x2", "max_bf16x2"] {
+            assert_eq!(
+                catalog
+                    .intrinsics
+                    .iter()
+                    .find(|record| record.id == id)
+                    .unwrap()
+                    .family,
+                "packed_alu"
+            );
+            assert!(records.iter().all(|record| record.id != id));
+        }
+
+        let f16 = render_compat_packed_alu(&catalog, "test-hash", PackedAluFormat::F16x2);
+        assert!(f16.contains("pub fn min_ftz_nan_xorsign_abs_f16x2(a: u32, b: u32) -> u32"));
+        let bf16 = render_compat_packed_alu(&catalog, "test-hash", PackedAluFormat::Bf16x2);
+        assert!(bf16.contains("pub fn max_nan_xorsign_abs_bf16x2(a: u32, b: u32) -> u32"));
+        let float = render_compat_float(&catalog, "test-hash");
+        assert!(float.contains("pub fn min_ftz_nan_xorsign_abs_f32(a: f32, b: f32) -> f32"));
+
+        let dialect = render_dialect_extended_minmax(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct ExtendedMinMaxOp").count(), 1);
+        assert_eq!(
+            dialect
+                .matches("            (ExtendedMinMaxFormatAttr::")
+                .count(),
+            28
+        );
+        for attr in [
+            "ExtendedMinMaxFormatAttr",
+            "ExtendedMinMaxOperationAttr",
+            "ExtendedMinMaxSubnormalAttr",
+            "ExtendedMinMaxNanAttr",
+            "ExtendedMinMaxXorSignAbsAttr",
+        ] {
+            assert!(dialect.contains(attr));
+            assert!(dialect.contains(&format!("{attr}::register(ctx)")));
+        }
+        assert!(dialect.contains("variant is not admitted"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert_eq!(importer.matches("ExtendedMinMaxOp::build(ctx").count(), 28);
+        assert!(importer.contains("cuda_device::float::min_xorsign_abs_f32"));
+        assert!(importer.contains("cuda_device::bf16x2::max_nan_bf16x2"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for ExtendedMinMaxOp")
+                .count(),
+            1
+        );
+        assert!(lowering.contains("convert_generated_extended_minmax"));
+        assert!(lowering.contains("min.ftz.NaN.xorsign.abs.f32"));
+        assert!(lowering.contains("max.NaN.xorsign.abs.bf16x2"));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains("GeneratedIntrinsicVariant::ExtendedMinMax"));
+        assert!(targets.contains("GeneratedPtxVersion::from_encoded(72)"));
+        assert!(targets.contains("Operation::get_op::<ExtendedMinMaxOp>"));
+        assert!(targets.contains("ExtendedMinMaxXorSignAbsAttr::Enabled"));
+
+        let packed_record = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "min_ftz_nan_f16x2")
+            .unwrap();
+        let packed_probe = render_probe(&catalog, packed_record, "test-hash");
+        assert!(
+            packed_probe.contains("call i32 asm \"min.ftz.NaN.f16x2 $0, $1, $2;\", \"=r,r,r\"")
+        );
+        assert!(!packed_probe.contains("sideeffect"));
+        assert!(!packed_probe.contains("convergent"));
+        let f32_record = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "max_ftz_nan_xorsign_abs_f32")
+            .unwrap();
+        let f32_probe = render_probe(&catalog, f32_record, "test-hash");
+        assert!(
+            f32_probe
+                .contains("call float asm \"max.ftz.NaN.xorsign.abs.f32 $0, $1, $2;\", \"=f,f,f\"")
+        );
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/extended_minmax.rs"
+        )));
+        for module in ["float", "f16x2", "bf16x2"] {
+            assert!(outputs.contains_key(&PathBuf::from(format!(
+                "crates/cuda-device/src/generated/{module}.rs"
+            ))));
+        }
+
+        let mut wrong_adapter = catalog;
+        wrong_adapter
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "min_xorsign_abs_f32")
+            .unwrap()
+            .extended_minmax
+            .as_mut()
+            .unwrap()
+            .adapter = ExtendedMinMaxAdapter::DirectPackedU32;
+        assert!(validate_renderable(&wrong_adapter).is_err());
+    }
+
+    #[test]
+    fn extended_minmax_alone_renders_float_wrappers() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut catalog = crate::resolve::resolve(&repo_root).unwrap();
+        catalog
+            .intrinsics
+            .retain(|record| record.family == "extended_minmax");
+
+        let (path, float) = render_compat_float_output(&catalog, "test-hash")
+            .expect("extended min/max alone must render float wrappers");
+        assert_eq!(
+            path,
+            PathBuf::from("crates/cuda-device/src/generated/float.rs")
+        );
+        assert!(float.contains("pub fn min_xorsign_abs_f32(a: f32, b: f32) -> f32"));
+        assert!(!float.contains("pub fn add_rn_f32"));
     }
 }

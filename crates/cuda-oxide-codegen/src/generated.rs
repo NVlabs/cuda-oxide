@@ -1673,6 +1673,86 @@ mod tests {
     }
 
     #[test]
+    fn extended_minmax_target_matcher_is_exact() {
+        use dialect_nvvm::ops::{
+            ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp,
+            ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr,
+        };
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let f32_ty = FP32Type::get(&ctx);
+        let block = BasicBlock::new(&mut ctx, None, vec![f32_ty.into(), f32_ty.into()]);
+        let a = block.deref(&ctx).get_argument(0);
+        let b = block.deref(&ctx).get_argument(1);
+
+        let exact = ExtendedMinMaxOp::build(
+            &mut ctx,
+            a,
+            b,
+            ExtendedMinMaxFormatAttr::F32,
+            ExtendedMinMaxOperationAttr::Min,
+            ExtendedMinMaxSubnormalAttr::Preserve,
+            ExtendedMinMaxNanAttr::Number,
+            ExtendedMinMaxXorSignAbsAttr::Enabled,
+        );
+        let requirements =
+            collect_generated_intrinsic_requirements(&ctx, exact, GeneratedMarkerPolicy::Optional)
+                .unwrap();
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].marker, "v1:i0562");
+        assert_eq!(requirements.targets[0].id, "min_xorsign_abs_f32");
+
+        let adjacent = ExtendedMinMaxOp::build(
+            &mut ctx,
+            a,
+            b,
+            ExtendedMinMaxFormatAttr::F32,
+            ExtendedMinMaxOperationAttr::Min,
+            ExtendedMinMaxSubnormalAttr::Preserve,
+            ExtendedMinMaxNanAttr::Number,
+            ExtendedMinMaxXorSignAbsAttr::Disabled,
+        );
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            adjacent,
+            GeneratedMarkerPolicy::Optional,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("matches 0 generated catalog variants"),
+            "{error}"
+        );
+
+        let wrong_marker = ExtendedMinMaxOp::build(
+            &mut ctx,
+            a,
+            b,
+            ExtendedMinMaxFormatAttr::F32,
+            ExtendedMinMaxOperationAttr::Min,
+            ExtendedMinMaxSubnormalAttr::Preserve,
+            ExtendedMinMaxNanAttr::Number,
+            ExtendedMinMaxXorSignAbsAttr::Enabled,
+        );
+        wrong_marker.deref_mut(&ctx).attributes.set(
+            Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+            StringAttr::new("v1:i0559".to_string()),
+        );
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            wrong_marker,
+            GeneratedMarkerPolicy::Required,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("does not match the exact variant attributes"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn scalar_conversion_collector_preserves_all_backend_floor_groups() {
         use crate::generated_intrinsic_targets::{
             GeneratedHardwareAlternative, GeneratedHardwareTarget,

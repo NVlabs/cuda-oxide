@@ -3850,3 +3850,199 @@ status = "active"
 catalog_id = "mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e5m2_e5m2_f16"
 operation_key = "matrix.mma.sp.m16n8k64.row.col.kind_f8f6f4.f16.e5m2.e5m2.f16.not_applicable.ordered_metadata"
 raw_rust_signature = { safe = false, arguments = ["[u32; 2]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0550"
+status = "active"
+catalog_id = "min_ftz_f16x2"
+operation_key = "floating.minmax.f16x2.min.ftz.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0551"
+status = "active"
+catalog_id = "min_ftz_nan_f16x2"
+operation_key = "floating.minmax.f16x2.min.ftz.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0552"
+status = "active"
+catalog_id = "min_ftz_nan_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.min.ftz.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0553"
+status = "active"
+catalog_id = "min_ftz_nan_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.min.ftz.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0554"
+status = "active"
+catalog_id = "min_ftz_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.min.ftz.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0555"
+status = "active"
+catalog_id = "min_ftz_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.min.ftz.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0556"
+status = "active"
+catalog_id = "min_nan_bf16x2"
+operation_key = "floating.minmax.bf16x2.min.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0557"
+status = "active"
+catalog_id = "min_nan_f16x2"
+operation_key = "floating.minmax.f16x2.min.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0558"
+status = "active"
+catalog_id = "min_nan_xorsign_abs_bf16x2"
+operation_key = "floating.minmax.bf16x2.min.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0559"
+status = "active"
+catalog_id = "min_nan_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.min.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0560"
+status = "active"
+catalog_id = "min_nan_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.min.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0561"
+status = "active"
+catalog_id = "min_xorsign_abs_bf16x2"
+operation_key = "floating.minmax.bf16x2.min.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0562"
+status = "active"
+catalog_id = "min_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.min.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0563"
+status = "active"
+catalog_id = "min_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.min.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0564"
+status = "active"
+catalog_id = "max_ftz_f16x2"
+operation_key = "floating.minmax.f16x2.max.ftz.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0565"
+status = "active"
+catalog_id = "max_ftz_nan_f16x2"
+operation_key = "floating.minmax.f16x2.max.ftz.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0566"
+status = "active"
+catalog_id = "max_ftz_nan_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.max.ftz.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0567"
+status = "active"
+catalog_id = "max_ftz_nan_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.max.ftz.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0568"
+status = "active"
+catalog_id = "max_ftz_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.max.ftz.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0569"
+status = "active"
+catalog_id = "max_ftz_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.max.ftz.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0570"
+status = "active"
+catalog_id = "max_nan_bf16x2"
+operation_key = "floating.minmax.bf16x2.max.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0571"
+status = "active"
+catalog_id = "max_nan_f16x2"
+operation_key = "floating.minmax.f16x2.max.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0572"
+status = "active"
+catalog_id = "max_nan_xorsign_abs_bf16x2"
+operation_key = "floating.minmax.bf16x2.max.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0573"
+status = "active"
+catalog_id = "max_nan_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.max.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0574"
+status = "active"
+catalog_id = "max_nan_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.max.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0575"
+status = "active"
+catalog_id = "max_xorsign_abs_bf16x2"
+operation_key = "floating.minmax.bf16x2.max.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0576"
+status = "active"
+catalog_id = "max_xorsign_abs_f32"
+operation_key = "floating.minmax.f32.max.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0577"
+status = "active"
+catalog_id = "max_xorsign_abs_f16x2"
+operation_key = "floating.minmax.f16x2.max.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }

@@ -178,6 +178,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub scalar_arithmetic: Option<ScalarArithmeticAdmission>,
     #[serde(default)]
+    pub extended_minmax: Option<ExtendedMinMaxAdmission>,
+    #[serde(default)]
     pub cluster_sreg: Option<ClusterSregAdmission>,
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrierAdmission>,
@@ -595,6 +597,29 @@ pub struct ScalarArithmeticAdmissionVariant {
     pub saturation: ScalarArithmeticSaturation,
 }
 
+/// Compact admission for the exact extended floating-point min/max family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtendedMinMaxAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ExtendedMinMaxAdmissionVariant>,
+}
+
+/// One reviewed extended min/max variant.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtendedMinMaxAdmissionVariant {
+    pub abi_id: String,
+    pub format: ExtendedMinMaxFormat,
+    pub operation: ExtendedMinMaxOperation,
+    pub subnormal: ExtendedMinMaxSubnormal,
+    pub nan: ExtendedMinMaxNan,
+    pub xorsign_abs: bool,
+}
+
 /// Compact admission for a closed dense integer register-MMA family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -811,6 +836,8 @@ pub struct OverlayIntrinsic {
     pub scalar_conversion: Option<ScalarConversion>,
     #[serde(default)]
     pub scalar_arithmetic: Option<ScalarArithmetic>,
+    #[serde(default)]
+    pub extended_minmax: Option<ExtendedMinMax>,
     #[serde(default)]
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default)]
@@ -2056,6 +2083,55 @@ pub enum ScalarArithmeticSaturation {
     Sat,
 }
 
+/// Closed identity and carrier contract for extended floating-point min/max.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtendedMinMax {
+    pub format: ExtendedMinMaxFormat,
+    pub operation: ExtendedMinMaxOperation,
+    pub subnormal: ExtendedMinMaxSubnormal,
+    pub nan: ExtendedMinMaxNan,
+    pub xorsign_abs: bool,
+    pub adapter: ExtendedMinMaxAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendedMinMaxFormat {
+    F32,
+    F16x2,
+    Bf16x2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendedMinMaxOperation {
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendedMinMaxSubnormal {
+    Preserve,
+    Ftz,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendedMinMaxNan {
+    Number,
+    Nan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendedMinMaxAdapter {
+    DirectF32,
+    DirectPackedU32,
+}
+
 /// Closed contract for converting two scalar values into one packed value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2618,6 +2694,8 @@ pub struct CatalogIntrinsic {
     pub scalar_conversion: Option<ScalarConversion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scalar_arithmetic: Option<ScalarArithmetic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extended_minmax: Option<ExtendedMinMax>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

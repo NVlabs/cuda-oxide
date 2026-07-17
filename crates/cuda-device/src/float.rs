@@ -3,6 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scalar floating-point intrinsics with explicit rounding.
+//! Scalar floating-point intrinsics.
 
 include!("generated/float.rs");

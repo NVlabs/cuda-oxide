@@ -13,6 +13,7 @@ shards = [
     "overlay/debug_control.toml",
     "overlay/dotprod.toml",
     "overlay/elect.toml",
+    "overlay/extended_minmax.toml",
     "overlay/ldmatrix.toml",
     "overlay/ldmatrix_blackwell.toml",
     "overlay/mbarrier_basic.toml",
