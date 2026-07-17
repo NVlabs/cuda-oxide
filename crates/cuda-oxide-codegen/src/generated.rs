@@ -8,8 +8,10 @@
 use crate::error::PipelineError;
 use crate::generated_intrinsic_targets::{
     GENERATED_INTRINSIC_MARKER_ATTR, GeneratedIntrinsicBackend, GeneratedIntrinsicTarget,
-    GeneratedTargetRequirement, generated_intrinsic_operation_matches,
-    generated_intrinsic_target_by_marker, generated_intrinsic_targets_by_op_name,
+    GeneratedIntrinsicVariant, GeneratedTargetContract, GeneratedTargetRequirement,
+    GeneratedTargetSelectorBinding, GeneratedTcgen05MmaTargetSelector,
+    generated_intrinsic_operation_matches, generated_intrinsic_target_by_marker,
+    generated_intrinsic_target_is_direct_dialect_candidate, generated_intrinsic_targets_by_op_name,
 };
 use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
@@ -27,19 +29,35 @@ pub(crate) enum GeneratedMarkerPolicy {
 
 /// Exact generated-intrinsic requirements found in typed, pre-lowering IR.
 ///
-/// The vector is deterministic and contains at most one entry per ABI marker.
-/// Multiple calls to one intrinsic therefore do not make target checking
-/// depend on call count or traversal order.
+/// `targets` keeps one entry per ABI marker. Selector-dependent calls are also
+/// retained separately by marker and exact selector tuple.
 #[derive(Debug, Clone)]
 pub(crate) struct GeneratedModuleRequirements {
     pub(crate) targets: Vec<&'static GeneratedIntrinsicTarget>,
+    resolved_targets: Vec<GeneratedResolvedTarget>,
     backend: GeneratedIntrinsicBackend,
+}
+
+/// One exact target contract retained from a typed intrinsic call.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GeneratedResolvedTarget {
+    pub(crate) target: &'static GeneratedIntrinsicTarget,
+    pub(crate) selector: Option<GeneratedTargetSelectorBinding>,
+    contract: Option<&'static GeneratedTargetContract>,
+}
+
+/// The target requirement selected for one retained call variant.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum GeneratedResolvedRequirement {
+    Target(GeneratedTargetRequirement),
+    Contract(&'static GeneratedTargetContract),
 }
 
 impl Default for GeneratedModuleRequirements {
     fn default() -> Self {
         Self {
             targets: Vec::new(),
+            resolved_targets: Vec::new(),
             backend: GeneratedIntrinsicBackend::LlvmNvptx,
         }
     }
@@ -50,11 +68,22 @@ impl GeneratedModuleRequirements {
         self.targets.is_empty()
     }
 
+    #[cfg(test)]
     pub(crate) fn for_backend(mut self, backend: GeneratedIntrinsicBackend) -> Self {
         self.backend = backend;
+        for resolved in &mut self.resolved_targets {
+            resolved.contract = resolved.selector.and_then(|selector| {
+                resolved.target.target_contract_for_backend_selector(
+                    backend,
+                    selector.name,
+                    selector.value,
+                )
+            });
+        }
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn requirement(
         &self,
         target: &GeneratedIntrinsicTarget,
@@ -62,10 +91,38 @@ impl GeneratedModuleRequirements {
         target.requirement_for_backend(self.backend)
     }
 
+    pub(crate) fn resolved_targets(&self) -> &[GeneratedResolvedTarget] {
+        &self.resolved_targets
+    }
+
+    pub(crate) fn resolved_requirement(
+        &self,
+        resolved: &GeneratedResolvedTarget,
+    ) -> Option<GeneratedResolvedRequirement> {
+        match resolved.selector {
+            Some(_) => resolved
+                .contract
+                .map(GeneratedResolvedRequirement::Contract),
+            None => Some(GeneratedResolvedRequirement::Target(
+                resolved.target.requirement_for_backend(self.backend),
+            )),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn from_targets(targets: Vec<&'static GeneratedIntrinsicTarget>) -> Self {
+        let resolved_targets = targets
+            .iter()
+            .copied()
+            .map(|target| GeneratedResolvedTarget {
+                target,
+                selector: None,
+                contract: None,
+            })
+            .collect();
         Self {
             targets,
+            resolved_targets,
             ..Self::default()
         }
     }
@@ -73,10 +130,26 @@ impl GeneratedModuleRequirements {
 
 /// Collect generated-intrinsic requirements before lowering erases typed
 /// operations and their compiler-only source ABI markers.
+#[cfg(test)]
 pub(crate) fn collect_generated_intrinsic_requirements(
     ctx: &Context,
     root: Ptr<Operation>,
     marker_policy: GeneratedMarkerPolicy,
+) -> Result<GeneratedModuleRequirements, PipelineError> {
+    collect_generated_intrinsic_requirements_for_backend(
+        ctx,
+        root,
+        marker_policy,
+        GeneratedIntrinsicBackend::LlvmNvptx,
+    )
+}
+
+/// Collect requirements for the backend selected before MIR lowering.
+pub(crate) fn collect_generated_intrinsic_requirements_for_backend(
+    ctx: &Context,
+    root: Ptr<Operation>,
+    marker_policy: GeneratedMarkerPolicy,
+    backend: GeneratedIntrinsicBackend,
 ) -> Result<GeneratedModuleRequirements, PipelineError> {
     use pliron::identifier::Identifier;
     use std::collections::BTreeMap;
@@ -89,13 +162,19 @@ pub(crate) fn collect_generated_intrinsic_requirements(
         }
     })?;
     let mut targets = BTreeMap::new();
+    let mut resolved_targets = BTreeMap::new();
 
     fn visit(
         ctx: &Context,
         op_ptr: Ptr<Operation>,
         marker_key: &pliron::identifier::Identifier,
         marker_policy: GeneratedMarkerPolicy,
+        backend: GeneratedIntrinsicBackend,
         targets: &mut BTreeMap<&'static str, &'static GeneratedIntrinsicTarget>,
+        resolved_targets: &mut BTreeMap<
+            (&'static str, Option<(&'static str, &'static str)>),
+            GeneratedResolvedTarget,
+        >,
     ) -> Result<(), PipelineError> {
         use pliron::builtin::attributes::StringAttr;
 
@@ -139,7 +218,7 @@ pub(crate) fn collect_generated_intrinsic_requirements(
                         ),
                     ));
                 }
-                targets.entry(target.marker).or_insert(target);
+                retain_generated_target(ctx, op_ptr, backend, target, targets, resolved_targets)?;
             }
             None if marker_attribute_exists => {
                 return Err(generated_requirement_error(
@@ -162,6 +241,7 @@ pub(crate) fn collect_generated_intrinsic_requirements(
             None if !candidates.is_empty() => {
                 let matching = candidates
                     .into_iter()
+                    .filter(|target| generated_intrinsic_target_is_direct_dialect_candidate(target))
                     .filter(|target| generated_intrinsic_operation_matches(ctx, target, op_ptr))
                     .collect::<Vec<_>>();
                 let [target] = matching.as_slice() else {
@@ -174,7 +254,7 @@ pub(crate) fn collect_generated_intrinsic_requirements(
                         ),
                     ));
                 };
-                targets.entry(target.marker).or_insert(*target);
+                retain_generated_target(ctx, op_ptr, backend, *target, targets, resolved_targets)?;
             }
             None => {}
         }
@@ -184,18 +264,135 @@ pub(crate) fn collect_generated_intrinsic_requirements(
             for block in region_ref.iter(ctx) {
                 let block_ref = block.deref(ctx);
                 for child_op in block_ref.iter(ctx) {
-                    visit(ctx, child_op, marker_key, marker_policy, targets)?;
+                    visit(
+                        ctx,
+                        child_op,
+                        marker_key,
+                        marker_policy,
+                        backend,
+                        targets,
+                        resolved_targets,
+                    )?;
                 }
             }
         }
         Ok(())
     }
 
-    visit(ctx, root, &marker_key, marker_policy, &mut targets)?;
+    visit(
+        ctx,
+        root,
+        &marker_key,
+        marker_policy,
+        backend,
+        &mut targets,
+        &mut resolved_targets,
+    )?;
     Ok(GeneratedModuleRequirements {
         targets: targets.into_values().collect(),
-        ..Default::default()
+        resolved_targets: resolved_targets.into_values().collect(),
+        backend,
     })
+}
+
+fn retain_generated_target(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    backend: GeneratedIntrinsicBackend,
+    target: &'static GeneratedIntrinsicTarget,
+    targets: &mut std::collections::BTreeMap<&'static str, &'static GeneratedIntrinsicTarget>,
+    resolved_targets: &mut std::collections::BTreeMap<
+        (&'static str, Option<(&'static str, &'static str)>),
+        GeneratedResolvedTarget,
+    >,
+) -> Result<(), PipelineError> {
+    let selector = generated_target_selector(ctx, target, op)?;
+    let contract = match selector {
+        Some(selector) => Some(
+            target
+                .target_contract_for_backend_selector(
+                    backend,
+                    selector.name,
+                    selector.value,
+                )
+                .ok_or_else(|| {
+                    generated_requirement_error(
+                        ctx,
+                        op,
+                        format!(
+                            "generated intrinsic `{}` (`{}`) has no unique {:?} target contract for {}={}",
+                            target.id,
+                            target.marker,
+                            backend,
+                            selector.name,
+                            selector.value
+                        ),
+                    )
+                })?,
+        ),
+        None => None,
+    };
+    targets.entry(target.marker).or_insert(target);
+    resolved_targets
+        .entry((
+            target.marker,
+            selector.map(|selector| (selector.name, selector.value)),
+        ))
+        .or_insert(GeneratedResolvedTarget {
+            target,
+            selector,
+            contract,
+        });
+    Ok(())
+}
+
+fn generated_target_selector(
+    ctx: &Context,
+    target: &GeneratedIntrinsicTarget,
+    operation: Ptr<Operation>,
+) -> Result<Option<GeneratedTargetSelectorBinding>, PipelineError> {
+    let GeneratedIntrinsicVariant::Tcgen05Mma {
+        target_selector: GeneratedTcgen05MmaTargetSelector::Kind,
+        ..
+    } = target.variant
+    else {
+        return Ok(None);
+    };
+
+    use dialect_nvvm::ops::Tcgen05MmaKindAttr;
+    let kind_key =
+        pliron::identifier::Identifier::try_from("nvvm_tcgen05_mma_kind").map_err(|error| {
+            generated_requirement_error(
+                ctx,
+                operation,
+                format!("invalid tcgen05 MMA kind attribute key: {error}"),
+            )
+        })?;
+    let kind = operation
+        .deref(ctx)
+        .attributes
+        .get::<Tcgen05MmaKindAttr>(&kind_key)
+        .cloned();
+    let value = match kind {
+        Some(Tcgen05MmaKindAttr::F16) => "f16",
+        Some(Tcgen05MmaKindAttr::Tf32) => "tf32",
+        Some(Tcgen05MmaKindAttr::F8f6f4) => "f8f6f4",
+        Some(Tcgen05MmaKindAttr::I8) => "i8",
+        None => {
+            return Err(generated_requirement_error(
+                ctx,
+                operation,
+                format!(
+                    "generated intrinsic `{}` (`{}`) is missing its `kind` target selector",
+                    target.id, target.marker
+                ),
+            ));
+        }
+    };
+    Ok(Some(GeneratedTargetSelectorBinding {
+        name: "kind",
+        value,
+    }))
 }
 
 fn generated_requirement_error(
@@ -213,9 +410,15 @@ fn generated_requirement_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated_intrinsic_targets::GENERATED_INTRINSIC_MARKER_ATTR;
+    use crate::generated_intrinsic_targets::{
+        GENERATED_INTRINSIC_MARKER_ATTR, GENERATED_INTRINSIC_TARGETS, GeneratedHardwareAlternative,
+        GeneratedHardwareTarget, GeneratedPtxVersion, GeneratedTargetAlternative,
+        GeneratedTcgen05MmaForm,
+    };
     use dialect_nvvm::ops::{
         ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr,
+        Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr,
+        Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp,
     };
     use pliron::basic_block::BasicBlock;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
@@ -370,6 +573,52 @@ mod tests {
             crate::lower::append_to_module(ctx, module_op, *op);
         }
         module_op
+    }
+
+    fn tcgen05_mma_shared_op(
+        ctx: &mut Context,
+        kind: Option<Tcgen05MmaKindAttr>,
+        marker: Option<&str>,
+    ) -> Ptr<Operation> {
+        let op = Operation::new(
+            ctx,
+            Tcgen05MmaOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        let mma = Tcgen05MmaOp::new(op);
+        mma.set_attr_nvvm_tcgen05_mma_form(ctx, Tcgen05MmaFormAttr::Shared);
+        if let Some(kind) = kind {
+            mma.set_attr_nvvm_tcgen05_mma_kind(ctx, kind);
+        }
+        mma.set_attr_nvvm_tcgen05_mma_cta_group(ctx, Tcgen05MmaCtaGroupAttr::Cg1);
+        mma.set_attr_nvvm_tcgen05_mma_collector_a(ctx, Tcgen05MmaCollectorAAttr::Discard);
+        if let Some(marker) = marker {
+            op.deref_mut(ctx).attributes.set(
+                Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                StringAttr::new(marker.to_string()),
+            );
+        }
+        op
+    }
+
+    fn tcgen05_mma_ws_tensor_op(ctx: &mut Context) -> Ptr<Operation> {
+        let op = Operation::new(
+            ctx,
+            Tcgen05MmaOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        let mma = Tcgen05MmaOp::new(op);
+        mma.set_attr_nvvm_tcgen05_mma_form(ctx, Tcgen05MmaFormAttr::WsTensor);
+        mma.set_attr_nvvm_tcgen05_mma_kind(ctx, Tcgen05MmaKindAttr::F8f6f4);
+        mma.set_attr_nvvm_tcgen05_mma_b_buffer(ctx, Tcgen05MmaBBufferAttr::B0);
+        mma.set_attr_nvvm_tcgen05_mma_b_usage(ctx, Tcgen05MmaBUsageAttr::Discard);
+        op
     }
 
     #[test]
@@ -1861,6 +2110,256 @@ mod tests {
                 .to_string();
         assert!(
             error.contains("does not match the exact variant attributes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn tcgen05_mma_kind_contracts_are_retained_per_marker_and_kind() {
+        let target = GENERATED_INTRINSIC_TARGETS
+            .iter()
+            .find(|target| target.id == "tcgen05_mma_shared")
+            .expect("generated tcgen05 shared MMA target");
+        assert_eq!(target.marker, "v1:i0763");
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let f16 =
+            tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::F16), Some(target.marker));
+        let f16_requirements = collect_generated_intrinsic_requirements_for_backend(
+            &ctx,
+            f16,
+            GeneratedMarkerPolicy::Required,
+            GeneratedIntrinsicBackend::LlvmNvptx,
+        )
+        .unwrap();
+        assert!(crate::target::generated_target_satisfied(
+            "sm_103a",
+            &f16_requirements
+        ));
+        assert!(crate::target::generated_target_satisfied(
+            "sm_100f",
+            &f16_requirements
+        ));
+
+        let i8 = tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::I8), Some(target.marker));
+        let i8_requirements = collect_generated_intrinsic_requirements_for_backend(
+            &ctx,
+            i8,
+            GeneratedMarkerPolicy::Required,
+            GeneratedIntrinsicBackend::LlvmNvptx,
+        )
+        .unwrap();
+        assert!(!crate::target::generated_target_satisfied(
+            "sm_103a",
+            &i8_requirements
+        ));
+        assert!(!crate::target::generated_target_satisfied(
+            "sm_100f",
+            &i8_requirements
+        ));
+        assert!(crate::target::generated_target_satisfied(
+            "sm_101a",
+            &i8_requirements
+        ));
+        let switched = i8_requirements
+            .clone()
+            .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+        assert!(!crate::target::generated_target_satisfied(
+            "sm_101a", &switched
+        ));
+
+        let f16 =
+            tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::F16), Some(target.marker));
+        let i8 = tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::I8), Some(target.marker));
+        let module = generated_test_module(&mut ctx, &[f16, i8]);
+        let both = collect_generated_intrinsic_requirements_for_backend(
+            &ctx,
+            module,
+            GeneratedMarkerPolicy::Required,
+            GeneratedIntrinsicBackend::LlvmNvptx,
+        )
+        .unwrap();
+        assert_eq!(both.targets.len(), 1);
+        assert_eq!(both.resolved_targets().len(), 2);
+        assert_eq!(
+            both.resolved_targets()
+                .iter()
+                .map(|resolved| resolved.selector.unwrap().value)
+                .collect::<Vec<_>>(),
+            ["f16", "i8"]
+        );
+        assert!(!crate::target::generated_target_satisfied("sm_103a", &both));
+        assert!(!crate::target::generated_target_satisfied("sm_100f", &both));
+        assert!(crate::target::generated_target_satisfied("sm_100a", &both));
+
+        let f16 =
+            tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::F16), Some(target.marker));
+        let libnvvm_f16 = collect_generated_intrinsic_requirements_for_backend(
+            &ctx,
+            f16,
+            GeneratedMarkerPolicy::Required,
+            GeneratedIntrinsicBackend::LibNvvm,
+        )
+        .unwrap();
+        assert!(!crate::target::generated_target_satisfied(
+            "sm_101a",
+            &libnvvm_f16
+        ));
+        assert!(crate::target::generated_target_satisfied(
+            "sm_103a",
+            &libnvvm_f16
+        ));
+
+        let i8 = tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::I8), Some(target.marker));
+        let libnvvm_i8 = collect_generated_intrinsic_requirements_for_backend(
+            &ctx,
+            i8,
+            GeneratedMarkerPolicy::Required,
+            GeneratedIntrinsicBackend::LibNvvm,
+        )
+        .unwrap();
+        assert!(!crate::target::generated_target_satisfied(
+            "sm_101a",
+            &libnvvm_i8
+        ));
+        assert!(crate::target::generated_target_satisfied(
+            "sm_110a",
+            &libnvvm_i8
+        ));
+    }
+
+    #[test]
+    fn markerless_tcgen05_mma_ignores_compatibility_aliases() {
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let op = tcgen05_mma_ws_tensor_op(&mut ctx);
+        let requirements = collect_generated_intrinsic_requirements_for_backend(
+            &ctx,
+            op,
+            GeneratedMarkerPolicy::Optional,
+            GeneratedIntrinsicBackend::LlvmNvptx,
+        )
+        .unwrap();
+
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].id, "tcgen05_mma_ws_tensor");
+        assert_eq!(requirements.resolved_targets().len(), 1);
+        assert_eq!(
+            requirements.resolved_targets()[0].selector.unwrap().value,
+            "f8f6f4"
+        );
+    }
+
+    #[test]
+    fn tcgen05_mma_selector_contract_failures_are_closed() {
+        static ALTERNATIVES: &[GeneratedTargetAlternative] = &[GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(86),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(100),
+        }];
+        static F16_CONTRACTS: &[GeneratedTargetContract] = &[GeneratedTargetContract {
+            selectors: &[GeneratedTargetSelectorBinding {
+                name: "kind",
+                value: "f16",
+            }],
+            alternatives: ALTERNATIVES,
+        }];
+        static DUPLICATE_F16_CONTRACTS: &[GeneratedTargetContract] = &[
+            GeneratedTargetContract {
+                selectors: &[GeneratedTargetSelectorBinding {
+                    name: "kind",
+                    value: "f16",
+                }],
+                alternatives: ALTERNATIVES,
+            },
+            GeneratedTargetContract {
+                selectors: &[GeneratedTargetSelectorBinding {
+                    name: "kind",
+                    value: "f16",
+                }],
+                alternatives: ALTERNATIVES,
+            },
+        ];
+        static MISSING_I8_TARGET: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+            marker: "test:tcgen_mma_missing_i8",
+            id: "tcgen_mma_missing_i8",
+            abi_id: "test",
+            dialect_op: "nvvm.tcgen05_mma",
+            variant: GeneratedIntrinsicVariant::Tcgen05Mma {
+                form: GeneratedTcgen05MmaForm::Shared,
+                target_selector: GeneratedTcgen05MmaTargetSelector::Kind,
+                compatibility_alias: false,
+            },
+            requirement: GeneratedTargetRequirement {
+                minimum_ptx: GeneratedPtxVersion::from_encoded(86),
+                hardware: GeneratedHardwareTarget::TargetMatrix {
+                    contracts: F16_CONTRACTS,
+                },
+            },
+            backend_requirements: &[],
+            selections: &[],
+            llvm: None,
+        };
+        static DUPLICATE_F16_TARGET: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+            marker: "test:tcgen_mma_duplicate_f16",
+            id: "tcgen_mma_duplicate_f16",
+            abi_id: "test",
+            dialect_op: "nvvm.tcgen05_mma",
+            variant: GeneratedIntrinsicVariant::Tcgen05Mma {
+                form: GeneratedTcgen05MmaForm::Shared,
+                target_selector: GeneratedTcgen05MmaTargetSelector::Kind,
+                compatibility_alias: false,
+            },
+            requirement: GeneratedTargetRequirement {
+                minimum_ptx: GeneratedPtxVersion::from_encoded(86),
+                hardware: GeneratedHardwareTarget::TargetMatrix {
+                    contracts: DUPLICATE_F16_CONTRACTS,
+                },
+            },
+            backend_requirements: &[],
+            selections: &[],
+            llvm: None,
+        };
+
+        fn retain_error(
+            ctx: &Context,
+            op: Ptr<Operation>,
+            target: &'static GeneratedIntrinsicTarget,
+        ) -> String {
+            let mut targets = std::collections::BTreeMap::new();
+            let mut resolved = std::collections::BTreeMap::new();
+            retain_generated_target(
+                ctx,
+                op,
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                target,
+                &mut targets,
+                &mut resolved,
+            )
+            .unwrap_err()
+            .to_string()
+        }
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let missing = tcgen05_mma_shared_op(&mut ctx, None, None);
+        let error = retain_error(&ctx, missing, &MISSING_I8_TARGET);
+        assert!(
+            error.contains("missing its `kind` target selector"),
+            "{error}"
+        );
+
+        let unknown = tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::I8), None);
+        let error = retain_error(&ctx, unknown, &MISSING_I8_TARGET);
+        assert!(
+            error.contains("no unique LlvmNvptx target contract for kind=i8"),
+            "{error}"
+        );
+
+        let duplicate = tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::F16), None);
+        let error = retain_error(&ctx, duplicate, &DUPLICATE_F16_TARGET);
+        assert!(
+            error.contains("no unique LlvmNvptx target contract for kind=f16"),
             "{error}"
         );
     }

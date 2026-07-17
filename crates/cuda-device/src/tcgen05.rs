@@ -1186,9 +1186,12 @@ pub enum CollectorUsage {
 ///
 /// # Safety
 ///
-/// - All descriptors must be valid and properly initialized
-/// - Must be called from within a CUDA kernel context on sm_100a+
-#[inline(never)]
+/// - Tensor-memory addresses, `b_desc`, and `idesc` must be valid
+/// - Must be called from a CUDA kernel on a target supported by this intrinsic
+/// - The collector buffer must be in `0..=3`
+///
+/// `a_desc` is kept for compatibility; tensor A is read from `a_tmem`.
+#[inline(always)]
 pub unsafe fn tcgen05_mma_ws_f16_with_collector(
     d_tmem: u32,
     a_tmem: u32,
@@ -1198,8 +1201,32 @@ pub unsafe fn tcgen05_mma_ws_f16_with_collector(
     enable_d: bool,
     collector: CollectorUsage,
 ) {
-    let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d, collector);
-    unreachable!("tcgen05_mma_ws_f16_with_collector called outside CUDA kernel context")
+    let _ = a_desc;
+    macro_rules! dispatch {
+        ($buffer:expr, $usage:expr) => {
+            match $buffer {
+                0 => unsafe {
+                    tcgen05_mma_ws_tensor::<0, 0, $usage>(d_tmem, a_tmem, b_desc, idesc, enable_d)
+                },
+                1 => unsafe {
+                    tcgen05_mma_ws_tensor::<0, 1, $usage>(d_tmem, a_tmem, b_desc, idesc, enable_d)
+                },
+                2 => unsafe {
+                    tcgen05_mma_ws_tensor::<0, 2, $usage>(d_tmem, a_tmem, b_desc, idesc, enable_d)
+                },
+                3 => unsafe {
+                    tcgen05_mma_ws_tensor::<0, 3, $usage>(d_tmem, a_tmem, b_desc, idesc, enable_d)
+                },
+                _ => panic!("collector buffer must be in 0..=3"),
+            }
+        };
+    }
+    match collector {
+        CollectorUsage::Discard(buffer) => dispatch!(buffer, 0),
+        CollectorUsage::LastUse(buffer) => dispatch!(buffer, 1),
+        CollectorUsage::Fill(buffer) => dispatch!(buffer, 2),
+        CollectorUsage::Use(buffer) => dispatch!(buffer, 3),
+    }
 }
 
 // =============================================================================

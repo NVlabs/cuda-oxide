@@ -14,7 +14,9 @@ use crate::export::{
     DeviceExternDecl, export_llvm_ir, module_uses_libdevice, render_llvm_ir,
     resolve_nvvm_target_with_generated, unresolved_external_symbols, validate_nvvm_debug_support,
 };
-use crate::generated::{GeneratedMarkerPolicy, collect_generated_intrinsic_requirements};
+use crate::generated::{
+    GeneratedMarkerPolicy, collect_generated_intrinsic_requirements_for_backend,
+};
 use crate::generated_intrinsic_targets::GeneratedIntrinsicBackend;
 use crate::llvm_tools::LlvmToolchain;
 use crate::lower::{add_device_extern_declarations, lower_to_llvm};
@@ -213,12 +215,15 @@ pub fn compile_translated_module(
     // intrinsics may have different LLVM signatures for `llc` and libNVVM, so
     // discovering NVVM mode only after lowering is too late.
     let backend_selection = select_pre_lowering_backend(ctx, module, request.output_policy);
-    let generated_requirements =
-        collect_generated_intrinsic_requirements(ctx, module, request.generated_marker_policy)?
-            .for_backend(match backend_selection.intrinsic_backend {
-                mir_lower::IntrinsicBackend::LlvmNvptx => GeneratedIntrinsicBackend::LlvmNvptx,
-                mir_lower::IntrinsicBackend::LibNvvm => GeneratedIntrinsicBackend::LibNvvm,
-            });
+    let generated_requirements = collect_generated_intrinsic_requirements_for_backend(
+        ctx,
+        module,
+        request.generated_marker_policy,
+        match backend_selection.intrinsic_backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => GeneratedIntrinsicBackend::LlvmNvptx,
+            mir_lower::IntrinsicBackend::LibNvvm => GeneratedIntrinsicBackend::LibNvvm,
+        },
+    )?;
 
     if request.trace.verbose {
         request

@@ -656,9 +656,22 @@ run_cargo() {
         return
     fi
 
-    # The tcgen05 copy, load, and store families must pass both compiler routes.
+    # The generated tcgen05 families must pass both compiler routes.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "tcgen05" ]]; then
         local cp_re='tcgen05\.cp\.cta_group::[12]\.(128x128b|128x256b|32x128b\.warpx4|4x256b|64x128b\.warpx2::(01_23|02_13))(\.b8x16\.(b4x16_p64|b6x16_p32))?[[:space:]]'
+        local mma_base_re='tcgen05\.mma(\.sp)?\.cta_group::[12]\.kind::(f16|tf32|f8f6f4|i8)\.collector::a::(discard|lastuse|fill|use)(\.ashift)?'
+        local mma_base_plain_re='tcgen05\.mma\.cta_group::[12]\.kind::(f16|tf32|f8f6f4|i8)\.collector::a::(discard|lastuse|fill|use)(\.ashift)?'
+        local mma_base_sp_re='tcgen05\.mma\.sp\.cta_group::[12]\.kind::(f16|tf32|f8f6f4|i8)\.collector::a::(discard|lastuse|fill|use)(\.ashift)?'
+        local mma_ws_re='tcgen05\.mma\.ws(\.sp)?\.cta_group::[12]\.kind::(f16|tf32|f8f6f4|i8)\.collector::b[0-3]::(discard|lastuse|fill|use)'
+        local mma_ws_plain_re='tcgen05\.mma\.ws\.cta_group::[12]\.kind::(f16|tf32|f8f6f4|i8)\.collector::b[0-3]::(discard|lastuse|fill|use)'
+        local mma_ws_sp_re='tcgen05\.mma\.ws\.sp\.cta_group::[12]\.kind::(f16|tf32|f8f6f4|i8)\.collector::b[0-3]::(discard|lastuse|fill|use)'
+        local ptx_shared_a_re='\[[^]]+\],[[:space:]]+%rd[0-9]+'
+        local ptx_tensor_a_re='\[[^]]+\],[[:space:]]+\[%r[0-9]+\]'
+        local ptx_zero_mask_re='%enable_pred,[[:space:]]+%rd[0-9]+;'
+        local nvvm_shared_a_re='\[\$0\],[[:space:]]+\$1'
+        local nvvm_tensor_a_re='\[\$0\],[[:space:]]+\[\$1\]'
+        local nvvm_zero_mask_re='%enable_pred,[[:space:]]+\$[56];'
+        local unresolved_mma_re='llvm\.nvvm\.tcgen05\.mma'
         local ld_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)(\.pack::16b)?\.b32'
         local ld_pack16_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.pack::16b\.b32'
         local ld_raw_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.b32'
@@ -719,6 +732,63 @@ run_cargo() {
             || grep -qE 'tcgen05\.(commit|shift)\.cta_group::1' <<<"${llvm_control_cg2}" \
             || grep -qE "${unresolved_control_re}" "${llvm_ptx}"; then
             printf 'tcgen05 LLVM route did not emit the exact cg1 multicast commit and cg1/cg2 shift-down forms\n' >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
+        local llvm_mma_base llvm_mma_ws llvm_mma_base_count llvm_mma_base_unique
+        local llvm_mma_ws_count llvm_mma_ws_unique
+        llvm_mma_base="$(awk '/^\.visible \.entry compile_tcgen05_mma_base\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_ws="$(awk '/^\.visible \.entry compile_tcgen05_mma_ws\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base_count="$(grep -oE "${mma_base_re}" <<<"${llvm_mma_base}" | wc -l)"
+        llvm_mma_base_unique="$(grep -oE "${mma_base_re}" <<<"${llvm_mma_base}" | sort -u | wc -l)"
+        llvm_mma_ws_count="$(grep -oE "${mma_ws_re}" <<<"${llvm_mma_ws}" | wc -l)"
+        llvm_mma_ws_unique="$(grep -oE "${mma_ws_re}" <<<"${llvm_mma_ws}" | sort -u | wc -l)"
+        if [[ -z "${llvm_mma_base}" || -z "${llvm_mma_ws}" ]] \
+            || [[ ${llvm_mma_base_count} -ne 9 || ${llvm_mma_base_unique} -ne 8 ]] \
+            || [[ ${llvm_mma_ws_count} -ne 16 || ${llvm_mma_ws_unique} -ne 10 ]] \
+            || [[ $(grep -oE "${mma_base_plain_re}" <<<"${llvm_mma_base}" | wc -l) -ne 6 ]] \
+            || [[ $(grep -oE "${mma_base_sp_re}" <<<"${llvm_mma_base}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE "${mma_ws_plain_re}" <<<"${llvm_mma_ws}" | wc -l) -ne 12 ]] \
+            || [[ $(grep -oE "${mma_ws_sp_re}" <<<"${llvm_mma_ws}" | wc -l) -ne 4 ]] \
+            || [[ $(grep -cE "${mma_base_plain_re}[[:space:]]+${ptx_shared_a_re}" <<<"${llvm_mma_base}") -ne 4 ]] \
+            || [[ $(grep -cE "${mma_base_plain_re}[[:space:]]+${ptx_tensor_a_re}" <<<"${llvm_mma_base}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_base_sp_re}[[:space:]]+${ptx_shared_a_re}" <<<"${llvm_mma_base}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_base_sp_re}[[:space:]]+${ptx_tensor_a_re}" <<<"${llvm_mma_base}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${ptx_shared_a_re}" <<<"${llvm_mma_ws}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${ptx_tensor_a_re}" <<<"${llvm_mma_ws}") -ne 10 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${ptx_shared_a_re}" <<<"${llvm_mma_ws}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${ptx_tensor_a_re}" <<<"${llvm_mma_ws}") -ne 2 ]] \
+            || [[ $(grep -oE '\.cta_group::1\.' <<<"${llvm_mma_base}" | wc -l) -ne 5 ]] \
+            || [[ $(grep -oE '\.cta_group::2\.' <<<"${llvm_mma_base}" | wc -l) -ne 4 ]] \
+            || [[ $(grep -oE '\.cta_group::1\.' <<<"${llvm_mma_ws}" | wc -l) -ne 16 ]] \
+            || grep -qE '\.cta_group::2\.' <<<"${llvm_mma_ws}" \
+            || [[ $(grep -oE '\.kind::f16\.' <<<"${llvm_mma_base}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.kind::tf32\.' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.kind::f8f6f4\.' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.kind::i8\.' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.kind::f16\.' <<<"${llvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.kind::tf32\.' <<<"${llvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.kind::f8f6f4\.' <<<"${llvm_mma_ws}" | wc -l) -ne 8 ]] \
+            || [[ $(grep -oE '\.kind::i8\.' <<<"${llvm_mma_ws}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::a::discard' <<<"${llvm_mma_base}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.collector::a::lastuse' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::a::fill' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::a::use' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::b0::discard' <<<"${llvm_mma_ws}" | wc -l) -ne 7 ]] \
+            || [[ $(grep -oE '\.collector::b1::(lastuse|fill)' <<<"${llvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.collector::b2::(fill|use)' <<<"${llvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.collector::b3::(use|discard)' <<<"${llvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.ashift' <<<"${llvm_mma_base}" | wc -l) -ne 2 ]] \
+            || grep -qE '\.ashift' <<<"${llvm_mma_ws}" \
+            || [[ $(grep -cE "${mma_ws_re}.*${ptx_zero_mask_re}" <<<"${llvm_mma_ws}") -ne 4 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${ptx_shared_a_re}.*${ptx_zero_mask_re}" <<<"${llvm_mma_ws}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${ptx_tensor_a_re}.*${ptx_zero_mask_re}" <<<"${llvm_mma_ws}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${ptx_shared_a_re}.*${ptx_zero_mask_re}" <<<"${llvm_mma_ws}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${ptx_tensor_a_re}.*${ptx_zero_mask_re}" <<<"${llvm_mma_ws}") -ne 1 ]] \
+            || grep -qE "${unresolved_mma_re}" "${llvm_ptx}"; then
+            printf 'tcgen05 LLVM route expected 9 base and 16 warp-specialized MMA calls across all forms; got %s/%s and %s/%s total/unique\n' \
+                "${llvm_mma_base_count}" "${llvm_mma_base_unique}" "${llvm_mma_ws_count}" "${llvm_mma_ws_unique}" >>"${log}"
             CARGO_EC=1
             return
         fi
@@ -850,6 +920,84 @@ run_cargo() {
             || grep -qE 'tcgen05\.(commit|shift)\.cta_group::1' <<<"${nvvm_control_cg2}" \
             || grep -qE "${unresolved_control_re}" "${nvvm_ll}"; then
             printf 'tcgen05 libNVVM route did not emit the exact cg1 multicast commit and cg1/cg2 shift-down inline assembly\n' >>"${log}"
+            CARGO_EC=1
+        fi
+
+        local nvvm_mma_base nvvm_mma_ws nvvm_mma_base_count nvvm_mma_base_unique
+        local nvvm_mma_ws_count nvvm_mma_ws_unique nvvm_mma_inline_count nvvm_mma_memory_count
+        nvvm_mma_base="$(awk '/^define .*@compile_tcgen05_mma_base\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_ws="$(awk '/^define .*@compile_tcgen05_mma_ws\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base_count="$(grep -oE "${mma_base_re}" <<<"${nvvm_mma_base}" | wc -l)"
+        nvvm_mma_base_unique="$(grep -oE "${mma_base_re}" <<<"${nvvm_mma_base}" | sort -u | wc -l)"
+        nvvm_mma_ws_count="$(grep -oE "${mma_ws_re}" <<<"${nvvm_mma_ws}" | wc -l)"
+        nvvm_mma_ws_unique="$(grep -oE "${mma_ws_re}" <<<"${nvvm_mma_ws}" | sort -u | wc -l)"
+        nvvm_mma_inline_count="$(grep -cE 'call void asm sideeffect ".*tcgen05\.mma' <<<"${nvvm_mma_base}"$'\n'"${nvvm_mma_ws}")"
+        nvvm_mma_memory_count="$(grep -E 'call void asm sideeffect ".*tcgen05\.mma' <<<"${nvvm_mma_base}"$'\n'"${nvvm_mma_ws}" | grep -cF '~{memory}')"
+        local -a nvvm_mma_attrs=()
+        mapfile -t nvvm_mma_attrs < <(
+            sed -nE '/call void asm sideeffect ".*tcgen05\.mma/s/.* (#[0-9]+)$/\1/p' \
+                <<<"${nvvm_mma_base}"$'\n'"${nvvm_mma_ws}"
+        )
+        local nvvm_mma_convergent=1 mma_attr mma_attr_definition
+        if [[ ${#nvvm_mma_attrs[@]} -ne 25 ]]; then
+            nvvm_mma_convergent=0
+        else
+            for mma_attr in "${nvvm_mma_attrs[@]}"; do
+                mma_attr_definition="$(grep -E "^attributes ${mma_attr} = \\{[^}]*\\}$" "${nvvm_ll}")"
+                if [[ $(wc -l <<<"${mma_attr_definition}") -ne 1 ]] \
+                    || ! grep -qw convergent <<<"${mma_attr_definition}"; then
+                    nvvm_mma_convergent=0
+                    break
+                fi
+            done
+        fi
+        if [[ -z "${nvvm_mma_base}" || -z "${nvvm_mma_ws}" ]] \
+            || [[ ${nvvm_mma_base_count} -ne 9 || ${nvvm_mma_base_unique} -ne 8 ]] \
+            || [[ ${nvvm_mma_ws_count} -ne 16 || ${nvvm_mma_ws_unique} -ne 10 ]] \
+            || [[ ${nvvm_mma_inline_count} -ne 25 || ${nvvm_mma_memory_count} -ne 25 ]] \
+            || [[ ${nvvm_mma_convergent} -ne 1 ]] \
+            || [[ $(grep -oE "${mma_base_plain_re}" <<<"${nvvm_mma_base}" | wc -l) -ne 6 ]] \
+            || [[ $(grep -oE "${mma_base_sp_re}" <<<"${nvvm_mma_base}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE "${mma_ws_plain_re}" <<<"${nvvm_mma_ws}" | wc -l) -ne 12 ]] \
+            || [[ $(grep -oE "${mma_ws_sp_re}" <<<"${nvvm_mma_ws}" | wc -l) -ne 4 ]] \
+            || [[ $(grep -cE "${mma_base_plain_re}[[:space:]]+${nvvm_shared_a_re}" <<<"${nvvm_mma_base}") -ne 4 ]] \
+            || [[ $(grep -cE "${mma_base_plain_re}[[:space:]]+${nvvm_tensor_a_re}" <<<"${nvvm_mma_base}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_base_sp_re}[[:space:]]+${nvvm_shared_a_re}" <<<"${nvvm_mma_base}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_base_sp_re}[[:space:]]+${nvvm_tensor_a_re}" <<<"${nvvm_mma_base}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${nvvm_shared_a_re}" <<<"${nvvm_mma_ws}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${nvvm_tensor_a_re}" <<<"${nvvm_mma_ws}") -ne 10 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${nvvm_shared_a_re}" <<<"${nvvm_mma_ws}") -ne 2 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${nvvm_tensor_a_re}" <<<"${nvvm_mma_ws}") -ne 2 ]] \
+            || [[ $(grep -oE '\.cta_group::1\.' <<<"${nvvm_mma_base}" | wc -l) -ne 5 ]] \
+            || [[ $(grep -oE '\.cta_group::2\.' <<<"${nvvm_mma_base}" | wc -l) -ne 4 ]] \
+            || [[ $(grep -oE '\.cta_group::1\.' <<<"${nvvm_mma_ws}" | wc -l) -ne 16 ]] \
+            || grep -qE '\.cta_group::2\.' <<<"${nvvm_mma_ws}" \
+            || [[ $(grep -oE '\.kind::f16\.' <<<"${nvvm_mma_base}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.kind::tf32\.' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.kind::f8f6f4\.' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.kind::i8\.' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.kind::f16\.' <<<"${nvvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.kind::tf32\.' <<<"${nvvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.kind::f8f6f4\.' <<<"${nvvm_mma_ws}" | wc -l) -ne 8 ]] \
+            || [[ $(grep -oE '\.kind::i8\.' <<<"${nvvm_mma_ws}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::a::discard' <<<"${nvvm_mma_base}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.collector::a::lastuse' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::a::fill' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::a::use' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || [[ $(grep -oE '\.collector::b0::discard' <<<"${nvvm_mma_ws}" | wc -l) -ne 7 ]] \
+            || [[ $(grep -oE '\.collector::b1::(lastuse|fill)' <<<"${nvvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.collector::b2::(fill|use)' <<<"${nvvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.collector::b3::(use|discard)' <<<"${nvvm_mma_ws}" | wc -l) -ne 3 ]] \
+            || [[ $(grep -oE '\.ashift' <<<"${nvvm_mma_base}" | wc -l) -ne 2 ]] \
+            || grep -qE '\.ashift' <<<"${nvvm_mma_ws}" \
+            || [[ $(grep -cE "${mma_ws_re}.*${nvvm_zero_mask_re}" <<<"${nvvm_mma_ws}") -ne 4 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${nvvm_shared_a_re}.*${nvvm_zero_mask_re}" <<<"${nvvm_mma_ws}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_ws_plain_re}[[:space:]]+${nvvm_tensor_a_re}.*${nvvm_zero_mask_re}" <<<"${nvvm_mma_ws}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${nvvm_shared_a_re}.*${nvvm_zero_mask_re}" <<<"${nvvm_mma_ws}") -ne 1 ]] \
+            || [[ $(grep -cE "${mma_ws_sp_re}[[:space:]]+${nvvm_tensor_a_re}.*${nvvm_zero_mask_re}" <<<"${nvvm_mma_ws}") -ne 1 ]] \
+            || grep -qE "${unresolved_mma_re}" "${nvvm_ll}"; then
+            printf 'tcgen05 libNVVM route expected 9 base and 16 convergent, side-effecting MMA calls across all forms; got %s/%s and %s/%s total/unique\n' \
+                "${nvvm_mma_base_count}" "${nvvm_mma_base_unique}" "${nvvm_mma_ws_count}" "${nvvm_mma_ws_unique}" >>"${log}"
             CARGO_EC=1
         fi
 

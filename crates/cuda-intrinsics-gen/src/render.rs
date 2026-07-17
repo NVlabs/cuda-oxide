@@ -5,8 +5,8 @@
 
 use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
-    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, ClcAdapter,
-    ClcOperation, ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemoryAdapter,
+    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, CatalogTargetContract,
+    ClcAdapter, ClcOperation, ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemoryAdapter,
     ClusterMemoryOperation, ClusterMemorySourceContract, CpAsyncCachePolicy,
     CpAsyncControlOperation, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
     CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControlAdapter, DebugControlOperation,
@@ -28,10 +28,12 @@ use crate::model::{
     SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
     SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
     StmatrixLayout, StmatrixMultiplicity, Tcgen05Adapter, Tcgen05CpGroup, Tcgen05CpMember,
-    Tcgen05LdMultiplicity, Tcgen05LdShape, Tcgen05Operation, Tcgen05SourceContract, TmaAdapter,
-    TmaOperation, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode,
-    WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
-    WgmmaControlAdapter, WgmmaControlMode, WgmmaControlParticipation,
+    Tcgen05LdMultiplicity, Tcgen05LdShape, Tcgen05Mma, Tcgen05MmaAlias, Tcgen05MmaBUsage,
+    Tcgen05MmaForm, Tcgen05MmaKind, Tcgen05MmaSelectorLayout, Tcgen05Operation,
+    Tcgen05SourceContract, TmaAdapter, TmaOperation, VoteAdapter, VoteMode, WarpBarrierAdapter,
+    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode,
+    WgmmaControlParticipation,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -2044,6 +2046,304 @@ fn tcgen05_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .filter(|record| record.family == "tcgen05")
 }
 
+fn tcgen05_mma_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    tcgen05_intrinsics(catalog).filter(|record| {
+        record
+            .tcgen05
+            .as_ref()
+            .is_some_and(|tcgen05| tcgen05.mma.is_some())
+    })
+}
+
+fn tcgen05_non_mma_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    tcgen05_intrinsics(catalog).filter(|record| {
+        record
+            .tcgen05
+            .as_ref()
+            .is_some_and(|tcgen05| tcgen05.mma.is_none())
+    })
+}
+
+fn tcgen05_mma_form_name(form: Tcgen05MmaForm) -> &'static str {
+    match form {
+        Tcgen05MmaForm::Shared => "Shared",
+        Tcgen05MmaForm::Tensor => "Tensor",
+        Tcgen05MmaForm::TensorAshift => "TensorAshift",
+        Tcgen05MmaForm::SpShared => "SpShared",
+        Tcgen05MmaForm::SpTensor => "SpTensor",
+        Tcgen05MmaForm::SpTensorAshift => "SpTensorAshift",
+        Tcgen05MmaForm::WsShared => "WsShared",
+        Tcgen05MmaForm::WsSharedZeroColMask => "WsSharedZeroColMask",
+        Tcgen05MmaForm::WsSpShared => "WsSpShared",
+        Tcgen05MmaForm::WsSpSharedZeroColMask => "WsSpSharedZeroColMask",
+        Tcgen05MmaForm::WsSpTensor => "WsSpTensor",
+        Tcgen05MmaForm::WsSpTensorZeroColMask => "WsSpTensorZeroColMask",
+        Tcgen05MmaForm::WsTensor => "WsTensor",
+        Tcgen05MmaForm::WsTensorZeroColMask => "WsTensorZeroColMask",
+    }
+}
+
+fn tcgen05_mma_form_attr(form: Tcgen05MmaForm) -> String {
+    format!("Tcgen05MmaFormAttr::{}", tcgen05_mma_form_name(form))
+}
+
+fn tcgen05_mma_kind_attr(kind: Tcgen05MmaKind) -> &'static str {
+    match kind {
+        Tcgen05MmaKind::F16 => "Tcgen05MmaKindAttr::F16",
+        Tcgen05MmaKind::Tf32 => "Tcgen05MmaKindAttr::Tf32",
+        Tcgen05MmaKind::F8f6f4 => "Tcgen05MmaKindAttr::F8f6f4",
+        Tcgen05MmaKind::I8 => "Tcgen05MmaKindAttr::I8",
+    }
+}
+
+fn tcgen05_mma_b_usage_attr(usage: Tcgen05MmaBUsage) -> &'static str {
+    match usage {
+        Tcgen05MmaBUsage::Discard => "Tcgen05MmaBUsageAttr::Discard",
+        Tcgen05MmaBUsage::Fill => "Tcgen05MmaBUsageAttr::Fill",
+        Tcgen05MmaBUsage::Use => "Tcgen05MmaBUsageAttr::Use",
+        Tcgen05MmaBUsage::LastUse => "Tcgen05MmaBUsageAttr::LastUse",
+    }
+}
+
+fn tcgen05_mma_runtime_parameters(mma: &Tcgen05Mma) -> Vec<(&'static str, &'static str)> {
+    if mma.alias.is_some() {
+        return vec![
+            ("d_tmem", "u32"),
+            ("a_tmem", "u32"),
+            ("legacy_a_desc", "u64"),
+            ("b_desc", "u64"),
+            ("idesc", "u32"),
+            ("enable_d", "bool"),
+        ];
+    }
+    let mut parameters = match mma.form {
+        Tcgen05MmaForm::Shared
+        | Tcgen05MmaForm::SpShared
+        | Tcgen05MmaForm::WsShared
+        | Tcgen05MmaForm::WsSharedZeroColMask
+        | Tcgen05MmaForm::WsSpShared
+        | Tcgen05MmaForm::WsSpSharedZeroColMask => vec![
+            ("d_tmem", "u32"),
+            ("a_desc", "u64"),
+            ("b_desc", "u64"),
+            ("idesc", "u32"),
+            ("enable_d", "bool"),
+        ],
+        Tcgen05MmaForm::Tensor
+        | Tcgen05MmaForm::TensorAshift
+        | Tcgen05MmaForm::SpTensor
+        | Tcgen05MmaForm::SpTensorAshift
+        | Tcgen05MmaForm::WsSpTensor
+        | Tcgen05MmaForm::WsSpTensorZeroColMask
+        | Tcgen05MmaForm::WsTensor
+        | Tcgen05MmaForm::WsTensorZeroColMask => vec![
+            ("d_tmem", "u32"),
+            ("a_tmem", "u32"),
+            ("b_desc", "u64"),
+            ("idesc", "u32"),
+            ("enable_d", "bool"),
+        ],
+    };
+    if matches!(
+        mma.form,
+        Tcgen05MmaForm::SpShared
+            | Tcgen05MmaForm::SpTensor
+            | Tcgen05MmaForm::SpTensorAshift
+            | Tcgen05MmaForm::WsSpShared
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+    ) {
+        parameters.push(("metadata_tmem", "u32"));
+    }
+    if matches!(
+        mma.form,
+        Tcgen05MmaForm::WsSharedZeroColMask
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    ) {
+        parameters.push(("zero_column_mask", "u64"));
+    }
+    parameters
+}
+
+fn tcgen05_mma_selector_parameters(
+    layout: Tcgen05MmaSelectorLayout,
+) -> [(&'static str, &'static str); 3] {
+    match layout {
+        Tcgen05MmaSelectorLayout::Base { .. } => [
+            ("KIND", "kind"),
+            ("CTA_GROUP", "cta_group"),
+            ("COLLECTOR_A", "collector_a"),
+        ],
+        Tcgen05MmaSelectorLayout::WarpSpecialized { .. } => [
+            ("KIND", "kind"),
+            ("B_BUFFER", "b_buffer"),
+            ("B_USAGE", "b_usage"),
+        ],
+    }
+}
+
+fn tcgen05_mma_is_ws(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::WsShared
+            | Tcgen05MmaForm::WsSharedZeroColMask
+            | Tcgen05MmaForm::WsSpShared
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensor
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_is_sparse(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::SpShared
+            | Tcgen05MmaForm::SpTensor
+            | Tcgen05MmaForm::SpTensorAshift
+            | Tcgen05MmaForm::WsSpShared
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_is_tensor_a(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::Tensor
+            | Tcgen05MmaForm::TensorAshift
+            | Tcgen05MmaForm::SpTensor
+            | Tcgen05MmaForm::SpTensorAshift
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensor
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_is_ashift(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::TensorAshift | Tcgen05MmaForm::SpTensorAshift
+    )
+}
+
+fn tcgen05_mma_has_zero_col_mask(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::WsSharedZeroColMask
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_kind_name(kind: Tcgen05MmaKind) -> &'static str {
+    match kind {
+        Tcgen05MmaKind::F16 => "f16",
+        Tcgen05MmaKind::Tf32 => "tf32",
+        Tcgen05MmaKind::F8f6f4 => "f8f6f4",
+        Tcgen05MmaKind::I8 => "i8",
+    }
+}
+
+fn tcgen05_mma_b_usage_name(usage: Tcgen05MmaBUsage) -> &'static str {
+    match usage {
+        Tcgen05MmaBUsage::Discard => "discard",
+        Tcgen05MmaBUsage::LastUse => "lastuse",
+        Tcgen05MmaBUsage::Fill => "fill",
+        Tcgen05MmaBUsage::Use => "use",
+    }
+}
+
+fn tcgen05_mma_inline_asm(
+    form: Tcgen05MmaForm,
+    kind: Tcgen05MmaKind,
+    cta_group: u8,
+    collector_a: Option<&str>,
+    b_buffer: Option<u8>,
+    b_usage: Option<Tcgen05MmaBUsage>,
+) -> (String, String) {
+    let mut instruction = "tcgen05.mma".to_owned();
+    if tcgen05_mma_is_ws(form) {
+        instruction.push_str(".ws");
+    }
+    if tcgen05_mma_is_sparse(form) {
+        instruction.push_str(".sp");
+    }
+    write!(
+        instruction,
+        ".cta_group::{cta_group}.kind::{}",
+        tcgen05_mma_kind_name(kind)
+    )
+    .unwrap();
+    if tcgen05_mma_is_ws(form) {
+        write!(
+            instruction,
+            ".collector::b{}::{}",
+            b_buffer.expect("warp-specialized B buffer"),
+            tcgen05_mma_b_usage_name(b_usage.expect("warp-specialized B usage"))
+        )
+        .unwrap();
+    } else {
+        write!(
+            instruction,
+            ".collector::a::{}",
+            collector_a.expect("base collector A usage")
+        )
+        .unwrap();
+        if tcgen05_mma_is_ashift(form) {
+            instruction.push_str(".ashift");
+        }
+    }
+
+    let a = if tcgen05_mma_is_tensor_a(form) {
+        "[$1]"
+    } else {
+        "$1"
+    };
+    write!(instruction, " [$0], {a}, $2").unwrap();
+    if tcgen05_mma_is_sparse(form) {
+        instruction.push_str(", [$5]");
+    }
+    instruction.push_str(", $3, %enable_pred");
+    if tcgen05_mma_has_zero_col_mask(form) {
+        instruction.push_str(if tcgen05_mma_is_sparse(form) {
+            ", $6"
+        } else {
+            ", $5"
+        });
+    }
+    instruction.push(';');
+
+    let template =
+        format!("{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $4, 0; {instruction} }}");
+    let mut constraints = vec![
+        "r",
+        if tcgen05_mma_is_tensor_a(form) {
+            "r"
+        } else {
+            "l"
+        },
+        "l",
+        "r",
+        "r",
+    ];
+    if tcgen05_mma_is_sparse(form) {
+        constraints.push("r");
+    }
+    if tcgen05_mma_has_zero_col_mask(form) {
+        constraints.push("l");
+    }
+    constraints.push("~{memory}");
+    (template, constraints.join(","))
+}
+
 fn tcgen05_participation_doc(operation: Tcgen05Operation) -> Option<&'static str> {
     match operation {
         Tcgen05Operation::AllocCg2
@@ -2164,6 +2464,296 @@ fn tcgen05_st_register_count(record: &CatalogIntrinsic) -> usize {
     st.shape.register_multiplier() * st.multiplicity.count()
 }
 
+fn tcgen05_mma_target_matrix_is_closed(
+    target: &crate::model::CatalogTargetRequirement,
+    backend: IntrinsicBackend,
+    fixed_kind: Option<Tcgen05MmaKind>,
+) -> bool {
+    let CatalogHardwareTarget::TargetMatrix { contracts } = &target.hardware else {
+        return false;
+    };
+    let expected_kinds: Vec<&str> = fixed_kind.map_or_else(
+        || vec!["f16", "tf32", "f8f6f4", "i8"],
+        |kind| vec![tcgen05_mma_kind_name(kind)],
+    );
+    if target.minimum_ptx.to_string() != "8.6" || contracts.len() != expected_kinds.len() {
+        return false;
+    }
+    let common = match backend {
+        IntrinsicBackend::LlvmNvptx => vec![
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                "8.6",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 100 }, "8.8"),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                "8.6",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 101 }, "8.8"),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                "8.8",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 103 }, "8.8"),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                "9.0",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 110 }, "9.0"),
+        ],
+        IntrinsicBackend::LibNvvm => vec![
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                "8.6",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 100 }, "8.8"),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                "8.8",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 103 }, "8.8"),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                "9.0",
+            ),
+            (CatalogHardwareAlternative::FamilyTarget { sm: 110 }, "9.0"),
+        ],
+    };
+    let i8 = match backend {
+        IntrinsicBackend::LlvmNvptx => vec![
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                "8.6",
+            ),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                "8.6",
+            ),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                "9.0",
+            ),
+        ],
+        IntrinsicBackend::LibNvvm => vec![
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                "8.6",
+            ),
+            (
+                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                "9.0",
+            ),
+        ],
+    };
+    expected_kinds.into_iter().all(|kind| {
+        let Some(contract) = contracts.iter().find(|contract| {
+            contract.selectors.len() == 1
+                && contract.selectors[0].name == "kind"
+                && contract.selectors[0].value == kind
+        }) else {
+            return false;
+        };
+        let expected = if kind == "i8" { &i8 } else { &common };
+        contract.alternatives.len() == expected.len()
+            && contract.alternatives.iter().zip(expected).all(
+                |(actual, (hardware, minimum_ptx))| {
+                    actual.hardware == *hardware && actual.minimum_ptx.to_string() == *minimum_ptx
+                },
+            )
+    })
+}
+
+fn tcgen05_mma_render_contract(
+    record: &CatalogIntrinsic,
+    tcgen05: &crate::model::Tcgen05,
+    mma: &Tcgen05Mma,
+    llvm_route: &crate::model::CatalogBackendLowering,
+    libnvvm_route: &crate::model::CatalogBackendLowering,
+) -> bool {
+    if tcgen05.operation != Tcgen05Operation::Mma
+        || tcgen05.cp.is_some()
+        || tcgen05.ld.is_some()
+        || tcgen05.st.is_some()
+        || tcgen05.source_contract != Tcgen05SourceContract::TablegenSelectionChangesPtx
+        || tcgen05.runtime_validation != RuntimeValidation::Unexecuted
+        || record.rust.module != "tcgen05"
+        || record.rust.safe
+        || record.rust.must_use
+        || record.rust.result != "()"
+        || record.dialect.op_type != "Tcgen05MmaOp"
+        || record.dialect.op_name != "nvvm.tcgen05_mma"
+        || !record.dialect.results.is_empty()
+        || record.lowering != "generated_tcgen05_mma"
+        || record.semantics.pure
+        || record.semantics.memory != "read_write"
+        || !record.semantics.convergent
+        || record.semantics.execution_scope != "thread"
+        || record.target.minimum_ptx.to_string() != "8.6"
+        || record.target.hardware != mma.llvm_target.hardware
+        || record.target.targets != "sm_100a|sm_101a|sm_103a|sm_110a"
+        || llvm_route.backend != IntrinsicBackend::LlvmNvptx
+        || llvm_route.mechanism != BackendLoweringMechanism::InlinePtx
+        || llvm_route.target != mma.llvm_target
+        || !tcgen05_mma_target_matrix_is_closed(
+            &llvm_route.target,
+            IntrinsicBackend::LlvmNvptx,
+            mma.fixed_selectors.map(|fixed| fixed.kind),
+        )
+        || libnvvm_route.backend != IntrinsicBackend::LibNvvm
+        || libnvvm_route.mechanism != BackendLoweringMechanism::InlinePtx
+        || libnvvm_route.target != mma.libnvvm_target
+        || !tcgen05_mma_target_matrix_is_closed(
+            &libnvvm_route.target,
+            IntrinsicBackend::LibNvvm,
+            mma.fixed_selectors.map(|fixed| fixed.kind),
+        )
+    {
+        return false;
+    }
+
+    let mut expected_operands = vec![
+        "i32".to_owned(),
+        if tcgen05_mma_is_tensor_a(mma.form) {
+            "i32".to_owned()
+        } else {
+            "i64".to_owned()
+        },
+        "i64".to_owned(),
+        "i32".to_owned(),
+        "i1".to_owned(),
+    ];
+    if tcgen05_mma_is_sparse(mma.form) {
+        expected_operands.push("i32".into());
+    }
+    if tcgen05_mma_has_zero_col_mask(mma.form) {
+        expected_operands.push("i64".into());
+    }
+
+    let llvm = llvm(record);
+    let representative_kind = mma
+        .fixed_selectors
+        .map_or(Tcgen05MmaKind::F16, |fixed| fixed.kind);
+    let representative_buffer = mma.fixed_selectors.map_or(0, |fixed| fixed.b_buffer);
+    let representative_usage = mma
+        .fixed_selectors
+        .map_or(Tcgen05MmaBUsage::Discard, |fixed| fixed.b_usage);
+    let representative = if tcgen05_mma_is_ws(mma.form) {
+        tcgen05_mma_inline_asm(
+            mma.form,
+            representative_kind,
+            1,
+            None,
+            Some(representative_buffer),
+            Some(representative_usage),
+        )
+    } else {
+        tcgen05_mma_inline_asm(
+            mma.form,
+            representative_kind,
+            1,
+            Some("discard"),
+            None,
+            None,
+        )
+    };
+    let instruction = representative
+        .0
+        .find("tcgen05.mma")
+        .map_or("", |start| &representative.0[start..]);
+    let head = instruction.split_whitespace().next().unwrap_or_default();
+    let mut components = head.split('.');
+    let expected_mnemonic = components.next().unwrap_or_default();
+    let expected_modifiers = components.map(str::to_owned).collect::<Vec<_>>();
+    let mut expected_ptx_operands = vec![crate::ptx::OperandPattern::Address];
+    expected_ptx_operands.push(if tcgen05_mma_is_tensor_a(mma.form) {
+        crate::ptx::OperandPattern::Address
+    } else {
+        crate::ptx::OperandPattern::Register
+    });
+    expected_ptx_operands.push(crate::ptx::OperandPattern::Register);
+    if tcgen05_mma_is_sparse(mma.form) {
+        expected_ptx_operands.push(crate::ptx::OperandPattern::Address);
+    }
+    expected_ptx_operands.extend([
+        crate::ptx::OperandPattern::Register,
+        crate::ptx::OperandPattern::Register,
+    ]);
+    if tcgen05_mma_has_zero_col_mask(mma.form) {
+        expected_ptx_operands.push(crate::ptx::OperandPattern::Register);
+    }
+    if record.dialect.operands != expected_operands
+        || llvm.results.len() != 0
+        || record.expected_ptx.mnemonic != expected_mnemonic
+        || record.expected_ptx.modifiers != expected_modifiers
+        || record.expected_ptx.operands != expected_ptx_operands
+    {
+        return false;
+    }
+
+    match (tcgen05.adapter, mma.alias, mma.fixed_selectors) {
+        (Tcgen05Adapter::MmaDirectSelectors, None, None) => {
+            let selector_indices = match mma.selector_layout {
+                Tcgen05MmaSelectorLayout::Base {
+                    kind_argument,
+                    cta_group_argument,
+                    collector_a_argument,
+                    collector_a_upper_exclusive,
+                } => {
+                    if collector_a_upper_exclusive
+                        != if tcgen05_mma_is_ashift(mma.form) {
+                            2
+                        } else {
+                            4
+                        }
+                    {
+                        return false;
+                    }
+                    [kind_argument, cta_group_argument, collector_a_argument]
+                }
+                Tcgen05MmaSelectorLayout::WarpSpecialized {
+                    kind_argument,
+                    b_buffer_argument,
+                    b_usage_argument,
+                } => [kind_argument, b_buffer_argument, b_usage_argument],
+            };
+            let first_selector = expected_operands.len() as u8;
+            record.rust.arguments.len() == expected_operands.len() + 3
+                && record
+                    .rust
+                    .arguments
+                    .ends_with(&["u32".into(), "u32".into(), "u32".into()])
+                && llvm.arguments.len() == expected_operands.len() + 3
+                && selector_indices == [first_selector, first_selector + 1, first_selector + 2]
+                && tcgen05_mma_is_ws(mma.form)
+                    == matches!(
+                        mma.selector_layout,
+                        Tcgen05MmaSelectorLayout::WarpSpecialized { .. }
+                    )
+        }
+        (
+            Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor,
+            Some(
+                Tcgen05MmaAlias::E4m3
+                | Tcgen05MmaAlias::E5m2
+                | Tcgen05MmaAlias::E2m3
+                | Tcgen05MmaAlias::E3m2
+                | Tcgen05MmaAlias::E2m1,
+            ),
+            Some(fixed),
+        ) => {
+            mma.form == Tcgen05MmaForm::WsTensor
+                && fixed.kind == Tcgen05MmaKind::F8f6f4
+                && fixed.b_buffer == 0
+                && fixed.b_usage == Tcgen05MmaBUsage::Discard
+                && record.rust.arguments == ["u32", "u32", "u64", "u64", "u32", "bool"]
+                && record.dialect.operands == ["i32", "i32", "i64", "i32", "i1"]
+                && llvm.arguments.len() == 8
+        }
+        _ => false,
+    }
+}
+
 fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
     let Some(tcgen05) = &record.tcgen05 else {
         return false;
@@ -2171,6 +2761,9 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
     let [llvm_route, libnvvm_route] = record.backend_lowerings.as_slice() else {
         return false;
     };
+    if let Some(mma) = &tcgen05.mma {
+        return tcgen05_mma_render_contract(record, tcgen05, mma, llvm_route, libnvvm_route);
+    }
     let llvm_hardware = CatalogHardwareTarget::AnyOf {
         alternatives: vec![
             CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
@@ -3303,32 +3896,35 @@ fn hardware_target_label(target: &CatalogHardwareTarget) -> String {
             .map(hardware_alternative_label)
             .collect::<Vec<_>>()
             .join(" or "),
-        CatalogHardwareTarget::TargetMatrix {
-            selectors,
-            alternatives,
-        } => {
-            let selectors = selectors
-                .iter()
-                .map(|selector| format!("{}={}", selector.name, selector.value))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let alternatives = alternatives
-                .iter()
-                .map(|alternative| {
-                    format!(
-                        "{} at PTX {}",
-                        hardware_alternative_label(&alternative.hardware),
-                        alternative.minimum_ptx
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" or ");
-            if selectors.is_empty() {
-                alternatives
-            } else {
-                format!("{alternatives} for {selectors}")
-            }
-        }
+        CatalogHardwareTarget::TargetMatrix { contracts } => contracts
+            .iter()
+            .map(|contract| {
+                let selectors = contract
+                    .selectors
+                    .iter()
+                    .map(|selector| format!("{}={}", selector.name, selector.value))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let alternatives = contract
+                    .alternatives
+                    .iter()
+                    .map(|alternative| {
+                        format!(
+                            "{} at PTX {}",
+                            hardware_alternative_label(&alternative.hardware),
+                            alternative.minimum_ptx
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                if selectors.is_empty() {
+                    alternatives
+                } else {
+                    format!("{alternatives} for {selectors}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
     }
 }
 
@@ -3351,36 +3947,44 @@ fn generated_hardware_target(target: &CatalogHardwareTarget) -> String {
                 .join(", ");
             format!("GeneratedHardwareTarget::AnyOf(&[{alternatives}])")
         }
-        CatalogHardwareTarget::TargetMatrix {
-            selectors,
-            alternatives,
-        } => {
-            let selectors = selectors
+        CatalogHardwareTarget::TargetMatrix { contracts } => {
+            let contracts = contracts
                 .iter()
-                .map(|selector| {
-                    format!(
-                        "GeneratedTargetSelectorBinding {{ name: {:?}, value: {:?} }}",
-                        selector.name, selector.value
-                    )
-                })
+                .map(generated_target_contract)
                 .collect::<Vec<_>>()
                 .join(", ");
-            let alternatives = alternatives
-                .iter()
-                .map(|alternative| {
-                    format!(
-                        "GeneratedTargetAlternative {{ minimum_ptx: GeneratedPtxVersion::from_encoded({}), hardware: {} }}",
-                        alternative.minimum_ptx.encoded(),
-                        generated_hardware_alternative(&alternative.hardware)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "GeneratedHardwareTarget::TargetMatrix {{ selectors: &[{selectors}], alternatives: &[{alternatives}] }}"
-            )
+            format!("GeneratedHardwareTarget::TargetMatrix {{ contracts: &[{contracts}] }}")
         }
     }
+}
+
+fn generated_target_contract(contract: &CatalogTargetContract) -> String {
+    let selectors = contract
+        .selectors
+        .iter()
+        .map(|selector| {
+            format!(
+                "GeneratedTargetSelectorBinding {{ name: {:?}, value: {:?} }}",
+                selector.name, selector.value
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let alternatives = contract
+        .alternatives
+        .iter()
+        .map(|alternative| {
+            format!(
+                "GeneratedTargetAlternative {{ minimum_ptx: GeneratedPtxVersion::from_encoded({}), hardware: {} }}",
+                alternative.minimum_ptx.encoded(),
+                generated_hardware_alternative(&alternative.hardware)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "GeneratedTargetContract {{ selectors: &[{selectors}], alternatives: &[{alternatives}] }}"
+    )
 }
 
 fn generated_hardware_alternative(alternative: &CatalogHardwareAlternative) -> String {
@@ -4767,12 +5371,123 @@ pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
     output
 }
 
+fn render_compat_tcgen05_mma_record(output: &mut String, record: &CatalogIntrinsic) {
+    let mma = record
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref())
+        .expect("tcgen05 MMA record");
+    let parameters = tcgen05_mma_runtime_parameters(mma);
+    let signature = parameters
+        .iter()
+        .map(|(name, ty)| format!("{name}: {ty}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let values = parameters
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    writeln!(output, "/// {}", record.summary).unwrap();
+    output.push_str("/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n");
+    if mma.alias.is_some() {
+        output.push_str("/// This uses kind f8f6f4 and collector b0::discard.\n");
+        output.push_str("/// `legacy_a_desc` is kept for compatibility; tensor A uses `a_tmem`.\n");
+    } else {
+        match mma.selector_layout {
+            Tcgen05MmaSelectorLayout::Base { .. } => {
+                output.push_str("/// `KIND` is 0=f16, 1=tf32, 2=f8f6f4, or 3=i8.\n");
+                output.push_str(
+                    "/// `CTA_GROUP` is 1 or 2. `COLLECTOR_A` is 0=discard, 1=lastuse, 2=fill, or 3=use.\n",
+                );
+            }
+            Tcgen05MmaSelectorLayout::WarpSpecialized { .. } => {
+                output.push_str("/// `KIND` is 0=f16, 1=tf32, 2=f8f6f4, or 3=i8.\n");
+                output.push_str(
+                    "/// `B_BUFFER` is 0 through 3. `B_USAGE` is 0=discard, 1=lastuse, 2=fill, or 3=use.\n",
+                );
+            }
+        }
+    }
+    output.push_str("///\n/// # Safety\n");
+    output
+        .push_str("/// Tensor-memory addresses and descriptors must be valid for this MMA form.\n");
+    if mma.alias.is_some() {
+        output.push_str("#[inline(never)]\n");
+        output.push_str("#[allow(clippy::too_many_arguments)]\n");
+        writeln!(output, "pub unsafe fn {}({signature}) {{", record.rust.name).unwrap();
+        writeln!(output, "    let _ = ({values});").unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+        return;
+    }
+
+    let selectors = tcgen05_mma_selector_parameters(mma.selector_layout);
+    let const_parameters = selectors
+        .iter()
+        .map(|(name, _)| format!("const {name}: u32"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let selector_values = selectors
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    output.push_str("#[inline(always)]\n");
+    if parameters.len() > 5 {
+        output.push_str("#[allow(clippy::too_many_arguments)]\n");
+    }
+    writeln!(
+        output,
+        "pub unsafe fn {}<{const_parameters}>({signature}) {{",
+        record.rust.name
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "    unsafe {{ __{}({values}, {selector_values}) }}",
+        record.rust.name
+    )
+    .unwrap();
+    output.push_str("}\n\n#[doc(hidden)]\n#[inline(never)]\n");
+    output.push_str("#[allow(clippy::too_many_arguments)]\n");
+    let hidden_parameters = parameters
+        .iter()
+        .map(|(name, ty)| format!("_{name}: {ty}"))
+        .chain(selectors.iter().map(|(_, name)| format!("_{name}: u32")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        output,
+        "pub(crate) unsafe fn __{}({hidden_parameters}) {{",
+        record.rust.name
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "    unreachable!(\"{} called outside CUDA kernel context\")",
+        record.rust.name
+    )
+    .unwrap();
+    output.push_str("}\n\n");
+}
+
 fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 209);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 228);
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
     for record in tcgen05_intrinsics(catalog) {
         let tcgen05 = record.tcgen05.as_ref().unwrap();
+        if tcgen05.mma.is_some() {
+            render_compat_tcgen05_mma_record(&mut output, record);
+            continue;
+        }
         let operation = tcgen05.operation;
         let has_half_split_offset = tcgen05
             .ld
@@ -4915,6 +5630,7 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                     ("tmem_addr: u32", "tmem_addr")
                 }
                 Tcgen05Operation::St => unreachable!("store handled above"),
+                Tcgen05Operation::Mma => unreachable!("generic MMA handled above"),
             };
             (arguments.into(), values.into())
         };
@@ -9218,13 +9934,14 @@ fn render_tcgen05_carrier_runs(types: &[String]) -> String {
 }
 
 fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 209);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 228);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         r#"//! Generated Tensor Core Generation 5 operations.
 
 use dialect_mir::{ops::MirConstantOp, types::MirPtrType};
 use pliron::{
+    attribute::Attribute,
     builtin::{
         op_interfaces::{NOpdsInterface, NResultsInterface},
         ops::ConstantOp,
@@ -9239,7 +9956,7 @@ use pliron::{
     r#type::{TypeHandle, Typed},
     verify_err,
 };
-use pliron_derive::pliron_op;
+use pliron_derive::{pliron_attr, pliron_op};
 
 #[derive(Clone, Copy)]
 enum Tcgen05Carrier {
@@ -9350,7 +10067,109 @@ fn verify_tcgen05_signature(
 
 "#,
     );
-    for record in tcgen05_intrinsics(catalog) {
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        output.push_str(
+            r#"#[pliron_attr(name = "nvvm.tcgen05_mma_form", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum Tcgen05MmaFormAttr {
+    Shared, Tensor, TensorAshift, SpShared, SpTensor, SpTensorAshift,
+    WsShared, WsSharedZeroColMask, WsSpShared, WsSpSharedZeroColMask,
+    WsSpTensor, WsSpTensorZeroColMask, WsTensor, WsTensorZeroColMask,
+}
+
+#[pliron_attr(name = "nvvm.tcgen05_mma_kind", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum Tcgen05MmaKindAttr { F16, Tf32, F8f6f4, I8 }
+
+#[pliron_attr(name = "nvvm.tcgen05_mma_cta_group", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum Tcgen05MmaCtaGroupAttr { Cg1, Cg2 }
+
+#[pliron_attr(name = "nvvm.tcgen05_mma_collector_a", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum Tcgen05MmaCollectorAAttr { Discard, LastUse, Fill, Use }
+
+#[pliron_attr(name = "nvvm.tcgen05_mma_b_buffer", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum Tcgen05MmaBBufferAttr { B0, B1, B2, B3 }
+
+#[pliron_attr(name = "nvvm.tcgen05_mma_b_usage", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum Tcgen05MmaBUsageAttr { Discard, LastUse, Fill, Use }
+
+#[pliron_op(
+    name = "nvvm.tcgen05_mma",
+    format,
+    attributes = (
+        nvvm_tcgen05_mma_form: Tcgen05MmaFormAttr,
+        nvvm_tcgen05_mma_kind: Tcgen05MmaKindAttr,
+        nvvm_tcgen05_mma_cta_group: Tcgen05MmaCtaGroupAttr,
+        nvvm_tcgen05_mma_collector_a: Tcgen05MmaCollectorAAttr,
+        nvvm_tcgen05_mma_b_buffer: Tcgen05MmaBBufferAttr,
+        nvvm_tcgen05_mma_b_usage: Tcgen05MmaBUsageAttr
+    )
+)]
+pub struct Tcgen05MmaOp;
+
+impl Tcgen05MmaOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+}
+
+impl Verify for Tcgen05MmaOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        use Tcgen05Carrier::{I1, I32, I64};
+        let op = self.get_operation();
+        let form = self.get_attr_nvvm_tcgen05_mma_form(ctx);
+        let Some(form) = form.as_deref() else {
+            return verify_err!(op.deref(ctx).loc(), "nvvm.tcgen05_mma requires a form");
+        };
+        if self.get_attr_nvvm_tcgen05_mma_kind(ctx).is_none() {
+            return verify_err!(op.deref(ctx).loc(), "nvvm.tcgen05_mma requires a kind");
+        }
+        let (operands, base): (&[(Tcgen05Carrier, usize)], bool) = match form {
+            Tcgen05MmaFormAttr::Shared | Tcgen05MmaFormAttr::WsShared =>
+                (&[(I32, 1), (I64, 2), (I32, 1), (I1, 1)], matches!(form, Tcgen05MmaFormAttr::Shared)),
+            Tcgen05MmaFormAttr::Tensor | Tcgen05MmaFormAttr::TensorAshift | Tcgen05MmaFormAttr::WsTensor =>
+                (&[(I32, 2), (I64, 1), (I32, 1), (I1, 1)], !matches!(form, Tcgen05MmaFormAttr::WsTensor)),
+            Tcgen05MmaFormAttr::SpShared | Tcgen05MmaFormAttr::WsSpShared =>
+                (&[(I32, 1), (I64, 2), (I32, 1), (I1, 1), (I32, 1)], matches!(form, Tcgen05MmaFormAttr::SpShared)),
+            Tcgen05MmaFormAttr::SpTensor | Tcgen05MmaFormAttr::SpTensorAshift | Tcgen05MmaFormAttr::WsSpTensor =>
+                (&[(I32, 2), (I64, 1), (I32, 1), (I1, 1), (I32, 1)], !matches!(form, Tcgen05MmaFormAttr::WsSpTensor)),
+            Tcgen05MmaFormAttr::WsSharedZeroColMask =>
+                (&[(I32, 1), (I64, 2), (I32, 1), (I1, 1), (I64, 1)], false),
+            Tcgen05MmaFormAttr::WsSpSharedZeroColMask =>
+                (&[(I32, 1), (I64, 2), (I32, 1), (I1, 1), (I32, 1), (I64, 1)], false),
+            Tcgen05MmaFormAttr::WsSpTensorZeroColMask =>
+                (&[(I32, 2), (I64, 1), (I32, 1), (I1, 1), (I32, 1), (I64, 1)], false),
+            Tcgen05MmaFormAttr::WsTensorZeroColMask =>
+                (&[(I32, 2), (I64, 1), (I32, 1), (I1, 1), (I64, 1)], false),
+        };
+        verify_tcgen05_signature(ctx, op, "nvvm.tcgen05_mma", operands, &[], None)?;
+
+        let cta_group = self.get_attr_nvvm_tcgen05_mma_cta_group(ctx);
+        let collector_a = self.get_attr_nvvm_tcgen05_mma_collector_a(ctx);
+        let b_buffer = self.get_attr_nvvm_tcgen05_mma_b_buffer(ctx);
+        let b_usage = self.get_attr_nvvm_tcgen05_mma_b_usage(ctx);
+        if base {
+            if cta_group.is_none() || collector_a.is_none() || b_buffer.is_some() || b_usage.is_some() {
+                return verify_err!(op.deref(ctx).loc(), "base tcgen05 MMA requires CTA-group and collector-A selectors");
+            }
+            if matches!(form, Tcgen05MmaFormAttr::TensorAshift | Tcgen05MmaFormAttr::SpTensorAshift)
+                && !matches!(collector_a.as_deref(), Some(Tcgen05MmaCollectorAAttr::Discard | Tcgen05MmaCollectorAAttr::LastUse))
+            {
+                return verify_err!(op.deref(ctx).loc(), "ashift tcgen05 MMA only supports discard or last-use collector-A");
+            }
+        } else if cta_group.is_some() || collector_a.is_some() || b_buffer.is_none() || b_usage.is_none() {
+            return verify_err!(op.deref(ctx).loc(), "warp-specialized tcgen05 MMA requires B-buffer and B-usage selectors");
+        }
+        Ok(())
+    }
+}
+
+"#,
+        );
+    }
+    for record in tcgen05_non_mma_intrinsics(catalog) {
         let operand_count = record.dialect.operands.len();
         let result_count = record.dialect.results.len();
         let operand_runs = render_tcgen05_carrier_runs(&record.dialect.operands);
@@ -9390,7 +10209,12 @@ fn verify_tcgen05_signature(
         output.push_str("}\n\n");
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
-    for record in tcgen05_intrinsics(catalog) {
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        output.push_str(
+            "    Tcgen05MmaFormAttr::register(ctx);\n    Tcgen05MmaKindAttr::register(ctx);\n    Tcgen05MmaCtaGroupAttr::register(ctx);\n    Tcgen05MmaCollectorAAttr::register(ctx);\n    Tcgen05MmaBBufferAttr::register(ctx);\n    Tcgen05MmaBUsageAttr::register(ctx);\n    Tcgen05MmaOp::register(ctx);\n",
+        );
+    }
+    for record in tcgen05_non_mma_intrinsics(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -9672,6 +10496,177 @@ fn render_importer_elect_dispatch(
     output.push_str("        }\n");
 }
 
+fn render_importer_tcgen05_mma_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let mma = record
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref())
+        .expect("tcgen05 MMA record");
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    writeln!(
+        output,
+        "            require_arity(name, args.len(), {}, &loc)?;",
+        record.rust.arguments.len()
+    )
+    .unwrap();
+
+    let runtime_indices = if mma.alias.is_some() {
+        vec![0, 1, 3, 4, 5]
+    } else {
+        let selector_indices = match mma.selector_layout {
+            Tcgen05MmaSelectorLayout::Base {
+                kind_argument,
+                cta_group_argument,
+                collector_a_argument,
+                ..
+            } => [
+                kind_argument as usize,
+                cta_group_argument as usize,
+                collector_a_argument as usize,
+            ],
+            Tcgen05MmaSelectorLayout::WarpSpecialized {
+                kind_argument,
+                b_buffer_argument,
+                b_usage_argument,
+            } => [
+                kind_argument as usize,
+                b_buffer_argument as usize,
+                b_usage_argument as usize,
+            ],
+        };
+        (0..record.rust.arguments.len())
+            .filter(|index| !selector_indices.contains(index))
+            .collect()
+    };
+    writeln!(
+        output,
+        "            let runtime_indices: &[usize] = &{runtime_indices:?};"
+    )
+    .unwrap();
+    output.push_str(
+        "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(runtime_indices.len());\n            for &index in runtime_indices {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, &args[index], value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
+    );
+
+    if let Some(fixed) = mma.fixed_selectors {
+        let b_buffer = match fixed.b_buffer {
+            0 => "Tcgen05MmaBBufferAttr::B0",
+            1 => "Tcgen05MmaBBufferAttr::B1",
+            2 => "Tcgen05MmaBBufferAttr::B2",
+            3 => "Tcgen05MmaBBufferAttr::B3",
+            _ => panic!("admitted tcgen05 MMA B buffer"),
+        };
+        writeln!(
+            output,
+            "            let kind = {};",
+            tcgen05_mma_kind_attr(fixed.kind)
+        )
+        .unwrap();
+        writeln!(output, "            let b_buffer = {b_buffer};").unwrap();
+        writeln!(
+            output,
+            "            let b_usage = {};",
+            tcgen05_mma_b_usage_attr(fixed.b_usage)
+        )
+        .unwrap();
+    } else {
+        let (kind_argument, second_argument, third_argument) = match mma.selector_layout {
+            Tcgen05MmaSelectorLayout::Base {
+                kind_argument,
+                cta_group_argument,
+                collector_a_argument,
+                ..
+            } => (kind_argument, cta_group_argument, collector_a_argument),
+            Tcgen05MmaSelectorLayout::WarpSpecialized {
+                kind_argument,
+                b_buffer_argument,
+                b_usage_argument,
+            } => (kind_argument, b_buffer_argument, b_usage_argument),
+        };
+        writeln!(
+            output,
+            "            let kind = match generated_tcgen05_mma_selector(args.get({kind_argument}usize)) {{\n                Some(0) => Tcgen05MmaKindAttr::F16,\n                Some(1) => Tcgen05MmaKindAttr::Tf32,\n                Some(2) => Tcgen05MmaKindAttr::F8f6f4,\n                Some(3) => Tcgen05MmaKindAttr::I8,\n                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA kind must be a compile-time u32 constant in 0..=3\".to_owned())),\n            }};"
+        )
+        .unwrap();
+        match mma.selector_layout {
+            Tcgen05MmaSelectorLayout::Base {
+                collector_a_upper_exclusive,
+                ..
+            } => {
+                writeln!(
+                    output,
+                    "            let cta_group = match generated_tcgen05_mma_selector(args.get({second_argument}usize)) {{\n                Some(1) => Tcgen05MmaCtaGroupAttr::Cg1,\n                Some(2) => Tcgen05MmaCtaGroupAttr::Cg2,\n                _ => {{\n                    return input_err!(\n                        loc.clone(),\n                        TranslationErr::unsupported(\n                            \"tcgen05 MMA CTA group must be the compile-time u32 constant 1 or 2\"\n                                .to_owned()\n                        )\n                    );\n                }}\n            }};"
+                )
+                .unwrap();
+                let collector_arms = if collector_a_upper_exclusive == 2 {
+                    "                Some(0) => Tcgen05MmaCollectorAAttr::Discard,\n                Some(1) => Tcgen05MmaCollectorAAttr::LastUse,\n"
+                } else {
+                    "                Some(0) => Tcgen05MmaCollectorAAttr::Discard,\n                Some(1) => Tcgen05MmaCollectorAAttr::LastUse,\n                Some(2) => Tcgen05MmaCollectorAAttr::Fill,\n                Some(3) => Tcgen05MmaCollectorAAttr::Use,\n"
+                };
+                writeln!(
+                    output,
+                    "            let collector_a = match generated_tcgen05_mma_selector(args.get({third_argument}usize)) {{\n{collector_arms}                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA collector-A selector is outside its closed range\".to_owned())),\n            }};"
+                )
+                .unwrap();
+            }
+            Tcgen05MmaSelectorLayout::WarpSpecialized { .. } => {
+                writeln!(
+                    output,
+                    "            let b_buffer = match generated_tcgen05_mma_selector(args.get({second_argument}usize)) {{\n                Some(0) => Tcgen05MmaBBufferAttr::B0,\n                Some(1) => Tcgen05MmaBBufferAttr::B1,\n                Some(2) => Tcgen05MmaBBufferAttr::B2,\n                Some(3) => Tcgen05MmaBBufferAttr::B3,\n                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA B buffer must be a compile-time u32 constant in 0..=3\".to_owned())),\n            }};"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "            let b_usage = match generated_tcgen05_mma_selector(args.get({third_argument}usize)) {{\n                Some(0) => Tcgen05MmaBUsageAttr::Discard,\n                Some(1) => Tcgen05MmaBUsageAttr::LastUse,\n                Some(2) => Tcgen05MmaBUsageAttr::Fill,\n                Some(3) => Tcgen05MmaBUsageAttr::Use,\n                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA B usage must be a compile-time u32 constant in 0..=3\".to_owned())),\n            }};"
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    output.push_str(
+        "            let intrinsic = Operation::new(ctx, Tcgen05MmaOp::get_concrete_op_info(), vec![], operands, vec![], 0);\n            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n            let mma_op = Tcgen05MmaOp::new(intrinsic);\n",
+    );
+    writeln!(
+        output,
+        "            mma_op.set_attr_nvvm_tcgen05_mma_form(ctx, {});",
+        tcgen05_mma_form_attr(mma.form)
+    )
+    .unwrap();
+    output.push_str("            mma_op.set_attr_nvvm_tcgen05_mma_kind(ctx, kind);\n");
+    match mma.selector_layout {
+        Tcgen05MmaSelectorLayout::Base { .. } => output.push_str(
+            "            mma_op.set_attr_nvvm_tcgen05_mma_cta_group(ctx, cta_group);\n            mma_op.set_attr_nvvm_tcgen05_mma_collector_a(ctx, collector_a);\n",
+        ),
+        Tcgen05MmaSelectorLayout::WarpSpecialized { .. } => output.push_str(
+            "            mma_op.set_attr_nvvm_tcgen05_mma_b_buffer(ctx, b_buffer);\n            mma_op.set_attr_nvvm_tcgen05_mma_b_usage(ctx, b_usage);\n",
+        ),
+    }
+    writeln!(
+        output,
+        "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    output.push_str(
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+    );
+    writeln!(
+        output,
+        "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+        format!("{} call without target block", record.rust.name)
+    )
+    .unwrap();
+    output.push_str("            }\n        }\n");
+}
+
 fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -9928,9 +10923,12 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
-    for record in tcgen05_intrinsics(catalog) {
+    for record in tcgen05_non_mma_intrinsics(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
+    }
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        output.push_str(", Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp");
     }
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
@@ -11393,6 +12391,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     for record in tcgen05_intrinsics(catalog) {
         let tcgen05 = record.tcgen05.as_ref().unwrap();
+        if tcgen05.mma.is_some() {
+            render_importer_tcgen05_mma_dispatch(&mut output, catalog, record);
+            continue;
+        }
         let operation = tcgen05.operation;
         let has_half_split_offset = tcgen05
             .ld
@@ -11558,6 +12560,27 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
     );
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        output.push_str(
+            r#"
+
+fn generated_tcgen05_mma_selector(operand: Option<&mir::Operand>) -> Option<u32> {
+    use rustc_public::ty::{ConstantKind, TyConstKind};
+    let mir::Operand::Constant(constant) = operand? else { return None; };
+    let value: u128 = match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => alloc.read_uint().ok()?,
+        ConstantKind::Ty(value) => match value.kind() {
+            TyConstKind::Value(_, alloc) => alloc.read_uint().ok()?,
+            _ => value.eval_target_usize().ok()? as u128,
+        },
+        ConstantKind::Unevaluated(_) | ConstantKind::Param(_) => return None,
+        ConstantKind::ZeroSized => return None,
+    };
+    u32::try_from(value).ok()
+}
+"#,
+        );
+    }
     if tcgen05_intrinsics(catalog)
         .any(|record| record.tcgen05.as_ref().unwrap().operation == Tcgen05Operation::St)
     {
@@ -12210,6 +13233,7 @@ fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usiz
                 None,
             )
         }
+        Tcgen05Operation::Mma => unreachable!("generic MMA uses attribute-driven lowering"),
     }
 }
 
@@ -12333,9 +13357,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
         );
     }
-    for record in tcgen05_intrinsics(catalog) {
+    for record in tcgen05_non_mma_intrinsics(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
+    }
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        output.push_str(", Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -13746,7 +14773,7 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
-    for record in tcgen05_intrinsics(catalog) {
+    for record in tcgen05_non_mma_intrinsics(catalog) {
         let operation = record.tcgen05.as_ref().unwrap().operation;
         let (template, constraints, result_count) = tcgen05_inline_asm(record);
         writeln!(
@@ -13775,6 +14802,156 @@ fn convert_generated_tcgen05_load(
             .unwrap();
         }
         output.push_str("    }\n}\n\n");
+    }
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        output.push_str(
+            r#"#[op_interface_impl]
+impl MirToLlvmConversion for Tcgen05MmaOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        let op = self.get_operation();
+        let form = self
+            .get_attr_nvvm_tcgen05_mma_form(ctx)
+            .as_deref()
+            .cloned();
+        let kind = self
+            .get_attr_nvvm_tcgen05_mma_kind(ctx)
+            .as_deref()
+            .cloned();
+        let cta_group = self
+            .get_attr_nvvm_tcgen05_mma_cta_group(ctx)
+            .as_deref()
+            .cloned();
+        let collector_a = self
+            .get_attr_nvvm_tcgen05_mma_collector_a(ctx)
+            .as_deref()
+            .cloned();
+        let b_buffer = self
+            .get_attr_nvvm_tcgen05_mma_b_buffer(ctx)
+            .as_deref()
+            .cloned();
+        let b_usage = self
+            .get_attr_nvvm_tcgen05_mma_b_usage(ctx)
+            .as_deref()
+            .cloned();
+        let kind = match kind {
+            Some(Tcgen05MmaKindAttr::F16) => "f16",
+            Some(Tcgen05MmaKindAttr::Tf32) => "tf32",
+            Some(Tcgen05MmaKindAttr::F8f6f4) => "f8f6f4",
+            Some(Tcgen05MmaKindAttr::I8) => "i8",
+            None => return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "nvvm.tcgen05_mma requires a kind",
+            ),
+        };
+        let (prefix, a, metadata, zero_mask, constraints, arity, base, ashift) =
+            match form {
+                Some(Tcgen05MmaFormAttr::Shared) =>
+                    ("tcgen05.mma", "$1", None, None, "r,l,l,r,r,~{memory}", 5, true, false),
+                Some(Tcgen05MmaFormAttr::Tensor) =>
+                    ("tcgen05.mma", "[$1]", None, None, "r,r,l,r,r,~{memory}", 5, true, false),
+                Some(Tcgen05MmaFormAttr::TensorAshift) =>
+                    ("tcgen05.mma", "[$1]", None, None, "r,r,l,r,r,~{memory}", 5, true, true),
+                Some(Tcgen05MmaFormAttr::SpShared) =>
+                    ("tcgen05.mma.sp", "$1", Some("$5"), None, "r,l,l,r,r,r,~{memory}", 6, true, false),
+                Some(Tcgen05MmaFormAttr::SpTensor) =>
+                    ("tcgen05.mma.sp", "[$1]", Some("$5"), None, "r,r,l,r,r,r,~{memory}", 6, true, false),
+                Some(Tcgen05MmaFormAttr::SpTensorAshift) =>
+                    ("tcgen05.mma.sp", "[$1]", Some("$5"), None, "r,r,l,r,r,r,~{memory}", 6, true, true),
+                Some(Tcgen05MmaFormAttr::WsShared) =>
+                    ("tcgen05.mma.ws", "$1", None, None, "r,l,l,r,r,~{memory}", 5, false, false),
+                Some(Tcgen05MmaFormAttr::WsSharedZeroColMask) =>
+                    ("tcgen05.mma.ws", "$1", None, Some("$5"), "r,l,l,r,r,l,~{memory}", 6, false, false),
+                Some(Tcgen05MmaFormAttr::WsSpShared) =>
+                    ("tcgen05.mma.ws.sp", "$1", Some("$5"), None, "r,l,l,r,r,r,~{memory}", 6, false, false),
+                Some(Tcgen05MmaFormAttr::WsSpSharedZeroColMask) =>
+                    ("tcgen05.mma.ws.sp", "$1", Some("$5"), Some("$6"), "r,l,l,r,r,r,l,~{memory}", 7, false, false),
+                Some(Tcgen05MmaFormAttr::WsSpTensor) =>
+                    ("tcgen05.mma.ws.sp", "[$1]", Some("$5"), None, "r,r,l,r,r,r,~{memory}", 6, false, false),
+                Some(Tcgen05MmaFormAttr::WsSpTensorZeroColMask) =>
+                    ("tcgen05.mma.ws.sp", "[$1]", Some("$5"), Some("$6"), "r,r,l,r,r,r,l,~{memory}", 7, false, false),
+                Some(Tcgen05MmaFormAttr::WsTensor) =>
+                    ("tcgen05.mma.ws", "[$1]", None, None, "r,r,l,r,r,~{memory}", 5, false, false),
+                Some(Tcgen05MmaFormAttr::WsTensorZeroColMask) =>
+                    ("tcgen05.mma.ws", "[$1]", None, Some("$5"), "r,r,l,r,r,l,~{memory}", 6, false, false),
+                None => return pliron::input_err!(
+                    op.deref(ctx).loc(),
+                    "nvvm.tcgen05_mma requires a form",
+                ),
+            };
+
+        let selector = if base {
+            let group = match cta_group {
+                Some(Tcgen05MmaCtaGroupAttr::Cg1) => 1,
+                Some(Tcgen05MmaCtaGroupAttr::Cg2) => 2,
+                None => return pliron::input_err!(
+                    op.deref(ctx).loc(),
+                    "base tcgen05 MMA requires a CTA-group selector",
+                ),
+            };
+            let usage = match collector_a {
+                Some(Tcgen05MmaCollectorAAttr::Discard) => "discard",
+                Some(Tcgen05MmaCollectorAAttr::LastUse) => "lastuse",
+                Some(Tcgen05MmaCollectorAAttr::Fill) if !ashift => "fill",
+                Some(Tcgen05MmaCollectorAAttr::Use) if !ashift => "use",
+                _ => return pliron::input_err!(
+                    op.deref(ctx).loc(),
+                    "tcgen05 MMA collector-A selector has no generated recipe",
+                ),
+            };
+            format!(
+                ".cta_group::{group}.kind::{kind}.collector::a::{usage}{}",
+                if ashift { ".ashift" } else { "" },
+            )
+        } else {
+            let buffer = match b_buffer {
+                Some(Tcgen05MmaBBufferAttr::B0) => 0,
+                Some(Tcgen05MmaBBufferAttr::B1) => 1,
+                Some(Tcgen05MmaBBufferAttr::B2) => 2,
+                Some(Tcgen05MmaBBufferAttr::B3) => 3,
+                None => return pliron::input_err!(
+                    op.deref(ctx).loc(),
+                    "warp-specialized tcgen05 MMA requires a B-buffer selector",
+                ),
+            };
+            let usage = match b_usage {
+                Some(Tcgen05MmaBUsageAttr::Discard) => "discard",
+                Some(Tcgen05MmaBUsageAttr::LastUse) => "lastuse",
+                Some(Tcgen05MmaBUsageAttr::Fill) => "fill",
+                Some(Tcgen05MmaBUsageAttr::Use) => "use",
+                None => return pliron::input_err!(
+                    op.deref(ctx).loc(),
+                    "warp-specialized tcgen05 MMA requires a B-usage selector",
+                ),
+            };
+            format!(
+                ".cta_group::1.kind::{kind}.collector::b{buffer}::{usage}"
+            )
+        };
+
+        let mut operands = format!("[$0], {a}, $2");
+        if let Some(metadata) = metadata {
+            operands.push_str(&format!(", [{metadata}]"));
+        }
+        operands.push_str(", $3, %enable_pred");
+        if let Some(zero_mask) = zero_mask {
+            operands.push_str(&format!(", {zero_mask}"));
+        }
+        let template = format!(
+            "{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $4, 0; {prefix}{selector} {operands}; }}"
+        );
+        convert_generated_tcgen05_void(
+            ctx, rewriter, op, arity, &template, constraints,
+        )
+    }
+}
+
+"#,
+        );
     }
     for record in debug_controls(catalog) {
         writeln!(
@@ -13937,6 +15114,17 @@ fn generated_selection_alternatives(selections: &[CatalogSelection]) -> String {
 }
 
 fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
+    if let Some(mma) = record
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref())
+    {
+        return format!(
+            "GeneratedIntrinsicVariant::Tcgen05Mma {{ form: GeneratedTcgen05MmaForm::{}, target_selector: GeneratedTcgen05MmaTargetSelector::Kind, compatibility_alias: {} }}",
+            tcgen05_mma_form_name(mma.form),
+            mma.alias.is_some(),
+        );
+    }
     if let Some(control) = &record.wgmma_control {
         let mode = match control.mode {
             WgmmaControlMode::Fence => "GeneratedWgmmaControlMode::Fence",
@@ -14232,6 +15420,44 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     );
     replace_exact_render_fragment(
         &mut output,
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetAlternative { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareAlternative }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]), TargetMatrix { selectors: &'static [GeneratedTargetSelectorBinding], alternatives: &'static [GeneratedTargetAlternative] } }",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetAlternative { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareAlternative }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetContract { pub selectors: &'static [GeneratedTargetSelectorBinding], pub alternatives: &'static [GeneratedTargetAlternative] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]), TargetMatrix { contracts: &'static [GeneratedTargetContract] } }",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "impl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}",
+        r#"impl GeneratedHardwareTarget {
+    pub fn contract_for_selector(
+        self,
+        name: &str,
+        value: &str,
+    ) -> Option<&'static GeneratedTargetContract> {
+        let Self::TargetMatrix { contracts } = self else { return None; };
+        let mut matching = contracts.iter().filter(|contract| {
+            matches!(contract.selectors, [binding] if binding.name == name && binding.value == value)
+        });
+        let contract = matching.next()?;
+        if matching.next().is_some() { None } else { Some(contract) }
+    }
+}
+
+impl GeneratedIntrinsicTarget {
+    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {
+        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)
+    }
+
+    pub fn target_contract_for_backend_selector(
+        &self,
+        backend: GeneratedIntrinsicBackend,
+        name: &str,
+        value: &str,
+    ) -> Option<&'static GeneratedTargetContract> {
+        self.requirement_for_backend(backend).hardware.contract_for_selector(name, value)
+    }
+}"#,
+    );
+    replace_exact_render_fragment(
+        &mut output,
         "GeneratedLdmatrixShape { M8n8 }",
         "GeneratedLdmatrixShape { M8n8, M8n16, M16n16 }",
     );
@@ -14319,6 +15545,18 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             "    ExtendedMinMax { format: GeneratedExtendedMinMaxFormat, operation: GeneratedExtendedMinMaxOperation, subnormal: GeneratedExtendedMinMaxSubnormal, nan: GeneratedExtendedMinMaxNan, xorsign_abs: bool },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget",
         );
     }
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedTcgen05MmaForm { Shared, Tensor, TensorAshift, SpShared, SpTensor, SpTensorAshift, WsShared, WsSharedZeroColMask, WsSpShared, WsSpSharedZeroColMask, WsSpTensor, WsSpTensorZeroColMask, WsTensor, WsTensorZeroColMask }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedTcgen05MmaTargetSelector { Kind }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        );
+        replace_exact_render_fragment(
+            &mut output,
+            "}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget",
+            "    Tcgen05Mma { form: GeneratedTcgen05MmaForm, target_selector: GeneratedTcgen05MmaTargetSelector, compatibility_alias: bool },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget",
+        );
+    }
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
             Some(llvm) => {
@@ -14355,6 +15593,45 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "];\n\npub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGETS.iter().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n        GeneratedIntrinsicVariant::RegisterMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow } => {\n            let Some(op) = Operation::get_op::<RegisterMmaOp>(operation, ctx) else { return false; };\n            let shape_matches = match shape {\n                GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k8),\n                GeneratedRegisterMmaShape::M16n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k16),\n                GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F32),\n                GeneratedRegisterMmaAccumulator::F64 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F64),\n                GeneratedRegisterMmaAccumulator::S32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::S32),\n            };\n            let element_matches = |expected, actual: Option<&RegisterMmaElementAttr>| match expected {\n                GeneratedRegisterMmaElement::Bf16 => actual == Some(&RegisterMmaElementAttr::Bf16),\n                GeneratedRegisterMmaElement::F16 => actual == Some(&RegisterMmaElementAttr::F16),\n                GeneratedRegisterMmaElement::Tf32 => actual == Some(&RegisterMmaElementAttr::Tf32),\n                GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8 => actual == Some(&RegisterMmaElementAttr::S8),\n                GeneratedRegisterMmaElement::U8 => actual == Some(&RegisterMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&RegisterMmaLayoutAttr>| match expected {\n                GeneratedRegisterMmaLayout::Row => actual == Some(&RegisterMmaLayoutAttr::Row),\n                GeneratedRegisterMmaLayout::Col => actual == Some(&RegisterMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedRegisterMmaOverflow::NotApplicable => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::NotApplicable),\n                GeneratedRegisterMmaOverflow::Wrapping => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Wrapping),\n                GeneratedRegisterMmaOverflow::Satfinite => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Satfinite),\n            };\n            shape_matches && accumulator_matches\n                && element_matches(a_element, op.get_attr_nvvm_register_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_register_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_register_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_register_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n        }\n    }\n}\n",
     );
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "pub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches",
+            "pub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_target_is_direct_dialect_candidate(target: &GeneratedIntrinsicTarget) -> bool {\n    !matches!(target.variant, GeneratedIntrinsicVariant::Tcgen05Mma { compatibility_alias: true, .. })\n}\n\npub fn generated_intrinsic_operation_matches",
+        );
+        replace_exact_render_fragment(
+            &mut output,
+            "        GeneratedIntrinsicVariant::Scalar => true,",
+            r#"        GeneratedIntrinsicVariant::Scalar => true,
+        GeneratedIntrinsicVariant::Tcgen05Mma { form, target_selector, compatibility_alias } => {
+            let Some(op) = Operation::get_op::<Tcgen05MmaOp>(operation, ctx) else { return false; };
+            let form_matches = match form {
+                GeneratedTcgen05MmaForm::Shared => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::Shared),
+                GeneratedTcgen05MmaForm::Tensor => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::Tensor),
+                GeneratedTcgen05MmaForm::TensorAshift => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::TensorAshift),
+                GeneratedTcgen05MmaForm::SpShared => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::SpShared),
+                GeneratedTcgen05MmaForm::SpTensor => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::SpTensor),
+                GeneratedTcgen05MmaForm::SpTensorAshift => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::SpTensorAshift),
+                GeneratedTcgen05MmaForm::WsShared => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsShared),
+                GeneratedTcgen05MmaForm::WsSharedZeroColMask => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsSharedZeroColMask),
+                GeneratedTcgen05MmaForm::WsSpShared => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsSpShared),
+                GeneratedTcgen05MmaForm::WsSpSharedZeroColMask => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsSpSharedZeroColMask),
+                GeneratedTcgen05MmaForm::WsSpTensor => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsSpTensor),
+                GeneratedTcgen05MmaForm::WsSpTensorZeroColMask => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsSpTensorZeroColMask),
+                GeneratedTcgen05MmaForm::WsTensor => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsTensor),
+                GeneratedTcgen05MmaForm::WsTensorZeroColMask => op.get_attr_nvvm_tcgen05_mma_form(ctx).as_deref() == Some(&Tcgen05MmaFormAttr::WsTensorZeroColMask),
+            };
+            let selector_matches = matches!(target_selector, GeneratedTcgen05MmaTargetSelector::Kind)
+                && op.get_attr_nvvm_tcgen05_mma_kind(ctx).is_some();
+            let alias_matches = !compatibility_alias || (
+                op.get_attr_nvvm_tcgen05_mma_kind(ctx).as_deref() == Some(&Tcgen05MmaKindAttr::F8f6f4)
+                    && op.get_attr_nvvm_tcgen05_mma_b_buffer(ctx).as_deref() == Some(&Tcgen05MmaBBufferAttr::B0)
+                    && op.get_attr_nvvm_tcgen05_mma_b_usage(ctx).as_deref() == Some(&Tcgen05MmaBUsageAttr::Discard)
+            );
+            form_matches && selector_matches && alias_matches
+        }"#,
+        );
+    }
     replace_exact_render_fragment(
         &mut output,
         "GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {",
@@ -14593,6 +15870,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             "ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp, ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr",
         );
     }
+    if tcgen05_mma_intrinsics(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr",
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr, Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp",
+        );
+    }
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
     );
@@ -14605,7 +15889,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         writeln!(
             output,
-            "        assert_eq!(target.id, {:?});\n        assert_eq!(target.abi_id, {:?});\n        assert_eq!(target.dialect_op, {:?});\n        assert_eq!(target.variant, {});\n        assert_eq!(target.requirement.minimum_ptx.encoded(), {});\n        assert_eq!(target.requirement.hardware, {});\n        assert_eq!(target.backend_requirements, {});\n        assert_eq!(target.selections, {});",
+            "        assert_eq!(target.id, {:?});\n        assert_eq!(target.abi_id, {:?});\n        assert_eq!(target.dialect_op, {:?});\n        assert_eq!(target.variant, {});\n        assert_eq!(target.requirement.minimum_ptx.encoded(), {});\n        assert_eq!(target.requirement.hardware, const {{ {} }});\n        assert_eq!(target.backend_requirements, const {{ {} }});\n        assert_eq!(target.selections, {});",
             record.id,
             record.rust.abi_id,
             record.dialect.op_name,
@@ -14797,8 +16081,77 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
     output
 }
 
+fn render_tcgen05_mma_probe(
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+    hash: &str,
+    mma: &Tcgen05Mma,
+) -> String {
+    let (kind, b_buffer, b_usage) = mma.fixed_selectors.map_or(
+        (Tcgen05MmaKind::F16, 0, Tcgen05MmaBUsage::Discard),
+        |fixed| (fixed.kind, fixed.b_buffer, fixed.b_usage),
+    );
+    let (template, constraints) = if tcgen05_mma_is_ws(mma.form) {
+        tcgen05_mma_inline_asm(mma.form, kind, 1, None, Some(b_buffer), Some(b_usage))
+    } else {
+        tcgen05_mma_inline_asm(mma.form, kind, 1, Some("discard"), None, None)
+    };
+    let parameters = tcgen05_mma_runtime_parameters(mma);
+    let llvm_parameter = |(name, ty): &(&str, &str)| {
+        let ty = match *ty {
+            "u32" => "i32",
+            "u64" => "i64",
+            "bool" => "i1",
+            _ => unreachable!("closed tcgen05 MMA probe type"),
+        };
+        format!("{ty} %{name}")
+    };
+    let signature = parameters
+        .iter()
+        .map(llvm_parameter)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let argument_indices: Vec<usize> = if mma.alias.is_some() {
+        vec![0, 1, 3, 4, 5]
+    } else {
+        (0..parameters.len()).collect()
+    };
+    let arguments = argument_indices
+        .iter()
+        .map(|&index| llvm_parameter(&parameters[index]))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut output = llvm_header(catalog, hash);
+    output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+    writeln!(
+        output,
+        "; LLVM source: {}; route: inline PTX; source contract: {:?}",
+        llvm(record).symbol,
+        record.tcgen05.as_ref().unwrap().source_contract
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "define void @probe_{}({signature}) #0 {{",
+        record.id
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "  call void asm sideeffect {template:?}, {constraints:?}({arguments}) #0"
+    )
+    .unwrap();
+    output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+    output
+}
+
 fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
-    let operation = record.tcgen05.as_ref().expect("tcgen05 contract").operation;
+    let tcgen05 = record.tcgen05.as_ref().expect("tcgen05 contract");
+    if let Some(mma) = &tcgen05.mma {
+        return render_tcgen05_mma_probe(catalog, record, hash, mma);
+    }
+    let operation = tcgen05.operation;
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
     writeln!(
@@ -15060,6 +16413,7 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 "i32 %tmem".into(),
             )
         }
+        Tcgen05Operation::Mma => unreachable!("generic MMA probe handled above"),
     };
     let (lowering_template, lowering_constraints, lowering_results) = tcgen05_inline_asm(record);
     assert_eq!(template, lowering_template);
@@ -16933,20 +18287,22 @@ mod tests {
     #[test]
     fn paired_target_matrix_renders_selectors_and_ptx_floors() {
         let target = CatalogHardwareTarget::TargetMatrix {
-            selectors: vec![TargetSelectorBinding {
-                name: "kind".into(),
-                value: "i8".into(),
+            contracts: vec![CatalogTargetContract {
+                selectors: vec![TargetSelectorBinding {
+                    name: "kind".into(),
+                    value: "i8".into(),
+                }],
+                alternatives: vec![
+                    CatalogTargetAlternative {
+                        minimum_ptx: "8.8".parse().unwrap(),
+                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                    },
+                    CatalogTargetAlternative {
+                        minimum_ptx: "9.0".parse().unwrap(),
+                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                    },
+                ],
             }],
-            alternatives: vec![
-                CatalogTargetAlternative {
-                    minimum_ptx: "8.8".parse().unwrap(),
-                    hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
-                },
-                CatalogTargetAlternative {
-                    minimum_ptx: "9.0".parse().unwrap(),
-                    hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
-                },
-            ],
         };
 
         assert_eq!(
@@ -16955,8 +18311,78 @@ mod tests {
         );
         assert_eq!(
             generated_hardware_target(&target),
-            "GeneratedHardwareTarget::TargetMatrix { selectors: &[GeneratedTargetSelectorBinding { name: \"kind\", value: \"i8\" }], alternatives: &[GeneratedTargetAlternative { minimum_ptx: GeneratedPtxVersion::from_encoded(88), hardware: GeneratedHardwareAlternative::ExactArchitecture(100) }, GeneratedTargetAlternative { minimum_ptx: GeneratedPtxVersion::from_encoded(90), hardware: GeneratedHardwareAlternative::ExactArchitecture(110) }] }"
+            "GeneratedHardwareTarget::TargetMatrix { contracts: &[GeneratedTargetContract { selectors: &[GeneratedTargetSelectorBinding { name: \"kind\", value: \"i8\" }], alternatives: &[GeneratedTargetAlternative { minimum_ptx: GeneratedPtxVersion::from_encoded(88), hardware: GeneratedHardwareAlternative::ExactArchitecture(100) }, GeneratedTargetAlternative { minimum_ptx: GeneratedPtxVersion::from_encoded(90), hardware: GeneratedHardwareAlternative::ExactArchitecture(110) }] }] }"
         );
+    }
+
+    #[test]
+    fn tcgen05_mma_inline_asm_closes_selectors_and_operand_order() {
+        for (kind, spelling) in [
+            (Tcgen05MmaKind::F16, "kind::f16"),
+            (Tcgen05MmaKind::Tf32, "kind::tf32"),
+            (Tcgen05MmaKind::F8f6f4, "kind::f8f6f4"),
+            (Tcgen05MmaKind::I8, "kind::i8"),
+        ] {
+            let (template, _) = tcgen05_mma_inline_asm(
+                Tcgen05MmaForm::WsTensor,
+                kind,
+                1,
+                None,
+                Some(0),
+                Some(Tcgen05MmaBUsage::Discard),
+            );
+            assert!(template.contains(spelling));
+        }
+        for (usage, spelling) in [
+            (Tcgen05MmaBUsage::Discard, "collector::b0::discard"),
+            (Tcgen05MmaBUsage::LastUse, "collector::b0::lastuse"),
+            (Tcgen05MmaBUsage::Fill, "collector::b0::fill"),
+            (Tcgen05MmaBUsage::Use, "collector::b0::use"),
+        ] {
+            let (template, _) = tcgen05_mma_inline_asm(
+                Tcgen05MmaForm::WsTensor,
+                Tcgen05MmaKind::F16,
+                1,
+                None,
+                Some(0),
+                Some(usage),
+            );
+            assert!(template.contains(spelling));
+        }
+
+        for (form, operands, constraints) in [
+            (
+                Tcgen05MmaForm::WsTensor,
+                "[$0], [$1], $2, $3, %enable_pred;",
+                "r,r,l,r,r,~{memory}",
+            ),
+            (
+                Tcgen05MmaForm::WsSpTensor,
+                "[$0], [$1], $2, [$5], $3, %enable_pred;",
+                "r,r,l,r,r,r,~{memory}",
+            ),
+            (
+                Tcgen05MmaForm::WsTensorZeroColMask,
+                "[$0], [$1], $2, $3, %enable_pred, $5;",
+                "r,r,l,r,r,l,~{memory}",
+            ),
+            (
+                Tcgen05MmaForm::WsSpTensorZeroColMask,
+                "[$0], [$1], $2, [$5], $3, %enable_pred, $6;",
+                "r,r,l,r,r,r,l,~{memory}",
+            ),
+        ] {
+            let (template, actual_constraints) = tcgen05_mma_inline_asm(
+                form,
+                Tcgen05MmaKind::F16,
+                1,
+                None,
+                Some(3),
+                Some(Tcgen05MmaBUsage::LastUse),
+            );
+            assert!(template.contains(operands));
+            assert_eq!(actual_constraints, constraints);
+        }
     }
 
     fn catalog_with_debug_controls() -> CatalogFile {
@@ -17239,7 +18665,7 @@ mod tests {
     fn catalog_with_tcgen05() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
-        assert_eq!(tcgen05_intrinsics(&catalog).count(), 209);
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 228);
         catalog
     }
 
@@ -18919,7 +20345,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 762);
+        assert_eq!(catalog.intrinsics.len(), 781);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -20211,7 +21637,22 @@ mod tests {
                     "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
                 )
                 .count(),
-            209
+            228
+        );
+        assert!(compatibility.contains("/// `KIND` is 0=f16, 1=tf32, 2=f8f6f4, or 3=i8."));
+        assert!(compatibility.contains(
+            "/// `CTA_GROUP` is 1 or 2. `COLLECTOR_A` is 0=discard, 1=lastuse, 2=fill, or 3=use."
+        ));
+        assert!(compatibility.contains(
+            "/// `B_BUFFER` is 0 through 3. `B_USAGE` is 0=discard, 1=lastuse, 2=fill, or 3=use."
+        ));
+        assert_eq!(
+            compatibility
+                .matches(
+                    "/// `legacy_a_desc` is kept for compatibility; tensor A uses `a_tmem`.\n",
+                )
+                .count(),
+            5
         );
         assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
 
@@ -20265,7 +21706,7 @@ mod tests {
                 "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
             )
             .count(),
-            209
+            228
         );
         assert!(raw.contains("pub fn i0345() -> ()"));
         assert!(raw.contains("pub fn i0357() -> ()"));
@@ -20300,11 +21741,11 @@ mod tests {
         ));
 
         let dialect = render_dialect_tcgen05(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 209);
-        assert_eq!(dialect.matches("impl Verify for Tcgen05").count(), 209);
-        assert_eq!(dialect.matches("::register(ctx)").count(), 209);
+        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 210);
+        assert_eq!(dialect.matches("impl Verify for Tcgen05").count(), 210);
+        assert_eq!(dialect.matches("::register(ctx)").count(), 216);
         assert_eq!(dialect.matches("            Some(1),").count(), 32);
-        assert!(!dialect.contains("verifier = \"succ\""));
+        assert_eq!(dialect.matches("verifier = \"succ\"").count(), 6);
         assert!(dialect.contains("Operation::get_op::<MirConstantOp>"));
         assert!(dialect.contains("Operation::get_op::<ConstantOp>"));
         assert!(dialect.contains("&[(Tcgen05Carrier::I32, 1), (Tcgen05Carrier::I64, 1)],"));

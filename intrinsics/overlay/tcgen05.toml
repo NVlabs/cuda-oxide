@@ -1,4 +1,4 @@
-schema = 56
+schema = 57
 family = "tcgen05"
 
 [tcgen05]
@@ -14,6 +14,8 @@ offset_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 offset_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-ldst-offset"
 control_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 control_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-control"
+mma_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383-tcgen05-mma"
+mma_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-mma"
 runtime_validation = "unexecuted"
 
 [[tcgen05.variant]]
@@ -123,6 +125,174 @@ operation = "shift_down"
 [[tcgen05.variant]]
 abi_id = "i0762"
 operation = "shift_down_cg2"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0763"
+form = "shared"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0764"
+form = "tensor"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0765"
+form = "tensor_ashift"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0766"
+form = "sp_shared"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0767"
+form = "sp_tensor"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0768"
+form = "sp_tensor_ashift"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0769"
+form = "ws_shared"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0770"
+form = "ws_shared_zero_col_mask"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0771"
+form = "ws_sp_shared"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0772"
+form = "ws_sp_shared_zero_col_mask"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0773"
+form = "ws_sp_tensor"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0774"
+form = "ws_sp_tensor_zero_col_mask"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0775"
+form = "ws_tensor"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0776"
+form = "ws_tensor_zero_col_mask"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0777"
+form = "ws_tensor"
+alias = "e4m3"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0778"
+form = "ws_tensor"
+alias = "e5m2"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0779"
+form = "ws_tensor"
+alias = "e2m3"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0780"
+form = "ws_tensor"
+alias = "e3m2"
+
+[[tcgen05.mma_variant]]
+abi_id = "i0781"
+form = "ws_tensor"
+alias = "e2m1"
+
+[[tcgen05.mma_llvm_target_contract]]
+selectors = [{ name = "kind", value = "f16" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_100f", minimum_ptx = "8.8" },
+    { target = "sm_101a", minimum_ptx = "8.6" },
+    { target = "sm_101f", minimum_ptx = "8.8" },
+    { target = "sm_103a", minimum_ptx = "8.8" },
+    { target = "sm_103f", minimum_ptx = "8.8" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+    { target = "sm_110f", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_llvm_target_contract]]
+selectors = [{ name = "kind", value = "f8f6f4" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_100f", minimum_ptx = "8.8" },
+    { target = "sm_101a", minimum_ptx = "8.6" },
+    { target = "sm_101f", minimum_ptx = "8.8" },
+    { target = "sm_103a", minimum_ptx = "8.8" },
+    { target = "sm_103f", minimum_ptx = "8.8" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+    { target = "sm_110f", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_llvm_target_contract]]
+selectors = [{ name = "kind", value = "i8" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_101a", minimum_ptx = "8.6" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_llvm_target_contract]]
+selectors = [{ name = "kind", value = "tf32" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_100f", minimum_ptx = "8.8" },
+    { target = "sm_101a", minimum_ptx = "8.6" },
+    { target = "sm_101f", minimum_ptx = "8.8" },
+    { target = "sm_103a", minimum_ptx = "8.8" },
+    { target = "sm_103f", minimum_ptx = "8.8" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+    { target = "sm_110f", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_libnvvm_target_contract]]
+selectors = [{ name = "kind", value = "f16" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_100f", minimum_ptx = "8.8" },
+    { target = "sm_103a", minimum_ptx = "8.8" },
+    { target = "sm_103f", minimum_ptx = "8.8" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+    { target = "sm_110f", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_libnvvm_target_contract]]
+selectors = [{ name = "kind", value = "f8f6f4" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_100f", minimum_ptx = "8.8" },
+    { target = "sm_103a", minimum_ptx = "8.8" },
+    { target = "sm_103f", minimum_ptx = "8.8" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+    { target = "sm_110f", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_libnvvm_target_contract]]
+selectors = [{ name = "kind", value = "i8" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+]
+
+[[tcgen05.mma_libnvvm_target_contract]]
+selectors = [{ name = "kind", value = "tf32" }]
+alternatives = [
+    { target = "sm_100a", minimum_ptx = "8.6" },
+    { target = "sm_100f", minimum_ptx = "8.8" },
+    { target = "sm_103a", minimum_ptx = "8.8" },
+    { target = "sm_103f", minimum_ptx = "8.8" },
+    { target = "sm_110a", minimum_ptx = "9.0" },
+    { target = "sm_110f", minimum_ptx = "9.0" },
+]
 
 [[tcgen05.cp_variant]]
 abi_id = "i0578"

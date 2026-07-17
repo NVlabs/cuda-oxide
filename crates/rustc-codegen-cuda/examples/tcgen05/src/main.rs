@@ -305,6 +305,142 @@ mod kernels {
         }
     }
 
+    /// Keeps every base tcgen05 MMA form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_mma_base(
+        d_tmem: u32,
+        a_tmem: u32,
+        metadata_tmem: u32,
+        a_desc: u64,
+        b_desc: u64,
+        idesc: u32,
+    ) {
+        unsafe {
+            tcgen05::tcgen05_mma_shared::<0, 1, 0>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<1, 2, 1>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<2, 1, 2>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<3, 2, 3>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_tensor::<0, 1, 0>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_tensor_ashift::<1, 2, 1>(
+                d_tmem, a_tmem, b_desc, idesc, false,
+            );
+            tcgen05::tcgen05_mma_sp_shared::<2, 1, 2>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_sp_tensor::<3, 2, 3>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_sp_tensor_ashift::<0, 1, 0>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+        }
+    }
+
+    /// Keeps every warp-specialized tcgen05 MMA form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_mma_ws(
+        d_tmem: u32,
+        a_tmem: u32,
+        metadata_tmem: u32,
+        a_desc: u64,
+        b_desc: u64,
+        zero_column_mask: u64,
+        idesc: u32,
+    ) {
+        unsafe {
+            tcgen05::tcgen05_mma_ws_shared::<0, 0, 0>(
+                d_tmem, a_desc, b_desc, idesc, false,
+            );
+            tcgen05::tcgen05_mma_ws_shared_zero_col_mask::<1, 1, 1>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                zero_column_mask,
+            );
+            tcgen05::tcgen05_mma_ws_sp_shared::<2, 2, 2>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_ws_sp_shared_zero_col_mask::<3, 3, 3>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+                zero_column_mask,
+            );
+            tcgen05::tcgen05_mma_ws_sp_tensor::<0, 1, 2>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_ws_sp_tensor_zero_col_mask::<1, 2, 3>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+                zero_column_mask,
+            );
+            tcgen05::tcgen05_mma_ws_tensor::<0, 0, 0>(
+                d_tmem, a_tmem, b_desc, idesc, false,
+            );
+            tcgen05::tcgen05_mma_ws_tensor::<1, 1, 1>(
+                d_tmem, a_tmem, b_desc, idesc, false,
+            );
+            tcgen05::tcgen05_mma_ws_tensor::<2, 2, 2>(
+                d_tmem, a_tmem, b_desc, idesc, false,
+            );
+            tcgen05::tcgen05_mma_ws_tensor::<3, 3, 3>(
+                d_tmem, a_tmem, b_desc, idesc, false,
+            );
+            tcgen05::tcgen05_mma_ws_tensor_zero_col_mask::<2, 3, 0>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                zero_column_mask,
+            );
+
+            tcgen05::tcgen05_mma_ws_e4m3(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e5m2(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e2m3(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e3m2(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e2m1(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+        }
+    }
+
     /// Keeps every generated tcgen05 load form in device code.
     ///
     /// This kernel is compile-only and is never launched.

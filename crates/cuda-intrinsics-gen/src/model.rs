@@ -530,6 +530,14 @@ pub struct Tcgen05Admission {
     pub control_llvm_evidence_profile: Option<String>,
     #[serde(default)]
     pub control_libnvvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub mma_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub mma_libnvvm_evidence_profile: Option<String>,
+    #[serde(rename = "mma_llvm_target_contract", default)]
+    pub mma_llvm_target_contracts: Vec<TargetContract>,
+    #[serde(rename = "mma_libnvvm_target_contract", default)]
+    pub mma_libnvvm_target_contracts: Vec<TargetContract>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<Tcgen05AdmissionVariant>,
@@ -543,6 +551,8 @@ pub struct Tcgen05Admission {
     pub ld_offset_variants: Vec<Tcgen05LdAdmissionVariant>,
     #[serde(rename = "st_offset_variant", default)]
     pub st_offset_variants: Vec<Tcgen05StAdmissionVariant>,
+    #[serde(rename = "mma_variant", default)]
+    pub mma_variants: Vec<Tcgen05MmaAdmissionVariant>,
 }
 
 /// One reviewed tcgen05 operation and its reserved ABI ID.
@@ -580,6 +590,16 @@ pub struct Tcgen05StAdmissionVariant {
     pub shape: Tcgen05LdShape,
     pub multiplicity: Tcgen05LdMultiplicity,
     pub unpack16: bool,
+}
+
+/// One reviewed tcgen05 MMA source form or compatibility alias.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05MmaAdmissionVariant {
+    pub abi_id: String,
+    pub form: Tcgen05MmaForm,
+    #[serde(default)]
+    pub alias: Option<Tcgen05MmaAlias>,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -1110,9 +1130,111 @@ pub struct Tcgen05 {
     pub ld: Option<Tcgen05Ld>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub st: Option<Tcgen05St>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mma: Option<Tcgen05Mma>,
     pub adapter: Tcgen05Adapter,
     pub source_contract: Tcgen05SourceContract,
     pub runtime_validation: RuntimeValidation,
+}
+
+/// Closed identity and selector contract for one tcgen05 MMA API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05Mma {
+    pub form: Tcgen05MmaForm,
+    pub selector_layout: Tcgen05MmaSelectorLayout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_selectors: Option<Tcgen05MmaFixedSelectors>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<Tcgen05MmaAlias>,
+    pub llvm_target: CatalogTargetRequirement,
+    pub libnvvm_target: CatalogTargetRequirement,
+}
+
+/// The 14 LLVM source forms covered by the first tcgen05 MMA batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05MmaForm {
+    Shared,
+    Tensor,
+    TensorAshift,
+    SpShared,
+    SpTensor,
+    SpTensorAshift,
+    WsShared,
+    WsSharedZeroColMask,
+    WsSpShared,
+    WsSpSharedZeroColMask,
+    WsSpTensor,
+    WsSpTensorZeroColMask,
+    WsTensor,
+    WsTensorZeroColMask,
+}
+
+/// Immediate arguments that select one imported tcgen05 MMA spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Tcgen05MmaSelectorLayout {
+    Base {
+        kind_argument: u8,
+        cta_group_argument: u8,
+        collector_a_argument: u8,
+        collector_a_upper_exclusive: u8,
+    },
+    WarpSpecialized {
+        kind_argument: u8,
+        b_buffer_argument: u8,
+        b_usage_argument: u8,
+    },
+}
+
+/// A fixed warp-specialized selector tuple used by compatibility aliases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05MmaFixedSelectors {
+    pub kind: Tcgen05MmaKind,
+    pub b_buffer: u8,
+    pub b_usage: Tcgen05MmaBUsage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05MmaKind {
+    F16,
+    Tf32,
+    F8f6f4,
+    I8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05MmaBUsage {
+    Discard,
+    LastUse,
+    Fill,
+    Use,
+}
+
+impl Tcgen05MmaBUsage {
+    pub const fn selector_value(self) -> u8 {
+        match self {
+            Self::Discard => 0,
+            Self::LastUse => 1,
+            Self::Fill => 2,
+            Self::Use => 3,
+        }
+    }
+}
+
+/// Public names proposed by PR #346 for the generic f8f6f4 carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05MmaAlias {
+    E4m3,
+    E5m2,
+    E2m3,
+    E3m2,
+    E2m1,
 }
 
 /// Closed identity for one tcgen05 shared-to-tensor-memory copy.
@@ -1270,6 +1392,7 @@ pub enum Tcgen05Operation {
     CommitMulticast,
     ShiftDown,
     ShiftDownCg2,
+    Mma,
 }
 
 impl Tcgen05Operation {
@@ -1303,7 +1426,8 @@ impl Tcgen05Operation {
             | Self::CpSmemToTmemCg2
             | Self::CommitMulticast
             | Self::ShiftDown
-            | Self::ShiftDownCg2 => "thread",
+            | Self::ShiftDownCg2
+            | Self::Mma => "thread",
         }
     }
 }
@@ -1326,6 +1450,8 @@ pub enum Tcgen05Adapter {
     TmemHalfSplitOffsetInjectPack16ToU32Registers,
     TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid,
     TmemAddressToVoid,
+    MmaDirectSelectors,
+    MmaWsFixedSelectorsDropLegacyADescriptor,
 }
 
 /// Relationship between the public operation and LLVM's NVPTX selection.
@@ -3133,10 +3259,9 @@ pub enum CatalogHardwareTarget {
     AnyOf {
         alternatives: Vec<CatalogHardwareAlternative>,
     },
-    /// PTX and hardware pairs for one selected operation form.
+    /// Closed selector contracts with their exact PTX and hardware pairs.
     TargetMatrix {
-        selectors: Vec<TargetSelectorBinding>,
-        alternatives: Vec<CatalogTargetAlternative>,
+        contracts: Vec<CatalogTargetContract>,
     },
 }
 
@@ -3154,6 +3279,14 @@ pub enum CatalogHardwareAlternative {
 pub struct CatalogTargetAlternative {
     pub minimum_ptx: PtxVersion,
     pub hardware: CatalogHardwareAlternative,
+}
+
+/// One selector tuple and its exact PTX and hardware pairs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogTargetContract {
+    pub selectors: Vec<TargetSelectorBinding>,
+    pub alternatives: Vec<CatalogTargetAlternative>,
 }
 
 /// One field/value pair that selects a target contract.

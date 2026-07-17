@@ -10,9 +10,9 @@ use crate::model::{
     CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetAlternative,
-    CatalogTargetRequirement, Clc, ClcAdapter, ClcAdmission, ClcOperation, ClusterBarrier,
-    ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemory,
-    ClusterMemoryAdapter, ClusterMemoryAdmission, ClusterMemoryOperation,
+    CatalogTargetContract, CatalogTargetRequirement, Clc, ClcAdapter, ClcAdmission, ClcOperation,
+    ClusterBarrier, ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering,
+    ClusterMemory, ClusterMemoryAdapter, ClusterMemoryAdmission, ClusterMemoryOperation,
     ClusterMemorySourceContract, ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy,
     CpAsyncControlAdapter, CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter,
     CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl,
@@ -56,7 +56,9 @@ use crate::model::{
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, TargetContract, TargetSelectorBinding,
     Tcgen05, Tcgen05Adapter, Tcgen05Admission, Tcgen05Cp, Tcgen05CpAdmissionVariant,
     Tcgen05CpGroup, Tcgen05CpMember, Tcgen05Ld, Tcgen05LdAdmissionVariant, Tcgen05LdMultiplicity,
-    Tcgen05LdShape, Tcgen05Operation, Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant,
+    Tcgen05LdShape, Tcgen05Mma, Tcgen05MmaAdmissionVariant, Tcgen05MmaAlias, Tcgen05MmaBUsage,
+    Tcgen05MmaFixedSelectors, Tcgen05MmaForm, Tcgen05MmaKind, Tcgen05MmaSelectorLayout,
+    Tcgen05Operation, Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant,
     ThreadfenceAdmission, ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation,
     VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
     WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
@@ -72,9 +74,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 43;
+const OVERLAY_SCHEMA: u32 = 44;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 56;
+const OVERLAY_SHARD_SCHEMA: u32 = 57;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -103,12 +105,44 @@ const TCGEN05_LD_SHARD_SCHEMA: u32 = 53;
 const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
 const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
 const TCGEN05_CONTROL_SHARD_SCHEMA: u32 = 56;
-pub(crate) const CATALOG_SCHEMA: u32 = 43;
+const TCGEN05_MMA_SHARD_SCHEMA: u32 = 57;
+pub(crate) const CATALOG_SCHEMA: u32 = 44;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
 const BLACKWELL_LDMATRIX_LIBNVVM_TARGETS: &str = BLACKWELL_LDMATRIX_LLVM_TARGETS;
 const TCGEN05_LLVM_TARGETS: &str = "sm_100a|sm_101a|sm_103a|sm_110a";
 const TCGEN05_LIBNVVM_TARGETS: &str = "sm_100a|sm_103a|sm_110a";
+const TCGEN05_MMA_FORMS: [Tcgen05MmaForm; 14] = [
+    Tcgen05MmaForm::Shared,
+    Tcgen05MmaForm::Tensor,
+    Tcgen05MmaForm::TensorAshift,
+    Tcgen05MmaForm::SpShared,
+    Tcgen05MmaForm::SpTensor,
+    Tcgen05MmaForm::SpTensorAshift,
+    Tcgen05MmaForm::WsShared,
+    Tcgen05MmaForm::WsSharedZeroColMask,
+    Tcgen05MmaForm::WsSpShared,
+    Tcgen05MmaForm::WsSpSharedZeroColMask,
+    Tcgen05MmaForm::WsSpTensor,
+    Tcgen05MmaForm::WsSpTensorZeroColMask,
+    Tcgen05MmaForm::WsTensor,
+    Tcgen05MmaForm::WsTensorZeroColMask,
+];
+const TCGEN05_MMA_ALIASES: [Tcgen05MmaAlias; 5] = [
+    Tcgen05MmaAlias::E4m3,
+    Tcgen05MmaAlias::E5m2,
+    Tcgen05MmaAlias::E2m3,
+    Tcgen05MmaAlias::E3m2,
+    Tcgen05MmaAlias::E2m1,
+];
+const TCGEN05_MMA_KINDS: [Tcgen05MmaKind; 4] = [
+    Tcgen05MmaKind::F16,
+    Tcgen05MmaKind::F8f6f4,
+    Tcgen05MmaKind::I8,
+    Tcgen05MmaKind::Tf32,
+];
+const TCGEN05_MMA_DIALECT_OP_TYPE: &str = "Tcgen05MmaOp";
+const TCGEN05_MMA_DIALECT_OP_NAME: &str = "nvvm.tcgen05_mma";
 const REGISTER_MMA_F8F6F4_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
 const SPARSE_MMA_F8F6F4_F16_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
 
@@ -126,6 +160,26 @@ pub(crate) struct CandidateResolution {
     pub catalog: CatalogFile,
     pub mechanism: BackendLoweringMechanism,
     pub requirement: CatalogTargetRequirement,
+}
+
+fn primary_evidence_profile<'a>(
+    policy: &'a OverlayIntrinsic,
+    default_profile: &'a str,
+) -> Result<&'a str> {
+    if policy
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref())
+        .is_none()
+    {
+        return Ok(default_profile);
+    }
+    policy
+        .backend_lowerings
+        .iter()
+        .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+        .map(|lowering| lowering.evidence_profile.as_str())
+        .with_context(|| format!("{} has no LLVM tcgen05 MMA evidence route", policy.id))
 }
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
@@ -149,12 +203,13 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         let declaration = resolve_imported_declaration(policy, &source, &imported_by_record)?;
         validate_special_register_llvm_exclusion(policy, &imported_by_record)?;
         validate_policy(policy, &source, declaration, overlay.intrinsic_abi)?;
+        let primary_profile = primary_evidence_profile(policy, &overlay.backend_profile)?;
         let evidence = evidence_by_profile_id
-            .get(&(overlay.backend_profile.as_str(), policy.id.as_str()))
+            .get(&(primary_profile, policy.id.as_str()))
             .with_context(|| {
                 format!(
                     "intrinsic {} has no evidence record in selected profile {}",
-                    policy.id, overlay.backend_profile
+                    policy.id, primary_profile
                 )
             })?;
         validate_evidence(policy, evidence, None)?;
@@ -164,7 +219,7 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
             source,
             declaration,
             evidence.record,
-            &overlay.backend_profile,
+            primary_profile,
             evidence.backend_version,
             evidence.backend_sha256,
             backend_lowerings,
@@ -376,9 +431,9 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         .filter(|record| record.family == "tcgen05")
         .count();
     match active_count {
-        209 => return Ok(catalog),
+        228 => return Ok(catalog),
         0 => {}
-        count => bail!("active tcgen05 catalog has {count} of 209 records"),
+        count => bail!("active tcgen05 catalog has {count} of 228 records"),
     }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
@@ -424,6 +479,10 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         offset_libnvvm_evidence_profile: Some("libnvvm-tcgen05-offset-test".into()),
         control_llvm_evidence_profile: Some("llvm-tcgen05-control-test".into()),
         control_libnvvm_evidence_profile: Some("libnvvm-tcgen05-control-test".into()),
+        mma_llvm_evidence_profile: None,
+        mma_libnvvm_evidence_profile: None,
+        mma_llvm_target_contracts: vec![],
+        mma_libnvvm_target_contracts: vec![],
         runtime_validation: RuntimeValidation::Unexecuted,
         variants: operations
             .into_iter()
@@ -469,6 +528,7 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
                 },
             )
             .collect(),
+        mma_variants: vec![],
     };
     for policy in expand_tcgen05_admission(&admission)? {
         let source = resolve_policy_source(&policy)?;
@@ -788,8 +848,9 @@ fn target_requirement_ptx_floor(
                 selected_stage_hardware_matches(hardware, *expected, allow_forward_minimum)
             })
             .then(|| requirement.minimum_ptx.encoded()),
-        CatalogHardwareTarget::TargetMatrix { alternatives, .. } => alternatives
+        CatalogHardwareTarget::TargetMatrix { contracts } => contracts
             .iter()
+            .flat_map(|contract| contract.alternatives.iter())
             .filter(|alternative| {
                 selected_stage_hardware_matches(
                     hardware,
@@ -1325,6 +1386,17 @@ fn validate_overlay_shard_schema_with_max(
             TCGEN05_CONTROL_SHARD_SCHEMA
         );
     }
+    ensure!(
+        shard.tcgen05.as_ref().is_none_or(|admission| {
+            admission.mma_variants.is_empty()
+                && admission.mma_llvm_evidence_profile.is_none()
+                && admission.mma_libnvvm_evidence_profile.is_none()
+                && admission.mma_llvm_target_contracts.is_empty()
+                && admission.mma_libnvvm_target_contracts.is_empty()
+        }) || shard.schema >= TCGEN05_MMA_SHARD_SCHEMA,
+        "compact tcgen05 MMA admission requires overlay shard schema {}",
+        TCGEN05_MMA_SHARD_SCHEMA
+    );
     Ok(())
 }
 
@@ -1378,7 +1450,10 @@ fn shares_tcgen05_mma_ws_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool
                 Tcgen05Operation::MmaWsF16
                     | Tcgen05Operation::MmaWsBf16
                     | Tcgen05Operation::MmaWsTf32
-            )
+            ) || tcgen05
+                .mma
+                .as_ref()
+                .is_some_and(|mma| mma.form == Tcgen05MmaForm::WsTensor)
         })
 }
 
@@ -1448,7 +1523,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -1473,6 +1548,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.scalar_conversion,
             record.scalar_arithmetic,
             record.extended_minmax,
+            record.tcgen05,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -2157,6 +2233,24 @@ fn validate_policy(
             "warp_shuffle" => 8,
             "packed_conversion" | "prmt" | "stmatrix" => 0,
             "tcgen05"
+                if policy
+                    .tcgen05
+                    .as_ref()
+                    .and_then(|tcgen05| tcgen05.mma.as_ref())
+                    .is_some() =>
+            {
+                let mma = policy.tcgen05.as_ref().unwrap().mma.as_ref().unwrap();
+                if mma.alias.is_some() {
+                    1
+                } else if tcgen05_mma_is_ws(mma.form) {
+                    64
+                } else if tcgen05_mma_is_ashift(mma.form) {
+                    16
+                } else {
+                    32
+                }
+            }
+            "tcgen05"
                 if policy.tcgen05.as_ref().is_some_and(|tcgen05| {
                     tcgen05.source_contract != Tcgen05SourceContract::ExactTablegenSelection
                 }) =>
@@ -2251,6 +2345,28 @@ fn selection_matches_policy(
         let Some(tcgen05) = &policy.tcgen05 else {
             return false;
         };
+        if let Some(mma) = &tcgen05.mma {
+            let expected = if mma.alias.is_some() {
+                BTreeSet::from([tcgen05_mma_selection_asm(
+                    Tcgen05MmaForm::WsTensor,
+                    Tcgen05MmaKind::F8f6f4,
+                    1,
+                    None,
+                    Some(0),
+                    Some(Tcgen05MmaBUsage::Discard),
+                )])
+            } else {
+                tcgen05_mma_valid_selection_asms(mma.form)
+            };
+            return expected.contains(&selection.asm)
+                && selection.predicates
+                    == [if selection.asm.contains(".kind::i8.") {
+                        "Subtarget->hasTcgen05MMAI8Kind()"
+                    } else {
+                        "Subtarget->hasTcgen05InstSupport()"
+                    }]
+                && selection.constraints.is_empty();
+        }
         if tcgen05.source_contract != Tcgen05SourceContract::ExactTablegenSelection {
             return false;
         }
@@ -4322,7 +4438,7 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             Tcgen05Adapter::TmemAddressToVoid,
             Tcgen05SourceContract::ExactTablegenSelection,
         ),
-        Tcgen05Operation::Ld | Tcgen05Operation::St => {
+        Tcgen05Operation::Ld | Tcgen05Operation::St | Tcgen05Operation::Mma => {
             unreachable!("tcgen05 load/store variants use their compact recipes")
         }
     };
@@ -4794,7 +4910,7 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             }),
             "Shifts tensor-memory rows down by one row.",
         ),
-        Tcgen05Operation::Ld | Tcgen05Operation::St => {
+        Tcgen05Operation::Ld | Tcgen05Operation::St | Tcgen05Operation::Mma => {
             unreachable!("tcgen05 load/store variants use their compact recipes")
         }
     };
@@ -4826,6 +4942,624 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
         selection_record,
         selection_asm,
         summary,
+    }
+}
+
+fn tcgen05_mma_form_name(form: Tcgen05MmaForm) -> &'static str {
+    match form {
+        Tcgen05MmaForm::Shared => "shared",
+        Tcgen05MmaForm::Tensor => "tensor",
+        Tcgen05MmaForm::TensorAshift => "tensor_ashift",
+        Tcgen05MmaForm::SpShared => "sp_shared",
+        Tcgen05MmaForm::SpTensor => "sp_tensor",
+        Tcgen05MmaForm::SpTensorAshift => "sp_tensor_ashift",
+        Tcgen05MmaForm::WsShared => "ws_shared",
+        Tcgen05MmaForm::WsSharedZeroColMask => "ws_shared_zero_col_mask",
+        Tcgen05MmaForm::WsSpShared => "ws_sp_shared",
+        Tcgen05MmaForm::WsSpSharedZeroColMask => "ws_sp_shared_zero_col_mask",
+        Tcgen05MmaForm::WsSpTensor => "ws_sp_tensor",
+        Tcgen05MmaForm::WsSpTensorZeroColMask => "ws_sp_tensor_zero_col_mask",
+        Tcgen05MmaForm::WsTensor => "ws_tensor",
+        Tcgen05MmaForm::WsTensorZeroColMask => "ws_tensor_zero_col_mask",
+    }
+}
+
+fn tcgen05_mma_alias_name(alias: Tcgen05MmaAlias) -> &'static str {
+    match alias {
+        Tcgen05MmaAlias::E4m3 => "e4m3",
+        Tcgen05MmaAlias::E5m2 => "e5m2",
+        Tcgen05MmaAlias::E2m3 => "e2m3",
+        Tcgen05MmaAlias::E3m2 => "e3m2",
+        Tcgen05MmaAlias::E2m1 => "e2m1",
+    }
+}
+
+fn tcgen05_mma_kind_name(kind: Tcgen05MmaKind) -> &'static str {
+    match kind {
+        Tcgen05MmaKind::F16 => "f16",
+        Tcgen05MmaKind::Tf32 => "tf32",
+        Tcgen05MmaKind::F8f6f4 => "f8f6f4",
+        Tcgen05MmaKind::I8 => "i8",
+    }
+}
+
+fn tcgen05_mma_b_usage_name(usage: Tcgen05MmaBUsage) -> &'static str {
+    match usage {
+        Tcgen05MmaBUsage::Discard => "discard",
+        Tcgen05MmaBUsage::Fill => "fill",
+        Tcgen05MmaBUsage::Use => "use",
+        Tcgen05MmaBUsage::LastUse => "lastuse",
+    }
+}
+
+fn tcgen05_mma_is_ws(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::WsShared
+            | Tcgen05MmaForm::WsSharedZeroColMask
+            | Tcgen05MmaForm::WsSpShared
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensor
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_is_sparse(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::SpShared
+            | Tcgen05MmaForm::SpTensor
+            | Tcgen05MmaForm::SpTensorAshift
+            | Tcgen05MmaForm::WsSpShared
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_is_tensor_a(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::Tensor
+            | Tcgen05MmaForm::TensorAshift
+            | Tcgen05MmaForm::SpTensor
+            | Tcgen05MmaForm::SpTensorAshift
+            | Tcgen05MmaForm::WsSpTensor
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensor
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_is_ashift(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::TensorAshift | Tcgen05MmaForm::SpTensorAshift
+    )
+}
+
+fn tcgen05_mma_has_zero_col_mask(form: Tcgen05MmaForm) -> bool {
+    matches!(
+        form,
+        Tcgen05MmaForm::WsSharedZeroColMask
+            | Tcgen05MmaForm::WsSpSharedZeroColMask
+            | Tcgen05MmaForm::WsSpTensorZeroColMask
+            | Tcgen05MmaForm::WsTensorZeroColMask
+    )
+}
+
+fn tcgen05_mma_source_record(form: Tcgen05MmaForm) -> String {
+    format!("int_nvvm_tcgen05_mma_{}", tcgen05_mma_form_name(form))
+}
+
+fn tcgen05_mma_llvm_symbol(form: Tcgen05MmaForm) -> String {
+    let suffix = match form {
+        Tcgen05MmaForm::Shared => "shared",
+        Tcgen05MmaForm::Tensor => "tensor",
+        Tcgen05MmaForm::TensorAshift => "tensor.ashift",
+        Tcgen05MmaForm::SpShared => "sp.shared",
+        Tcgen05MmaForm::SpTensor => "sp.tensor",
+        Tcgen05MmaForm::SpTensorAshift => "sp.tensor.ashift",
+        Tcgen05MmaForm::WsShared => "ws.shared",
+        Tcgen05MmaForm::WsSharedZeroColMask => "ws.shared.zero_col_mask",
+        Tcgen05MmaForm::WsSpShared => "ws.sp.shared",
+        Tcgen05MmaForm::WsSpSharedZeroColMask => "ws.sp.shared.zero_col_mask",
+        Tcgen05MmaForm::WsSpTensor => "ws.sp.tensor",
+        Tcgen05MmaForm::WsSpTensorZeroColMask => "ws.sp.tensor.zero_col_mask",
+        Tcgen05MmaForm::WsTensor => "ws.tensor",
+        Tcgen05MmaForm::WsTensorZeroColMask => "ws.tensor.zero_col_mask",
+    };
+    format!("llvm.nvvm.tcgen05.mma.{suffix}")
+}
+
+fn tcgen05_mma_llvm_arguments(form: Tcgen05MmaForm) -> Vec<String> {
+    let mut arguments = vec![
+        "tmem_ptr".into(),
+        if tcgen05_mma_is_tensor_a(form) {
+            "tmem_ptr".into()
+        } else {
+            "i64".into()
+        },
+        "i64".into(),
+        "i32".into(),
+        "i1".into(),
+    ];
+    if tcgen05_mma_is_sparse(form) {
+        arguments.push("tmem_ptr".into());
+    }
+    if tcgen05_mma_has_zero_col_mask(form) {
+        arguments.push("i64".into());
+    }
+    arguments.extend(["i32".into(), "i32".into(), "i32".into()]);
+    arguments
+}
+
+fn tcgen05_mma_selector_layout(form: Tcgen05MmaForm) -> Tcgen05MmaSelectorLayout {
+    let first =
+        5 + u8::from(tcgen05_mma_is_sparse(form)) + u8::from(tcgen05_mma_has_zero_col_mask(form));
+    if tcgen05_mma_is_ws(form) {
+        Tcgen05MmaSelectorLayout::WarpSpecialized {
+            kind_argument: first,
+            b_buffer_argument: first + 1,
+            b_usage_argument: first + 2,
+        }
+    } else {
+        Tcgen05MmaSelectorLayout::Base {
+            kind_argument: first,
+            cta_group_argument: first + 1,
+            collector_a_argument: first + 2,
+            collector_a_upper_exclusive: if tcgen05_mma_is_ashift(form) { 2 } else { 4 },
+        }
+    }
+}
+
+fn tcgen05_mma_imported_properties(form: Tcgen05MmaForm) -> Vec<String> {
+    let layout = tcgen05_mma_selector_layout(form);
+    let (kind, second, third, second_lower, second_upper, third_upper) = match layout {
+        Tcgen05MmaSelectorLayout::Base {
+            kind_argument,
+            cta_group_argument,
+            collector_a_argument,
+            collector_a_upper_exclusive,
+        } => (
+            kind_argument,
+            cta_group_argument,
+            collector_a_argument,
+            1,
+            3,
+            collector_a_upper_exclusive,
+        ),
+        Tcgen05MmaSelectorLayout::WarpSpecialized {
+            kind_argument,
+            b_buffer_argument,
+            b_usage_argument,
+        } => (kind_argument, b_buffer_argument, b_usage_argument, 0, 4, 4),
+    };
+    let mut properties = vec![
+        format!("ImmArg<arg{kind}>"),
+        format!("ImmArg<arg{second}>"),
+        format!("ImmArg<arg{third}>"),
+        "IntrArgMemOnly".into(),
+        format!("Range<arg{kind},0,4>"),
+        format!("Range<arg{second},{second_lower},{second_upper}>"),
+        format!("Range<arg{third},0,{third_upper}>"),
+        "WriteOnly<arg0>".into(),
+    ];
+    if tcgen05_mma_is_tensor_a(form) {
+        properties.push("ReadOnly<arg1>".into());
+    }
+    if form == Tcgen05MmaForm::Tensor {
+        properties.extend([
+            "ArgInfo<arg5>".into(),
+            "ArgInfo<arg6>".into(),
+            "ArgInfo<arg7>".into(),
+        ]);
+    }
+    properties.sort();
+    properties
+}
+
+fn tcgen05_mma_selection_asm(
+    form: Tcgen05MmaForm,
+    kind: Tcgen05MmaKind,
+    cta_group: u8,
+    collector_a: Option<&str>,
+    b_buffer: Option<u8>,
+    b_usage: Option<Tcgen05MmaBUsage>,
+) -> String {
+    let mut head = "tcgen05.mma".to_owned();
+    if tcgen05_mma_is_ws(form) {
+        head.push_str(".ws");
+    }
+    if tcgen05_mma_is_sparse(form) {
+        head.push_str(".sp");
+    }
+    head.push_str(&format!(
+        ".cta_group::{cta_group}.kind::{}",
+        tcgen05_mma_kind_name(kind)
+    ));
+    if tcgen05_mma_is_ws(form) {
+        head.push_str(&format!(
+            ".collector::b{}::{}",
+            b_buffer.expect("warp-specialized B buffer"),
+            tcgen05_mma_b_usage_name(b_usage.expect("warp-specialized B usage"))
+        ));
+    } else {
+        head.push_str(&format!(
+            ".collector::a::{}",
+            collector_a.expect("base collector A usage")
+        ));
+        if tcgen05_mma_is_ashift(form) {
+            head.push_str(".ashift");
+        }
+    }
+
+    let a = if tcgen05_mma_is_tensor_a(form) {
+        "[$a]"
+    } else {
+        "$a"
+    };
+    let mut operands = format!("[$dtmem], {a}, $b");
+    if tcgen05_mma_is_sparse(form) {
+        operands.push_str(", [$spmetadata]");
+    }
+    operands.push_str(", $idesc, $enable_inp_d");
+    if tcgen05_mma_has_zero_col_mask(form) {
+        operands.push_str(", $zero_col_mask");
+    }
+    format!("{head} {operands};")
+}
+
+fn tcgen05_mma_all_selection_asms(form: Tcgen05MmaForm) -> BTreeSet<String> {
+    if tcgen05_mma_is_ws(form) {
+        return [
+            Tcgen05MmaBUsage::Discard,
+            Tcgen05MmaBUsage::LastUse,
+            Tcgen05MmaBUsage::Fill,
+            Tcgen05MmaBUsage::Use,
+        ]
+        .into_iter()
+        .flat_map(|usage| {
+            TCGEN05_MMA_KINDS.into_iter().flat_map(move |kind| {
+                (0..4).map(move |buffer| {
+                    tcgen05_mma_selection_asm(form, kind, 1, None, Some(buffer), Some(usage))
+                })
+            })
+        })
+        .collect();
+    }
+    TCGEN05_MMA_KINDS
+        .into_iter()
+        .flat_map(|kind| {
+            (1..=2).flat_map(move |group| {
+                ["discard", "lastuse", "fill", "use"].map(move |usage| {
+                    tcgen05_mma_selection_asm(form, kind, group, Some(usage), None, None)
+                })
+            })
+        })
+        .collect()
+}
+
+fn tcgen05_mma_valid_selection_asms(form: Tcgen05MmaForm) -> BTreeSet<String> {
+    if !tcgen05_mma_is_ashift(form) {
+        return tcgen05_mma_all_selection_asms(form);
+    }
+    TCGEN05_MMA_KINDS
+        .into_iter()
+        .flat_map(|kind| {
+            (1..=2).flat_map(move |group| {
+                ["discard", "lastuse"].map(move |usage| {
+                    tcgen05_mma_selection_asm(form, kind, group, Some(usage), None, None)
+                })
+            })
+        })
+        .collect()
+}
+
+fn tcgen05_mma_target_contract(
+    kind: Tcgen05MmaKind,
+    alternatives: &[(&str, &str)],
+) -> TargetContract {
+    TargetContract {
+        selectors: vec![TargetSelectorBinding {
+            name: "kind".into(),
+            value: tcgen05_mma_kind_name(kind).into(),
+        }],
+        alternatives: alternatives
+            .iter()
+            .map(
+                |(target, minimum_ptx)| crate::model::TargetContractAlternative {
+                    target: (*target).into(),
+                    minimum_ptx: (*minimum_ptx).into(),
+                },
+            )
+            .collect(),
+    }
+}
+
+fn expected_tcgen05_mma_target_contracts(backend: IntrinsicBackend) -> Vec<TargetContract> {
+    const LLVM_COMMON: &[(&str, &str)] = &[
+        ("sm_100a", "8.6"),
+        ("sm_100f", "8.8"),
+        ("sm_101a", "8.6"),
+        ("sm_101f", "8.8"),
+        ("sm_103a", "8.8"),
+        ("sm_103f", "8.8"),
+        ("sm_110a", "9.0"),
+        ("sm_110f", "9.0"),
+    ];
+    const LLVM_I8: &[(&str, &str)] = &[("sm_100a", "8.6"), ("sm_101a", "8.6"), ("sm_110a", "9.0")];
+    const LIBNVVM_COMMON: &[(&str, &str)] = &[
+        ("sm_100a", "8.6"),
+        ("sm_100f", "8.8"),
+        ("sm_103a", "8.8"),
+        ("sm_103f", "8.8"),
+        ("sm_110a", "9.0"),
+        ("sm_110f", "9.0"),
+    ];
+    const LIBNVVM_I8: &[(&str, &str)] = &[("sm_100a", "8.6"), ("sm_110a", "9.0")];
+    TCGEN05_MMA_KINDS
+        .into_iter()
+        .map(|kind| {
+            let alternatives = match (backend, kind) {
+                (IntrinsicBackend::LlvmNvptx, Tcgen05MmaKind::I8) => LLVM_I8,
+                (IntrinsicBackend::LlvmNvptx, _) => LLVM_COMMON,
+                (IntrinsicBackend::LibNvvm, Tcgen05MmaKind::I8) => LIBNVVM_I8,
+                (IntrinsicBackend::LibNvvm, _) => LIBNVVM_COMMON,
+            };
+            tcgen05_mma_target_contract(kind, alternatives)
+        })
+        .collect()
+}
+
+fn tcgen05_mma_expected_ptx(
+    form: Tcgen05MmaForm,
+    alias: Option<Tcgen05MmaAlias>,
+) -> InstructionPattern {
+    let kind = if alias.is_some() {
+        Tcgen05MmaKind::F8f6f4
+    } else {
+        Tcgen05MmaKind::F16
+    };
+    let asm = if tcgen05_mma_is_ws(form) {
+        tcgen05_mma_selection_asm(
+            form,
+            kind,
+            1,
+            None,
+            Some(0),
+            Some(Tcgen05MmaBUsage::Discard),
+        )
+    } else {
+        tcgen05_mma_selection_asm(form, kind, 1, Some("discard"), None, None)
+    };
+    let head = asm.split_whitespace().next().unwrap();
+    let mut components = head.split('.');
+    let mnemonic = components.next().unwrap().into();
+    let modifiers = components.map(str::to_owned).collect();
+    let mut operands = vec![OperandPattern::Address];
+    operands.push(if tcgen05_mma_is_tensor_a(form) {
+        OperandPattern::Address
+    } else {
+        OperandPattern::Register
+    });
+    operands.push(OperandPattern::Register);
+    if tcgen05_mma_is_sparse(form) {
+        operands.push(OperandPattern::Address);
+    }
+    operands.extend([OperandPattern::Register, OperandPattern::Register]);
+    if tcgen05_mma_has_zero_col_mask(form) {
+        operands.push(OperandPattern::Register);
+    }
+    InstructionPattern {
+        mnemonic,
+        modifiers,
+        operands,
+    }
+}
+
+fn tcgen05_mma_rust_arguments(form: Tcgen05MmaForm, alias: Option<Tcgen05MmaAlias>) -> Vec<String> {
+    if alias.is_some() {
+        return ["u32", "u32", "u64", "u64", "u32", "bool"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+    }
+    tcgen05_mma_llvm_arguments(form)
+        .iter()
+        .map(|argument| match argument.as_str() {
+            "tmem_ptr" | "i32" => "u32",
+            "i64" => "u64",
+            "i1" => "bool",
+            _ => unreachable!("closed tcgen05 MMA LLVM type"),
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn tcgen05_mma_dialect_operands(
+    form: Tcgen05MmaForm,
+    alias: Option<Tcgen05MmaAlias>,
+) -> Vec<String> {
+    if alias.is_some() {
+        return ["i32", "i32", "i64", "i32", "i1"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+    }
+    let mut arguments = tcgen05_mma_llvm_arguments(form);
+    arguments.truncate(arguments.len() - 3);
+    arguments
+        .iter()
+        .map(|argument| match argument.as_str() {
+            "tmem_ptr" | "i32" => "i32",
+            "i64" => "i64",
+            "i1" => "i1",
+            _ => unreachable!("closed tcgen05 MMA LLVM type"),
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn materialize_tcgen05_mma_variant(
+    admission: &Tcgen05Admission,
+    variant: &Tcgen05MmaAdmissionVariant,
+    llvm_target: &CatalogTargetRequirement,
+    libnvvm_target: &CatalogTargetRequirement,
+) -> OverlayIntrinsic {
+    let form = variant.form;
+    let alias = variant.alias;
+    let id = alias.map_or_else(
+        || format!("tcgen05_mma_{}", tcgen05_mma_form_name(form)),
+        |alias| format!("tcgen05_mma_ws_{}", tcgen05_mma_alias_name(alias)),
+    );
+    let operation_key = alias.map_or_else(
+        || {
+            format!(
+                "tcgen05.mma.{}",
+                tcgen05_mma_form_name(form).replace('_', ".")
+            )
+        },
+        |alias| format!("tcgen05.mma.ws.tensor.{}", tcgen05_mma_alias_name(alias)),
+    );
+    let llvm_arguments = tcgen05_mma_llvm_arguments(form);
+    let rust_arguments = tcgen05_mma_rust_arguments(form, alias);
+    let dialect_operands = tcgen05_mma_dialect_operands(form, alias);
+    let fixed_selectors = alias.map(|_| Tcgen05MmaFixedSelectors {
+        kind: Tcgen05MmaKind::F8f6f4,
+        b_buffer: 0,
+        b_usage: Tcgen05MmaBUsage::Discard,
+    });
+
+    OverlayIntrinsic {
+        id: id.clone(),
+        abi_id: variant.abi_id.clone(),
+        operation_key,
+        family: "tcgen05".into(),
+        source: None,
+        source_record: Some(tcgen05_mma_source_record(form)),
+        rust_module: "tcgen05".into(),
+        rust_name: id.clone(),
+        rust_arguments,
+        rust_result: "()".into(),
+        safe: false,
+        must_use: false,
+        safe_allowlist_reason: None,
+        public_rust_path: format!("cuda_intrinsics::tcgen05::{id}"),
+        compatibility_rust_paths: vec![if alias.is_some() {
+            format!("cuda_device::tcgen05::{id}")
+        } else {
+            format!("cuda_device::tcgen05::__{id}")
+        }],
+        dialect_op_type: TCGEN05_MMA_DIALECT_OP_TYPE.into(),
+        dialect_op_name: TCGEN05_MMA_DIALECT_OP_NAME.into(),
+        dialect_operands,
+        dialect_results: vec![],
+        llvm_symbol: Some(tcgen05_mma_llvm_symbol(form)),
+        resolved_llvm_symbol: None,
+        llvm_arguments,
+        llvm_results: vec![],
+        pure: false,
+        memory: "read_write".into(),
+        // TableGen omits IntrConvergent, but collective MMA must not move across control flow.
+        convergent: true,
+        execution_scope: "thread".into(),
+        minimum_ptx: "8.6".into(),
+        minimum_sm: None,
+        ptx_result: "()".into(),
+        targets: TCGEN05_LLVM_TARGETS.into(),
+        ptx_isa_version: "8.6".into(),
+        ptx_isa_section: "Tensor Memory tcgen05 instructions".into(),
+        ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory".into(),
+        lowering: "generated_tcgen05_mma".into(),
+        backend_lowerings: vec![
+            OverlayBackendLowering {
+                backend: IntrinsicBackend::LlvmNvptx,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: admission
+                    .mma_llvm_evidence_profile
+                    .as_ref()
+                    .expect("validated tcgen05 MMA LLVM evidence profile")
+                    .clone(),
+                targets: None,
+                minimum_ptx: None,
+                minimum_sm: None,
+            },
+            OverlayBackendLowering {
+                backend: IntrinsicBackend::LibNvvm,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: admission
+                    .mma_libnvvm_evidence_profile
+                    .as_ref()
+                    .expect("validated tcgen05 MMA libNVVM evidence profile")
+                    .clone(),
+                targets: None,
+                minimum_ptx: None,
+                minimum_sm: None,
+            },
+        ],
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        scalar_conversion: None,
+        scalar_arithmetic: None,
+        extended_minmax: None,
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        movmatrix: None,
+        mbarrier_extended: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        cluster_barrier: None,
+        wgmma_control: None,
+        special_register: None,
+        debug_control: None,
+        cluster_memory: None,
+        clc: None,
+        tma: None,
+        tcgen05: Some(Tcgen05 {
+            operation: Tcgen05Operation::Mma,
+            cp: None,
+            ld: None,
+            st: None,
+            mma: Some(Tcgen05Mma {
+                form,
+                selector_layout: tcgen05_mma_selector_layout(form),
+                fixed_selectors,
+                alias,
+                llvm_target: llvm_target.clone(),
+                libnvvm_target: libnvvm_target.clone(),
+            }),
+            adapter: if alias.is_some() {
+                Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor
+            } else {
+                Tcgen05Adapter::MmaDirectSelectors
+            },
+            source_contract: Tcgen05SourceContract::TablegenSelectionChangesPtx,
+            runtime_validation: admission.runtime_validation,
+        }),
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: tcgen05_mma_expected_ptx(form, alias),
+        summary: if alias.is_some() {
+            "Issues one f8f6f4 warp-specialized tensor-memory MMA.".into()
+        } else {
+            "Issues one selector-controlled tensor-memory MMA.".into()
+        },
     }
 }
 
@@ -5013,6 +5747,7 @@ fn materialize_tcgen05_cp_variant(
         }),
         ld: None,
         st: None,
+        mma: None,
         adapter: Tcgen05Adapter::TmemDescriptorToVoid,
         source_contract: Tcgen05SourceContract::ExactTablegenSelection,
         runtime_validation: admission.runtime_validation,
@@ -5265,6 +6000,7 @@ fn materialize_tcgen05_ld_variant(
         cp: None,
         ld: Some(ld),
         st: None,
+        mma: None,
         adapter: if has_half_split_offset {
             Tcgen05Adapter::TmemHalfSplitOffsetInjectPack16ToU32Registers
         } else {
@@ -5449,6 +6185,7 @@ fn materialize_tcgen05_st_variant(
         cp: None,
         ld: None,
         st: Some(st),
+        mma: None,
         adapter: if has_half_split_offset {
             Tcgen05Adapter::TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid
         } else {
@@ -5683,6 +6420,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                     cp: None,
                     ld: None,
                     st: None,
+                    mma: None,
                     adapter: recipe.adapter,
                     source_contract: recipe.source_contract,
                     runtime_validation: admission.runtime_validation,
@@ -5708,6 +6446,17 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
             "tcgen05 copy evidence profiles require admitted copy variants"
         );
     } else {
+        ensure!(
+            [
+                Tcgen05MmaBUsage::Discard,
+                Tcgen05MmaBUsage::LastUse,
+                Tcgen05MmaBUsage::Fill,
+                Tcgen05MmaBUsage::Use,
+            ]
+            .map(Tcgen05MmaBUsage::selector_value)
+                == [0, 1, 2, 3],
+            "tcgen05 MMA B-usage selector mapping changed"
+        );
         ensure!(
             admission
                 .cp_llvm_evidence_profile
@@ -5994,6 +6743,91 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
             );
         }
     }
+
+    if admission.mma_variants.is_empty() {
+        ensure!(
+            admission.mma_llvm_evidence_profile.is_none()
+                && admission.mma_libnvvm_evidence_profile.is_none()
+                && admission.mma_llvm_target_contracts.is_empty()
+                && admission.mma_libnvvm_target_contracts.is_empty(),
+            "tcgen05 MMA profiles and target contracts require admitted variants"
+        );
+    } else {
+        ensure!(
+            admission
+                .mma_llvm_evidence_profile
+                .as_deref()
+                .is_some_and(|profile| !profile.trim().is_empty())
+                && admission
+                    .mma_libnvvm_evidence_profile
+                    .as_deref()
+                    .is_some_and(|profile| !profile.trim().is_empty()),
+            "compact tcgen05 MMA admission requires both backend evidence profiles"
+        );
+        let expected_variants = TCGEN05_MMA_FORMS
+            .into_iter()
+            .map(|form| (form, None))
+            .chain(
+                TCGEN05_MMA_ALIASES
+                    .into_iter()
+                    .map(|alias| (Tcgen05MmaForm::WsTensor, Some(alias))),
+            )
+            .collect::<Vec<_>>();
+        ensure!(
+            admission
+                .mma_variants
+                .iter()
+                .map(|variant| (variant.form, variant.alias))
+                .eq(expected_variants),
+            "compact tcgen05 MMA admission must list all 19 APIs in canonical order"
+        );
+        for (index, variant) in admission.mma_variants.iter().enumerate() {
+            let reserved = format!("i{:04}", 763 + index);
+            ensure!(
+                variant.abi_id == reserved,
+                "tcgen05 MMA variant {} must keep reserved ABI ID {reserved}",
+                index + 1
+            );
+        }
+
+        let expected_llvm = expected_tcgen05_mma_target_contracts(IntrinsicBackend::LlvmNvptx);
+        let expected_libnvvm = expected_tcgen05_mma_target_contracts(IntrinsicBackend::LibNvvm);
+        ensure!(
+            admission.mma_llvm_target_contracts == expected_llvm
+                && admission.mma_libnvvm_target_contracts == expected_libnvvm,
+            "tcgen05 MMA target contracts changed from the reviewed backend matrices"
+        );
+        let llvm_target =
+            resolve_target_contracts("tcgen05 MMA LLVM", &admission.mma_llvm_target_contracts)?;
+        let libnvvm_target = resolve_target_contracts(
+            "tcgen05 MMA libNVVM",
+            &admission.mma_libnvvm_target_contracts,
+        )?;
+        let fixed_selector = [TargetSelectorBinding {
+            name: "kind".into(),
+            value: "f8f6f4".into(),
+        }];
+        let fixed_llvm = resolve_target_contract(
+            "tcgen05 MMA LLVM alias",
+            &fixed_selector,
+            &admission.mma_llvm_target_contracts,
+        )?;
+        let fixed_libnvvm = resolve_target_contract(
+            "tcgen05 MMA libNVVM alias",
+            &fixed_selector,
+            &admission.mma_libnvvm_target_contracts,
+        )?;
+        for variant in &admission.mma_variants {
+            let (llvm, libnvvm) = if variant.alias.is_some() {
+                (&fixed_llvm, &fixed_libnvvm)
+            } else {
+                (&llvm_target, &libnvvm_target)
+            };
+            records.push(materialize_tcgen05_mma_variant(
+                admission, variant, llvm, libnvvm,
+            ));
+        }
+    }
     Ok(records)
 }
 
@@ -6005,6 +6839,9 @@ fn validate_tcgen05_policy(
         .tcgen05
         .as_ref()
         .with_context(|| format!("{} has no closed tcgen05 contract", policy.id))?;
+    if let Some(mma) = &tcgen05.mma {
+        return validate_tcgen05_mma_policy(policy, declaration, tcgen05, mma);
+    }
     if let Some(ld) = tcgen05.ld {
         return validate_tcgen05_ld_policy(policy, declaration, tcgen05, ld);
     }
@@ -6017,9 +6854,9 @@ fn validate_tcgen05_policy(
     ensure!(
         !matches!(
             tcgen05.operation,
-            Tcgen05Operation::Ld | Tcgen05Operation::St
+            Tcgen05Operation::Ld | Tcgen05Operation::St | Tcgen05Operation::Mma
         ),
-        "{} has a tcgen05 load/store operation without its closed identity",
+        "{} has a tcgen05 load/store/MMA operation without its closed identity",
         policy.id
     );
     let recipe = tcgen05_recipe(tcgen05.operation);
@@ -6092,6 +6929,245 @@ fn validate_tcgen05_policy(
     validate_tcgen05_backend_routes(policy, "tcgen05")?;
     validate_tcgen05_source_contract(&recipe, declaration)?;
     ensure_no_other_family_contract(policy, "tcgen05")?;
+    Ok(())
+}
+
+fn validate_tcgen05_mma_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    tcgen05: &Tcgen05,
+    mma: &Tcgen05Mma,
+) -> Result<()> {
+    let form = mma.form;
+    let alias = mma.alias;
+    let id = alias.map_or_else(
+        || format!("tcgen05_mma_{}", tcgen05_mma_form_name(form)),
+        |alias| format!("tcgen05_mma_ws_{}", tcgen05_mma_alias_name(alias)),
+    );
+    let operation_key = alias.map_or_else(
+        || {
+            format!(
+                "tcgen05.mma.{}",
+                tcgen05_mma_form_name(form).replace('_', ".")
+            )
+        },
+        |alias| format!("tcgen05.mma.ws.tensor.{}", tcgen05_mma_alias_name(alias)),
+    );
+    let index = if let Some(alias) = alias {
+        14 + TCGEN05_MMA_ALIASES
+            .iter()
+            .position(|candidate| *candidate == alias)
+            .context("unknown tcgen05 MMA alias")?
+    } else {
+        TCGEN05_MMA_FORMS
+            .iter()
+            .position(|candidate| *candidate == form)
+            .context("unknown tcgen05 MMA form")?
+    };
+    let abi_id = format!("i{:04}", 763 + index);
+    let llvm_arguments = tcgen05_mma_llvm_arguments(form);
+    let expected_fixed = alias.map(|_| Tcgen05MmaFixedSelectors {
+        kind: Tcgen05MmaKind::F8f6f4,
+        b_buffer: 0,
+        b_usage: Tcgen05MmaBUsage::Discard,
+    });
+    ensure!(
+        policy.id == id
+            && policy.abi_id == abi_id
+            && policy.operation_key == operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(tcgen05_mma_source_record(form).as_str())
+            && policy.llvm_symbol.as_deref() == Some(tcgen05_mma_llvm_symbol(form).as_str())
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == tcgen05_mma_source_record(form)
+            && declaration.llvm_name == tcgen05_mma_llvm_symbol(form),
+        "{} tcgen05 MMA identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "tcgen05"
+            && policy.rust_name == id
+            && policy.rust_arguments == tcgen05_mma_rust_arguments(form, alias)
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::tcgen05::{id}")
+            && policy.compatibility_rust_paths
+                == [if alias.is_some() {
+                    format!("cuda_device::tcgen05::{id}")
+                } else {
+                    format!("cuda_device::tcgen05::__{id}")
+                }],
+        "{} tcgen05 MMA Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == TCGEN05_MMA_DIALECT_OP_TYPE
+            && policy.dialect_op_name == TCGEN05_MMA_DIALECT_OP_NAME
+            && policy.dialect_operands == tcgen05_mma_dialect_operands(form, alias)
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results.is_empty()
+            && declaration.arguments == llvm_arguments
+            && declaration.results.is_empty()
+            && declaration.classes
+                == [
+                    "SDPatternOperator",
+                    "Intrinsic",
+                    "DefaultAttrsIntrinsic",
+                    "DefaultAttrsIntrinsicFlags",
+                ]
+            && declaration.properties == tcgen05_mma_imported_properties(form)
+            && policy.lowering == "generated_tcgen05_mma",
+        "{} tcgen05 MMA carrier or imported declaration changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "thread"
+            && tcgen05.operation == Tcgen05Operation::Mma
+            && tcgen05.cp.is_none()
+            && tcgen05.ld.is_none()
+            && tcgen05.st.is_none()
+            && mma.selector_layout == tcgen05_mma_selector_layout(form)
+            && mma.fixed_selectors == expected_fixed
+            && tcgen05.adapter
+                == if alias.is_some() {
+                    Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor
+                } else {
+                    Tcgen05Adapter::MmaDirectSelectors
+                }
+            && tcgen05.source_contract == Tcgen05SourceContract::TablegenSelectionChangesPtx
+            && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} tcgen05 MMA semantics or selector contract changed",
+        policy.id
+    );
+
+    let expected_llvm_contracts =
+        expected_tcgen05_mma_target_contracts(IntrinsicBackend::LlvmNvptx);
+    let expected_libnvvm_contracts =
+        expected_tcgen05_mma_target_contracts(IntrinsicBackend::LibNvvm);
+    let selected = [TargetSelectorBinding {
+        name: "kind".into(),
+        value: "f8f6f4".into(),
+    }];
+    let expected_llvm = if alias.is_some() {
+        resolve_target_contract(
+            "tcgen05 MMA LLVM alias",
+            &selected,
+            &expected_llvm_contracts,
+        )?
+    } else {
+        resolve_target_contracts("tcgen05 MMA LLVM", &expected_llvm_contracts)?
+    };
+    let expected_libnvvm = if alias.is_some() {
+        resolve_target_contract(
+            "tcgen05 MMA libNVVM alias",
+            &selected,
+            &expected_libnvvm_contracts,
+        )?
+    } else {
+        resolve_target_contracts("tcgen05 MMA libNVVM", &expected_libnvvm_contracts)?
+    };
+    ensure!(
+        mma.llvm_target == expected_llvm
+            && mma.libnvvm_target == expected_libnvvm
+            && policy.minimum_ptx == "8.6"
+            && policy.minimum_sm.is_none()
+            && policy.targets == TCGEN05_LLVM_TARGETS
+            && policy.ptx_result == "()"
+            && policy.ptx_isa_version == "8.6"
+            && policy.expected_ptx == tcgen05_mma_expected_ptx(form, alias),
+        "{} tcgen05 MMA target or PTX contract changed",
+        policy.id
+    );
+    let backend_pairs = policy
+        .backend_lowerings
+        .iter()
+        .map(|route| (route.backend, route.mechanism))
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|route| {
+                !route.evidence_profile.trim().is_empty()
+                    && route.targets.is_none()
+                    && route.minimum_ptx.is_none()
+                    && route.minimum_sm.is_none()
+            }),
+        "{} tcgen05 MMA backend routes changed",
+        policy.id
+    );
+
+    let expected_all = tcgen05_mma_all_selection_asms(form);
+    let expected_valid = if alias.is_some() {
+        BTreeSet::from([tcgen05_mma_selection_asm(
+            Tcgen05MmaForm::WsTensor,
+            Tcgen05MmaKind::F8f6f4,
+            1,
+            None,
+            Some(0),
+            Some(Tcgen05MmaBUsage::Discard),
+        )])
+    } else {
+        tcgen05_mma_valid_selection_asms(form)
+    };
+    let mut source_records = BTreeSet::new();
+    let actual_all = declaration
+        .selections
+        .iter()
+        .map(|selection| {
+            ensure!(
+                !selection.source_record.is_empty()
+                    && source_records.insert(selection.source_record.as_str())
+                    && selection.constraints.is_empty(),
+                "{} tcgen05 MMA selection provenance changed",
+                policy.id
+            );
+            let predicate = if selection.asm.contains(".kind::i8.") {
+                "Subtarget->hasTcgen05MMAI8Kind()"
+            } else {
+                "Subtarget->hasTcgen05InstSupport()"
+            };
+            ensure!(
+                selection.predicates == [predicate],
+                "{} tcgen05 MMA selection predicate changed",
+                policy.id
+            );
+            Ok(selection.asm.clone())
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    ensure!(
+        actual_all == expected_all
+            && declaration.selections.len() == expected_all.len()
+            && expected_valid.is_subset(&expected_all)
+            && expected_valid.len()
+                == if alias.is_some() {
+                    1
+                } else if tcgen05_mma_is_ws(form) {
+                    64
+                } else if tcgen05_mma_is_ashift(form) {
+                    16
+                } else {
+                    32
+                },
+        "{} tcgen05 MMA selection matrix changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "tcgen05 MMA")?;
     Ok(())
 }
 
@@ -8389,6 +9465,10 @@ fn validate_selected_target_predicates(
     }
 
     let mma_family = matches!(policy.family.as_str(), "register_mma" | "sparse_mma");
+    let tcgen05_mma = policy
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref());
     let mut imported_ptx: Option<u16> = None;
     let mut imported_sm: Option<u16> = None;
     let mut has_dot_instructions = false;
@@ -8396,6 +9476,7 @@ fn validate_selected_target_predicates(
     let mut has_tma_blackwell_support = false;
     let mut has_tcgen05_support = false;
     let mut has_tcgen05_shift_support = false;
+    let mut has_tcgen05_mma_i8_support = false;
     let mut has_ldstmatrix_blackwell_support = false;
     let mut has_mma_block_scale_support = false;
     for predicate in &selection.predicates {
@@ -8480,6 +9561,7 @@ fn validate_selected_target_predicates(
             ensure!(
                 !has_tcgen05_support
                     && !has_tcgen05_shift_support
+                    && !has_tcgen05_mma_i8_support
                     && imported_ptx.is_none()
                     && imported_sm.is_none()
                     && !has_dot_instructions
@@ -8489,6 +9571,25 @@ fn validate_selected_target_predicates(
                 policy.id
             );
             has_tcgen05_support = true;
+        } else if predicate == "Subtarget->hasTcgen05MMAI8Kind()" {
+            ensure!(
+                tcgen05_mma.is_some() && selection.asm.contains(".kind::i8."),
+                "{} uses the tcgen05 I8 predicate outside an I8 MMA selection",
+                policy.id
+            );
+            ensure!(
+                !has_tcgen05_mma_i8_support
+                    && !has_tcgen05_support
+                    && !has_tcgen05_shift_support
+                    && imported_ptx.is_none()
+                    && imported_sm.is_none()
+                    && !has_dot_instructions
+                    && !has_clc_multicast_support
+                    && !has_tma_blackwell_support,
+                "{} has duplicate or conflicting tcgen05 I8 predicates",
+                policy.id
+            );
+            has_tcgen05_mma_i8_support = true;
         } else if predicate == "Subtarget->hasTcgen05ShiftSupport()" {
             ensure!(
                 policy.family == "tcgen05"
@@ -8504,6 +9605,7 @@ fn validate_selected_target_predicates(
             ensure!(
                 !has_tcgen05_shift_support
                     && !has_tcgen05_support
+                    && !has_tcgen05_mma_i8_support
                     && imported_ptx.is_none()
                     && imported_sm.is_none()
                     && !has_dot_instructions
@@ -8565,6 +9667,36 @@ fn validate_selected_target_predicates(
         }
     }
     let overlay_ptx = parse_ptx_version(&policy.minimum_ptx, &policy.id)?.encoded();
+    if let Some(mma) = tcgen05_mma {
+        let i8_selection = selection.asm.contains(".kind::i8.");
+        ensure!(
+            selection.predicates.len() == 1
+                && ((i8_selection && has_tcgen05_mma_i8_support && !has_tcgen05_support)
+                    || (!i8_selection && has_tcgen05_support && !has_tcgen05_mma_i8_support))
+                && !has_tcgen05_shift_support,
+            "{} tcgen05 MMA selection does not retain its exact kind predicate",
+            policy.id
+        );
+        let contracts = expected_tcgen05_mma_target_contracts(IntrinsicBackend::LlvmNvptx);
+        let expected_target = if let Some(fixed) = mma.fixed_selectors {
+            resolve_target_contract(
+                "tcgen05 MMA selected predicate",
+                &[TargetSelectorBinding {
+                    name: "kind".into(),
+                    value: tcgen05_mma_kind_name(fixed.kind).into(),
+                }],
+                &contracts,
+            )?
+        } else {
+            resolve_target_contracts("tcgen05 MMA selected predicate", &contracts)?
+        };
+        ensure!(
+            mma.llvm_target == expected_target,
+            "{} tcgen05 MMA predicate does not map to its closed LLVM target matrix",
+            policy.id
+        );
+        return Ok(());
+    }
     if has_mma_block_scale_support {
         let target_matches = match policy.family.as_str() {
             "register_mma" => {
@@ -22025,18 +23157,15 @@ fn parse_hardware_target(policy: &OverlayIntrinsic) -> Result<CatalogHardwareTar
     parse_hardware_target_fields(&policy.id, &policy.targets, policy.minimum_sm.as_deref())
 }
 
-/// Resolve the exact contract for one selector set.
-#[allow(dead_code)]
-pub(crate) fn resolve_target_contract(
+/// Resolve every selector contract without merging target sets.
+pub(crate) fn resolve_target_contracts(
     intrinsic_id: &str,
-    selected: &[TargetSelectorBinding],
     contracts: &[TargetContract],
 ) -> Result<CatalogTargetRequirement> {
     ensure!(
         !contracts.is_empty(),
         "{intrinsic_id} has no reviewed target contracts"
     );
-    validate_selector_bindings(intrinsic_id, "selected target selectors", selected)?;
 
     let expected_selector_names = contracts[0]
         .selectors
@@ -22096,26 +23225,56 @@ pub(crate) fn resolve_target_contract(
             "{intrinsic_id} target contract {:?} cannot mix a minimum-SM range with other alternatives",
             contract.selectors
         );
-        resolved_contracts.push((contract.selectors.clone(), alternatives));
+        resolved_contracts.push(CatalogTargetContract {
+            selectors: contract.selectors.clone(),
+            alternatives,
+        });
     }
     ensure!(
         resolved_contracts
             .windows(2)
-            .all(|pair| pair[0].0 < pair[1].0),
+            .all(|pair| pair[0].selectors < pair[1].selectors),
         "{intrinsic_id} target contracts must have unique, sorted selector bindings"
     );
 
-    let matching = resolved_contracts
+    let minimum_ptx = resolved_contracts
+        .iter()
+        .flat_map(|contract| contract.alternatives.iter())
+        .map(|alternative| alternative.minimum_ptx)
+        .min()
+        .unwrap();
+    Ok(CatalogTargetRequirement {
+        minimum_ptx,
+        hardware: CatalogHardwareTarget::TargetMatrix {
+            contracts: resolved_contracts,
+        },
+    })
+}
+
+/// Resolve one fixed selector tuple from a closed target matrix.
+pub(crate) fn resolve_target_contract(
+    intrinsic_id: &str,
+    selected: &[TargetSelectorBinding],
+    contracts: &[TargetContract],
+) -> Result<CatalogTargetRequirement> {
+    validate_selector_bindings(intrinsic_id, "selected target selectors", selected)?;
+    let resolved = resolve_target_contracts(intrinsic_id, contracts)?;
+    let CatalogHardwareTarget::TargetMatrix { contracts } = resolved.hardware else {
+        unreachable!("target-contract resolution always returns a matrix")
+    };
+
+    let matching = contracts
         .into_iter()
-        .filter(|(selectors, _)| selectors == selected)
+        .filter(|contract| contract.selectors == selected)
         .collect::<Vec<_>>();
     ensure!(
         matching.len() == 1,
         "{intrinsic_id} selected target selectors {:?} must match exactly one reviewed contract",
         selected
     );
-    let (selectors, alternatives) = matching.into_iter().next().unwrap();
-    let minimum_ptx = alternatives
+    let contract = matching.into_iter().next().unwrap();
+    let minimum_ptx = contract
+        .alternatives
         .iter()
         .map(|alternative| alternative.minimum_ptx)
         .min()
@@ -22123,8 +23282,7 @@ pub(crate) fn resolve_target_contract(
     Ok(CatalogTargetRequirement {
         minimum_ptx,
         hardware: CatalogHardwareTarget::TargetMatrix {
-            selectors,
-            alternatives,
+            contracts: vec![contract],
         },
     })
 }
@@ -22297,6 +23455,16 @@ fn backend_target_requirement(
     policy: &OverlayIntrinsic,
     lowering: &crate::model::OverlayBackendLowering,
 ) -> Result<CatalogTargetRequirement> {
+    if let Some(mma) = policy
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref())
+    {
+        return Ok(match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => mma.llvm_target.clone(),
+            IntrinsicBackend::LibNvvm => mma.libnvvm_target.clone(),
+        });
+    }
     let minimum_ptx = lowering
         .minimum_ptx
         .as_deref()
@@ -23285,7 +24453,12 @@ fn validate_selected_stage_targets(
             .is_some_and(|variant| variant.shape != LdmatrixShape::M8n8);
     let f8f6f4_mma = is_f8f6f4_mma_target_matrix_policy(policy);
     let paired_alternatives = match &requirement.hardware {
-        CatalogHardwareTarget::TargetMatrix { alternatives, .. } => Some(alternatives.as_slice()),
+        CatalogHardwareTarget::TargetMatrix { contracts } => Some(
+            contracts
+                .iter()
+                .flat_map(|contract| contract.alternatives.iter().cloned())
+                .collect::<Vec<_>>(),
+        ),
         _ => None,
     };
     let target_matrix_evidence = blackwell_ldmatrix || f8f6f4_mma || paired_alternatives.is_some();
@@ -23330,11 +24503,15 @@ fn validate_selected_stage_targets(
         CatalogHardwareTarget::AnyOf { alternatives } if !alternatives.is_empty() => {
             alternatives.clone()
         }
-        CatalogHardwareTarget::TargetMatrix { alternatives, .. } if !alternatives.is_empty() => {
-            alternatives
+        CatalogHardwareTarget::TargetMatrix { contracts } if !contracts.is_empty() => {
+            let mut alternatives = contracts
                 .iter()
+                .flat_map(|contract| contract.alternatives.iter())
                 .map(|alternative| alternative.hardware)
-                .collect()
+                .collect::<Vec<_>>();
+            alternatives.sort_by_key(|hardware| target_hardware_sort_key(*hardware));
+            alternatives.dedup();
+            alternatives
         }
         _ => bail!(
             "{} selected backend stages require a hardware target",
@@ -23349,7 +24526,7 @@ fn validate_selected_stage_targets(
             terminal_kind,
             &expected_hardware,
             expected_ptx,
-            paired_alternatives,
+            paired_alternatives.as_deref(),
         );
     }
     let backend = successful_stage(
@@ -24052,6 +25229,18 @@ fn materialize_record(
     backend_lowerings: Vec<CatalogBackendLowering>,
     intrinsic_abi: u32,
 ) -> Result<CatalogIntrinsic> {
+    let native_target = if let Some(mma) = policy
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.mma.as_ref())
+    {
+        mma.llvm_target.clone()
+    } else {
+        CatalogTargetRequirement {
+            minimum_ptx: parse_ptx_version(&policy.minimum_ptx, &policy.id)?,
+            hardware: parse_hardware_target(policy)?,
+        }
+    };
     let llvm = if let Some(declaration) = declaration {
         Some(CatalogLlvm {
             symbol: policy
@@ -24123,8 +25312,8 @@ fn materialize_record(
             execution_scope: policy.execution_scope.clone(),
         },
         target: CatalogTarget {
-            minimum_ptx: parse_ptx_version(&policy.minimum_ptx, &policy.id)?,
-            hardware: parse_hardware_target(policy)?,
+            minimum_ptx: native_target.minimum_ptx,
+            hardware: native_target.hardware,
             ptx_result: policy.ptx_result.clone(),
             targets: policy.targets.clone(),
             ptx_isa_version: policy.ptx_isa_version.clone(),
@@ -25738,7 +26927,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 57);
-        assert_eq!(overlay.intrinsics.len(), 762);
+        assert_eq!(overlay.intrinsics.len(), 781);
         assert_eq!(
             overlay
                 .intrinsics
@@ -26213,6 +27402,10 @@ mod tests {
             offset_libnvvm_evidence_profile: None,
             control_llvm_evidence_profile: Some("llvm-tcgen05-control-test".into()),
             control_libnvvm_evidence_profile: Some("libnvvm-tcgen05-control-test".into()),
+            mma_llvm_evidence_profile: None,
+            mma_libnvvm_evidence_profile: None,
+            mma_llvm_target_contracts: vec![],
+            mma_libnvvm_target_contracts: vec![],
             runtime_validation: RuntimeValidation::Unexecuted,
             variants: operations
                 .into_iter()
@@ -26226,6 +27419,7 @@ mod tests {
             st_variants: vec![],
             ld_offset_variants: vec![],
             st_offset_variants: vec![],
+            mma_variants: vec![],
         }
     }
 
@@ -26342,6 +27536,32 @@ mod tests {
                     unpack16,
                 },
             )
+            .collect();
+        admission
+    }
+
+    fn test_tcgen05_mma_admission() -> Tcgen05Admission {
+        let mut admission = test_tcgen05_admission();
+        admission.mma_llvm_evidence_profile = Some("llvm-tcgen05-mma-test".into());
+        admission.mma_libnvvm_evidence_profile = Some("libnvvm-tcgen05-mma-test".into());
+        admission.mma_llvm_target_contracts =
+            expected_tcgen05_mma_target_contracts(IntrinsicBackend::LlvmNvptx);
+        admission.mma_libnvvm_target_contracts =
+            expected_tcgen05_mma_target_contracts(IntrinsicBackend::LibNvvm);
+        admission.mma_variants = TCGEN05_MMA_FORMS
+            .into_iter()
+            .map(|form| (form, None))
+            .chain(
+                TCGEN05_MMA_ALIASES
+                    .into_iter()
+                    .map(|alias| (Tcgen05MmaForm::WsTensor, Some(alias))),
+            )
+            .enumerate()
+            .map(|(index, (form, alias))| Tcgen05MmaAdmissionVariant {
+                abi_id: format!("i{:04}", 763 + index),
+                form,
+                alias,
+            })
             .collect();
         admission
     }
@@ -28776,6 +29996,274 @@ scope = "system"
     }
 
     #[test]
+    fn compact_tcgen05_mma_admission_closes_sources_selectors_and_targets() {
+        let records = expand_tcgen05_admission(&test_tcgen05_mma_admission()).unwrap();
+        assert_eq!(records.len(), 46);
+        let mma = &records[27..];
+        assert_eq!(mma.len(), 19);
+        assert_eq!(
+            mma.iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0763", "tcgen05_mma_shared"),
+                ("i0764", "tcgen05_mma_tensor"),
+                ("i0765", "tcgen05_mma_tensor_ashift"),
+                ("i0766", "tcgen05_mma_sp_shared"),
+                ("i0767", "tcgen05_mma_sp_tensor"),
+                ("i0768", "tcgen05_mma_sp_tensor_ashift"),
+                ("i0769", "tcgen05_mma_ws_shared"),
+                ("i0770", "tcgen05_mma_ws_shared_zero_col_mask"),
+                ("i0771", "tcgen05_mma_ws_sp_shared"),
+                ("i0772", "tcgen05_mma_ws_sp_shared_zero_col_mask"),
+                ("i0773", "tcgen05_mma_ws_sp_tensor"),
+                ("i0774", "tcgen05_mma_ws_sp_tensor_zero_col_mask"),
+                ("i0775", "tcgen05_mma_ws_tensor"),
+                ("i0776", "tcgen05_mma_ws_tensor_zero_col_mask"),
+                ("i0777", "tcgen05_mma_ws_e4m3"),
+                ("i0778", "tcgen05_mma_ws_e5m2"),
+                ("i0779", "tcgen05_mma_ws_e2m3"),
+                ("i0780", "tcgen05_mma_ws_e3m2"),
+                ("i0781", "tcgen05_mma_ws_e2m1"),
+            ]
+        );
+        assert!(mma.iter().all(|record| {
+            record.dialect_op_type == TCGEN05_MMA_DIALECT_OP_TYPE
+                && record.dialect_op_name == TCGEN05_MMA_DIALECT_OP_NAME
+        }));
+        assert_eq!(
+            [
+                Tcgen05MmaBUsage::Discard,
+                Tcgen05MmaBUsage::LastUse,
+                Tcgen05MmaBUsage::Fill,
+                Tcgen05MmaBUsage::Use,
+            ]
+            .map(Tcgen05MmaBUsage::selector_value),
+            [0, 1, 2, 3]
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        for record in mma {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+            assert_eq!(record.memory, "read_write");
+            assert!(record.convergent);
+            assert_eq!(record.execution_scope, "thread");
+            assert!(!record.safe);
+        }
+
+        let canonical = &mma[..14];
+        assert_eq!(
+            canonical
+                .iter()
+                .map(|record| record.source_record.as_deref().unwrap())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            14
+        );
+        let selected_count = |record: &OverlayIntrinsic| {
+            declarations[record.source_record.as_deref().unwrap()]
+                .selections
+                .iter()
+                .filter(|selection| selection_matches_policy(record, selection))
+                .count()
+        };
+        let newly_matched = canonical
+            .iter()
+            .filter(|record| record.id != "tcgen05_mma_ws_tensor")
+            .map(selected_count)
+            .sum::<usize>();
+        assert_eq!(newly_matched, 608);
+        assert_eq!(selected_count(&canonical[12]), 64);
+        assert_eq!(canonical.iter().map(selected_count).sum::<usize>(), 672);
+        assert_eq!(mma[14..].iter().map(selected_count).sum::<usize>(), 5);
+        assert_eq!(
+            [2, 5]
+                .into_iter()
+                .map(|index| {
+                    declarations[canonical[index].source_record.as_deref().unwrap()]
+                        .selections
+                        .len()
+                        - selected_count(&canonical[index])
+                })
+                .sum::<usize>(),
+            32
+        );
+
+        for record in canonical {
+            assert_eq!(
+                record.compatibility_rust_paths,
+                [format!("cuda_device::tcgen05::__{}", record.id)]
+            );
+            assert_eq!(
+                &record.rust_arguments[record.rust_arguments.len() - 3..],
+                ["u32", "u32", "u32"]
+            );
+            let contract = record.tcgen05.as_ref().unwrap().mma.as_ref().unwrap();
+            let CatalogHardwareTarget::TargetMatrix { contracts } = &contract.llvm_target.hardware
+            else {
+                panic!("generic LLVM tcgen05 MMA target must be a matrix")
+            };
+            assert_eq!(contracts.len(), 4);
+            assert_eq!(
+                contracts
+                    .iter()
+                    .map(|contract| contract.alternatives.len())
+                    .collect::<Vec<_>>(),
+                [8, 8, 3, 8]
+            );
+            let CatalogHardwareTarget::TargetMatrix { contracts } =
+                &contract.libnvvm_target.hardware
+            else {
+                panic!("generic libNVVM tcgen05 MMA target must be a matrix")
+            };
+            assert_eq!(contracts.len(), 4);
+            assert_eq!(
+                contracts
+                    .iter()
+                    .map(|contract| contract.alternatives.len())
+                    .collect::<Vec<_>>(),
+                [6, 6, 2, 6]
+            );
+        }
+        for record in &mma[14..] {
+            assert_eq!(
+                record.compatibility_rust_paths,
+                [format!("cuda_device::tcgen05::{}", record.id)]
+            );
+            assert_eq!(
+                record.rust_arguments,
+                ["u32", "u32", "u64", "u64", "u32", "bool"]
+            );
+            assert_eq!(record.dialect_operands, ["i32", "i32", "i64", "i32", "i1"]);
+            let contract = record.tcgen05.as_ref().unwrap().mma.as_ref().unwrap();
+            assert_eq!(
+                contract.fixed_selectors,
+                Some(Tcgen05MmaFixedSelectors {
+                    kind: Tcgen05MmaKind::F8f6f4,
+                    b_buffer: 0,
+                    b_usage: Tcgen05MmaBUsage::Discard,
+                })
+            );
+            let CatalogHardwareTarget::TargetMatrix { contracts } = &contract.llvm_target.hardware
+            else {
+                panic!("fixed LLVM tcgen05 MMA target must be a matrix")
+            };
+            assert_eq!(contracts.len(), 1);
+            assert_eq!(contracts[0].selectors[0].value, "f8f6f4");
+        }
+
+        for legacy in [
+            "tcgen05_mma_ws_f16",
+            "tcgen05_mma_ws_bf16",
+            "tcgen05_mma_ws_tf32",
+        ] {
+            let old = &records[..27]
+                .iter()
+                .find(|record| record.id == legacy)
+                .unwrap();
+            assert!(old.tcgen05.as_ref().unwrap().mma.is_none());
+            assert!(old.abi_id.starts_with("i035"));
+        }
+    }
+
+    #[test]
+    fn compact_tcgen05_mma_admission_fails_closed_on_drift() {
+        let mut missing = test_tcgen05_mma_admission();
+        missing.mma_variants.pop();
+        assert!(expand_tcgen05_admission(&missing).is_err());
+
+        let mut reordered = test_tcgen05_mma_admission();
+        reordered.mma_variants.swap(0, 1);
+        assert!(expand_tcgen05_admission(&reordered).is_err());
+
+        let mut wrong_abi = test_tcgen05_mma_admission();
+        wrong_abi.mma_variants[0].abi_id = "i9999".into();
+        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+
+        let mut missing_target = test_tcgen05_mma_admission();
+        missing_target.mma_llvm_target_contracts[0]
+            .alternatives
+            .pop();
+        assert!(expand_tcgen05_admission(&missing_target).is_err());
+
+        let mut broadened_i8 = test_tcgen05_mma_admission();
+        broadened_i8.mma_libnvvm_target_contracts[2]
+            .alternatives
+            .insert(
+                1,
+                crate::model::TargetContractAlternative {
+                    target: "sm_103a".into(),
+                    minimum_ptx: "8.8".into(),
+                },
+            );
+        assert!(expand_tcgen05_admission(&broadened_i8).is_err());
+
+        let records = expand_tcgen05_admission(&test_tcgen05_mma_admission()).unwrap();
+        let record = records
+            .iter()
+            .find(|record| record.id == "tcgen05_mma_tensor_ashift")
+            .unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declaration = imported
+            .intrinsics
+            .iter()
+            .find(|declaration| {
+                Some(declaration.source_record.as_str()) == record.source_record.as_deref()
+            })
+            .unwrap();
+
+        let mut wrong_layout = record.clone();
+        let mma = wrong_layout.tcgen05.as_mut().unwrap().mma.as_mut().unwrap();
+        mma.selector_layout = Tcgen05MmaSelectorLayout::Base {
+            kind_argument: 6,
+            cta_group_argument: 5,
+            collector_a_argument: 7,
+            collector_a_upper_exclusive: 2,
+        };
+        assert!(validate_imported_policy(&wrong_layout, declaration).is_err());
+
+        let mut wrong_properties = declaration.clone();
+        wrong_properties.properties.pop();
+        assert!(validate_imported_policy(record, &wrong_properties).is_err());
+
+        let mut wrong_range = declaration.clone();
+        let range = wrong_range
+            .properties
+            .iter_mut()
+            .find(|property| property.as_str() == "Range<arg7,0,2>")
+            .unwrap();
+        *range = "Range<arg7,0,4>".into();
+        assert!(validate_imported_policy(record, &wrong_range).is_err());
+
+        let mut wrong_predicate = declaration.clone();
+        wrong_predicate.selections[0].predicates = vec!["hasSM100a".into()];
+        assert!(validate_imported_policy(record, &wrong_predicate).is_err());
+
+        let mut wrong_memory = record.clone();
+        wrong_memory.memory = "write".into();
+        assert!(validate_imported_policy(&wrong_memory, declaration).is_err());
+
+        let mut wrong_convergence = record.clone();
+        wrong_convergence.convergent = false;
+        assert!(validate_imported_policy(&wrong_convergence, declaration).is_err());
+
+        let mut split_dialect_op = record.clone();
+        split_dialect_op.dialect_op_type = "Tcgen05MmaTensorAshiftOp".into();
+        split_dialect_op.dialect_op_name = "nvvm.tcgen05_mma_tensor_ashift".into();
+        assert!(validate_imported_policy(&split_dialect_op, declaration).is_err());
+    }
+
+    #[test]
     fn compact_tcgen05_copy_admission_matches_all_llvm_records_and_fails_closed() {
         let records = expand_tcgen05_admission(&test_tcgen05_cp_admission()).unwrap();
         assert_eq!(records.len(), 61);
@@ -29475,6 +30963,22 @@ scope = "system"
             .unwrap_err()
             .to_string()
             .contains("requires overlay shard schema 56")
+        );
+        validate_overlay_shard_schema_with_max(
+            &shard(TCGEN05_MMA_SHARD_SCHEMA, test_tcgen05_mma_admission()),
+            path,
+            TCGEN05_MMA_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(TCGEN05_MMA_SHARD_SCHEMA - 1, test_tcgen05_mma_admission(),),
+                path,
+                TCGEN05_MMA_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 57")
         );
     }
 
@@ -33632,51 +35136,65 @@ scope = "system"
             ),
             target_contract(
                 vec![selector("kind", "i8")],
-                &[("sm_100a", "8.8"), ("sm_103a", "8.8"), ("sm_110a", "9.0")],
+                &[("sm_100a", "8.6"), ("sm_101a", "8.6"), ("sm_110a", "9.0")],
             ),
         ];
+        let full_requirement = resolve_target_contracts("tcgen05_mma", &contracts).unwrap();
+        assert_eq!(full_requirement.minimum_ptx.encoded(), 86);
+        let CatalogHardwareTarget::TargetMatrix {
+            contracts: full_contracts,
+        } = &full_requirement.hardware
+        else {
+            panic!("full target contracts must remain a matrix")
+        };
+        assert_eq!(full_contracts.len(), 2);
+        assert_eq!(full_contracts[0].selectors, [selector("kind", "f16")]);
+        assert_eq!(full_contracts[1].selectors, [selector("kind", "i8")]);
+
         let requirement =
             resolve_target_contract("tcgen05_mma", &[selector("kind", "i8")], &contracts).unwrap();
 
-        assert_eq!(requirement.minimum_ptx.encoded(), 88);
+        assert_eq!(requirement.minimum_ptx.encoded(), 86);
         assert_eq!(
             requirement.hardware,
             CatalogHardwareTarget::TargetMatrix {
-                selectors: vec![selector("kind", "i8")],
-                alternatives: vec![
-                    CatalogTargetAlternative {
-                        minimum_ptx: "8.8".parse().unwrap(),
-                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
-                    },
-                    CatalogTargetAlternative {
-                        minimum_ptx: "8.8".parse().unwrap(),
-                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
-                    },
-                    CatalogTargetAlternative {
-                        minimum_ptx: "9.0".parse().unwrap(),
-                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
-                    },
-                ],
+                contracts: vec![CatalogTargetContract {
+                    selectors: vec![selector("kind", "i8")],
+                    alternatives: vec![
+                        CatalogTargetAlternative {
+                            minimum_ptx: "8.6".parse().unwrap(),
+                            hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                        },
+                        CatalogTargetAlternative {
+                            minimum_ptx: "8.6".parse().unwrap(),
+                            hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                        },
+                        CatalogTargetAlternative {
+                            minimum_ptx: "9.0".parse().unwrap(),
+                            hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                        },
+                    ],
+                }],
             }
         );
 
         let mut policy = policy();
         policy.id = "tcgen05_mma".into();
-        assert!(validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx86").is_err());
-        validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx88").unwrap();
+        validate_candidate_target(&policy, &requirement, "sm_100a", "+ptx86").unwrap();
+        assert!(validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx88").is_err());
         assert!(validate_candidate_target(&policy, &requirement, "sm_110a", "+ptx88").is_err());
         validate_candidate_target(&policy, &requirement, "sm_110a", "+ptx90").unwrap();
 
         let libnvvm = [target_contract(
             vec![selector("kind", "i8")],
-            &[("sm_100a", "8.8"), ("sm_110a", "9.0")],
+            &[("sm_100a", "8.6"), ("sm_110a", "9.0")],
         )];
         let libnvvm_requirement =
             resolve_target_contract("tcgen05_mma", &[selector("kind", "i8")], &libnvvm).unwrap();
         assert_ne!(requirement, libnvvm_requirement);
-        validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx88").unwrap();
+        validate_candidate_target(&policy, &requirement, "sm_101a", "+ptx86").unwrap();
         assert!(
-            validate_candidate_target(&policy, &libnvvm_requirement, "sm_103a", "+ptx88").is_err()
+            validate_candidate_target(&policy, &libnvvm_requirement, "sm_101a", "+ptx86").is_err()
         );
     }
 

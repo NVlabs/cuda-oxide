@@ -5341,3 +5341,136 @@ status = "active"
 catalog_id = "tcgen05_shift_down_cg2"
 operation_key = "tcgen05.shift.down.cg2"
 raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0763"
+status = "active"
+catalog_id = "tcgen05_mma_shared"
+operation_key = "tcgen05.mma.shared"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0764"
+status = "active"
+catalog_id = "tcgen05_mma_tensor"
+operation_key = "tcgen05.mma.tensor"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0765"
+status = "active"
+catalog_id = "tcgen05_mma_tensor_ashift"
+operation_key = "tcgen05.mma.tensor.ashift"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0766"
+status = "active"
+catalog_id = "tcgen05_mma_sp_shared"
+operation_key = "tcgen05.mma.sp.shared"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0767"
+status = "active"
+catalog_id = "tcgen05_mma_sp_tensor"
+operation_key = "tcgen05.mma.sp.tensor"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0768"
+status = "active"
+catalog_id = "tcgen05_mma_sp_tensor_ashift"
+operation_key = "tcgen05.mma.sp.tensor.ashift"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0769"
+status = "active"
+catalog_id = "tcgen05_mma_ws_shared"
+operation_key = "tcgen05.mma.ws.shared"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0770"
+status = "active"
+catalog_id = "tcgen05_mma_ws_shared_zero_col_mask"
+operation_key = "tcgen05.mma.ws.shared.zero.col.mask"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool", "u64", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0771"
+status = "active"
+catalog_id = "tcgen05_mma_ws_sp_shared"
+operation_key = "tcgen05.mma.ws.sp.shared"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0772"
+status = "active"
+catalog_id = "tcgen05_mma_ws_sp_shared_zero_col_mask"
+operation_key = "tcgen05.mma.ws.sp.shared.zero.col.mask"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool", "u32", "u64", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0773"
+status = "active"
+catalog_id = "tcgen05_mma_ws_sp_tensor"
+operation_key = "tcgen05.mma.ws.sp.tensor"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0774"
+status = "active"
+catalog_id = "tcgen05_mma_ws_sp_tensor_zero_col_mask"
+operation_key = "tcgen05.mma.ws.sp.tensor.zero.col.mask"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u64", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0775"
+status = "active"
+catalog_id = "tcgen05_mma_ws_tensor"
+operation_key = "tcgen05.mma.ws.tensor"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0776"
+status = "active"
+catalog_id = "tcgen05_mma_ws_tensor_zero_col_mask"
+operation_key = "tcgen05.mma.ws.tensor.zero.col.mask"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u32", "bool", "u64", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0777"
+status = "active"
+catalog_id = "tcgen05_mma_ws_e4m3"
+operation_key = "tcgen05.mma.ws.tensor.e4m3"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0778"
+status = "active"
+catalog_id = "tcgen05_mma_ws_e5m2"
+operation_key = "tcgen05.mma.ws.tensor.e5m2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0779"
+status = "active"
+catalog_id = "tcgen05_mma_ws_e2m3"
+operation_key = "tcgen05.mma.ws.tensor.e2m3"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0780"
+status = "active"
+catalog_id = "tcgen05_mma_ws_e3m2"
+operation_key = "tcgen05.mma.ws.tensor.e3m2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0781"
+status = "active"
+catalog_id = "tcgen05_mma_ws_e2m1"
+operation_key = "tcgen05.mma.ws.tensor.e2m1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
