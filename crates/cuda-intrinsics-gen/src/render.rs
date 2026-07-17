@@ -27,10 +27,11 @@ use crate::model::{
     SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout,
     SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
     SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
-    StmatrixLayout, StmatrixMultiplicity, Tcgen05Adapter, Tcgen05Operation, Tcgen05SourceContract,
-    TmaAdapter, TmaOperation, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter,
-    WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
-    WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode, WgmmaControlParticipation,
+    StmatrixLayout, StmatrixMultiplicity, Tcgen05Adapter, Tcgen05CpGroup, Tcgen05CpMember,
+    Tcgen05Operation, Tcgen05SourceContract, TmaAdapter, TmaOperation, VoteAdapter, VoteMode,
+    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode,
+    WgmmaControlParticipation,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -2043,9 +2044,50 @@ fn tcgen05_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .filter(|record| record.family == "tcgen05")
 }
 
+fn tcgen05_cp_ptx_suffix(member: Tcgen05CpMember) -> &'static str {
+    use Tcgen05CpMember::*;
+    match member {
+        M128x128bB4x16P64 => "128x128b.b8x16.b4x16_p64",
+        M128x128bB6x16P32 => "128x128b.b8x16.b6x16_p32",
+        M128x128b => "128x128b",
+        M128x256bB4x16P64 => "128x256b.b8x16.b4x16_p64",
+        M128x256bB6x16P32 => "128x256b.b8x16.b6x16_p32",
+        M32x128bWarpx4B4x16P64 => "32x128b.warpx4.b8x16.b4x16_p64",
+        M32x128bWarpx4B6x16P32 => "32x128b.warpx4.b8x16.b6x16_p32",
+        M32x128bWarpx4 => "32x128b.warpx4",
+        M4x256bB4x16P64 => "4x256b.b8x16.b4x16_p64",
+        M4x256bB6x16P32 => "4x256b.b8x16.b6x16_p32",
+        M4x256b => "4x256b",
+        M64x128bWarpx2Pair0123B4x16P64 => "64x128b.warpx2::01_23.b8x16.b4x16_p64",
+        M64x128bWarpx2Pair0123B6x16P32 => "64x128b.warpx2::01_23.b8x16.b6x16_p32",
+        M64x128bWarpx2Pair0123 => "64x128b.warpx2::01_23",
+        M64x128bWarpx2Pair0213B4x16P64 => "64x128b.warpx2::02_13.b8x16.b4x16_p64",
+        M64x128bWarpx2Pair0213B6x16P32 => "64x128b.warpx2::02_13.b8x16.b6x16_p32",
+        M64x128bWarpx2Pair0213 => "64x128b.warpx2::02_13",
+    }
+}
+
 fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
     let Some(tcgen05) = &record.tcgen05 else {
         return false;
+    };
+    let [llvm_route, libnvvm_route] = record.backend_lowerings.as_slice() else {
+        return false;
+    };
+    let llvm_hardware = CatalogHardwareTarget::AnyOf {
+        alternatives: vec![
+            CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+            CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+            CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+            CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+        ],
+    };
+    let libnvvm_hardware = CatalogHardwareTarget::AnyOf {
+        alternatives: vec![
+            CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+            CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+            CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+        ],
     };
     if record.rust.module != "tcgen05"
         || record.rust.must_use
@@ -2053,14 +2095,55 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
         || !record.semantics.convergent
         || record.target.minimum_ptx.to_string() != "8.6"
         || record.target.targets != "sm_100a|sm_101a|sm_103a|sm_110a"
-        || record.backend_lowerings.len() != 2
-        || !record
-            .backend_lowerings
-            .iter()
-            .all(|route| route.mechanism == BackendLoweringMechanism::InlinePtx)
+        || llvm_route.backend != IntrinsicBackend::LlvmNvptx
+        || llvm_route.mechanism != BackendLoweringMechanism::InlinePtx
+        || llvm_route.target.minimum_ptx.to_string() != "8.6"
+        || llvm_route.target.hardware != llvm_hardware
+        || libnvvm_route.backend != IntrinsicBackend::LibNvvm
+        || libnvvm_route.mechanism != BackendLoweringMechanism::InlinePtx
+        || libnvvm_route.target.minimum_ptx.to_string() != "8.6"
+        || libnvvm_route.target.hardware != libnvvm_hardware
         || tcgen05.runtime_validation != RuntimeValidation::Unexecuted
     {
         return false;
+    }
+    match tcgen05.cp {
+        Some(cp) => {
+            let expected_operation = match cp.group {
+                Tcgen05CpGroup::Cg1 => Tcgen05Operation::CpSmemToTmem,
+                Tcgen05CpGroup::Cg2 => Tcgen05Operation::CpSmemToTmemCg2,
+            };
+            let group = match cp.group {
+                Tcgen05CpGroup::Cg1 => "cta_group::1",
+                Tcgen05CpGroup::Cg2 => "cta_group::2",
+            };
+            let modifiers = std::iter::once("cp")
+                .chain(std::iter::once(group))
+                .chain(tcgen05_cp_ptx_suffix(cp.member).split('.'))
+                .collect::<Vec<_>>();
+            if tcgen05.operation != expected_operation
+                || record.semantics.pure
+                || record.semantics.memory != "read_write"
+                || record.expected_ptx.mnemonic != "tcgen05"
+                || record.expected_ptx.modifiers != modifiers
+                || record.expected_ptx.operands
+                    != [
+                        crate::ptx::OperandPattern::Address,
+                        crate::ptx::OperandPattern::Register,
+                    ]
+            {
+                return false;
+            }
+        }
+        None if !matches!(
+            tcgen05.operation,
+            Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2
+        ) => {}
+        None if matches!(
+            record.id.as_str(),
+            "tcgen05_cp_smem_to_tmem" | "tcgen05_cp_smem_to_tmem_cg2"
+        ) => {}
+        None => return false,
     }
     let llvm = llvm(record);
     match (tcgen05.operation, tcgen05.adapter) {
@@ -4282,7 +4365,7 @@ pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
 }
 
 fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 24);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 58);
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
     for record in tcgen05_intrinsics(catalog) {
@@ -8541,7 +8624,7 @@ fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
 }
 
 fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 24);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 58);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         "//! Generated Tensor Core Generation 5 operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
@@ -10944,7 +11027,8 @@ fn special_register_backend_mechanism(
         .mechanism
 }
 
-fn tcgen05_inline_asm(operation: Tcgen05Operation) -> (String, String, Option<usize>) {
+fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usize>) {
+    let operation = record.tcgen05.as_ref().expect("tcgen05 contract").operation;
     match operation {
         Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
             let group = if operation == Tcgen05Operation::AllocCg2 { 2 } else { 1 };
@@ -11034,9 +11118,12 @@ fn tcgen05_inline_asm(operation: Tcgen05Operation) -> (String, String, Option<us
             )
         }
         Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
-            let group = if operation == Tcgen05Operation::CpSmemToTmemCg2 { 2 } else { 1 };
             (
-                format!("tcgen05.cp.cta_group::{group}.128x256b [$0], $1;"),
+                format!(
+                    "{}.{} [$0], $1;",
+                    record.expected_ptx.mnemonic,
+                    record.expected_ptx.modifiers.join(".")
+                ),
                 "r,l,~{memory}".into(),
                 None,
             )
@@ -12597,8 +12684,7 @@ fn convert_generated_tcgen05_load(
         output.push_str("    }\n}\n\n");
     }
     for record in tcgen05_intrinsics(catalog) {
-        let operation = record.tcgen05.as_ref().unwrap().operation;
-        let (template, constraints, result_count) = tcgen05_inline_asm(operation);
+        let (template, constraints, result_count) = tcgen05_inline_asm(record);
         writeln!(
             output,
             "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
@@ -13747,11 +13833,14 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
             )
         }
         Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
-            let group = if operation == Tcgen05Operation::CpSmemToTmemCg2 { "2" } else { "1" };
             (
                 "i32 %tmem, i64 %desc".into(),
                 "void".into(),
-                format!("tcgen05.cp.cta_group::{group}.128x256b [$0], $1;"),
+                format!(
+                    "{}.{} [$0], $1;",
+                    record.expected_ptx.mnemonic,
+                    record.expected_ptx.modifiers.join(".")
+                ),
                 "r,l,~{memory}".into(),
                 "i32 %tmem, i64 %desc".into(),
             )
@@ -13790,7 +13879,7 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
             "i32 %mbar, i16 %mask".into(),
         ),
     };
-    let (lowering_template, lowering_constraints, lowering_results) = tcgen05_inline_asm(operation);
+    let (lowering_template, lowering_constraints, lowering_results) = tcgen05_inline_asm(record);
     assert_eq!(template, lowering_template);
     assert_eq!(constraints, lowering_constraints);
     assert_eq!(result_ty != "void", lowering_results.is_some());
@@ -15931,7 +16020,7 @@ mod tests {
     fn catalog_with_tcgen05() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
-        assert_eq!(tcgen05_intrinsics(&catalog).count(), 24);
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 58);
         catalog
     }
 
@@ -17611,7 +17700,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 577);
+        assert_eq!(catalog.intrinsics.len(), 611);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -18809,11 +18898,28 @@ mod tests {
         assert!(compatibility.contains(
             "pub unsafe fn tcgen05_commit_multicast_cg2(mbar: *mut u64, cta_mask: u16) -> ()"
         ));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_cp_128x128b_b4x16_p64(tmem_addr: u32, smem_desc: u64) -> ()"
+        ));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_cp_64x128b_warpx2_02_13_cg2(tmem_addr: u32, smem_desc: u64) -> ()"
+        ));
         assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
 
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub unsafe fn i0578(_arg0: u32, _arg1: u64) -> ()"));
+        assert!(raw.contains("pub unsafe fn i0611(_arg0: u32, _arg1: u64) -> ()"));
+        let raw_mod = render_raw_mod(&catalog, "test-hash");
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0578 as tcgen05_cp_128x128b_b4x16_p64;"
+        ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0611 as tcgen05_cp_64x128b_warpx2_02_13_cg2;"
+        ));
+
         let dialect = render_dialect_tcgen05(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 24);
-        assert_eq!(dialect.matches("::register(ctx)").count(), 24);
+        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 58);
+        assert_eq!(dialect.matches("::register(ctx)").count(), 58);
         assert!(dialect.contains("NResultsInterface<32>"));
         assert!(dialect.contains("NResultsInterface<4>"));
         assert!(dialect.contains("NOpdsInterface<6>"));
@@ -18831,6 +18937,10 @@ mod tests {
         assert!(!importer.contains("super::tcgen05::emit_"));
         assert!(importer.contains("\"v1:i0343\""));
         assert!(importer.contains("\"v1:i0366\""));
+        assert!(importer.contains("cuda_device::tcgen05::tcgen05_cp_128x128b_b4x16_p64"));
+        assert!(importer.contains("Tcgen05Cp128x128bB4x16P64Op::get_concrete_op_info()"));
+        assert!(importer.contains("\"v1:i0578\""));
+        assert!(importer.contains("\"v1:i0611\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(!lowering.contains("use crate::convert::intrinsics::tcgen05;"));
@@ -18845,6 +18955,15 @@ mod tests {
         assert!(lowering.contains("builtin::types::{FP32Type, IntegerType, Signedness}"));
         assert!(lowering.contains("ops as llvm_ops"));
         assert!(lowering.contains("inserter::Inserter"));
+        assert!(lowering.contains("tcgen05.cp.cta_group::1.128x128b.b8x16.b4x16_p64 [$0], $1;"));
+        assert!(lowering.contains("tcgen05.cp.cta_group::1.32x128b.warpx4 [$0], $1;"));
+        assert!(
+            lowering.contains(
+                "tcgen05.cp.cta_group::2.64x128b.warpx2::01_23.b8x16.b6x16_p32 [$0], $1;"
+            )
+        );
+        assert!(lowering.contains("tcgen05.cp.cta_group::1.64x128b.warpx2::02_13 [$0], $1;"));
+        assert!(lowering.contains("\"r,l,~{memory}\""));
 
         let bf16 = tcgen05_intrinsics(&catalog)
             .find(|record| record.id == "tcgen05_mma_ws_bf16")
@@ -18867,10 +18986,43 @@ mod tests {
         let shared_commit_probe = render_probe(&catalog, shared_commit, "test-hash");
         assert!(shared_commit_probe.contains("one.shared::cluster.b64"));
 
+        for (id, spelling) in [
+            (
+                "tcgen05_cp_128x128b_b4x16_p64",
+                "tcgen05.cp.cta_group::1.128x128b.b8x16.b4x16_p64",
+            ),
+            (
+                "tcgen05_cp_32x128b_warpx4",
+                "tcgen05.cp.cta_group::1.32x128b.warpx4",
+            ),
+            (
+                "tcgen05_cp_64x128b_warpx2_01_23_b6x16_p32_cg2",
+                "tcgen05.cp.cta_group::2.64x128b.warpx2::01_23.b8x16.b6x16_p32",
+            ),
+            (
+                "tcgen05_cp_64x128b_warpx2_02_13",
+                "tcgen05.cp.cta_group::1.64x128b.warpx2::02_13",
+            ),
+        ] {
+            let record = tcgen05_intrinsics(&catalog)
+                .find(|record| record.id == id)
+                .unwrap();
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains(spelling));
+            assert!(probe.contains("asm sideeffect"));
+            assert!(probe.contains("\"r,l,~{memory}\""));
+            assert!(probe.contains("attributes #0 = { convergent }"));
+        }
+
         let target = render_targets(&catalog, "test-hash");
         assert!(target.contains("\"v1:i0343\""));
+        assert!(target.contains("\"v1:i0578\""));
+        assert!(target.contains("\"v1:i0611\""));
         assert!(target.contains(
             "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
+        ));
+        assert!(target.contains(
+            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
         ));
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
@@ -18881,7 +19033,7 @@ mod tests {
             "crates/dialect-nvvm/src/ops/generated/tcgen05.rs"
         )));
 
-        let mut wrong_adapter = catalog;
+        let mut wrong_adapter = catalog.clone();
         wrong_adapter
             .intrinsics
             .iter_mut()
@@ -18892,6 +19044,35 @@ mod tests {
             .unwrap()
             .adapter = Tcgen05Adapter::NoOperands;
         assert!(validate_renderable(&wrong_adapter).is_err());
+
+        let mut wrong_libnvvm_target = catalog.clone();
+        wrong_libnvvm_target
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "tcgen05_cp_128x128b_b4x16_p64")
+            .unwrap()
+            .backend_lowerings[1]
+            .target
+            .hardware = CatalogHardwareTarget::AnyOf {
+            alternatives: vec![
+                CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+            ],
+        };
+        assert!(validate_renderable(&wrong_libnvvm_target).is_err());
+
+        let mut wrong_copy_spelling = catalog;
+        wrong_copy_spelling
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "tcgen05_cp_128x128b_b4x16_p64")
+            .unwrap()
+            .expected_ptx
+            .modifiers
+            .remove(3);
+        assert!(validate_renderable(&wrong_copy_spelling).is_err());
     }
 
     #[test]

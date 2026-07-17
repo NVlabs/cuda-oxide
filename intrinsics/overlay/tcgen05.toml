@@ -1,9 +1,11 @@
-schema = 42
+schema = 52
 family = "tcgen05"
 
 [tcgen05]
 llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05"
+cp_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+cp_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-cp"
 runtime_validation = "unexecuted"
 
 [[tcgen05.variant]]
@@ -101,3 +103,173 @@ operation = "commit_multicast_cg2"
 [[tcgen05.variant]]
 abi_id = "i0366"
 operation = "cp_smem_to_tmem_cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0578"
+member = "128x128b_b4x16_p64"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0579"
+member = "128x128b_b4x16_p64"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0580"
+member = "128x128b_b6x16_p32"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0581"
+member = "128x128b_b6x16_p32"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0582"
+member = "128x128b"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0583"
+member = "128x128b"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0584"
+member = "128x256b_b4x16_p64"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0585"
+member = "128x256b_b4x16_p64"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0586"
+member = "128x256b_b6x16_p32"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0587"
+member = "128x256b_b6x16_p32"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0588"
+member = "32x128b_warpx4_b4x16_p64"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0589"
+member = "32x128b_warpx4_b4x16_p64"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0590"
+member = "32x128b_warpx4_b6x16_p32"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0591"
+member = "32x128b_warpx4_b6x16_p32"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0592"
+member = "32x128b_warpx4"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0593"
+member = "32x128b_warpx4"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0594"
+member = "4x256b_b4x16_p64"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0595"
+member = "4x256b_b4x16_p64"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0596"
+member = "4x256b_b6x16_p32"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0597"
+member = "4x256b_b6x16_p32"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0598"
+member = "4x256b"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0599"
+member = "4x256b"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0600"
+member = "64x128b_warpx2_01_23_b4x16_p64"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0601"
+member = "64x128b_warpx2_01_23_b4x16_p64"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0602"
+member = "64x128b_warpx2_01_23_b6x16_p32"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0603"
+member = "64x128b_warpx2_01_23_b6x16_p32"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0604"
+member = "64x128b_warpx2_01_23"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0605"
+member = "64x128b_warpx2_01_23"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0606"
+member = "64x128b_warpx2_02_13_b4x16_p64"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0607"
+member = "64x128b_warpx2_02_13_b4x16_p64"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0608"
+member = "64x128b_warpx2_02_13_b6x16_p32"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0609"
+member = "64x128b_warpx2_02_13_b6x16_p32"
+group = "cg2"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0610"
+member = "64x128b_warpx2_02_13"
+group = "cg1"
+
+[[tcgen05.cp_variant]]
+abi_id = "i0611"
+member = "64x128b_warpx2_02_13"
+group = "cg2"

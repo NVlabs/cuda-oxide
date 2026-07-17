@@ -47,7 +47,7 @@ WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 classify() {
@@ -651,6 +651,74 @@ run_cargo() {
             if [[ ${VERBOSE} -eq 1 ]]; then
                 printf 'libNVVM route did not emit the expected sparse, dense, standard FP8, conversion, and ldmatrix inline-PTX calls\n'
             fi
+            CARGO_EC=1
+        fi
+        return
+    fi
+
+    # The tcgen05 copy family must pass both compiler routes on its exact target.
+    if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "tcgen05" ]]; then
+        local cp_re='tcgen05\.cp\.cta_group::[12]\.(128x128b|128x256b|32x128b\.warpx4|4x256b|64x128b\.warpx2::(01_23|02_13))(\.b8x16\.(b4x16_p64|b6x16_p32))?[[:space:]]'
+        local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local -a llvm_args=("build" "${ex}" "--arch=sm_100a")
+        local llvm_ec
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide "${llvm_args[@]}" 2>&1 | tee "${log}"
+            llvm_ec=${PIPESTATUS[0]}
+        else
+            cargo oxide "${llvm_args[@]}" >"${log}" 2>&1
+            llvm_ec=$?
+        fi
+        if [[ ${llvm_ec} -ne 0 ]]; then
+            CARGO_EC=${llvm_ec}
+            return
+        fi
+
+        local llvm_cg1 llvm_cg2 llvm_cp_count llvm_cp_unique
+        llvm_cg1="$(awk '/^\.visible \.entry compile_tcgen05_cp_cg1\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_cg2="$(awk '/^\.visible \.entry compile_tcgen05_cp_cg2\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_cp_count="$(grep -oE "${cp_re}" <<<"${llvm_cg1}"$'\n'"${llvm_cg2}" | wc -l)"
+        llvm_cp_unique="$(grep -oE "${cp_re}" <<<"${llvm_cg1}"$'\n'"${llvm_cg2}" | sort -u | wc -l)"
+        if [[ -z "${llvm_cg1}" || -z "${llvm_cg2}" ]] \
+            || ! grep -qx '\.target sm_100a' "${llvm_ptx}" \
+            || [[ $(grep -oE "${cp_re}" <<<"${llvm_cg1}" | wc -l) -ne 18 ]] \
+            || [[ $(grep -oE "${cp_re}" <<<"${llvm_cg2}" | wc -l) -ne 18 ]] \
+            || grep -q 'tcgen05\.cp\.cta_group::2\.' <<<"${llvm_cg1}" \
+            || grep -q 'tcgen05\.cp\.cta_group::1\.' <<<"${llvm_cg2}" \
+            || [[ ${llvm_cp_count} -ne 36 || ${llvm_cp_unique} -ne 36 ]]; then
+            printf 'tcgen05 LLVM route expected 18 copy forms per CTA group and 36 unique total; got %s/%s total/unique\n' \
+                "${llvm_cp_count}" "${llvm_cp_unique}" >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
+        local -a nvvm_args=("emit-ltoir" "${ex}" "--arch=sm_100a")
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide "${nvvm_args[@]}" 2>&1 | tee -a "${log}"
+            CARGO_EC=${PIPESTATUS[0]}
+        else
+            cargo oxide "${nvvm_args[@]}" >>"${log}" 2>&1
+            CARGO_EC=$?
+        fi
+        if [[ ${CARGO_EC} -ne 0 ]]; then
+            return
+        fi
+
+        local nvvm_ll="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local nvvm_cg1 nvvm_cg2 nvvm_cp_count nvvm_cp_unique
+        nvvm_cg1="$(awk '/^define .*@compile_tcgen05_cp_cg1\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_cg2="$(awk '/^define .*@compile_tcgen05_cp_cg2\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_cp_count="$(grep -oE "${cp_re}" <<<"${nvvm_cg1}"$'\n'"${nvvm_cg2}" | wc -l)"
+        nvvm_cp_unique="$(grep -oE "${cp_re}" <<<"${nvvm_cg1}"$'\n'"${nvvm_cg2}" | sort -u | wc -l)"
+        if [[ -z "${nvvm_cg1}" || -z "${nvvm_cg2}" ]] \
+            || [[ $(grep -oE "${cp_re}" <<<"${nvvm_cg1}" | wc -l) -ne 18 ]] \
+            || [[ $(grep -oE "${cp_re}" <<<"${nvvm_cg2}" | wc -l) -ne 18 ]] \
+            || grep -q 'tcgen05\.cp\.cta_group::2\.' <<<"${nvvm_cg1}" \
+            || grep -q 'tcgen05\.cp\.cta_group::1\.' <<<"${nvvm_cg2}" \
+            || [[ ${nvvm_cp_count} -ne 36 || ${nvvm_cp_unique} -ne 36 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.cp' "${nvvm_ll}"; then
+            printf 'tcgen05 libNVVM route expected 18 inline copy forms per CTA group and 36 unique total; got %s/%s total/unique\n' \
+                "${nvvm_cp_count}" "${nvvm_cp_unique}" >>"${log}"
             CARGO_EC=1
         fi
         return

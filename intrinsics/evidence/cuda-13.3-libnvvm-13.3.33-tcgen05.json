@@ -31,7 +31,7 @@
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
-          "detail": "CUDA 13.3 libNVVM verified the combined module and retained all 24 exact tcgen05 instructions through LTOIR and linked PTX. LTOIR SHA-256 was 234ddb423fd986e4ac7df3c50c265734fe851f8fcd3fc97827a5a70f7c1f56b3 for compute_100a, ca5840112666fac59bde59b8a7777f66bc864e5a8e2832a122b458ce38485f50 for compute_103a, and 3545a605caea9c50008d7ecb8ab1c41f7ffeea129e791baf79eef522608f33bf for compute_110a. Linked PTX SHA-256 was 18b127dd78c7a7ed3ca0b08a1e24d73c0ca32e2d29d51c726ddbde71f60eb7a9, 7b8944889d6d4ee5ce99639ce869f841437ef9b181f4449eb402c9004844758b, and 06431b22f61484cf3b51e7e2090acd747f4a515a219cbf53bdec284797a1729c. The BF16 public route intentionally emitted PTX kind::f16 and no kind::bf16."
+          "detail": "CUDA 13.3 libNVVM verified the combined module and retained all 24 exact tcgen05 instructions through LTOIR and linked PTX. LTOIR SHA-256 was 234ddb423fd986e4ac7df3c50c265734fe851f8fcd3fc97827a5a70f7c1f56b3 for compute_100a, ca5840112666fac59bde59b8a7777f66bc864e5a8e2832a122b458ce38485f50 for compute_103a, and 3545a605caea9c50008d7ecb8ab1c41f7ffeea129e791baf79eef522608f33bf for compute_110a. Linked PTX SHA-256 was 18b127dd78c7a7ed3ca0b08a1e24d73c0ca32e2d29d51c726ddbde71f60eb7a9, 7b8944889d6d4ee5ce99639ce869f841437ef9b181f4449eb402c9004844758b, and 06431b22f61484cf3b51e7e2090acd747f4a515a219cbf53bdec284797a1729c. A direct compute_101a probe failed before code generation with NVVM_ERROR_INVALID_INPUT, so this backend route excludes sm_101a. The BF16 public route intentionally emitted PTX kind::f16 and no kind::bf16."
         },
         {
           "targets": [

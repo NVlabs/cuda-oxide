@@ -1599,6 +1599,71 @@ mod tests {
     }
 
     #[test]
+    fn generated_tcgen05_targets_preserve_the_backend_split() {
+        use crate::generated_intrinsic_targets::{
+            GENERATED_INTRINSIC_TARGETS, GeneratedIntrinsicBackend,
+        };
+
+        let targets = GENERATED_INTRINSIC_TARGETS
+            .iter()
+            .filter(|target| target.id.starts_with("tcgen05_"))
+            .collect::<Vec<_>>();
+        assert_eq!(targets.len(), 58);
+
+        for target in targets {
+            let llvm = GeneratedModuleRequirements::from_targets(vec![target])
+                .for_backend(GeneratedIntrinsicBackend::LlvmNvptx);
+            let libnvvm = GeneratedModuleRequirements::from_targets(vec![target])
+                .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+
+            assert_eq!(
+                generated_ptx_isa_requirement(&llvm).unwrap(),
+                PtxIsaRequirement::Ptx86,
+                "{}",
+                target.id
+            );
+            assert_eq!(
+                generated_ptx_isa_requirement(&libnvvm).unwrap(),
+                PtxIsaRequirement::Ptx86,
+                "{}",
+                target.id
+            );
+            for arch in ["sm_100a", "sm_103a", "sm_110a"] {
+                assert!(
+                    generated_target_satisfied(arch, &llvm),
+                    "{} {arch}",
+                    target.id
+                );
+                assert!(
+                    generated_target_satisfied(arch, &libnvvm),
+                    "{} {arch}",
+                    target.id
+                );
+            }
+            assert!(
+                generated_target_satisfied("sm_101a", &llvm),
+                "{}",
+                target.id
+            );
+            assert!(
+                !generated_target_satisfied("sm_101a", &libnvvm),
+                "{}",
+                target.id
+            );
+            assert!(
+                !generated_target_satisfied("sm_120a", &llvm),
+                "{}",
+                target.id
+            );
+            assert!(
+                !generated_target_satisfied("sm_120a", &libnvvm),
+                "{}",
+                target.id
+            );
+        }
+    }
+
+    #[test]
     fn generated_packed_conversion_floors_require_ampere() {
         use crate::generated_intrinsic_targets::{
             GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,

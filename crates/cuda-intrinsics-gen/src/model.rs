@@ -510,9 +510,15 @@ pub struct TmaAdmissionVariant {
 pub struct Tcgen05Admission {
     pub llvm_evidence_profile: String,
     pub libnvvm_evidence_profile: String,
+    #[serde(default)]
+    pub cp_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub cp_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<Tcgen05AdmissionVariant>,
+    #[serde(rename = "cp_variant", default)]
+    pub cp_variants: Vec<Tcgen05CpAdmissionVariant>,
 }
 
 /// One reviewed tcgen05 operation and its reserved ABI ID.
@@ -521,6 +527,15 @@ pub struct Tcgen05Admission {
 pub struct Tcgen05AdmissionVariant {
     pub abi_id: String,
     pub operation: Tcgen05Operation,
+}
+
+/// One reviewed tcgen05 copy member and CTA group.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05CpAdmissionVariant {
+    pub abi_id: String,
+    pub member: Tcgen05CpMember,
+    pub group: Tcgen05CpGroup,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -1045,9 +1060,64 @@ pub enum TmaAdapter {
 #[serde(deny_unknown_fields)]
 pub struct Tcgen05 {
     pub operation: Tcgen05Operation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cp: Option<Tcgen05Cp>,
     pub adapter: Tcgen05Adapter,
     pub source_contract: Tcgen05SourceContract,
     pub runtime_validation: RuntimeValidation,
+}
+
+/// Closed identity for one tcgen05 shared-to-tensor-memory copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05Cp {
+    pub member: Tcgen05CpMember,
+    pub group: Tcgen05CpGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Tcgen05CpMember {
+    #[serde(rename = "128x128b_b4x16_p64")]
+    M128x128bB4x16P64,
+    #[serde(rename = "128x128b_b6x16_p32")]
+    M128x128bB6x16P32,
+    #[serde(rename = "128x128b")]
+    M128x128b,
+    #[serde(rename = "128x256b_b4x16_p64")]
+    M128x256bB4x16P64,
+    #[serde(rename = "128x256b_b6x16_p32")]
+    M128x256bB6x16P32,
+    #[serde(rename = "32x128b_warpx4_b4x16_p64")]
+    M32x128bWarpx4B4x16P64,
+    #[serde(rename = "32x128b_warpx4_b6x16_p32")]
+    M32x128bWarpx4B6x16P32,
+    #[serde(rename = "32x128b_warpx4")]
+    M32x128bWarpx4,
+    #[serde(rename = "4x256b_b4x16_p64")]
+    M4x256bB4x16P64,
+    #[serde(rename = "4x256b_b6x16_p32")]
+    M4x256bB6x16P32,
+    #[serde(rename = "4x256b")]
+    M4x256b,
+    #[serde(rename = "64x128b_warpx2_01_23_b4x16_p64")]
+    M64x128bWarpx2Pair0123B4x16P64,
+    #[serde(rename = "64x128b_warpx2_01_23_b6x16_p32")]
+    M64x128bWarpx2Pair0123B6x16P32,
+    #[serde(rename = "64x128b_warpx2_01_23")]
+    M64x128bWarpx2Pair0123,
+    #[serde(rename = "64x128b_warpx2_02_13_b4x16_p64")]
+    M64x128bWarpx2Pair0213B4x16P64,
+    #[serde(rename = "64x128b_warpx2_02_13_b6x16_p32")]
+    M64x128bWarpx2Pair0213B6x16P32,
+    #[serde(rename = "64x128b_warpx2_02_13")]
+    M64x128bWarpx2Pair0213,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05CpGroup {
+    Cg1,
+    Cg2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

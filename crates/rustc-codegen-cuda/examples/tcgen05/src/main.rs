@@ -33,11 +33,11 @@ use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig, sys};
 use cuda_device::barrier::Barrier;
 use cuda_device::shared::SharedArray;
 use cuda_device::tcgen05::{
-    Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
-    Tcgen05SmemDescriptor, Tcgen05SwizzleMode, tcgen05_alloc, tcgen05_alloc_cg2, tcgen05_commit,
-    tcgen05_commit_multicast_cg2, tcgen05_cp_smem_to_tmem, tcgen05_dealloc, tcgen05_dealloc_cg2,
-    tcgen05_fence_after_thread_sync, tcgen05_fence_before_thread_sync, tcgen05_ld_16x256b_pure,
-    tcgen05_load_wait, tcgen05_mma_f16_cg2, tcgen05_mma_ws_f16,
+    self, Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor,
+    Tcgen05MmaShape, Tcgen05SmemDescriptor, Tcgen05SwizzleMode, tcgen05_alloc, tcgen05_alloc_cg2,
+    tcgen05_commit, tcgen05_commit_multicast_cg2, tcgen05_cp_smem_to_tmem, tcgen05_dealloc,
+    tcgen05_dealloc_cg2, tcgen05_fence_after_thread_sync, tcgen05_fence_before_thread_sync,
+    tcgen05_ld_16x256b_pure, tcgen05_load_wait, tcgen05_mma_f16_cg2, tcgen05_mma_ws_f16,
 };
 use cuda_device::{DisjointSlice, cluster, cluster_launch, kernel, thread, warp};
 use cuda_host::cuda_module;
@@ -265,6 +265,33 @@ mod kernels {
         }
     }
 
+    /// Keeps every cta_group::1 tcgen05 copy form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_cp_cg1(tmem_addr: u32, smem_desc: u64) {
+        unsafe {
+            tcgen05::tcgen05_cp_smem_to_tmem(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13(tmem_addr, smem_desc);
+        }
+    }
+
     // =============================================================================
     // CTA Pair (cta_group::2) Test Kernels
     // =============================================================================
@@ -386,6 +413,34 @@ mod kernels {
             if tid == 0 {
                 cuda_device::barrier::mbarrier_inval(&raw mut MBAR);
             }
+        }
+    }
+
+    /// Keeps every cta_group::2 tcgen05 copy form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    #[cluster_launch(2, 1, 1)]
+    pub unsafe fn compile_tcgen05_cp_cg2(tmem_addr: u32, smem_desc: u64) {
+        unsafe {
+            tcgen05::tcgen05_cp_smem_to_tmem_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_cg2(tmem_addr, smem_desc);
         }
     }
 }
