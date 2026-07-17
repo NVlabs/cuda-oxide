@@ -2098,6 +2098,15 @@ fn tcgen05_ld_register_count(record: &CatalogIntrinsic) -> usize {
     ld.shape.register_multiplier() * ld.multiplicity.count()
 }
 
+fn tcgen05_st_register_count(record: &CatalogIntrinsic) -> usize {
+    let st = record
+        .tcgen05
+        .as_ref()
+        .and_then(|tcgen05| tcgen05.st)
+        .expect("generated tcgen05 store identity");
+    st.shape.register_multiplier() * st.multiplicity.count()
+}
+
 fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
     let Some(tcgen05) = &record.tcgen05 else {
         return false;
@@ -2154,6 +2163,7 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
                 .collect::<Vec<_>>();
             if tcgen05.operation != expected_operation
                 || tcgen05.ld.is_some()
+                || tcgen05.st.is_some()
                 || record.semantics.pure
                 || record.semantics.memory != "read_write"
                 || record.expected_ptx.mnemonic != "tcgen05"
@@ -2198,6 +2208,7 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
             };
             if tcgen05.operation != Tcgen05Operation::Ld
                 || tcgen05.cp.is_some()
+                || tcgen05.st.is_some()
                 || record.expected_ptx.mnemonic != "tcgen05"
                 || record.expected_ptx.modifiers != modifiers
                 || record.expected_ptx.operands
@@ -2207,6 +2218,38 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
             }
         }
         None if tcgen05.operation != Tcgen05Operation::Ld => {}
+        None => return false,
+    }
+    match tcgen05.st {
+        Some(st) => {
+            let count = tcgen05_st_register_count(record);
+            let mut modifiers: Vec<String> = vec![
+                "st".into(),
+                "sync".into(),
+                "aligned".into(),
+                tcgen05_ld_shape_label(st.shape).into(),
+                tcgen05_ld_multiplicity_label(st.multiplicity).into(),
+            ];
+            if st.unpack16 {
+                modifiers.push("unpack::16b".into());
+            }
+            modifiers.push("b32".into());
+            let data = if count == 1 {
+                crate::ptx::OperandPattern::Register
+            } else {
+                crate::ptx::OperandPattern::RegisterList { length: count }
+            };
+            if tcgen05.operation != Tcgen05Operation::St
+                || tcgen05.cp.is_some()
+                || tcgen05.ld.is_some()
+                || record.expected_ptx.mnemonic != "tcgen05"
+                || record.expected_ptx.modifiers != modifiers
+                || record.expected_ptx.operands != [crate::ptx::OperandPattern::Address, data]
+            {
+                return false;
+            }
+        }
+        None if tcgen05.operation != Tcgen05Operation::St => {}
         None => return false,
     }
     let llvm = llvm(record);
@@ -2365,6 +2408,30 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
                 && llvm.results == [llvm_result]
                 && !record.semantics.pure
                 && record.semantics.memory == "read"
+                && tcgen05.source_contract
+                    == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+        }
+        (Tcgen05Operation::St, Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid) => {
+            let count = tcgen05_st_register_count(record);
+            let rust_data = if count == 1 {
+                "u32".into()
+            } else {
+                format!("[u32; {count}]")
+            };
+            let llvm_data = if count == 1 {
+                "i32".into()
+            } else {
+                format!("v{count}i32")
+            };
+            !record.rust.safe
+                && record.rust.arguments == ["u32", rust_data.as_str()]
+                && record.rust.result == "()"
+                && record.dialect.operands == vec!["i32"; count + 1]
+                && record.dialect.results.is_empty()
+                && llvm.arguments == ["tmem_ptr", llvm_data.as_str(), "i1"]
+                && llvm.results.is_empty()
+                && !record.semantics.pure
+                && record.semantics.memory == "write"
                 && tcgen05.source_contract
                     == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
         }
@@ -3580,6 +3647,12 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                          /// All threads required by `tcgen05.ld.sync.aligned` must execute convergently with the same address.\n\
                          /// Complete the matching tensor-memory load wait before consuming the returned registers.\n",
                     );
+                } else if tcgen05.operation == Tcgen05Operation::St {
+                    output.push_str(
+                        "/// `_arg0` must name a live tensor-memory allocation covering the selected tile.\n\
+                         /// All threads required by `tcgen05.st.sync.aligned` must execute convergently with the same address.\n\
+                         /// Complete the matching tensor-memory store wait before relying on completion or reusing the affected storage.\n",
+                    );
                 } else {
                     output.push_str(
                         "/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n",
@@ -4465,47 +4538,62 @@ pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
 }
 
 fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 116);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 174);
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
     for record in tcgen05_intrinsics(catalog) {
         let operation = record.tcgen05.as_ref().unwrap().operation;
-        let (arguments, values) = match operation {
-            Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
-                ("dst_smem: *mut u32, n_cols: u32", "dst_smem, n_cols")
-            }
-            Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => {
-                ("tmem_addr: u32, n_cols: u32", "tmem_addr, n_cols")
-            }
-            Tcgen05Operation::RelinquishAllocPermit
-            | Tcgen05Operation::FenceBeforeThreadSync
-            | Tcgen05Operation::FenceAfterThreadSync
-            | Tcgen05Operation::LoadWait
-            | Tcgen05Operation::StoreWait
-            | Tcgen05Operation::RelinquishAllocPermitCg2 => ("", ""),
-            Tcgen05Operation::Commit
-            | Tcgen05Operation::CommitSharedCluster
-            | Tcgen05Operation::CommitCg2
-            | Tcgen05Operation::CommitSharedClusterCg2 => ("mbar: *mut u64", "mbar"),
-            Tcgen05Operation::MmaWsF16
-            | Tcgen05Operation::MmaWsBf16
-            | Tcgen05Operation::MmaWsTf32 => (
-                "d_tmem: u32, a_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool",
-                "d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d",
-            ),
-            Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => (
-                "d_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool",
-                "d_tmem, a_desc, b_desc, idesc, enable_d",
-            ),
-            Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
-                ("tmem_addr: u32, smem_desc: u64", "tmem_addr, smem_desc")
-            }
-            Tcgen05Operation::Ld16x256bX8Pure
-            | Tcgen05Operation::Ld16x256bPure
-            | Tcgen05Operation::Ld => ("tmem_addr: u32", "tmem_addr"),
-            Tcgen05Operation::CommitMulticastCg2 => {
-                ("mbar: *mut u64, cta_mask: u16", "mbar, cta_mask")
-            }
+        let (arguments, values): (String, String) = if operation == Tcgen05Operation::St {
+            let count = tcgen05_st_register_count(record);
+            let data = if count == 1 {
+                "u32".into()
+            } else {
+                format!("CuSimd<u32, {count}>")
+            };
+            (
+                format!("tmem_addr: u32, data: {data}"),
+                "tmem_addr, data".into(),
+            )
+        } else {
+            let (arguments, values) = match operation {
+                Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
+                    ("dst_smem: *mut u32, n_cols: u32", "dst_smem, n_cols")
+                }
+                Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => {
+                    ("tmem_addr: u32, n_cols: u32", "tmem_addr, n_cols")
+                }
+                Tcgen05Operation::RelinquishAllocPermit
+                | Tcgen05Operation::FenceBeforeThreadSync
+                | Tcgen05Operation::FenceAfterThreadSync
+                | Tcgen05Operation::LoadWait
+                | Tcgen05Operation::StoreWait
+                | Tcgen05Operation::RelinquishAllocPermitCg2 => ("", ""),
+                Tcgen05Operation::Commit
+                | Tcgen05Operation::CommitSharedCluster
+                | Tcgen05Operation::CommitCg2
+                | Tcgen05Operation::CommitSharedClusterCg2 => ("mbar: *mut u64", "mbar"),
+                Tcgen05Operation::MmaWsF16
+                | Tcgen05Operation::MmaWsBf16
+                | Tcgen05Operation::MmaWsTf32 => (
+                    "d_tmem: u32, a_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool",
+                    "d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d",
+                ),
+                Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => (
+                    "d_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool",
+                    "d_tmem, a_desc, b_desc, idesc, enable_d",
+                ),
+                Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
+                    ("tmem_addr: u32, smem_desc: u64", "tmem_addr, smem_desc")
+                }
+                Tcgen05Operation::Ld16x256bX8Pure
+                | Tcgen05Operation::Ld16x256bPure
+                | Tcgen05Operation::Ld => ("tmem_addr: u32", "tmem_addr"),
+                Tcgen05Operation::CommitMulticastCg2 => {
+                    ("mbar: *mut u64, cta_mask: u16", "mbar, cta_mask")
+                }
+                Tcgen05Operation::St => unreachable!("store handled above"),
+            };
+            (arguments.into(), values.into())
         };
         let result: String = match operation {
             Tcgen05Operation::Ld16x256bX8Pure => "TmemF32x32".into(),
@@ -4518,12 +4606,20 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                     format!("CuSimd<u32, {count}>")
                 }
             }
+            Tcgen05Operation::St => "()".into(),
             _ => "()".into(),
         };
         writeln!(output, "/// {}", record.summary).unwrap();
         if !record.rust.safe {
             output.push_str("///\n/// # Safety\n");
-            output.push_str("/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n");
+            if operation == Tcgen05Operation::St {
+                output.push_str(
+                    "/// The tensor-memory address must remain live and cover the selected tile.\n\
+                     /// Required threads must execute convergently with the same address. Complete the store wait before relying on completion.\n",
+                );
+            } else {
+                output.push_str("/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n");
+            }
         }
         output.push_str("#[inline(never)]\n");
         if record.rust.arguments.len() > 5 {
@@ -8734,7 +8830,7 @@ fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
 }
 
 fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 116);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 174);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         "//! Generated Tensor Core Generation 5 operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
@@ -9309,7 +9405,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         || tcgen05_intrinsics(catalog).next().is_some()
     {
         output.push_str(
-            "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirConstructStructOp, MirExtractFieldOp}, types::MirArrayType};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
+            "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirConstructStructOp, MirExtractFieldOp}, types::{MirArrayType, MirStructType}};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
         );
     }
     if tcgen05_intrinsics(catalog).next().is_some() {
@@ -10762,6 +10858,39 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("        ");
         render_inline_patterns(&mut output, &path_refs);
         output.push_str(" => {\n");
+        if operation == Tcgen05Operation::St {
+            let count = tcgen05_st_register_count(record);
+            output.push_str("            require_arity(name, args.len(), 2, &loc)?;\n");
+            writeln!(
+                output,
+                "            let (operands, last_op) = import_generated_tcgen05_store_operands(\n                ctx, body, args, {count}, block_ptr, prev_op, value_map, loc.clone(),\n            )?;"
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                record.dialect.op_type
+            )
+            .unwrap();
+            output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+            writeln!(
+                output,
+                "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+                intrinsic_marker(catalog, record)
+            )
+            .unwrap();
+            output.push_str(
+                "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+            );
+            writeln!(
+                output,
+                "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                format!("{} call without target block", record.rust.name)
+            )
+            .unwrap();
+            output.push_str("            }\n        }\n");
+            continue;
+        }
         let arity = record.dialect.operands.len();
         writeln!(
             output,
@@ -10862,6 +10991,121 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
     );
+    if tcgen05_intrinsics(catalog)
+        .any(|record| record.tcgen05.as_ref().unwrap().operation == Tcgen05Operation::St)
+    {
+        output.push_str(
+            r#"
+
+#[allow(clippy::too_many_arguments)]
+fn import_generated_tcgen05_store_operands(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    expected_len: usize,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    loc: Location,
+) -> TranslationResult<(Vec<Value>, Option<Ptr<Operation>>)> {
+    if args.len() != 2 || !(1..=128).contains(&expected_len) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "generated tcgen05 store expects an address and 1..=128 registers".to_owned()
+            )
+        );
+    }
+    let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+    let (address, last_op) = rvalue::translate_operand(
+        ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
+    )?;
+    let (data, mut last_op) = rvalue::translate_operand(
+        ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),
+    )?;
+    if expected_len == 1 {
+        if data.get_type(ctx) != u32_ty {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "generated tcgen05 store data must be a u32 register".to_owned()
+                )
+            );
+        }
+        return Ok((vec![address, data], last_op));
+    }
+
+    let data_ty = data.get_type(ctx);
+    let direct_array = data_ty
+        .deref(ctx)
+        .downcast_ref::<MirArrayType>()
+        .is_some_and(|array| {
+            array.size() == expected_len as u64 && array.element_type() == u32_ty
+        });
+    let array = if direct_array {
+        data
+    } else {
+        let wrapped_array_ty = data_ty
+            .deref(ctx)
+            .downcast_ref::<MirStructType>()
+            .filter(|structure| structure.field_count() == 1)
+            .and_then(|structure| structure.get_field_type(0));
+        let valid_wrapper = wrapped_array_ty.is_some_and(|field_ty| {
+            field_ty
+                .deref(ctx)
+                .downcast_ref::<MirArrayType>()
+                .is_some_and(|array| {
+                    array.size() == expected_len as u64 && array.element_type() == u32_ty
+                })
+        });
+        if !valid_wrapper {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "generated tcgen05 store data must contain {expected_len} u32 registers"
+                ))
+            );
+        }
+        let array_ty = wrapped_array_ty.expect("validated tcgen05 store wrapper");
+        let extract = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![array_ty],
+            vec![data],
+            vec![],
+            0,
+        );
+        extract.deref_mut(ctx).set_loc(loc.clone());
+        let extract = MirExtractFieldOp::new(extract);
+        extract.set_attr_index(ctx, FieldIndexAttr(0));
+        helpers::insert_op(ctx, extract.get_operation(), block_ptr, last_op);
+        last_op = Some(extract.get_operation());
+        extract.get_operation().deref(ctx).get_result(0)
+    };
+
+    let mut operands = Vec::with_capacity(expected_len + 1);
+    operands.push(address);
+    for index in 0..expected_len {
+        let extract = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![u32_ty],
+            vec![array],
+            vec![],
+            0,
+        );
+        extract.deref_mut(ctx).set_loc(loc.clone());
+        let extract = MirExtractFieldOp::new(extract);
+        extract.set_attr_index(ctx, FieldIndexAttr(index as u32));
+        helpers::insert_op(ctx, extract.get_operation(), block_ptr, last_op);
+        last_op = Some(extract.get_operation());
+        operands.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    Ok((operands, last_op))
+}
+"#,
+        );
+    }
     if register_mmas(catalog).next().is_some() || sparse_mmas(catalog).next().is_some() {
         output.push_str(
             r#"
@@ -11289,6 +11533,26 @@ fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usiz
                 ),
                 constraints,
                 Some(count),
+            )
+        }
+        Tcgen05Operation::St => {
+            let count = tcgen05_st_register_count(record);
+            let registers = (1..=count)
+                .map(|index| format!("${index}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let constraints = std::iter::repeat_n("r", count + 1)
+                .chain(std::iter::once("~{memory}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            (
+                format!(
+                    "{}.{} [$0], {{{registers}}};",
+                    record.expected_ptx.mnemonic,
+                    record.expected_ptx.modifiers.join(".")
+                ),
+                constraints,
+                None,
             )
         }
         Tcgen05Operation::LoadWait => (
@@ -14021,6 +14285,21 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 "i32 %tmem".into(),
             )
         }
+        Tcgen05Operation::St => {
+            let count = tcgen05_st_register_count(record);
+            let parameters = std::iter::once("i32 %tmem".into())
+                .chain((0..count).map(|index| format!("i32 %d{index}")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let (template, constraints, _) = tcgen05_inline_asm(record);
+            (
+                parameters.clone(),
+                "void".into(),
+                template,
+                constraints,
+                parameters,
+            )
+        }
         Tcgen05Operation::Ld => {
             let count = tcgen05_ld_register_count(record);
             let fields = std::iter::repeat_n("i32", count)
@@ -15821,6 +16100,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
+            .or_else(|| {
+                record
+                    .tcgen05
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
             .or_else(|| (record.family == "stmatrix").then(|| "unexecuted".to_owned()))
             .unwrap_or_else(|| "not recorded".to_owned());
         writeln!(output, "- `{}`: runtime `{runtime}`", record.id).unwrap();
@@ -16198,7 +16483,7 @@ mod tests {
     fn catalog_with_tcgen05() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
-        assert_eq!(tcgen05_intrinsics(&catalog).count(), 116);
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 174);
         catalog
     }
 
@@ -17878,7 +18163,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 669);
+        assert_eq!(catalog.intrinsics.len(), 727);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -19093,6 +19378,17 @@ mod tests {
         assert!(compatibility.contains(
             "pub unsafe fn tcgen05_ld_32x32b_x128_pack16(tmem_addr: u32) -> CuSimd<u32, 128>"
         ));
+        assert!(
+            compatibility.contains(
+                "pub unsafe fn tcgen05_st_16x64b_x1_raw(tmem_addr: u32, data: u32) -> ()"
+            )
+        );
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_st_16x64b_x2_raw(tmem_addr: u32, data: CuSimd<u32, 2>) -> ()"
+        ));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_st_32x32b_x128_unpack16(tmem_addr: u32, data: CuSimd<u32, 128>) -> ()"
+        ));
         assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -19101,8 +19397,12 @@ mod tests {
         assert!(raw.contains("pub unsafe fn i0612(_arg0: u32) -> u32"));
         assert!(raw.contains("pub unsafe fn i0614(_arg0: u32) -> [u32; 2]"));
         assert!(raw.contains("pub unsafe fn i0669(_arg0: u32) -> [u32; 128]"));
+        assert!(raw.contains("pub unsafe fn i0670(_arg0: u32, _arg1: u32) -> ()"));
+        assert!(raw.contains("pub unsafe fn i0672(_arg0: u32, _arg1: [u32; 2]) -> ()"));
+        assert!(raw.contains("pub unsafe fn i0727(_arg0: u32, _arg1: [u32; 128]) -> ()"));
         assert!(raw.contains("`_arg0` must name a live tensor-memory allocation"));
         assert!(raw.contains("Complete the matching tensor-memory load wait"));
+        assert!(raw.contains("Complete the matching tensor-memory store wait"));
         let raw_mod = render_raw_mod(&catalog, "test-hash");
         assert!(raw_mod.contains(
             "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0578 as tcgen05_cp_128x128b_b4x16_p64;"
@@ -19110,12 +19410,17 @@ mod tests {
         assert!(raw_mod.contains(
             "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0611 as tcgen05_cp_64x128b_warpx2_02_13_cg2;"
         ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0727 as tcgen05_st_32x32b_x128_unpack16;"
+        ));
 
         let dialect = render_dialect_tcgen05(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 116);
-        assert_eq!(dialect.matches("::register(ctx)").count(), 116);
+        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 174);
+        assert_eq!(dialect.matches("::register(ctx)").count(), 174);
         assert!(dialect.contains("pub struct Tcgen05Ld16x64bX1RawOp"));
         assert!(dialect.contains("pub struct Tcgen05Ld32x32bX128Pack16Op"));
+        assert!(dialect.contains("pub struct Tcgen05St16x64bX1RawOp"));
+        assert!(dialect.contains("pub struct Tcgen05St32x32bX128Unpack16Op"));
         assert!(dialect.contains("NResultsInterface<128>"));
         assert!(dialect.contains("NResultsInterface<32>"));
         assert!(dialect.contains("NResultsInterface<4>"));
@@ -19133,6 +19438,14 @@ mod tests {
         assert!(importer.contains("MirConstructStructOp::get_concrete_op_info()"));
         assert!(importer.contains("Tcgen05Ld16x64bX1RawOp::get_concrete_op_info()"));
         assert!(importer.contains("Tcgen05Ld32x32bX128Pack16Op::get_concrete_op_info()"));
+        assert!(importer.contains("Tcgen05St16x64bX1RawOp::get_concrete_op_info()"));
+        assert!(importer.contains("Tcgen05St32x32bX128Unpack16Op::get_concrete_op_info()"));
+        assert!(importer.contains("import_generated_tcgen05_store_operands("));
+        assert!(importer.contains("downcast_ref::<MirStructType>()"));
+        assert!(
+            importer
+                .contains("generated tcgen05 store data must contain {expected_len} u32 registers")
+        );
         assert!(importer.contains("destination_ty == array_result.get_type(ctx)"));
         assert!(!importer.contains("super::tcgen05::emit_"));
         assert!(importer.contains("\"v1:i0343\""));
@@ -19141,6 +19454,8 @@ mod tests {
         assert!(importer.contains("Tcgen05Cp128x128bB4x16P64Op::get_concrete_op_info()"));
         assert!(importer.contains("\"v1:i0578\""));
         assert!(importer.contains("\"v1:i0611\""));
+        assert!(importer.contains("\"v1:i0670\""));
+        assert!(importer.contains("\"v1:i0727\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(!lowering.contains("use crate::convert::intrinsics::tcgen05;"));
@@ -19158,6 +19473,12 @@ mod tests {
         assert!(lowering.contains(
             "convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), 1, true"
         ));
+        assert!(lowering.contains("convert_generated_tcgen05_void("));
+        assert!(lowering.contains("tcgen05.st.sync.aligned.16x64b.x1.b32 [$0], {$1};"));
+        assert!(
+            lowering.contains("tcgen05.st.sync.aligned.32x32b.x128.unpack::16b.b32 [$0], {$1,$2")
+        );
+        assert!(lowering.contains("\"r,r,~{memory}\""));
         assert!(lowering.contains("builtin::types::{FP32Type, IntegerType, Signedness}"));
         assert!(lowering.contains("ops as llvm_ops"));
         assert!(lowering.contains("inserter::Inserter"));
@@ -19235,16 +19556,38 @@ mod tests {
         assert!(packed_load_probe.contains("tcgen05.ld.sync.aligned.32x32b.x128.pack::16b.b32"));
         assert!(packed_load_probe.contains("{ i32, i32"));
 
+        let scalar_store = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_st_16x64b_x1_raw")
+            .unwrap();
+        let scalar_store_probe = render_probe(&catalog, scalar_store, "test-hash");
+        assert!(scalar_store_probe.contains("call void asm sideeffect"));
+        assert!(scalar_store_probe.contains("tcgen05.st.sync.aligned.16x64b.x1.b32"));
+        assert!(scalar_store_probe.contains("\"r,r,~{memory}\""));
+
+        let unpacked_store = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_st_32x32b_x128_unpack16")
+            .unwrap();
+        let unpacked_store_probe = render_probe(&catalog, unpacked_store, "test-hash");
+        assert!(
+            unpacked_store_probe.contains("tcgen05.st.sync.aligned.32x32b.x128.unpack::16b.b32")
+        );
+        assert!(unpacked_store_probe.contains("i32 %d127"));
+
         let target = render_targets(&catalog, "test-hash");
         assert!(target.contains("\"v1:i0343\""));
         assert!(target.contains("\"v1:i0578\""));
         assert!(target.contains("\"v1:i0611\""));
+        assert!(target.contains("\"v1:i0727\""));
         assert!(target.contains(
             "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
         ));
         assert!(target.contains(
             "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
         ));
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("- `tcgen05_st_16x64b_x1_raw`: runtime `unexecuted`"));
+        assert!(!reference.contains("- `tcgen05_st_16x64b_x1_raw`: runtime `not recorded`"));
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
         assert!(outputs.contains_key(&PathBuf::from(
@@ -19294,6 +19637,17 @@ mod tests {
             .modifiers
             .remove(5);
         assert!(validate_renderable(&wrong_load_selector).is_err());
+
+        let mut wrong_store_selector = catalog.clone();
+        wrong_store_selector
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "tcgen05_st_16x64b_x1_unpack16")
+            .unwrap()
+            .expected_ptx
+            .modifiers
+            .remove(5);
+        assert!(validate_renderable(&wrong_store_selector).is_err());
 
         let mut wrong_copy_spelling = catalog;
         wrong_copy_spelling

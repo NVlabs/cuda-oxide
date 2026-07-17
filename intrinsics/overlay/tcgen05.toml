@@ -1,4 +1,4 @@
-schema = 53
+schema = 54
 family = "tcgen05"
 
 [tcgen05]
@@ -8,6 +8,8 @@ cp_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 cp_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-cp"
 ld_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 ld_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-ld"
+st_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+st_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-st"
 runtime_validation = "unexecuted"
 
 [[tcgen05.variant]]
@@ -623,3 +625,351 @@ abi_id = "i0669"
 shape = "32x32b"
 multiplicity = "x128"
 pack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0670"
+shape = "16x64b"
+multiplicity = "x1"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0671"
+shape = "16x64b"
+multiplicity = "x1"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0672"
+shape = "16x64b"
+multiplicity = "x2"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0673"
+shape = "16x64b"
+multiplicity = "x2"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0674"
+shape = "16x64b"
+multiplicity = "x4"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0675"
+shape = "16x64b"
+multiplicity = "x4"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0676"
+shape = "16x64b"
+multiplicity = "x8"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0677"
+shape = "16x64b"
+multiplicity = "x8"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0678"
+shape = "16x64b"
+multiplicity = "x16"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0679"
+shape = "16x64b"
+multiplicity = "x16"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0680"
+shape = "16x64b"
+multiplicity = "x32"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0681"
+shape = "16x64b"
+multiplicity = "x32"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0682"
+shape = "16x64b"
+multiplicity = "x64"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0683"
+shape = "16x64b"
+multiplicity = "x64"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0684"
+shape = "16x64b"
+multiplicity = "x128"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0685"
+shape = "16x64b"
+multiplicity = "x128"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0686"
+shape = "16x128b"
+multiplicity = "x1"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0687"
+shape = "16x128b"
+multiplicity = "x1"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0688"
+shape = "16x128b"
+multiplicity = "x2"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0689"
+shape = "16x128b"
+multiplicity = "x2"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0690"
+shape = "16x128b"
+multiplicity = "x4"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0691"
+shape = "16x128b"
+multiplicity = "x4"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0692"
+shape = "16x128b"
+multiplicity = "x8"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0693"
+shape = "16x128b"
+multiplicity = "x8"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0694"
+shape = "16x128b"
+multiplicity = "x16"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0695"
+shape = "16x128b"
+multiplicity = "x16"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0696"
+shape = "16x128b"
+multiplicity = "x32"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0697"
+shape = "16x128b"
+multiplicity = "x32"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0698"
+shape = "16x128b"
+multiplicity = "x64"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0699"
+shape = "16x128b"
+multiplicity = "x64"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0700"
+shape = "16x256b"
+multiplicity = "x1"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0701"
+shape = "16x256b"
+multiplicity = "x1"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0702"
+shape = "16x256b"
+multiplicity = "x2"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0703"
+shape = "16x256b"
+multiplicity = "x2"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0704"
+shape = "16x256b"
+multiplicity = "x4"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0705"
+shape = "16x256b"
+multiplicity = "x4"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0706"
+shape = "16x256b"
+multiplicity = "x8"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0707"
+shape = "16x256b"
+multiplicity = "x8"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0708"
+shape = "16x256b"
+multiplicity = "x16"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0709"
+shape = "16x256b"
+multiplicity = "x16"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0710"
+shape = "16x256b"
+multiplicity = "x32"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0711"
+shape = "16x256b"
+multiplicity = "x32"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0712"
+shape = "32x32b"
+multiplicity = "x1"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0713"
+shape = "32x32b"
+multiplicity = "x1"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0714"
+shape = "32x32b"
+multiplicity = "x2"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0715"
+shape = "32x32b"
+multiplicity = "x2"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0716"
+shape = "32x32b"
+multiplicity = "x4"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0717"
+shape = "32x32b"
+multiplicity = "x4"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0718"
+shape = "32x32b"
+multiplicity = "x8"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0719"
+shape = "32x32b"
+multiplicity = "x8"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0720"
+shape = "32x32b"
+multiplicity = "x16"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0721"
+shape = "32x32b"
+multiplicity = "x16"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0722"
+shape = "32x32b"
+multiplicity = "x32"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0723"
+shape = "32x32b"
+multiplicity = "x32"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0724"
+shape = "32x32b"
+multiplicity = "x64"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0725"
+shape = "32x32b"
+multiplicity = "x64"
+unpack16 = true
+
+[[tcgen05.st_variant]]
+abi_id = "i0726"
+shape = "32x32b"
+multiplicity = "x128"
+unpack16 = false
+
+[[tcgen05.st_variant]]
+abi_id = "i0727"
+shape = "32x32b"
+multiplicity = "x128"
+unpack16 = true

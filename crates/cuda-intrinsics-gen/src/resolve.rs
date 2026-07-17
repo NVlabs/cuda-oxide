@@ -56,13 +56,13 @@ use crate::model::{
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05Adapter,
     Tcgen05Admission, Tcgen05Cp, Tcgen05CpAdmissionVariant, Tcgen05CpGroup, Tcgen05CpMember,
     Tcgen05Ld, Tcgen05LdAdmissionVariant, Tcgen05LdMultiplicity, Tcgen05LdShape, Tcgen05Operation,
-    Tcgen05SourceContract, ThreadfenceAdmission, ThreadfenceScope, Tma, TmaAdapter, TmaAdmission,
-    TmaOperation, VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter,
-    WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
-    WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
-    WarpShuffleValueKind, WgmmaControl, WgmmaControlAdapter, WgmmaControlAdmission,
-    WgmmaControlMode, WgmmaControlParticipation,
+    Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant, ThreadfenceAdmission,
+    ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation, VoteAdapter, VoteMode,
+    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
+    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
+    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
+    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind, WgmmaControl,
+    WgmmaControlAdapter, WgmmaControlAdmission, WgmmaControlMode, WgmmaControlParticipation,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -73,7 +73,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 43;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 53;
+const OVERLAY_SHARD_SCHEMA: u32 = 54;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -99,6 +99,7 @@ const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 45;
 const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 51;
 const TCGEN05_CP_SHARD_SCHEMA: u32 = 52;
 const TCGEN05_LD_SHARD_SCHEMA: u32 = 53;
+const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
 pub(crate) const CATALOG_SCHEMA: u32 = 43;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
@@ -372,9 +373,9 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         .filter(|record| record.family == "tcgen05")
         .count();
     match active_count {
-        116 => return Ok(catalog),
+        174 => return Ok(catalog),
         0 => {}
-        count => bail!("active tcgen05 catalog has {count} of 116 records"),
+        count => bail!("active tcgen05 catalog has {count} of 174 records"),
     }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
@@ -411,6 +412,8 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         cp_libnvvm_evidence_profile: None,
         ld_llvm_evidence_profile: None,
         ld_libnvvm_evidence_profile: None,
+        st_llvm_evidence_profile: None,
+        st_libnvvm_evidence_profile: None,
         runtime_validation: RuntimeValidation::Unexecuted,
         variants: operations
             .into_iter()
@@ -421,6 +424,7 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
             .collect(),
         cp_variants: vec![],
         ld_variants: vec![],
+        st_variants: vec![],
     };
     for policy in expand_tcgen05_admission(&admission)? {
         let source = resolve_policy_source(&policy)?;
@@ -1192,6 +1196,15 @@ fn validate_overlay_shard_schema_with_max(
         "compact tcgen05 load admission requires overlay shard schema {}",
         TCGEN05_LD_SHARD_SCHEMA
     );
+    ensure!(
+        shard
+            .tcgen05
+            .as_ref()
+            .is_none_or(|admission| admission.st_variants.is_empty())
+            || shard.schema >= TCGEN05_ST_SHARD_SCHEMA,
+        "compact tcgen05 store admission requires overlay shard schema {}",
+        TCGEN05_ST_SHARD_SCHEMA
+    );
     Ok(())
 }
 
@@ -1272,6 +1285,16 @@ fn shares_tcgen05_ld_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
     )
 }
 
+fn shares_tcgen05_st_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
+    record.tcgen05.as_ref().is_some_and(|tcgen05| {
+        tcgen05.st.is_some_and(|st| {
+            tcgen05.operation == Tcgen05Operation::St
+                && record.source_record.as_deref() == Some(tcgen05_st_source_record(st).as_str())
+                && symbol == tcgen05_st_llvm_symbol(st)
+        })
+    })
+}
+
 fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> Result<()> {
     let mut ids = BTreeSet::new();
     let mut abi_ids = BTreeSet::new();
@@ -1336,7 +1359,8 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             let is_resolved = record.resolved_llvm_symbol.is_some();
             let shares_reviewed_symbol = shares_tma_2d_g2s_symbol(record, symbol)
                 || shares_tcgen05_mma_ws_symbol(record, symbol)
-                || shares_tcgen05_ld_symbol(record, symbol);
+                || shares_tcgen05_ld_symbol(record, symbol)
+                || shares_tcgen05_st_symbol(record, symbol);
             if let Some((previous_was_resolved, previous_shared_symbol)) =
                 symbol_bases.insert(symbol, (is_resolved, shares_reviewed_symbol))
             {
@@ -4145,8 +4169,8 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             Tcgen05Adapter::TmemDescriptorToVoid,
             Tcgen05SourceContract::ExactTablegenSelection,
         ),
-        Tcgen05Operation::Ld => {
-            unreachable!("tcgen05 load variants use the compact load recipe")
+        Tcgen05Operation::Ld | Tcgen05Operation::St => {
+            unreachable!("tcgen05 load/store variants use their compact recipes")
         }
     };
 
@@ -4584,8 +4608,8 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             ),
             "Commits tcgen05 completion to the selected cluster mbarriers.",
         ),
-        Tcgen05Operation::Ld => {
-            unreachable!("tcgen05 load variants use the compact load recipe")
+        Tcgen05Operation::Ld | Tcgen05Operation::St => {
+            unreachable!("tcgen05 load/store variants use their compact recipes")
         }
     };
 
@@ -4802,6 +4826,7 @@ fn materialize_tcgen05_cp_variant(
             group: variant.group,
         }),
         ld: None,
+        st: None,
         adapter: Tcgen05Adapter::TmemDescriptorToVoid,
         source_contract: Tcgen05SourceContract::ExactTablegenSelection,
         runtime_validation: admission.runtime_validation,
@@ -5006,6 +5031,7 @@ fn materialize_tcgen05_ld_variant(
         operation: Tcgen05Operation::Ld,
         cp: None,
         ld: Some(ld),
+        st: None,
         adapter: Tcgen05Adapter::TmemInjectPack16ToU32Registers,
         source_contract: Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
         runtime_validation: admission.runtime_validation,
@@ -5015,6 +5041,157 @@ fn materialize_tcgen05_ld_variant(
     record.summary = format!(
         "Loads {register_count} {} 32-bit register value{} from tensor memory.",
         if ld.pack16 { "packed" } else { "raw" },
+        if register_count == 1 { "" } else { "s" }
+    );
+    record
+}
+
+const TCGEN05_ST_VARIANTS: [(Tcgen05LdShape, Tcgen05LdMultiplicity); 29] = TCGEN05_LD_VARIANTS;
+
+fn tcgen05_st_register_count(st: Tcgen05St) -> usize {
+    st.shape.register_multiplier() * st.multiplicity.count()
+}
+
+fn tcgen05_st_id(st: Tcgen05St) -> String {
+    format!(
+        "tcgen05_st_{}_{}_{}",
+        tcgen05_ld_shape_name(st.shape),
+        tcgen05_ld_multiplicity_name(st.multiplicity),
+        if st.unpack16 { "unpack16" } else { "raw" }
+    )
+}
+
+fn tcgen05_st_source_record(st: Tcgen05St) -> String {
+    format!(
+        "int_nvvm_tcgen05_st_{}_{}",
+        tcgen05_ld_shape_name(st.shape),
+        tcgen05_ld_multiplicity_name(st.multiplicity)
+    )
+}
+
+fn tcgen05_st_llvm_symbol(st: Tcgen05St) -> String {
+    format!(
+        "llvm.nvvm.tcgen05.st.{}.{}",
+        tcgen05_ld_shape_name(st.shape),
+        tcgen05_ld_multiplicity_name(st.multiplicity)
+    )
+}
+
+fn tcgen05_st_rust_data(st: Tcgen05St) -> String {
+    match tcgen05_st_register_count(st) {
+        1 => "u32".into(),
+        count => format!("[u32; {count}]"),
+    }
+}
+
+fn tcgen05_st_llvm_data(st: Tcgen05St) -> String {
+    match tcgen05_st_register_count(st) {
+        1 => "i32".into(),
+        count => format!("v{count}i32"),
+    }
+}
+
+fn tcgen05_st_op_type(st: Tcgen05St) -> String {
+    let shape = tcgen05_ld_shape_name(st.shape);
+    let multiplicity = tcgen05_ld_multiplicity_name(st.multiplicity)
+        .strip_prefix('x')
+        .unwrap();
+    format!(
+        "Tcgen05St{shape}X{multiplicity}{}Op",
+        if st.unpack16 { "Unpack16" } else { "Raw" }
+    )
+}
+
+fn tcgen05_st_modifiers(st: Tcgen05St) -> Vec<String> {
+    let mut modifiers = vec![
+        "st".into(),
+        "sync".into(),
+        "aligned".into(),
+        tcgen05_ld_shape_name(st.shape).into(),
+        tcgen05_ld_multiplicity_name(st.multiplicity).into(),
+    ];
+    if st.unpack16 {
+        modifiers.push("unpack::16b".into());
+    }
+    modifiers.push("b32".into());
+    modifiers
+}
+
+fn tcgen05_st_operands(st: Tcgen05St) -> Vec<OperandPattern> {
+    let data = match tcgen05_st_register_count(st) {
+        1 => OperandPattern::Register,
+        length => OperandPattern::RegisterList { length },
+    };
+    vec![OperandPattern::Address, data]
+}
+
+fn materialize_tcgen05_st_variant(
+    base: &OverlayIntrinsic,
+    admission: &Tcgen05Admission,
+    variant: &Tcgen05StAdmissionVariant,
+) -> OverlayIntrinsic {
+    let st = Tcgen05St {
+        shape: variant.shape,
+        multiplicity: variant.multiplicity,
+        unpack16: variant.unpack16,
+    };
+    let id = tcgen05_st_id(st);
+    let register_count = tcgen05_st_register_count(st);
+    let rust_data = tcgen05_st_rust_data(st);
+    let llvm_data = tcgen05_st_llvm_data(st);
+    let mode = if st.unpack16 { "unpack16" } else { "raw" };
+    let mut record = base.clone();
+    record.id = id.clone();
+    record.abi_id = variant.abi_id.clone();
+    record.operation_key = format!(
+        "tcgen05.st.{}.{}.{}",
+        tcgen05_ld_shape_name(st.shape),
+        tcgen05_ld_multiplicity_name(st.multiplicity),
+        mode
+    );
+    record.source_record = Some(tcgen05_st_source_record(st));
+    record.rust_name = id.clone();
+    record.rust_arguments = vec!["u32".into(), rust_data];
+    record.rust_result = "()".into();
+    record.must_use = false;
+    record.public_rust_path = format!("cuda_intrinsics::tcgen05::{id}");
+    record.compatibility_rust_paths = vec![format!("cuda_device::tcgen05::{id}")];
+    record.dialect_op_type = tcgen05_st_op_type(st);
+    record.dialect_op_name = format!("nvvm.{id}");
+    record.dialect_operands = std::iter::once("i32".into())
+        .chain(std::iter::repeat_n("i32".into(), register_count))
+        .collect();
+    record.dialect_results.clear();
+    record.llvm_symbol = Some(tcgen05_st_llvm_symbol(st));
+    record.resolved_llvm_symbol = None;
+    record.llvm_arguments = vec!["tmem_ptr".into(), llvm_data, "i1".into()];
+    record.llvm_results.clear();
+    record.memory = "write".into();
+    record.ptx_result = "()".into();
+    record.backend_lowerings[0].evidence_profile = admission
+        .st_llvm_evidence_profile
+        .as_ref()
+        .expect("validated tcgen05 store LLVM evidence profile")
+        .clone();
+    record.backend_lowerings[1].evidence_profile = admission
+        .st_libnvvm_evidence_profile
+        .as_ref()
+        .expect("validated tcgen05 store libNVVM evidence profile")
+        .clone();
+    record.tcgen05 = Some(Tcgen05 {
+        operation: Tcgen05Operation::St,
+        cp: None,
+        ld: None,
+        st: Some(st),
+        adapter: Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid,
+        source_contract: Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
+        runtime_validation: admission.runtime_validation,
+    });
+    record.expected_ptx.modifiers = tcgen05_st_modifiers(st);
+    record.expected_ptx.operands = tcgen05_st_operands(st);
+    record.summary = format!(
+        "Stores {register_count} {} 32-bit register value{} to tensor memory.",
+        if st.unpack16 { "unpacked" } else { "raw" },
         if register_count == 1 { "" } else { "s" }
     );
     record
@@ -5184,6 +5361,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                     operation: recipe.operation,
                     cp: None,
                     ld: None,
+                    st: None,
                     adapter: recipe.adapter,
                     source_contract: recipe.source_contract,
                     runtime_validation: admission.runtime_validation,
@@ -5261,64 +5439,130 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 && admission.ld_libnvvm_evidence_profile.is_none(),
             "tcgen05 load evidence profiles require admitted load variants"
         );
-        return Ok(records);
-    }
-    ensure!(
-        admission
-            .ld_llvm_evidence_profile
-            .as_deref()
-            .is_some_and(|profile| !profile.trim().is_empty())
-            && admission
-                .ld_libnvvm_evidence_profile
+    } else {
+        ensure!(
+            admission
+                .ld_llvm_evidence_profile
                 .as_deref()
-                .is_some_and(|profile| !profile.trim().is_empty()),
-        "compact tcgen05 load admission requires both backend evidence profiles"
-    );
-    let expected_ld = TCGEN05_LD_VARIANTS
-        .into_iter()
-        .flat_map(|(shape, multiplicity)| {
-            [false, true]
-                .into_iter()
-                .map(move |pack16| (shape, multiplicity, pack16))
-        })
-        .collect::<Vec<_>>();
-    ensure!(
-        admission
-            .ld_variants
+                .is_some_and(|profile| !profile.trim().is_empty())
+                && admission
+                    .ld_libnvvm_evidence_profile
+                    .as_deref()
+                    .is_some_and(|profile| !profile.trim().is_empty()),
+            "compact tcgen05 load admission requires both backend evidence profiles"
+        );
+        let expected_ld = TCGEN05_LD_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |pack16| (shape, multiplicity, pack16))
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            admission
+                .ld_variants
+                .iter()
+                .map(|variant| (variant.shape, variant.multiplicity, variant.pack16))
+                .eq(expected_ld),
+            "compact tcgen05 load admission must list all 58 variants in canonical order"
+        );
+        let base = records
             .iter()
-            .map(|variant| (variant.shape, variant.multiplicity, variant.pack16))
-            .eq(expected_ld),
-        "compact tcgen05 load admission must list all 58 variants in canonical order"
-    );
-    let base = records
-        .iter()
-        .find(|record| record.id == "tcgen05_ld_16x256b_pure")
-        .expect("closed tcgen05 load base")
-        .clone();
-    let first_load = records.len();
-    for (index, variant) in admission.ld_variants.iter().enumerate() {
-        let reserved = format!("i{:04}", 612 + index);
-        ensure!(
-            variant.abi_id == reserved,
-            "tcgen05 load variant {} must keep reserved ABI ID {reserved}",
-            index + 1
-        );
-        records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
+            .find(|record| record.id == "tcgen05_ld_16x256b_pure")
+            .expect("closed tcgen05 load base")
+            .clone();
+        let first_load = records.len();
+        for (index, variant) in admission.ld_variants.iter().enumerate() {
+            let reserved = format!("i{:04}", 612 + index);
+            ensure!(
+                variant.abi_id == reserved,
+                "tcgen05 load variant {} must keep reserved ABI ID {reserved}",
+                index + 1
+            );
+            records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
+        }
+        for pair in records[first_load..].chunks_exact(2) {
+            let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
+            let packed = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
+            ensure!(
+                raw.is_some_and(|ld| !ld.pack16)
+                    && packed.is_some_and(|ld| ld.pack16)
+                    && raw.map(|mut ld| {
+                        ld.pack16 = true;
+                        ld
+                    }) == packed
+                    && pair[0].source_record == pair[1].source_record
+                    && pair[0].llvm_symbol == pair[1].llvm_symbol,
+                "tcgen05 load source sharing must pair raw and pack16 leaves"
+            );
+        }
     }
-    for pair in records[first_load..].chunks_exact(2) {
-        let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
-        let packed = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
+
+    if admission.st_variants.is_empty() {
         ensure!(
-            raw.is_some_and(|ld| !ld.pack16)
-                && packed.is_some_and(|ld| ld.pack16)
-                && raw.map(|mut ld| {
-                    ld.pack16 = true;
-                    ld
-                }) == packed
-                && pair[0].source_record == pair[1].source_record
-                && pair[0].llvm_symbol == pair[1].llvm_symbol,
-            "tcgen05 load source sharing must pair raw and pack16 leaves"
+            admission.st_llvm_evidence_profile.is_none()
+                && admission.st_libnvvm_evidence_profile.is_none(),
+            "tcgen05 store evidence profiles require admitted store variants"
         );
+    } else {
+        ensure!(
+            admission
+                .st_llvm_evidence_profile
+                .as_deref()
+                .is_some_and(|profile| !profile.trim().is_empty())
+                && admission
+                    .st_libnvvm_evidence_profile
+                    .as_deref()
+                    .is_some_and(|profile| !profile.trim().is_empty()),
+            "compact tcgen05 store admission requires both backend evidence profiles"
+        );
+        let expected_st = TCGEN05_ST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |unpack16| (shape, multiplicity, unpack16))
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            admission
+                .st_variants
+                .iter()
+                .map(|variant| (variant.shape, variant.multiplicity, variant.unpack16))
+                .eq(expected_st),
+            "compact tcgen05 store admission must list all 58 variants in canonical order"
+        );
+        let base = records
+            .iter()
+            .find(|record| record.id == "tcgen05_ld_16x256b_pure")
+            .expect("closed tcgen05 store base")
+            .clone();
+        let first_store = records.len();
+        for (index, variant) in admission.st_variants.iter().enumerate() {
+            let reserved = format!("i{:04}", 670 + index);
+            ensure!(
+                variant.abi_id == reserved,
+                "tcgen05 store variant {} must keep reserved ABI ID {reserved}",
+                index + 1
+            );
+            records.push(materialize_tcgen05_st_variant(&base, admission, variant));
+        }
+        for pair in records[first_store..].chunks_exact(2) {
+            let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
+            let unpacked = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
+            ensure!(
+                raw.is_some_and(|st| !st.unpack16)
+                    && unpacked.is_some_and(|st| st.unpack16)
+                    && raw.map(|mut st| {
+                        st.unpack16 = true;
+                        st
+                    }) == unpacked
+                    && pair[0].source_record == pair[1].source_record
+                    && pair[0].llvm_symbol == pair[1].llvm_symbol,
+                "tcgen05 store source sharing must pair raw and unpack16 leaves"
+            );
+        }
     }
     Ok(records)
 }
@@ -5334,12 +5578,18 @@ fn validate_tcgen05_policy(
     if let Some(ld) = tcgen05.ld {
         return validate_tcgen05_ld_policy(policy, declaration, tcgen05, ld);
     }
+    if let Some(st) = tcgen05.st {
+        return validate_tcgen05_st_policy(policy, declaration, tcgen05, st);
+    }
     if let Some(cp) = tcgen05.cp {
         return validate_tcgen05_cp_policy(policy, declaration, tcgen05, cp);
     }
     ensure!(
-        tcgen05.operation != Tcgen05Operation::Ld,
-        "{} has a tcgen05 load operation without a load identity",
+        !matches!(
+            tcgen05.operation,
+            Tcgen05Operation::Ld | Tcgen05Operation::St
+        ),
+        "{} has a tcgen05 load/store operation without its closed identity",
         policy.id
     );
     let recipe = tcgen05_recipe(tcgen05.operation);
@@ -5390,6 +5640,7 @@ fn validate_tcgen05_policy(
             && policy.convergent
             && policy.execution_scope == "thread"
             && tcgen05.ld.is_none()
+            && tcgen05.st.is_none()
             && tcgen05.adapter == recipe.adapter
             && tcgen05.source_contract == recipe.source_contract
             && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
@@ -5494,6 +5745,7 @@ fn validate_tcgen05_ld_policy(
             && tcgen05.operation == Tcgen05Operation::Ld
             && tcgen05.cp.is_none()
             && tcgen05.ld == Some(ld)
+            && tcgen05.st.is_none()
             && tcgen05.adapter == Tcgen05Adapter::TmemInjectPack16ToU32Registers
             && tcgen05.source_contract == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
             && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
@@ -5514,6 +5766,113 @@ fn validate_tcgen05_ld_policy(
     );
     validate_tcgen05_backend_routes(policy, "tcgen05 load")?;
     ensure_no_other_family_contract(policy, "tcgen05 load")?;
+    Ok(())
+}
+
+fn validate_tcgen05_st_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    tcgen05: &Tcgen05,
+    st: Tcgen05St,
+) -> Result<()> {
+    let source_index = TCGEN05_ST_VARIANTS
+        .iter()
+        .position(|identity| *identity == (st.shape, st.multiplicity))
+        .with_context(|| format!("{} has an unsupported tcgen05 store identity", policy.id))?;
+    let expected_abi_id = format!("i{:04}", 670 + source_index * 2 + usize::from(st.unpack16));
+    let id = tcgen05_st_id(st);
+    let source_record = tcgen05_st_source_record(st);
+    let llvm_symbol = tcgen05_st_llvm_symbol(st);
+    let rust_data = tcgen05_st_rust_data(st);
+    let llvm_data = tcgen05_st_llvm_data(st);
+    let register_count = tcgen05_st_register_count(st);
+    let mode = if st.unpack16 { "unpack16" } else { "raw" };
+    ensure!(
+        policy.id == id
+            && policy.abi_id == expected_abi_id
+            && policy.operation_key
+                == format!(
+                    "tcgen05.st.{}.{}.{}",
+                    tcgen05_ld_shape_name(st.shape),
+                    tcgen05_ld_multiplicity_name(st.multiplicity),
+                    mode
+                )
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == source_record
+            && declaration.llvm_name == llvm_symbol,
+        "{} tcgen05 store identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "tcgen05"
+            && policy.rust_name == id
+            && policy.rust_arguments == ["u32", rust_data.as_str()]
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::tcgen05::{id}")
+            && policy.compatibility_rust_paths == [format!("cuda_device::tcgen05::{id}")],
+        "{} tcgen05 store Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == tcgen05_st_op_type(st)
+            && policy.dialect_op_name == format!("nvvm.{id}")
+            && policy.dialect_operands
+                == std::iter::once("i32".into())
+                    .chain(std::iter::repeat_n("i32".into(), register_count))
+                    .collect::<Vec<String>>()
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == ["tmem_ptr", llvm_data.as_str(), "i1"]
+            && policy.llvm_results.is_empty()
+            && declaration.arguments == ["tmem_ptr", llvm_data.as_str(), "i1"]
+            && declaration.results.is_empty()
+            && declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_TCGEN05_ST"]
+            && declaration.properties
+                == [
+                    "ImmArg<arg2>",
+                    "IntrArgMemOnly",
+                    "IntrConvergent",
+                    "NoCapture<arg0>",
+                ]
+            && declaration.selections.is_empty()
+            && policy.lowering == "generated_tcgen05",
+        "{} tcgen05 store carrier or imported declaration changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "write"
+            && policy.convergent
+            && policy.execution_scope == "thread"
+            && tcgen05.operation == Tcgen05Operation::St
+            && tcgen05.cp.is_none()
+            && tcgen05.ld.is_none()
+            && tcgen05.st == Some(st)
+            && tcgen05.adapter == Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid
+            && tcgen05.source_contract == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+            && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} tcgen05 store semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "8.6"
+            && policy.minimum_sm.is_none()
+            && policy.targets == TCGEN05_LLVM_TARGETS
+            && policy.ptx_isa_version == "8.6"
+            && policy.ptx_result == "()"
+            && policy.expected_ptx.mnemonic == "tcgen05"
+            && policy.expected_ptx.modifiers == tcgen05_st_modifiers(st)
+            && policy.expected_ptx.operands == tcgen05_st_operands(st),
+        "{} tcgen05 store target or PTX contract changed",
+        policy.id
+    );
+    validate_tcgen05_backend_routes(policy, "tcgen05 store")?;
+    ensure_no_other_family_contract(policy, "tcgen05 store")?;
     Ok(())
 }
 
@@ -5608,6 +5967,7 @@ fn validate_tcgen05_cp_policy(
             && policy.execution_scope == "thread"
             && tcgen05.operation == operation
             && tcgen05.ld.is_none()
+            && tcgen05.st.is_none()
             && tcgen05.adapter == Tcgen05Adapter::TmemDescriptorToVoid
             && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
             && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
@@ -24579,7 +24939,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 57);
-        assert_eq!(overlay.intrinsics.len(), 669);
+        assert_eq!(overlay.intrinsics.len(), 727);
         assert_eq!(
             overlay
                 .intrinsics
@@ -25045,6 +25405,8 @@ mod tests {
             cp_libnvvm_evidence_profile: None,
             ld_llvm_evidence_profile: None,
             ld_libnvvm_evidence_profile: None,
+            st_llvm_evidence_profile: None,
+            st_libnvvm_evidence_profile: None,
             runtime_validation: RuntimeValidation::Unexecuted,
             variants: operations
                 .into_iter()
@@ -25055,6 +25417,7 @@ mod tests {
                 .collect(),
             cp_variants: vec![],
             ld_variants: vec![],
+            st_variants: vec![],
         }
     }
 
@@ -25097,6 +25460,30 @@ mod tests {
                     shape,
                     multiplicity,
                     pack16,
+                },
+            )
+            .collect();
+        admission
+    }
+
+    fn test_tcgen05_st_admission() -> Tcgen05Admission {
+        let mut admission = test_tcgen05_ld_admission();
+        admission.st_llvm_evidence_profile = Some("llvm-tcgen05-st-test".into());
+        admission.st_libnvvm_evidence_profile = Some("libnvvm-tcgen05-st-test".into());
+        admission.st_variants = TCGEN05_ST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |unpack16| (shape, multiplicity, unpack16))
+            })
+            .enumerate()
+            .map(
+                |(index, (shape, multiplicity, unpack16))| Tcgen05StAdmissionVariant {
+                    abi_id: format!("i{:04}", 670 + index),
+                    shape,
+                    multiplicity,
+                    unpack16,
                 },
             )
             .collect();
@@ -27694,6 +28081,138 @@ scope = "system"
     }
 
     #[test]
+    fn compact_tcgen05_store_admission_matches_all_llvm_records_and_fails_closed() {
+        let records = expand_tcgen05_admission(&test_tcgen05_st_admission()).unwrap();
+        assert_eq!(records.len(), 174);
+        let stores = &records[116..];
+        assert_eq!(stores.len(), 58);
+        assert_eq!(
+            (stores[0].abi_id.as_str(), stores[0].id.as_str()),
+            ("i0670", "tcgen05_st_16x64b_x1_raw")
+        );
+        assert_eq!(
+            (stores[1].abi_id.as_str(), stores[1].id.as_str()),
+            ("i0671", "tcgen05_st_16x64b_x1_unpack16")
+        );
+        assert_eq!(
+            (stores[57].abi_id.as_str(), stores[57].id.as_str()),
+            ("i0727", "tcgen05_st_32x32b_x128_unpack16")
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        let mut source_counts = BTreeMap::new();
+        for record in stores {
+            let source_record = record.source_record.as_deref().unwrap();
+            *source_counts.entry(source_record).or_insert(0) += 1;
+            let declaration = declarations[source_record];
+            validate_imported_policy(record, declaration).unwrap();
+            assert_tcgen05_backend_target_split(record);
+            assert_eq!(record.rust_arguments.len(), 2);
+            assert_eq!(record.rust_result, "()");
+            assert!(!record.must_use);
+            assert!(!record.safe);
+            assert!(!record.pure);
+            assert_eq!(record.memory, "write");
+            assert!(record.convergent);
+            assert_eq!(record.dialect_results, Vec::<String>::new());
+            assert_eq!(record.llvm_results, Vec::<String>::new());
+            assert_eq!(record.llvm_arguments, declaration.arguments);
+            assert_eq!(
+                declaration.properties,
+                [
+                    "ImmArg<arg2>",
+                    "IntrArgMemOnly",
+                    "IntrConvergent",
+                    "NoCapture<arg0>",
+                ]
+            );
+            assert!(declaration.selections.is_empty());
+        }
+        assert_eq!(source_counts.len(), 29);
+        assert!(source_counts.values().all(|count| *count == 2));
+        validate_unique_overlay(&records, 1).unwrap();
+
+        let scalar_raw = &stores[0];
+        assert_eq!(scalar_raw.rust_arguments, ["u32", "u32"]);
+        assert_eq!(scalar_raw.dialect_operands, ["i32", "i32"]);
+        assert_eq!(scalar_raw.llvm_arguments, ["tmem_ptr", "i32", "i1"]);
+        assert_eq!(
+            scalar_raw.expected_ptx.modifiers,
+            ["st", "sync", "aligned", "16x64b", "x1", "b32"]
+        );
+        assert_eq!(
+            scalar_raw.expected_ptx.operands,
+            [OperandPattern::Address, OperandPattern::Register]
+        );
+        assert_eq!(
+            stores[1].expected_ptx.modifiers,
+            [
+                "st",
+                "sync",
+                "aligned",
+                "16x64b",
+                "x1",
+                "unpack::16b",
+                "b32",
+            ]
+        );
+        let largest = &stores[57];
+        assert_eq!(largest.rust_arguments, ["u32", "[u32; 128]"]);
+        assert_eq!(largest.dialect_operands.len(), 129);
+        assert_eq!(largest.llvm_arguments, ["tmem_ptr", "v128i32", "i1"]);
+        assert_eq!(
+            largest.expected_ptx.operands,
+            [
+                OperandPattern::Address,
+                OperandPattern::RegisterList { length: 128 },
+            ]
+        );
+
+        let mut missing = test_tcgen05_st_admission();
+        missing.st_variants.pop();
+        assert!(expand_tcgen05_admission(&missing).is_err());
+
+        let mut reordered = test_tcgen05_st_admission();
+        reordered.st_variants.swap(0, 1);
+        assert!(expand_tcgen05_admission(&reordered).is_err());
+
+        let mut wrong_abi = test_tcgen05_st_admission();
+        wrong_abi.st_variants[0].abi_id = "i9999".into();
+        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+
+        let mut missing_evidence = test_tcgen05_st_admission();
+        missing_evidence.st_llvm_evidence_profile = None;
+        assert!(expand_tcgen05_admission(&missing_evidence).is_err());
+
+        let declaration = declarations[stores[0].source_record.as_deref().unwrap()];
+        let mut wrong_selector = stores[0].clone();
+        wrong_selector
+            .tcgen05
+            .as_mut()
+            .unwrap()
+            .st
+            .as_mut()
+            .unwrap()
+            .unpack16 = true;
+        assert!(validate_imported_policy(&wrong_selector, declaration).is_err());
+
+        let mut changed_declaration = declaration.clone();
+        changed_declaration.properties.pop();
+        assert!(validate_imported_policy(&stores[0], &changed_declaration).is_err());
+
+        let mut unreviewed_sharing = records.clone();
+        unreviewed_sharing[117].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
+        assert!(validate_unique_overlay(&unreviewed_sharing, 1).is_err());
+    }
+
+    #[test]
     fn tcgen05_compact_schema_is_reserved_for_aggregation() {
         let shard = |schema, admission| OverlayShardFile {
             schema,
@@ -27775,6 +28294,22 @@ scope = "system"
             .unwrap_err()
             .to_string()
             .contains("requires overlay shard schema 53")
+        );
+        validate_overlay_shard_schema_with_max(
+            &shard(TCGEN05_ST_SHARD_SCHEMA, test_tcgen05_st_admission()),
+            path,
+            TCGEN05_ST_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(TCGEN05_ST_SHARD_SCHEMA - 1, test_tcgen05_st_admission()),
+                path,
+                TCGEN05_ST_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 54")
         );
     }
 

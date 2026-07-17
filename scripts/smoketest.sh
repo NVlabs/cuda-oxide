@@ -656,12 +656,15 @@ run_cargo() {
         return
     fi
 
-    # The tcgen05 copy and load families must pass both compiler routes.
+    # The tcgen05 copy, load, and store families must pass both compiler routes.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "tcgen05" ]]; then
         local cp_re='tcgen05\.cp\.cta_group::[12]\.(128x128b|128x256b|32x128b\.warpx4|4x256b|64x128b\.warpx2::(01_23|02_13))(\.b8x16\.(b4x16_p64|b6x16_p32))?[[:space:]]'
         local ld_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)(\.pack::16b)?\.b32'
         local ld_pack16_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.pack::16b\.b32'
         local ld_raw_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.b32'
+        local st_re='tcgen05\.st\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)(\.unpack::16b)?\.b32'
+        local st_unpack16_re='tcgen05\.st\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.unpack::16b\.b32'
+        local st_raw_re='tcgen05\.st\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.b32'
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local -a llvm_args=("build" "${ex}" "--arch=sm_100a")
         local llvm_ec
@@ -711,6 +714,22 @@ run_cargo() {
             return
         fi
 
+        local llvm_st llvm_st_count llvm_st_unique llvm_st_unpack16 llvm_st_raw
+        llvm_st="$(awk '/^\.visible \.entry compile_tcgen05_st\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_st_count="$(grep -oE "${st_re}" <<<"${llvm_st}" | wc -l)"
+        llvm_st_unique="$(grep -oE "${st_re}" <<<"${llvm_st}" | sort -u | wc -l)"
+        llvm_st_unpack16="$(grep -oE "${st_unpack16_re}" <<<"${llvm_st}" | wc -l)"
+        llvm_st_raw="$(grep -oE "${st_raw_re}" <<<"${llvm_st}" | wc -l)"
+        if [[ -z "${llvm_st}" ]] \
+            || [[ ${llvm_st_count} -ne 58 || ${llvm_st_unique} -ne 58 ]] \
+            || [[ ${llvm_st_unpack16} -ne 29 || ${llvm_st_raw} -ne 29 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.st' "${llvm_ptx}"; then
+            printf 'tcgen05 LLVM route expected 58 unique stores (29 raw and 29 unpack16); got %s/%s total/unique and %s/%s raw/unpack16\n' \
+                "${llvm_st_count}" "${llvm_st_unique}" "${llvm_st_raw}" "${llvm_st_unpack16}" >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
         local -a nvvm_args=("emit-ltoir" "${ex}" "--arch=sm_100a")
         if [[ ${VERBOSE} -eq 1 ]]; then
             cargo oxide "${nvvm_args[@]}" 2>&1 | tee -a "${log}"
@@ -755,6 +774,21 @@ run_cargo() {
             || grep -q 'llvm\.nvvm\.tcgen05\.ld' "${nvvm_ll}"; then
             printf 'tcgen05 libNVVM route expected sm_100a and 58 unique inline loads (29 raw and 29 pack16); got %s/%s total/unique and %s/%s raw/pack16\n' \
                 "${nvvm_ld_count}" "${nvvm_ld_unique}" "${nvvm_ld_raw}" "${nvvm_ld_pack16}" >>"${log}"
+            CARGO_EC=1
+        fi
+
+        local nvvm_st nvvm_st_count nvvm_st_unique nvvm_st_unpack16 nvvm_st_raw
+        nvvm_st="$(awk '/^define .*@compile_tcgen05_st\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_st_count="$(grep -oE "${st_re}" <<<"${nvvm_st}" | wc -l)"
+        nvvm_st_unique="$(grep -oE "${st_re}" <<<"${nvvm_st}" | sort -u | wc -l)"
+        nvvm_st_unpack16="$(grep -oE "${st_unpack16_re}" <<<"${nvvm_st}" | wc -l)"
+        nvvm_st_raw="$(grep -oE "${st_raw_re}" <<<"${nvvm_st}" | wc -l)"
+        if [[ -z "${nvvm_st}" ]] \
+            || [[ ${nvvm_st_count} -ne 58 || ${nvvm_st_unique} -ne 58 ]] \
+            || [[ ${nvvm_st_unpack16} -ne 29 || ${nvvm_st_raw} -ne 29 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.st' "${nvvm_ll}"; then
+            printf 'tcgen05 libNVVM route expected 58 unique inline stores (29 raw and 29 unpack16); got %s/%s total/unique and %s/%s raw/unpack16\n' \
+                "${nvvm_st_count}" "${nvvm_st_unique}" "${nvvm_st_raw}" "${nvvm_st_unpack16}" >>"${log}"
             CARGO_EC=1
         fi
         return

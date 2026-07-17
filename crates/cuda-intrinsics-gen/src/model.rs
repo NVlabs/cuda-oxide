@@ -518,6 +518,10 @@ pub struct Tcgen05Admission {
     pub ld_llvm_evidence_profile: Option<String>,
     #[serde(default)]
     pub ld_libnvvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub st_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub st_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<Tcgen05AdmissionVariant>,
@@ -525,6 +529,8 @@ pub struct Tcgen05Admission {
     pub cp_variants: Vec<Tcgen05CpAdmissionVariant>,
     #[serde(rename = "ld_variant", default)]
     pub ld_variants: Vec<Tcgen05LdAdmissionVariant>,
+    #[serde(rename = "st_variant", default)]
+    pub st_variants: Vec<Tcgen05StAdmissionVariant>,
 }
 
 /// One reviewed tcgen05 operation and its reserved ABI ID.
@@ -552,6 +558,16 @@ pub struct Tcgen05LdAdmissionVariant {
     pub shape: Tcgen05LdShape,
     pub multiplicity: Tcgen05LdMultiplicity,
     pub pack16: bool,
+}
+
+/// One reviewed tcgen05 store shape, repetition, and unpacking mode.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05StAdmissionVariant {
+    pub abi_id: String,
+    pub shape: Tcgen05LdShape,
+    pub multiplicity: Tcgen05LdMultiplicity,
+    pub unpack16: bool,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -1080,6 +1096,8 @@ pub struct Tcgen05 {
     pub cp: Option<Tcgen05Cp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ld: Option<Tcgen05Ld>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub st: Option<Tcgen05St>,
     pub adapter: Tcgen05Adapter,
     pub source_contract: Tcgen05SourceContract,
     pub runtime_validation: RuntimeValidation,
@@ -1145,6 +1163,15 @@ pub struct Tcgen05Ld {
     pub shape: Tcgen05LdShape,
     pub multiplicity: Tcgen05LdMultiplicity,
     pub pack16: bool,
+}
+
+/// Closed identity for one tcgen05 tensor-memory store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05St {
+    pub shape: Tcgen05LdShape,
+    pub multiplicity: Tcgen05LdMultiplicity,
+    pub unpack16: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1225,6 +1252,7 @@ pub enum Tcgen05Operation {
     CommitMulticastCg2,
     CpSmemToTmemCg2,
     Ld,
+    St,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1241,6 +1269,7 @@ pub enum Tcgen05Adapter {
     TmemToF32x4,
     BarrierPointerMaskToVoid,
     TmemInjectPack16ToU32Registers,
+    TmemU32RegistersInjectUnpack16ToVoid,
 }
 
 /// Relationship between the public operation and LLVM's NVPTX selection.
