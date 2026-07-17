@@ -3124,16 +3124,19 @@ impl fmt::Display for PtxVersion {
 
 /// Reviewed hardware availability for an intrinsic.
 ///
-/// The current overlay accepts `All` and monotonic `MinimumSm` requirements.
-/// The explicit suffix variants reserve a typed representation for PTX `a`
-/// architecture sets and `f` family sets without incorrectly reducing either
-/// to a monotonic minimum.
+/// Exact `a` and `f` targets stay distinct from monotonic minimums. A target
+/// matrix also keeps each hardware target paired with its PTX floor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CatalogHardwareTarget {
     All,
     AnyOf {
         alternatives: Vec<CatalogHardwareAlternative>,
+    },
+    /// PTX and hardware pairs for one selected operation form.
+    TargetMatrix {
+        selectors: Vec<TargetSelectorBinding>,
+        alternatives: Vec<CatalogTargetAlternative>,
     },
 }
 
@@ -3143,6 +3146,40 @@ pub enum CatalogHardwareAlternative {
     MinimumSm { sm: u16 },
     ExactArchitecture { sm: u16 },
     FamilyTarget { sm: u16 },
+}
+
+/// One PTX floor paired with one hardware alternative.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogTargetAlternative {
+    pub minimum_ptx: PtxVersion,
+    pub hardware: CatalogHardwareAlternative,
+}
+
+/// One field/value pair that selects a target contract.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetSelectorBinding {
+    pub name: String,
+    pub value: String,
+}
+
+/// One selector-specific target contract from admission policy.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetContract {
+    #[serde(default)]
+    pub selectors: Vec<TargetSelectorBinding>,
+    pub alternatives: Vec<TargetContractAlternative>,
+}
+
+/// One target spelling and PTX floor.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetContractAlternative {
+    pub target: String,
+    pub minimum_ptx: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

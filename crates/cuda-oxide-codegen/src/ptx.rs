@@ -9,7 +9,9 @@ use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
 use crate::target::{
     detect_module_requirements_in_llvm_file, merge_generated_module_requirements,
-    required_ptx_feature, resolve_ptx_target_with_generated, validate_target_for_llvm_major,
+    merge_generated_module_requirements_for_target, required_ptx_feature,
+    resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
+    validate_target_for_llvm_major,
 };
 use llvm_export::export::DebugKind;
 use std::path::{Path, PathBuf};
@@ -256,6 +258,9 @@ fn generate_ptx_impl(
         detected,
         generated,
     )?;
+    let requirements =
+        merge_generated_module_requirements_for_target(requirements, generated, &target)
+            .map_err(PipelineError::PtxGeneration)?;
 
     let mut diagnostics = Vec::new();
     if opts.verbose {
@@ -267,6 +272,8 @@ fn generate_ptx_impl(
     }
 
     validate_target_for_llvm_major(&target, toolchain.llc_major)
+        .map_err(PipelineError::PtxGeneration)?;
+    validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
         .map_err(PipelineError::PtxGeneration)?;
 
     // Run the LLVM middle-end (opt -O2) before llc. Feature detection above

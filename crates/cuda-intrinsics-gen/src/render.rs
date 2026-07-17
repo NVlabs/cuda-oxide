@@ -3300,13 +3300,43 @@ fn hardware_target_label(target: &CatalogHardwareTarget) -> String {
         CatalogHardwareTarget::All => "all".to_owned(),
         CatalogHardwareTarget::AnyOf { alternatives } => alternatives
             .iter()
-            .map(|alternative| match alternative {
-                CatalogHardwareAlternative::MinimumSm { sm } => format!("sm_{sm}+"),
-                CatalogHardwareAlternative::ExactArchitecture { sm } => format!("sm_{sm}a"),
-                CatalogHardwareAlternative::FamilyTarget { sm } => format!("sm_{sm}f"),
-            })
+            .map(hardware_alternative_label)
             .collect::<Vec<_>>()
             .join(" or "),
+        CatalogHardwareTarget::TargetMatrix {
+            selectors,
+            alternatives,
+        } => {
+            let selectors = selectors
+                .iter()
+                .map(|selector| format!("{}={}", selector.name, selector.value))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let alternatives = alternatives
+                .iter()
+                .map(|alternative| {
+                    format!(
+                        "{} at PTX {}",
+                        hardware_alternative_label(&alternative.hardware),
+                        alternative.minimum_ptx
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" or ");
+            if selectors.is_empty() {
+                alternatives
+            } else {
+                format!("{alternatives} for {selectors}")
+            }
+        }
+    }
+}
+
+fn hardware_alternative_label(alternative: &CatalogHardwareAlternative) -> String {
+    match alternative {
+        CatalogHardwareAlternative::MinimumSm { sm } => format!("sm_{sm}+"),
+        CatalogHardwareAlternative::ExactArchitecture { sm } => format!("sm_{sm}a"),
+        CatalogHardwareAlternative::FamilyTarget { sm } => format!("sm_{sm}f"),
     }
 }
 
@@ -3316,20 +3346,53 @@ fn generated_hardware_target(target: &CatalogHardwareTarget) -> String {
         CatalogHardwareTarget::AnyOf { alternatives } => {
             let alternatives = alternatives
                 .iter()
-                .map(|alternative| match alternative {
-                    CatalogHardwareAlternative::MinimumSm { sm } => {
-                        format!("GeneratedHardwareAlternative::MinimumSm({sm})")
-                    }
-                    CatalogHardwareAlternative::ExactArchitecture { sm } => {
-                        format!("GeneratedHardwareAlternative::ExactArchitecture({sm})")
-                    }
-                    CatalogHardwareAlternative::FamilyTarget { sm } => {
-                        format!("GeneratedHardwareAlternative::FamilyTarget({sm})")
-                    }
-                })
+                .map(generated_hardware_alternative)
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("GeneratedHardwareTarget::AnyOf(&[{alternatives}])")
+        }
+        CatalogHardwareTarget::TargetMatrix {
+            selectors,
+            alternatives,
+        } => {
+            let selectors = selectors
+                .iter()
+                .map(|selector| {
+                    format!(
+                        "GeneratedTargetSelectorBinding {{ name: {:?}, value: {:?} }}",
+                        selector.name, selector.value
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let alternatives = alternatives
+                .iter()
+                .map(|alternative| {
+                    format!(
+                        "GeneratedTargetAlternative {{ minimum_ptx: GeneratedPtxVersion::from_encoded({}), hardware: {} }}",
+                        alternative.minimum_ptx.encoded(),
+                        generated_hardware_alternative(&alternative.hardware)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "GeneratedHardwareTarget::TargetMatrix {{ selectors: &[{selectors}], alternatives: &[{alternatives}] }}"
+            )
+        }
+    }
+}
+
+fn generated_hardware_alternative(alternative: &CatalogHardwareAlternative) -> String {
+    match alternative {
+        CatalogHardwareAlternative::MinimumSm { sm } => {
+            format!("GeneratedHardwareAlternative::MinimumSm({sm})")
+        }
+        CatalogHardwareAlternative::ExactArchitecture { sm } => {
+            format!("GeneratedHardwareAlternative::ExactArchitecture({sm})")
+        }
+        CatalogHardwareAlternative::FamilyTarget { sm } => {
+            format!("GeneratedHardwareAlternative::FamilyTarget({sm})")
         }
     }
 }
@@ -14165,7 +14228,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     records.sort_by(|left, right| left.rust.abi_id.cmp(&right.rust.abi_id));
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n    RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
+        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetSelectorBinding { pub name: &'static str, pub value: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetAlternative { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareAlternative }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]), TargetMatrix { selectors: &'static [GeneratedTargetSelectorBinding], alternatives: &'static [GeneratedTargetAlternative] } }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n    RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -16860,10 +16923,41 @@ fn modules(catalog: &CatalogFile) -> BTreeSet<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ImportedSelectionConstraints;
+    use crate::model::{
+        CatalogTargetAlternative, ImportedSelectionConstraints, TargetSelectorBinding,
+    };
     use crate::ptx::{InstructionPattern, OperandPattern};
     use crate::util::read_json;
     use std::path::Path;
+
+    #[test]
+    fn paired_target_matrix_renders_selectors_and_ptx_floors() {
+        let target = CatalogHardwareTarget::TargetMatrix {
+            selectors: vec![TargetSelectorBinding {
+                name: "kind".into(),
+                value: "i8".into(),
+            }],
+            alternatives: vec![
+                CatalogTargetAlternative {
+                    minimum_ptx: "8.8".parse().unwrap(),
+                    hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                },
+                CatalogTargetAlternative {
+                    minimum_ptx: "9.0".parse().unwrap(),
+                    hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                },
+            ],
+        };
+
+        assert_eq!(
+            hardware_target_label(&target),
+            "sm_100a at PTX 8.8 or sm_110a at PTX 9.0 for kind=i8"
+        );
+        assert_eq!(
+            generated_hardware_target(&target),
+            "GeneratedHardwareTarget::TargetMatrix { selectors: &[GeneratedTargetSelectorBinding { name: \"kind\", value: \"i8\" }], alternatives: &[GeneratedTargetAlternative { minimum_ptx: GeneratedPtxVersion::from_encoded(88), hardware: GeneratedHardwareAlternative::ExactArchitecture(100) }, GeneratedTargetAlternative { minimum_ptx: GeneratedPtxVersion::from_encoded(90), hardware: GeneratedHardwareAlternative::ExactArchitecture(110) }] }"
+        );
+    }
 
     fn catalog_with_debug_controls() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

@@ -9,16 +9,16 @@ use crate::model::{
     BackendLoweringMechanism, CatalogBackend, CatalogBackendLowering, CatalogDialect, CatalogFile,
     CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
-    CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
-    Clc, ClcAdapter, ClcAdmission, ClcOperation, ClusterBarrier, ClusterBarrierAdmission,
-    ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemory, ClusterMemoryAdapter,
-    ClusterMemoryAdmission, ClusterMemoryOperation, ClusterMemorySourceContract,
-    ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter,
-    CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
-    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl, DebugControlAdapter,
-    DebugControlAdmission, DebugControlOperation, DotProductAdapter, DotProductOperation,
-    DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix,
-    EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
+    CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetAlternative,
+    CatalogTargetRequirement, Clc, ClcAdapter, ClcAdmission, ClcOperation, ClusterBarrier,
+    ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering, ClusterMemory,
+    ClusterMemoryAdapter, ClusterMemoryAdmission, ClusterMemoryOperation,
+    ClusterMemorySourceContract, ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy,
+    CpAsyncControlAdapter, CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter,
+    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl,
+    DebugControlAdapter, DebugControlAdmission, DebugControlOperation, DotProductAdapter,
+    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6,
+    EvidenceMatrix, EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
     EvidenceStageKind, ExtendedMinMax, ExtendedMinMaxAdapter, ExtendedMinMaxAdmission,
     ExtendedMinMaxFormat, ExtendedMinMaxNan, ExtendedMinMaxOperation, ExtendedMinMaxSubnormal,
     ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource,
@@ -53,16 +53,17 @@ use crate::model::{
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
     SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
-    StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05Adapter,
-    Tcgen05Admission, Tcgen05Cp, Tcgen05CpAdmissionVariant, Tcgen05CpGroup, Tcgen05CpMember,
-    Tcgen05Ld, Tcgen05LdAdmissionVariant, Tcgen05LdMultiplicity, Tcgen05LdShape, Tcgen05Operation,
-    Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant, ThreadfenceAdmission,
-    ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation, VoteAdapter, VoteMode,
-    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
-    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
-    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
-    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind, WgmmaControl,
-    WgmmaControlAdapter, WgmmaControlAdmission, WgmmaControlMode, WgmmaControlParticipation,
+    StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, TargetContract, TargetSelectorBinding,
+    Tcgen05, Tcgen05Adapter, Tcgen05Admission, Tcgen05Cp, Tcgen05CpAdmissionVariant,
+    Tcgen05CpGroup, Tcgen05CpMember, Tcgen05Ld, Tcgen05LdAdmissionVariant, Tcgen05LdMultiplicity,
+    Tcgen05LdShape, Tcgen05Operation, Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant,
+    ThreadfenceAdmission, ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation,
+    VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
+    WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
+    WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
+    WarpShuffleValueKind, WgmmaControl, WgmmaControlAdapter, WgmmaControlAdmission,
+    WgmmaControlMode, WgmmaControlParticipation,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -750,7 +751,12 @@ fn validate_candidate_target(
     let effective_minimum_ptx = if is_f8f6f4_mma_target_matrix_policy(policy) {
         f8f6f4_llvm_ptx_floor(hardware)?
     } else {
-        requirement.minimum_ptx.encoded()
+        target_requirement_ptx_floor(requirement, hardware, true).with_context(|| {
+            format!(
+                "candidate GPU target {gpu_target} does not satisfy {} hardware requirement {:?}",
+                policy.id, requirement.hardware
+            )
+        })?
     };
     ensure!(
         ptx.encoded() >= effective_minimum_ptx,
@@ -759,12 +765,7 @@ fn validate_candidate_target(
         effective_minimum_ptx / 10,
         effective_minimum_ptx % 10
     );
-    let hardware_matches = match &requirement.hardware {
-        CatalogHardwareTarget::All => true,
-        CatalogHardwareTarget::AnyOf { alternatives } => alternatives
-            .iter()
-            .any(|expected| selected_stage_hardware_matches(hardware, *expected, true)),
-    };
+    let hardware_matches = target_requirement_ptx_floor(requirement, hardware, true).is_some();
     ensure!(
         hardware_matches,
         "candidate GPU target {gpu_target} does not satisfy {} hardware requirement {:?}",
@@ -772,6 +773,33 @@ fn validate_candidate_target(
         requirement.hardware
     );
     Ok(())
+}
+
+fn target_requirement_ptx_floor(
+    requirement: &CatalogTargetRequirement,
+    hardware: CatalogHardwareAlternative,
+    allow_forward_minimum: bool,
+) -> Option<u16> {
+    match &requirement.hardware {
+        CatalogHardwareTarget::All => Some(requirement.minimum_ptx.encoded()),
+        CatalogHardwareTarget::AnyOf { alternatives } => alternatives
+            .iter()
+            .any(|expected| {
+                selected_stage_hardware_matches(hardware, *expected, allow_forward_minimum)
+            })
+            .then(|| requirement.minimum_ptx.encoded()),
+        CatalogHardwareTarget::TargetMatrix { alternatives, .. } => alternatives
+            .iter()
+            .filter(|alternative| {
+                selected_stage_hardware_matches(
+                    hardware,
+                    alternative.hardware,
+                    allow_forward_minimum,
+                )
+            })
+            .map(|alternative| alternative.minimum_ptx.encoded())
+            .min(),
+    }
 }
 
 fn parse_candidate_ptx_feature(value: &str) -> Result<PtxVersion> {
@@ -21997,6 +22025,159 @@ fn parse_hardware_target(policy: &OverlayIntrinsic) -> Result<CatalogHardwareTar
     parse_hardware_target_fields(&policy.id, &policy.targets, policy.minimum_sm.as_deref())
 }
 
+/// Resolve the exact contract for one selector set.
+#[allow(dead_code)]
+pub(crate) fn resolve_target_contract(
+    intrinsic_id: &str,
+    selected: &[TargetSelectorBinding],
+    contracts: &[TargetContract],
+) -> Result<CatalogTargetRequirement> {
+    ensure!(
+        !contracts.is_empty(),
+        "{intrinsic_id} has no reviewed target contracts"
+    );
+    validate_selector_bindings(intrinsic_id, "selected target selectors", selected)?;
+
+    let expected_selector_names = contracts[0]
+        .selectors
+        .iter()
+        .map(|selector| selector.name.as_str())
+        .collect::<Vec<_>>();
+    let mut resolved_contracts = Vec::with_capacity(contracts.len());
+    for contract in contracts {
+        validate_selector_bindings(
+            intrinsic_id,
+            "target-contract selectors",
+            &contract.selectors,
+        )?;
+        ensure!(
+            contract
+                .selectors
+                .iter()
+                .map(|selector| selector.name.as_str())
+                .eq(expected_selector_names.iter().copied()),
+            "{intrinsic_id} target contracts must use one closed selector schema"
+        );
+        ensure!(
+            !contract.alternatives.is_empty(),
+            "{intrinsic_id} target contract {:?} has no alternatives",
+            contract.selectors
+        );
+
+        let alternatives = contract
+            .alternatives
+            .iter()
+            .map(|alternative| {
+                Ok(CatalogTargetAlternative {
+                    minimum_ptx: parse_ptx_version(&alternative.minimum_ptx, intrinsic_id)?,
+                    hardware: parse_target_contract_hardware(intrinsic_id, &alternative.target)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(
+            alternatives
+                .windows(2)
+                .all(|pair| target_hardware_sort_key(pair[0].hardware)
+                    < target_hardware_sort_key(pair[1].hardware)),
+            "{intrinsic_id} target contract {:?} alternatives must have unique, sorted hardware targets",
+            contract.selectors
+        );
+        let minimum_count = alternatives
+            .iter()
+            .filter(|alternative| {
+                matches!(
+                    alternative.hardware,
+                    CatalogHardwareAlternative::MinimumSm { .. }
+                )
+            })
+            .count();
+        ensure!(
+            minimum_count == 0 || alternatives.len() == 1,
+            "{intrinsic_id} target contract {:?} cannot mix a minimum-SM range with other alternatives",
+            contract.selectors
+        );
+        resolved_contracts.push((contract.selectors.clone(), alternatives));
+    }
+    ensure!(
+        resolved_contracts
+            .windows(2)
+            .all(|pair| pair[0].0 < pair[1].0),
+        "{intrinsic_id} target contracts must have unique, sorted selector bindings"
+    );
+
+    let matching = resolved_contracts
+        .into_iter()
+        .filter(|(selectors, _)| selectors == selected)
+        .collect::<Vec<_>>();
+    ensure!(
+        matching.len() == 1,
+        "{intrinsic_id} selected target selectors {:?} must match exactly one reviewed contract",
+        selected
+    );
+    let (selectors, alternatives) = matching.into_iter().next().unwrap();
+    let minimum_ptx = alternatives
+        .iter()
+        .map(|alternative| alternative.minimum_ptx)
+        .min()
+        .unwrap();
+    Ok(CatalogTargetRequirement {
+        minimum_ptx,
+        hardware: CatalogHardwareTarget::TargetMatrix {
+            selectors,
+            alternatives,
+        },
+    })
+}
+
+fn validate_selector_bindings(
+    intrinsic_id: &str,
+    label: &str,
+    selectors: &[TargetSelectorBinding],
+) -> Result<()> {
+    for selector in selectors {
+        ensure!(
+            is_target_selector_token(&selector.name) && is_target_selector_token(&selector.value),
+            "{intrinsic_id} {label} must use lowercase snake-case names and values"
+        );
+    }
+    ensure!(
+        selectors.windows(2).all(|pair| pair[0].name < pair[1].name),
+        "{intrinsic_id} {label} must have unique, sorted names"
+    );
+    Ok(())
+}
+
+fn is_target_selector_token(value: &str) -> bool {
+    value
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_lowercase())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !value.ends_with('_')
+        && !value.contains("__")
+}
+
+fn parse_target_contract_hardware(
+    intrinsic_id: &str,
+    target: &str,
+) -> Result<CatalogHardwareAlternative> {
+    if let Some(minimum) = target.strip_suffix('+') {
+        let sm = parse_sm_spelling(intrinsic_id, "target contract", minimum, None)?;
+        return Ok(CatalogHardwareAlternative::MinimumSm { sm });
+    }
+    parse_exact_hardware_alternative(intrinsic_id, target)
+}
+
+fn target_hardware_sort_key(hardware: CatalogHardwareAlternative) -> (u16, u8) {
+    match hardware {
+        CatalogHardwareAlternative::MinimumSm { sm } => (sm, 0),
+        CatalogHardwareAlternative::ExactArchitecture { sm } => (sm, 1),
+        CatalogHardwareAlternative::FamilyTarget { sm } => (sm, 2),
+    }
+}
+
 fn parse_hardware_target_fields(
     intrinsic_id: &str,
     targets: &str,
@@ -23096,13 +23277,18 @@ fn validate_selected_stage_targets(
     record: &EvidenceRecord,
     lowering: &crate::model::OverlayBackendLowering,
 ) -> Result<()> {
+    let requirement = backend_target_requirement(policy, lowering)?;
     let blackwell_ldmatrix = policy.family == "ldmatrix"
         && policy
             .ldmatrix_variant
             .as_ref()
             .is_some_and(|variant| variant.shape != LdmatrixShape::M8n8);
     let f8f6f4_mma = is_f8f6f4_mma_target_matrix_policy(policy);
-    let target_matrix_evidence = blackwell_ldmatrix || f8f6f4_mma;
+    let paired_alternatives = match &requirement.hardware {
+        CatalogHardwareTarget::TargetMatrix { alternatives, .. } => Some(alternatives.as_slice()),
+        _ => None,
+    };
+    let target_matrix_evidence = blackwell_ldmatrix || f8f6f4_mma || paired_alternatives.is_some();
     if !target_matrix_evidence {
         let mut pairs = Vec::new();
         for stage in record.stages.iter().filter(|stage| {
@@ -23139,10 +23325,17 @@ fn validate_selected_stage_targets(
         IntrinsicBackend::LlvmNvptx => EvidenceStageKind::PtxAssembly,
         IntrinsicBackend::LibNvvm => EvidenceStageKind::DeviceLink,
     };
-    let requirement = backend_target_requirement(policy, lowering)?;
     let expected_ptx = requirement.minimum_ptx.encoded();
-    let expected_hardware = match requirement.hardware {
-        CatalogHardwareTarget::AnyOf { alternatives } if !alternatives.is_empty() => alternatives,
+    let expected_hardware = match &requirement.hardware {
+        CatalogHardwareTarget::AnyOf { alternatives } if !alternatives.is_empty() => {
+            alternatives.clone()
+        }
+        CatalogHardwareTarget::TargetMatrix { alternatives, .. } if !alternatives.is_empty() => {
+            alternatives
+                .iter()
+                .map(|alternative| alternative.hardware)
+                .collect()
+        }
         _ => bail!(
             "{} selected backend stages require a hardware target",
             policy.id
@@ -23156,6 +23349,7 @@ fn validate_selected_stage_targets(
             terminal_kind,
             &expected_hardware,
             expected_ptx,
+            paired_alternatives,
         );
     }
     let backend = successful_stage(
@@ -23236,6 +23430,7 @@ fn validate_target_matrix_stage_targets(
     terminal_kind: EvidenceStageKind,
     expected_hardware: &[CatalogHardwareAlternative],
     minimum_ptx: u16,
+    paired_alternatives: Option<&[CatalogTargetAlternative]>,
 ) -> Result<()> {
     let mut required_kinds = vec![EvidenceStageKind::BackendCodegen];
     if matches!(record.status.as_str(), "validated" | "executed") {
@@ -23274,16 +23469,13 @@ fn validate_target_matrix_stage_targets(
                 describe_stage_hardware(hardware)
             );
             covered.push(hardware);
+            let exact_floor =
+                target_matrix_ptx_floor(policy, hardware, paired_alternatives, false)?;
             let ptx_matches = match lowering.backend {
-                IntrinsicBackend::LlvmNvptx => {
-                    let floor = if is_f8f6f4_mma_target_matrix_policy(policy) {
-                        f8f6f4_llvm_ptx_floor(hardware)?
-                    } else {
-                        blackwell_ldmatrix_llvm_ptx_floor(hardware)?
-                    };
-                    ptx == floor
+                IntrinsicBackend::LlvmNvptx => ptx == exact_floor,
+                IntrinsicBackend::LibNvvm => {
+                    ptx >= paired_alternatives.map_or(minimum_ptx, |_| exact_floor)
                 }
-                IntrinsicBackend::LibNvvm => ptx >= minimum_ptx,
             };
             ensure!(
                 ptx_matches,
@@ -23325,7 +23517,81 @@ fn validate_target_matrix_stage_targets(
             }
         }
     }
+
+    if record.status == "executed" {
+        let runtime = record
+            .stages
+            .iter()
+            .filter(|stage| {
+                stage.stage == EvidenceStageKind::Runtime
+                    && stage.mechanism == Some(lowering.mechanism)
+                    && stage.outcome == "succeeded"
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            runtime.len() == 1,
+            "{} executed target-matrix evidence requires one successful runtime stage",
+            policy.id
+        );
+        let (hardware, ptx) = selected_stage_floor(runtime[0])?;
+        ensure!(
+            expected_hardware
+                .iter()
+                .any(|expected| { selected_stage_hardware_matches(hardware, *expected, true) }),
+            "{} runtime target {} is outside its target matrix",
+            policy.id,
+            describe_stage_hardware(hardware)
+        );
+        let floor = target_matrix_ptx_floor(policy, hardware, paired_alternatives, true)?;
+        let ptx_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => ptx == floor,
+            IntrinsicBackend::LibNvvm => ptx >= floor,
+        };
+        ensure!(
+            ptx_matches,
+            "{} runtime target {} records PTX {}.{} instead of its paired floor {}.{}",
+            policy.id,
+            describe_stage_hardware(hardware),
+            ptx / 10,
+            ptx % 10,
+            floor / 10,
+            floor % 10
+        );
+    }
     Ok(())
+}
+
+fn target_matrix_ptx_floor(
+    policy: &OverlayIntrinsic,
+    hardware: CatalogHardwareAlternative,
+    paired_alternatives: Option<&[CatalogTargetAlternative]>,
+    allow_forward_minimum: bool,
+) -> Result<u16> {
+    if let Some(alternatives) = paired_alternatives {
+        return alternatives
+            .iter()
+            .filter(|alternative| {
+                selected_stage_hardware_matches(
+                    hardware,
+                    alternative.hardware,
+                    allow_forward_minimum,
+                )
+            })
+            .map(|alternative| alternative.minimum_ptx.encoded())
+            .min()
+            .with_context(|| {
+                format!(
+                    "{} target matrix has no PTX floor for {}",
+                    policy.id,
+                    describe_stage_hardware(hardware)
+                )
+            });
+    }
+    if is_f8f6f4_mma_target_matrix_policy(policy) {
+        f8f6f4_llvm_ptx_floor(hardware)
+    } else {
+        blackwell_ldmatrix_llvm_ptx_floor(hardware)
+    }
 }
 
 fn f8f6f4_llvm_ptx_floor(hardware: CatalogHardwareAlternative) -> Result<u16> {
@@ -33327,6 +33593,165 @@ scope = "system"
         );
     }
 
+    fn selector(name: &str, value: &str) -> TargetSelectorBinding {
+        TargetSelectorBinding {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+
+    fn target_contract(
+        selectors: Vec<TargetSelectorBinding>,
+        alternatives: &[(&str, &str)],
+    ) -> TargetContract {
+        TargetContract {
+            selectors,
+            alternatives: alternatives
+                .iter()
+                .map(
+                    |(target, minimum_ptx)| crate::model::TargetContractAlternative {
+                        target: (*target).into(),
+                        minimum_ptx: (*minimum_ptx).into(),
+                    },
+                )
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn target_contracts_keep_selector_specific_ptx_hardware_pairs() {
+        let contracts = [
+            target_contract(
+                vec![selector("kind", "f16")],
+                &[
+                    ("sm_100a", "8.6"),
+                    ("sm_101a", "8.6"),
+                    ("sm_103a", "8.8"),
+                    ("sm_110a", "9.0"),
+                ],
+            ),
+            target_contract(
+                vec![selector("kind", "i8")],
+                &[("sm_100a", "8.8"), ("sm_103a", "8.8"), ("sm_110a", "9.0")],
+            ),
+        ];
+        let requirement =
+            resolve_target_contract("tcgen05_mma", &[selector("kind", "i8")], &contracts).unwrap();
+
+        assert_eq!(requirement.minimum_ptx.encoded(), 88);
+        assert_eq!(
+            requirement.hardware,
+            CatalogHardwareTarget::TargetMatrix {
+                selectors: vec![selector("kind", "i8")],
+                alternatives: vec![
+                    CatalogTargetAlternative {
+                        minimum_ptx: "8.8".parse().unwrap(),
+                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+                    },
+                    CatalogTargetAlternative {
+                        minimum_ptx: "8.8".parse().unwrap(),
+                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                    },
+                    CatalogTargetAlternative {
+                        minimum_ptx: "9.0".parse().unwrap(),
+                        hardware: CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
+                    },
+                ],
+            }
+        );
+
+        let mut policy = policy();
+        policy.id = "tcgen05_mma".into();
+        assert!(validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx86").is_err());
+        validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx88").unwrap();
+        assert!(validate_candidate_target(&policy, &requirement, "sm_110a", "+ptx88").is_err());
+        validate_candidate_target(&policy, &requirement, "sm_110a", "+ptx90").unwrap();
+
+        let libnvvm = [target_contract(
+            vec![selector("kind", "i8")],
+            &[("sm_100a", "8.8"), ("sm_110a", "9.0")],
+        )];
+        let libnvvm_requirement =
+            resolve_target_contract("tcgen05_mma", &[selector("kind", "i8")], &libnvvm).unwrap();
+        assert_ne!(requirement, libnvvm_requirement);
+        validate_candidate_target(&policy, &requirement, "sm_103a", "+ptx88").unwrap();
+        assert!(
+            validate_candidate_target(&policy, &libnvvm_requirement, "sm_103a", "+ptx88").is_err()
+        );
+    }
+
+    #[test]
+    fn target_contract_selection_and_shape_fail_closed() {
+        resolve_target_contract(
+            "tcgen05_mma",
+            &[selector("kind", "f16")],
+            &[target_contract(
+                vec![selector("kind", "f16")],
+                &[("sm_100a", "8.6"), ("sm_100f", "8.8"), ("sm_103a", "8.8")],
+            )],
+        )
+        .unwrap();
+
+        let valid = target_contract(
+            vec![selector("kind", "f16"), selector("scale_d", "false")],
+            &[("sm_100a", "8.6"), ("sm_103a", "8.8")],
+        );
+        assert!(
+            resolve_target_contract(
+                "tcgen05_mma",
+                &[selector("kind", "i8"), selector("scale_d", "false")],
+                &[valid.clone()],
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("exactly one reviewed contract")
+        );
+
+        for invalid in [
+            target_contract(
+                vec![selector("scale_d", "false"), selector("kind", "f16")],
+                &[("sm_100a", "8.6")],
+            ),
+            target_contract(vec![selector("kind", "F16")], &[("sm_100a", "8.6")]),
+            target_contract(vec![selector("kind_", "f16")], &[("sm_100a", "8.6")]),
+            target_contract(
+                vec![selector("kind", "f16")],
+                &[("sm_103a", "8.8"), ("sm_100a", "8.6")],
+            ),
+            target_contract(
+                vec![selector("kind", "f16")],
+                &[("sm_100+", "8.6"), ("sm_103a", "8.8")],
+            ),
+            target_contract(vec![selector("kind", "f16")], &[("sm_100a", "8.60")]),
+        ] {
+            assert!(
+                resolve_target_contract("tcgen05_mma", &invalid.selectors, &[invalid.clone()])
+                    .is_err(),
+                "{invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_target_requirement_json_is_unchanged() {
+        let requirement = CatalogTargetRequirement {
+            minimum_ptx: "8.6".parse().unwrap(),
+            hardware: CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::ExactArchitecture { sm: 100 }],
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(requirement).unwrap(),
+            serde_json::json!({
+                "minimum_ptx": "8.6",
+                "hardware": {
+                    "kind": "any_of",
+                    "alternatives": [{ "kind": "exact_architecture", "sm": 100 }]
+                }
+            })
+        );
+    }
+
     #[test]
     fn malformed_or_conflicting_hardware_targets_are_rejected() {
         for malformed in [
@@ -33500,6 +33925,185 @@ scope = "system"
                 .unwrap_err()
                 .to_string()
                 .contains("one structured stage for each")
+        );
+    }
+
+    #[test]
+    fn paired_target_evidence_checks_backend_and_runtime_floors() {
+        let policy = policy();
+        let hardware = vec![
+            CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
+            CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+        ];
+        let paired = vec![
+            CatalogTargetAlternative {
+                minimum_ptx: "8.6".parse().unwrap(),
+                hardware: hardware[0],
+            },
+            CatalogTargetAlternative {
+                minimum_ptx: "8.8".parse().unwrap(),
+                hardware: hardware[1],
+            },
+        ];
+        let llvm = OverlayBackendLowering {
+            backend: IntrinsicBackend::LlvmNvptx,
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            evidence_profile: "test".into(),
+            targets: None,
+            minimum_ptx: None,
+            minimum_sm: None,
+        };
+        let mut llvm_record = evidence();
+        llvm_record.status = "validated".into();
+        llvm_record.stages.clear();
+        for (target, ptx) in [("sm_100a", "ptx86"), ("sm_103a", "ptx88")] {
+            llvm_record.stages.push(evidence_stage(
+                EvidenceStageKind::BackendCodegen,
+                llvm.mechanism,
+                &[target, ptx],
+            ));
+            let mut assembly = evidence_stage(
+                EvidenceStageKind::PtxAssembly,
+                llvm.mechanism,
+                &[target, ptx],
+            );
+            assembly.tool_path = Some("/tool/ptxas".into());
+            assembly.tool_version = Some("test".into());
+            assembly.tool_sha256 = Some("0".repeat(64));
+            llvm_record.stages.push(assembly);
+        }
+        validate_target_matrix_stage_targets(
+            &policy,
+            &llvm_record,
+            &llvm,
+            EvidenceStageKind::PtxAssembly,
+            &hardware,
+            86,
+            Some(&paired),
+        )
+        .unwrap();
+
+        let mut wrong_floor = llvm_record.clone();
+        wrong_floor
+            .stages
+            .iter_mut()
+            .find(|stage| {
+                stage.stage == EvidenceStageKind::BackendCodegen
+                    && stage.targets.iter().any(|target| target == "sm_103a")
+            })
+            .unwrap()
+            .targets = vec!["sm_103a".into(), "ptx86".into()];
+        assert!(
+            validate_target_matrix_stage_targets(
+                &policy,
+                &wrong_floor,
+                &llvm,
+                EvidenceStageKind::PtxAssembly,
+                &hardware,
+                86,
+                Some(&paired),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("wrong PTX floor")
+        );
+
+        let libnvvm = OverlayBackendLowering {
+            backend: IntrinsicBackend::LibNvvm,
+            ..llvm.clone()
+        };
+        let mut libnvvm_record = evidence();
+        libnvvm_record.status = "validated".into();
+        libnvvm_record.stages.clear();
+        for (target, ptx) in [("sm_100a", "ptx88"), ("sm_103a", "ptx90")] {
+            libnvvm_record.stages.push(evidence_stage(
+                EvidenceStageKind::BackendCodegen,
+                libnvvm.mechanism,
+                &[target, ptx],
+            ));
+            let mut assembly = evidence_stage(
+                EvidenceStageKind::PtxAssembly,
+                libnvvm.mechanism,
+                &[target, ptx],
+            );
+            assembly.tool_path = Some("/tool/ptxas".into());
+            assembly.tool_version = Some("test".into());
+            assembly.tool_sha256 = Some("0".repeat(64));
+            libnvvm_record.stages.push(assembly);
+            let mut link = evidence_stage(
+                EvidenceStageKind::DeviceLink,
+                libnvvm.mechanism,
+                &[target, ptx],
+            );
+            link.artifact_kind = Some(EvidenceArtifactKind::Cubin);
+            link.tool_path = Some("/tool/nvlink".into());
+            link.tool_version = Some("test".into());
+            link.tool_sha256 = Some("0".repeat(64));
+            libnvvm_record.stages.push(link);
+        }
+        validate_target_matrix_stage_targets(
+            &policy,
+            &libnvvm_record,
+            &libnvvm,
+            EvidenceStageKind::DeviceLink,
+            &hardware,
+            86,
+            Some(&paired),
+        )
+        .unwrap();
+
+        let mut executed = llvm_record;
+        executed.status = "executed".into();
+        executed.stages.push(evidence_stage(
+            EvidenceStageKind::Runtime,
+            llvm.mechanism,
+            &["sm_103a", "ptx88"],
+        ));
+        validate_target_matrix_stage_targets(
+            &policy,
+            &executed,
+            &llvm,
+            EvidenceStageKind::PtxAssembly,
+            &hardware,
+            86,
+            Some(&paired),
+        )
+        .unwrap();
+
+        let mut wrong_runtime_ptx = executed.clone();
+        wrong_runtime_ptx.stages.last_mut().unwrap().targets =
+            vec!["sm_103a".into(), "ptx87".into()];
+        assert!(
+            validate_target_matrix_stage_targets(
+                &policy,
+                &wrong_runtime_ptx,
+                &llvm,
+                EvidenceStageKind::PtxAssembly,
+                &hardware,
+                86,
+                Some(&paired),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("paired floor")
+        );
+
+        let mut wrong_runtime_hardware = executed;
+        wrong_runtime_hardware.stages.last_mut().unwrap().targets =
+            vec!["sm_110a".into(), "ptx90".into()];
+        assert!(
+            validate_target_matrix_stage_targets(
+                &policy,
+                &wrong_runtime_hardware,
+                &llvm,
+                EvidenceStageKind::PtxAssembly,
+                &hardware,
+                86,
+                Some(&paired),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("outside its target matrix")
         );
     }
 

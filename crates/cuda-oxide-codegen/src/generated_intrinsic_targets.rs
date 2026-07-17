@@ -35,9 +35,23 @@ pub enum GeneratedHardwareAlternative {
     FamilyTarget(u16),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedTargetSelectorBinding {
+    pub name: &'static str,
+    pub value: &'static str,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedTargetAlternative {
+    pub minimum_ptx: GeneratedPtxVersion,
+    pub hardware: GeneratedHardwareAlternative,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedHardwareTarget {
     All,
     AnyOf(&'static [GeneratedHardwareAlternative]),
+    TargetMatrix {
+        selectors: &'static [GeneratedTargetSelectorBinding],
+        alternatives: &'static [GeneratedTargetAlternative],
+    },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedTargetRequirement {

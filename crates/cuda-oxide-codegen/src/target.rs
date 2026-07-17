@@ -12,7 +12,9 @@
 
 use crate::error::PipelineError;
 use crate::generated::GeneratedModuleRequirements;
-use crate::generated_intrinsic_targets::{GeneratedHardwareAlternative, GeneratedHardwareTarget};
+use crate::generated_intrinsic_targets::{
+    GeneratedHardwareAlternative, GeneratedHardwareTarget, GeneratedTargetRequirement,
+};
 use libnvvm_sys::CudaArch;
 use std::path::Path;
 
@@ -751,6 +753,8 @@ pub enum PtxIsaRequirement {
     Ptx80,
     Ptx86,
     Ptx87,
+    Ptx88,
+    Ptx90,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -768,30 +772,63 @@ pub(crate) fn generated_ptx_isa_requirement(
     let mut requirement = PtxIsaRequirement::Default;
     for target in &generated.targets {
         let target_requirement = generated.requirement(target);
-        let encoded = target_requirement.minimum_ptx.encoded();
-        let target_requirement = match encoded {
-            0..=60 => PtxIsaRequirement::Default,
-            61..=62 => PtxIsaRequirement::Ptx62,
-            63..=65 => PtxIsaRequirement::Ptx65,
-            66..=70 => PtxIsaRequirement::Ptx70,
-            71 => PtxIsaRequirement::Ptx71,
-            72..=78 => PtxIsaRequirement::Ptx78,
-            79..=80 => PtxIsaRequirement::Ptx80,
-            81..=86 => PtxIsaRequirement::Ptx86,
-            87 => PtxIsaRequirement::Ptx87,
-            _ => {
-                return Err(format!(
-                    "generated intrinsic `{}` (`{}`) requires PTX {}.{}, newer than cuda-oxide's supported PTX 8.7 floor",
-                    target.id,
-                    target.marker,
-                    target_requirement.minimum_ptx.major(),
-                    target_requirement.minimum_ptx.minor(),
-                ));
-            }
-        };
-        requirement = requirement.max(target_requirement);
+        requirement = requirement.max(ptx_isa_requirement_for_floor(
+            target_requirement.minimum_ptx.encoded(),
+            target.id,
+            target.marker,
+        )?);
     }
     Ok(requirement)
+}
+
+/// Resolve the PTX floor for the selected hardware alternative.
+pub(crate) fn generated_ptx_isa_requirement_for_target(
+    generated: &GeneratedModuleRequirements,
+    arch: &str,
+) -> Result<PtxIsaRequirement, String> {
+    let mut requirement = PtxIsaRequirement::Default;
+    for target in &generated.targets {
+        let target_requirement = generated.requirement(target);
+        let floor = generated_requirement_ptx_floor(arch, target_requirement).ok_or_else(|| {
+            format!(
+                "CUDA target {arch} cannot lower generated intrinsic `{}` (`{}`); requires {}",
+                target.id,
+                target.marker,
+                describe_generated_hardware(target_requirement.hardware)
+            )
+        })?;
+        requirement = requirement.max(ptx_isa_requirement_for_floor(
+            floor,
+            target.id,
+            target.marker,
+        )?);
+    }
+    Ok(requirement)
+}
+
+fn ptx_isa_requirement_for_floor(
+    encoded: u16,
+    id: &str,
+    marker: &str,
+) -> Result<PtxIsaRequirement, String> {
+    match encoded {
+        0..=60 => Ok(PtxIsaRequirement::Default),
+        61..=62 => Ok(PtxIsaRequirement::Ptx62),
+        63..=65 => Ok(PtxIsaRequirement::Ptx65),
+        66..=70 => Ok(PtxIsaRequirement::Ptx70),
+        71 => Ok(PtxIsaRequirement::Ptx71),
+        72..=78 => Ok(PtxIsaRequirement::Ptx78),
+        79..=80 => Ok(PtxIsaRequirement::Ptx80),
+        81..=86 => Ok(PtxIsaRequirement::Ptx86),
+        87 => Ok(PtxIsaRequirement::Ptx87),
+        88 => Ok(PtxIsaRequirement::Ptx88),
+        89..=90 => Ok(PtxIsaRequirement::Ptx90),
+        _ => Err(format!(
+            "generated intrinsic `{id}` (`{marker}`) requires PTX {}.{}, newer than cuda-oxide can request",
+            encoded / 10,
+            encoded % 10
+        )),
+    }
 }
 
 pub(crate) fn merge_generated_module_requirements(
@@ -799,6 +836,17 @@ pub(crate) fn merge_generated_module_requirements(
     generated: &GeneratedModuleRequirements,
 ) -> Result<ModuleRequirements, String> {
     text.ptx_isa = text.ptx_isa.max(generated_ptx_isa_requirement(generated)?);
+    Ok(text)
+}
+
+pub(crate) fn merge_generated_module_requirements_for_target(
+    mut text: ModuleRequirements,
+    generated: &GeneratedModuleRequirements,
+    arch: &str,
+) -> Result<ModuleRequirements, String> {
+    text.ptx_isa = text
+        .ptx_isa
+        .max(generated_ptx_isa_requirement_for_target(generated, arch)?);
     Ok(text)
 }
 
@@ -1037,22 +1085,31 @@ pub(crate) fn select_target_with_generated(
     // preserves catalog alternative order while still finding intersections
     // such as `minimum sm_80` AND `sm_90a exactly`.
     for target in &generated.targets {
-        if let GeneratedHardwareTarget::AnyOf(alternatives) = generated.requirement(target).hardware
-        {
-            for alternative in alternatives {
-                let candidate = match alternative {
-                    GeneratedHardwareAlternative::MinimumSm(capability) => {
-                        format!("sm_{capability}")
-                    }
-                    GeneratedHardwareAlternative::ExactArchitecture(capability) => {
-                        format!("sm_{capability}a")
-                    }
-                    GeneratedHardwareAlternative::FamilyTarget(capability) => {
-                        format!("sm_{capability}f")
-                    }
-                };
-                push_candidate(candidate);
+        let hardware = generated.requirement(target).hardware;
+        let alternatives: &[GeneratedHardwareAlternative] = match hardware {
+            GeneratedHardwareTarget::All => &[],
+            GeneratedHardwareTarget::AnyOf(alternatives) => alternatives,
+            GeneratedHardwareTarget::TargetMatrix { alternatives, .. } => {
+                for alternative in alternatives {
+                    let candidate = generated_hardware_candidate(alternative.hardware);
+                    push_candidate(candidate);
+                }
+                &[]
             }
+        };
+        for alternative in alternatives {
+            let candidate = match alternative {
+                GeneratedHardwareAlternative::MinimumSm(capability) => {
+                    format!("sm_{capability}")
+                }
+                GeneratedHardwareAlternative::ExactArchitecture(capability) => {
+                    format!("sm_{capability}a")
+                }
+                GeneratedHardwareAlternative::FamilyTarget(capability) => {
+                    format!("sm_{capability}f")
+                }
+            };
+            push_candidate(candidate);
         }
     }
 
@@ -1089,10 +1146,13 @@ pub(crate) fn generated_target_satisfied(
     arch: &str,
     generated: &GeneratedModuleRequirements,
 ) -> bool {
-    generated
-        .targets
-        .iter()
-        .all(|target| generated_hardware_satisfied(arch, generated.requirement(target).hardware))
+    generated.targets.iter().all(|target| {
+        let requirement = generated.requirement(target);
+        generated_hardware_satisfied(arch, requirement.hardware)
+            && generated_requirement_ptx_floor(arch, requirement).is_some_and(|floor| {
+                ptx_isa_requirement_for_floor(floor, target.id, target.marker).is_ok()
+            })
+    })
 }
 
 fn generated_hardware_satisfied(arch: &str, hardware: GeneratedHardwareTarget) -> bool {
@@ -1106,21 +1166,80 @@ fn generated_hardware_satisfied(arch: &str, hardware: GeneratedHardwareTarget) -
     match hardware {
         GeneratedHardwareTarget::All => true,
         GeneratedHardwareTarget::AnyOf(alternatives) => alternatives.iter().any(|alternative| {
-            match alternative {
-                GeneratedHardwareAlternative::MinimumSm(minimum) => {
-                    capability >= u32::from(*minimum)
-                }
-                GeneratedHardwareAlternative::ExactArchitecture(exact) => {
-                    capability == u32::from(*exact) && suffix == Some('a')
-                }
-                // Family compatibility is not numerically monotonic. Until the
-                // catalog has a reviewed compatibility table, accept only the
-                // exact `sm_Nf` spelling named by the requirement.
-                GeneratedHardwareAlternative::FamilyTarget(family) => {
-                    capability == u32::from(*family) && suffix == Some('f')
-                }
-            }
+            generated_hardware_alternative_satisfied(capability, suffix, *alternative)
         }),
+        GeneratedHardwareTarget::TargetMatrix { alternatives, .. } => {
+            alternatives.iter().any(|alternative| {
+                generated_hardware_alternative_satisfied(capability, suffix, alternative.hardware)
+            })
+        }
+    }
+}
+
+fn generated_hardware_candidate(alternative: GeneratedHardwareAlternative) -> String {
+    match alternative {
+        GeneratedHardwareAlternative::MinimumSm(capability) => format!("sm_{capability}"),
+        GeneratedHardwareAlternative::ExactArchitecture(capability) => {
+            format!("sm_{capability}a")
+        }
+        GeneratedHardwareAlternative::FamilyTarget(capability) => format!("sm_{capability}f"),
+    }
+}
+
+fn generated_hardware_requirement_label(alternative: GeneratedHardwareAlternative) -> String {
+    match alternative {
+        GeneratedHardwareAlternative::MinimumSm(capability) => {
+            format!("sm_{capability} or newer")
+        }
+        GeneratedHardwareAlternative::ExactArchitecture(capability) => {
+            format!("sm_{capability}a exactly")
+        }
+        GeneratedHardwareAlternative::FamilyTarget(capability) => {
+            format!("sm_{capability}f exactly")
+        }
+    }
+}
+
+fn generated_hardware_alternative_satisfied(
+    capability: u32,
+    suffix: Option<char>,
+    alternative: GeneratedHardwareAlternative,
+) -> bool {
+    match alternative {
+        GeneratedHardwareAlternative::MinimumSm(minimum) => capability >= u32::from(minimum),
+        GeneratedHardwareAlternative::ExactArchitecture(exact) => {
+            capability == u32::from(exact) && suffix == Some('a')
+        }
+        // Family targets match only the named `sm_Nf` spelling.
+        GeneratedHardwareAlternative::FamilyTarget(family) => {
+            capability == u32::from(family) && suffix == Some('f')
+        }
+    }
+}
+
+fn generated_requirement_ptx_floor(
+    arch: &str,
+    requirement: GeneratedTargetRequirement,
+) -> Option<u16> {
+    let (capability, suffix) = arch_compute_capability_and_suffix(arch)?;
+    if !is_known_cuda_target(capability, suffix) {
+        return None;
+    }
+    match requirement.hardware {
+        GeneratedHardwareTarget::All => Some(requirement.minimum_ptx.encoded()),
+        GeneratedHardwareTarget::AnyOf(alternatives) => alternatives
+            .iter()
+            .any(|alternative| {
+                generated_hardware_alternative_satisfied(capability, suffix, *alternative)
+            })
+            .then(|| requirement.minimum_ptx.encoded()),
+        GeneratedHardwareTarget::TargetMatrix { alternatives, .. } => alternatives
+            .iter()
+            .filter(|alternative| {
+                generated_hardware_alternative_satisfied(capability, suffix, alternative.hardware)
+            })
+            .map(|alternative| alternative.minimum_ptx.encoded())
+            .min(),
     }
 }
 
@@ -1138,6 +1257,11 @@ pub(crate) fn validate_generated_target(
                 describe_generated_hardware(requirement.hardware)
             ));
         }
+        ptx_isa_requirement_for_floor(
+            generated_requirement_ptx_floor(arch, requirement).unwrap(),
+            target.id,
+            target.marker,
+        )?;
     }
     Ok(())
 }
@@ -1147,19 +1271,36 @@ fn describe_generated_hardware(hardware: GeneratedHardwareTarget) -> String {
         GeneratedHardwareTarget::All => "any supported CUDA target".to_string(),
         GeneratedHardwareTarget::AnyOf(alternatives) => alternatives
             .iter()
-            .map(|alternative| match alternative {
-                GeneratedHardwareAlternative::MinimumSm(capability) => {
-                    format!("sm_{capability} or newer")
-                }
-                GeneratedHardwareAlternative::ExactArchitecture(capability) => {
-                    format!("sm_{capability}a exactly")
-                }
-                GeneratedHardwareAlternative::FamilyTarget(capability) => {
-                    format!("sm_{capability}f exactly")
-                }
-            })
+            .map(|alternative| generated_hardware_requirement_label(*alternative))
             .collect::<Vec<_>>()
             .join(" or "),
+        GeneratedHardwareTarget::TargetMatrix {
+            selectors,
+            alternatives,
+        } => {
+            let alternatives = alternatives
+                .iter()
+                .map(|alternative| {
+                    format!(
+                        "{} at PTX {}.{}",
+                        generated_hardware_requirement_label(alternative.hardware),
+                        alternative.minimum_ptx.major(),
+                        alternative.minimum_ptx.minor()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" or ");
+            if selectors.is_empty() {
+                alternatives
+            } else {
+                let selectors = selectors
+                    .iter()
+                    .map(|selector| format!("{}={}", selector.name, selector.value))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{alternatives} for {selectors}")
+            }
+        }
     }
 }
 
@@ -1371,6 +1512,8 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
         PtxIsaRequirement::Ptx80 => 80,
         PtxIsaRequirement::Ptx86 => 86,
         PtxIsaRequirement::Ptx87 => 87,
+        PtxIsaRequirement::Ptx88 => 88,
+        PtxIsaRequirement::Ptx90 => 90,
     };
     if requested <= minimum {
         return None;
@@ -1385,6 +1528,8 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
         PtxIsaRequirement::Ptx80 => Some("+ptx80"),
         PtxIsaRequirement::Ptx86 => Some("+ptx86"),
         PtxIsaRequirement::Ptx87 => Some("+ptx87"),
+        PtxIsaRequirement::Ptx88 => Some("+ptx88"),
+        PtxIsaRequirement::Ptx90 => Some("+ptx90"),
     }
 }
 
@@ -1434,6 +1579,22 @@ pub fn validate_target_for_llvm_major(target: &str, llc_major: Option<u32>) -> R
     Ok(())
 }
 
+pub(crate) fn validate_ptx_isa_for_llvm_major(
+    requirement: PtxIsaRequirement,
+    llc_major: Option<u32>,
+) -> Result<(), String> {
+    if requirement >= PtxIsaRequirement::Ptx90 && llc_major.is_none_or(|major| major < 22) {
+        let backend = llc_major.map_or_else(
+            || "an LLVM backend with an unknown version".to_string(),
+            |major| format!("LLVM {major}"),
+        );
+        return Err(format!(
+            "PTX 9.0 or newer requires LLVM 22 or newer; {backend} does not support the required PTX feature"
+        ));
+    }
+    Ok(())
+}
+
 /// Extract the compute-capability *major* version from an `sm_…` target string.
 ///
 /// CUDA concatenates major+minor without a separator, so `"sm_120a"` is cc 12.0
@@ -1461,8 +1622,9 @@ fn arch_compute_capability_and_suffix(arch: &str) -> Option<(u32, Option<char>)>
 mod tests {
     use super::*;
     use crate::generated_intrinsic_targets::{
-        GeneratedIntrinsicTarget, GeneratedIntrinsicVariant, GeneratedPtxVersion,
-        GeneratedTargetRequirement,
+        GeneratedBackendRequirement, GeneratedIntrinsicBackend, GeneratedIntrinsicTarget,
+        GeneratedIntrinsicVariant, GeneratedPtxVersion, GeneratedTargetAlternative,
+        GeneratedTargetRequirement, GeneratedTargetSelectorBinding,
     };
 
     static EXACT_SM120A: &[GeneratedHardwareAlternative] =
@@ -1481,9 +1643,9 @@ mod tests {
         selections: &[],
         llvm: None,
     };
-    static PTX88_FUTURE: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+    static PTX88: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
         marker: "test:ptx88",
-        id: "ptx88_future",
+        id: "ptx88",
         abi_id: "test",
         dialect_op: "test.ptx88",
         variant: GeneratedIntrinsicVariant::Scalar,
@@ -1495,6 +1657,301 @@ mod tests {
         selections: &[],
         llvm: None,
     };
+    static PTX91_FUTURE: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+        marker: "test:ptx91",
+        id: "ptx91_future",
+        abi_id: "test",
+        dialect_op: "test.ptx91",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(91),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[],
+        llvm: None,
+    };
+    static TCGEN_F16_SELECTORS: &[GeneratedTargetSelectorBinding] =
+        &[GeneratedTargetSelectorBinding {
+            name: "kind",
+            value: "f16",
+        }];
+    static TCGEN_F16_TARGETS: &[GeneratedTargetAlternative] = &[
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(86),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(100),
+        },
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(86),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(101),
+        },
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(103),
+        },
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(90),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(110),
+        },
+    ];
+    static TCGEN_F16: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+        marker: "test:tcgen_f16",
+        id: "tcgen_f16",
+        abi_id: "test",
+        dialect_op: "test.tcgen_f16",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(86),
+            hardware: GeneratedHardwareTarget::TargetMatrix {
+                selectors: TCGEN_F16_SELECTORS,
+                alternatives: TCGEN_F16_TARGETS,
+            },
+        },
+        backend_requirements: &[],
+        selections: &[],
+        llvm: None,
+    };
+    static TCGEN_I8_SELECTORS: &[GeneratedTargetSelectorBinding] =
+        &[GeneratedTargetSelectorBinding {
+            name: "kind",
+            value: "i8",
+        }];
+    static TCGEN_I8_TARGETS: &[GeneratedTargetAlternative] = &[
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(100),
+        },
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(103),
+        },
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(90),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(110),
+        },
+    ];
+    static TCGEN_I8_LIBNVVM_TARGETS: &[GeneratedTargetAlternative] = &[
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(100),
+        },
+        GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(90),
+            hardware: GeneratedHardwareAlternative::ExactArchitecture(110),
+        },
+    ];
+    static TCGEN_I8_BACKENDS: &[GeneratedBackendRequirement] = &[GeneratedBackendRequirement {
+        backend: GeneratedIntrinsicBackend::LibNvvm,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareTarget::TargetMatrix {
+                selectors: TCGEN_I8_SELECTORS,
+                alternatives: TCGEN_I8_LIBNVVM_TARGETS,
+            },
+        },
+    }];
+    static TCGEN_I8: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+        marker: "test:tcgen_i8",
+        id: "tcgen_i8",
+        abi_id: "test",
+        dialect_op: "test.tcgen_i8",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareTarget::TargetMatrix {
+                selectors: TCGEN_I8_SELECTORS,
+                alternatives: TCGEN_I8_TARGETS,
+            },
+        },
+        backend_requirements: TCGEN_I8_BACKENDS,
+        selections: &[],
+        llvm: None,
+    };
+
+    #[test]
+    fn paired_target_floors_compose_with_target_cpu_minima() {
+        let generated = GeneratedModuleRequirements::from_targets(vec![&TCGEN_F16]);
+
+        assert_eq!(
+            generated_ptx_isa_requirement(&generated).unwrap(),
+            PtxIsaRequirement::Ptx86
+        );
+        for target in ["sm_100a", "sm_101a", "sm_103a", "sm_110a"] {
+            assert!(generated_target_satisfied(target, &generated), "{target}");
+        }
+        for (target, requirement) in [
+            ("sm_100a", PtxIsaRequirement::Ptx86),
+            ("sm_101a", PtxIsaRequirement::Ptx86),
+            ("sm_103a", PtxIsaRequirement::Ptx88),
+            ("sm_110a", PtxIsaRequirement::Ptx90),
+        ] {
+            assert_eq!(
+                generated_ptx_isa_requirement_for_target(&generated, target).unwrap(),
+                requirement
+            );
+            assert_eq!(required_ptx_feature(target, requirement), None);
+        }
+        assert_eq!(
+            generated_requirement_ptx_floor("sm_103a", TCGEN_F16.requirement),
+            Some(88)
+        );
+        assert_eq!(
+            generated_requirement_ptx_floor("sm_110a", TCGEN_F16.requirement),
+            Some(90)
+        );
+        for target in ["sm_100f", "sm_103f", "sm_120a", "sm_121a"] {
+            assert!(!generated_target_satisfied(target, &generated), "{target}");
+        }
+        assert_eq!(
+            select_target_with_generated(DetectedFeatures::Basic, &generated).unwrap(),
+            "sm_100a"
+        );
+
+        let generated = GeneratedModuleRequirements::from_targets(vec![&TCGEN_I8]);
+        assert_eq!(
+            generated_ptx_isa_requirement(&generated).unwrap(),
+            PtxIsaRequirement::Ptx88
+        );
+        assert_eq!(
+            generated_ptx_isa_requirement_for_target(&generated, "sm_100a").unwrap(),
+            PtxIsaRequirement::Ptx88
+        );
+        assert_eq!(
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx88),
+            Some("+ptx88")
+        );
+        for (target, requirement) in [
+            ("sm_103a", PtxIsaRequirement::Ptx88),
+            ("sm_110a", PtxIsaRequirement::Ptx90),
+        ] {
+            assert_eq!(
+                generated_ptx_isa_requirement_for_target(&generated, target).unwrap(),
+                requirement
+            );
+            assert_eq!(required_ptx_feature(target, requirement), None);
+        }
+    }
+
+    #[test]
+    fn paired_minimum_target_diagnostic_preserves_range_meaning() {
+        static TARGETS: &[GeneratedTargetAlternative] = &[GeneratedTargetAlternative {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareAlternative::MinimumSm(100),
+        }];
+
+        assert_eq!(
+            describe_generated_hardware(GeneratedHardwareTarget::TargetMatrix {
+                selectors: &[],
+                alternatives: TARGETS,
+            }),
+            "sm_100 or newer at PTX 8.8"
+        );
+    }
+
+    #[test]
+    fn paired_target_matrix_flows_through_backend_target_resolution() {
+        let llvm = GeneratedModuleRequirements::from_targets(vec![&TCGEN_I8])
+            .for_backend(GeneratedIntrinsicBackend::LlvmNvptx);
+        let libnvvm = GeneratedModuleRequirements::from_targets(vec![&TCGEN_I8])
+            .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+
+        assert!(generated_target_satisfied("sm_103a", &llvm));
+        assert!(!generated_target_satisfied("sm_103a", &libnvvm));
+        assert!(generated_target_satisfied("sm_110a", &libnvvm));
+
+        assert_eq!(
+            resolve_ptx_target_with_generated(
+                Some("sm_103a"),
+                None,
+                DetectedFeatures::Basic,
+                &llvm,
+            )
+            .unwrap(),
+            ("sm_103a".into(), "CUDA_OXIDE_TARGET")
+        );
+        assert!(
+            resolve_ptx_target_with_generated(
+                Some("sm_101a"),
+                None,
+                DetectedFeatures::Basic,
+                &llvm,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            resolve_ptx_target_with_generated(
+                None,
+                Some("sm_103a"),
+                DetectedFeatures::Basic,
+                &llvm,
+            )
+            .unwrap(),
+            ("sm_103a".into(), "detected GPU")
+        );
+        assert_eq!(
+            resolve_ptx_target_with_generated(
+                None,
+                Some("sm_101a"),
+                DetectedFeatures::Basic,
+                &libnvvm,
+            )
+            .unwrap(),
+            ("sm_100a".into(), "feature requirement")
+        );
+        assert_eq!(
+            resolve_ptx_target_with_generated(None, None, DetectedFeatures::Basic, &llvm).unwrap(),
+            ("sm_100a".into(), "feature requirement")
+        );
+
+        let base = ModuleRequirements {
+            features: DetectedFeatures::Basic,
+            ptx_isa: PtxIsaRequirement::Default,
+        };
+        assert_eq!(
+            merge_generated_module_requirements_for_target(base, &llvm, "sm_103a")
+                .unwrap()
+                .ptx_isa,
+            PtxIsaRequirement::Ptx88
+        );
+        assert_eq!(
+            merge_generated_module_requirements_for_target(base, &llvm, "sm_110a")
+                .unwrap()
+                .ptx_isa,
+            PtxIsaRequirement::Ptx90
+        );
+
+        let error = crate::export::resolve_nvvm_target_with_generated(
+            Some("sm_103a"),
+            None,
+            None,
+            &libnvvm,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("tcgen_i8"), "{error}");
+        assert_eq!(
+            crate::export::resolve_nvvm_target_with_generated(
+                Some("sm_110a"),
+                None,
+                None,
+                &libnvvm,
+            )
+            .unwrap()
+            .sm(),
+            "sm_110a"
+        );
+        assert_eq!(
+            crate::export::resolve_nvvm_target_with_generated(
+                None,
+                Some("sm_103a"),
+                None,
+                &libnvvm,
+            )
+            .unwrap()
+            .sm(),
+            "sm_100a"
+        );
+    }
 
     #[test]
     fn generated_ptx87_exact_sm120a_requirement_is_preserved() {
@@ -1535,12 +1992,48 @@ mod tests {
     }
 
     #[test]
-    fn generated_ptx_floor_above_87_is_rejected() {
-        let generated = GeneratedModuleRequirements::from_targets(vec![&PTX88_FUTURE]);
+    fn generated_ptx88_and_ptx90_floors_are_preserved() {
+        let generated = GeneratedModuleRequirements::from_targets(vec![&PTX88]);
+        assert_eq!(
+            generated_ptx_isa_requirement(&generated).unwrap(),
+            PtxIsaRequirement::Ptx88
+        );
+        assert_eq!(
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx88),
+            Some("+ptx88")
+        );
+        assert_eq!(
+            required_ptx_feature("sm_103a", PtxIsaRequirement::Ptx88),
+            None
+        );
+        assert_eq!(
+            ptx_isa_requirement_for_floor(89, "test", "test").unwrap(),
+            PtxIsaRequirement::Ptx90
+        );
+        assert_eq!(
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx90),
+            Some("+ptx90")
+        );
+        assert_eq!(
+            required_ptx_feature("sm_110a", PtxIsaRequirement::Ptx90),
+            None
+        );
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx87, Some(21)).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, None).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, Some(21)).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, Some(22)).unwrap();
+        assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, None).is_err());
+        assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, Some(21)).is_err());
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, Some(22)).unwrap();
+
+        let generated = GeneratedModuleRequirements::from_targets(vec![&PTX91_FUTURE]);
         let error = generated_ptx_isa_requirement(&generated).unwrap_err();
 
-        assert!(error.contains("requires PTX 8.8"), "{error}");
-        assert!(error.contains("supported PTX 8.7"), "{error}");
+        assert!(error.contains("requires PTX 9.1"), "{error}");
+        assert!(
+            error.contains("newer than cuda-oxide can request"),
+            "{error}"
+        );
     }
 
     #[test]
