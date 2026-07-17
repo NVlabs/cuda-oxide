@@ -1186,11 +1186,11 @@ fn translate_call(
 
     // Handle diverging calls (calls that never return, like unwrap_failed, panic, etc.)
     // These have no target block because the function never returns.
-    // In GPU code, we emit an unreachable terminator since panics can't actually execute.
+    // We emit trap + unreachable terminator since panics can't actually execute but reachable.
     if target_usize.is_none() {
-        // This is a diverging call (returns !) - emit unreachable
+        // This is a diverging call (returns !) - emit trap + unreachable
         // Examples: unwrap_failed(), panic!(), abort()
-        return Ok(emit_unreachable_after(ctx, block_ptr, prev_op, loc));
+        return Ok(emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc));
     }
 
     // A call to a rustc intrinsic that no dispatch arm above recognized can
@@ -1639,6 +1639,14 @@ fn translate_closure_call(
     }
 }
 
+/// Terminates the block with a bare `mir.unreachable`.
+///
+/// Only for paths that can never execute: rustc-proven unreachability
+/// (`TerminatorKind::Unreachable`) or code after a call that is emitted into
+/// the module and genuinely never returns.
+///
+/// Runtime-reachable panic paths whose diverging call is dropped must use
+/// [`emit_trap_unreachable_after`] instead.
 fn emit_unreachable_after(
     ctx: &mut Context,
     block_ptr: Ptr<BasicBlock>,
@@ -1660,6 +1668,33 @@ fn emit_unreachable_after(
         op.insert_at_front(block_ptr, ctx);
     }
     op
+}
+
+/// Terminates the block with `nvvm.trap` followed by `mir.unreachable`.
+///
+/// For runtime-reachable diverging paths whose call is not emitted (dropped
+/// panic calls). A thread reaching it aborts the kernel (`trap;` in PTX).
+fn emit_trap_unreachable_after(
+    ctx: &mut Context,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> Ptr<Operation> {
+    let trap_op = Operation::new(
+        ctx,
+        dialect_nvvm::ops::TrapOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    trap_op.deref_mut(ctx).set_loc(loc.clone());
+    if let Some(prev) = prev_op {
+        trap_op.insert_after(ctx, prev);
+    } else {
+        trap_op.insert_at_front(block_ptr, ctx);
+    }
+    emit_unreachable_after(ctx, block_ptr, Some(trap_op), loc)
 }
 
 /// True only when the rust-call receiver is itself a closure.
