@@ -292,6 +292,19 @@ mod kernels {
         }
     }
 
+    /// Keeps the cta_group::1 tcgen05 control forms in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_control_cg1(tmem_addr: u32, mbar: *mut u64) {
+        unsafe {
+            if thread::threadIdx_x() == 0 {
+                tcgen05::tcgen05_shift_down(tmem_addr);
+                tcgen05::tcgen05_commit_multicast(mbar, 1);
+            }
+        }
+    }
+
     /// Keeps every generated tcgen05 load form in device code.
     ///
     /// This kernel is compile-only and is never launched.
@@ -627,6 +640,20 @@ mod kernels {
             tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b4x16_p64_cg2(tmem_addr, smem_desc);
             tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b6x16_p32_cg2(tmem_addr, smem_desc);
             tcgen05::tcgen05_cp_64x128b_warpx2_02_13_cg2(tmem_addr, smem_desc);
+        }
+    }
+
+    /// Keeps the cta_group::2 tcgen05 control form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    #[cluster_launch(2, 1, 1)]
+    pub unsafe fn compile_tcgen05_control_cg2(tmem_addr: u32, mbar: *mut u64) {
+        unsafe {
+            if thread::threadIdx_x() == 0 && cluster::block_rank() == 0 {
+                tcgen05::tcgen05_shift_down_cg2(tmem_addr);
+                tcgen05::tcgen05_commit_cg2(mbar);
+            }
         }
     }
 }

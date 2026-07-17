@@ -1,0 +1,216 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-tcgen05-control",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_100a",
+    "ptx_feature": "PTX ISA 8.6 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "tcgen05_control3_libnvvm_inline_probe",
+      "coverage_count": 3,
+      "stages": [
+        {
+          "targets": [
+            "compute_100a",
+            "ptx93"
+          ],
+          "representation": "three convergent NVVM IR 2.0 inline-PTX kernels covering the admitted tcgen05 commit and shift controls",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: compute_100a 0b0bffdde9ac419ddef9aa2dfab0a88d7478e27860e804fcbbfef332c1920754; compute_103a 9019c74a58c6077102fc2223da9f67b52850f4df7ad73cf7784e05009f86b65e; compute_110a e1b1bd804b6201a86a382021b60dbaf141e3aac10dbc7c26f12ad98f80322910. The separate direct-intrinsic fixture also succeeded on those targets, with PTX SHA-256 4c535d8f76a09ef5d2b38f07f6a1f1a4dda5afc4e0540f89b987f7e5a0cb3c4f, a3500c104fce6291d8e1b3badc091085078d499f72b508eb5598cc12d1f30954, and fd38746edac8a01e45d978db36999ca83a1132ba18b4327bfbb54c2f1413f44c, in target order.",
+          "tool_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "tool_version": "CUDA toolkit 13.3; libNVVM 2.0; NVVM IR 2.0; debug IR 3.2; release V13.3.33",
+          "tool_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0"
+        },
+        {
+          "targets": [
+            "compute_101a",
+            "ptx93"
+          ],
+          "representation": "the same NVVM IR 2.0 fixture requested for unavailable and excluded direct-intrinsic targets",
+          "stage": "backend_codegen",
+          "outcome": "failed",
+          "detail": "CUDA 13.3 libNVVM rejected compute_101a/f with NVVM_ERROR_INVALID_OPTION. Direct shift intrinsics rejected compute_100f, compute_103f, and compute_110f as unsupported operations; the commit intrinsic separately passed those family targets. Direct forms of all three records rejected base targets and compute_120/121. The shared libNVVM route is closed to compute_100a, compute_103a, and compute_110a."
+        },
+        {
+          "targets": [
+            "sm_100a",
+            "ptx93"
+          ],
+          "representation": "libNVVM-produced PTX containing the three exact tcgen05 controls",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted sm_100a, sm_103a, and sm_110a. Cubin SHA-256: 88743111f57596a0c77bafe054764c63b5dafe8f4a72a49e35aabe41865feeba; 8e50db9432c58adb4ed83badb4984720f7592aeba322ff3b97740e0caf31c486; cdead147e86914c22f5fde7a325f142c2e88f0dc56a8261056937eadeb9bec24, in target order. Each cubin has one UTCBAR.MULTICAST, one UTCSHIFT.DOWN, and one UTCSHIFT.2CTA.DOWN. Isolated commit PTX also assembled on sm_100f, sm_103f, and sm_110f; isolated shifts did not.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_120a",
+            "ptx93"
+          ],
+          "representation": "the same three inline instructions emitted for excluded family and future targets",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "CUDA 13.3 ptxas rejected tcgen05.shift on sm_100f, sm_103f, and sm_110f. It rejected tcgen05.commit and tcgen05.shift on sm_120a/f and sm_121a/f.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_100a",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR linked with all three inline-PTX kernels retained through llvm.used",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "LTOIR SHA-256: sm_100a c79c3b541a41faa35ff05353e8aa7738b7db3201c59cd0403fb4f888d622555e; sm_103a 8563b5b7b21a1a4161aa9216bbd707fe22224815ada8a79928d4279cc00fe84c; sm_110a fcccad4be6c5d7e623a49876d7ba8859ab08dff720682d7a3d713432ab2aea4a. nvJitLink cubin SHA-256: 73e1691afa49d02c15f8cb938e9ec1f12c8464cf4f74749f9ffa48cf4974500a; 420c4fd951b26f081a34d73aaa0160acfb4f999fbf5e809bb450eb3b958bda35; ceeaf53f9251c600daef97387490e636b3403e85a51af33133f51cadada21658, in target order. Every linked cubin retains one UTCBAR.MULTICAST, one UTCSHIFT.DOWN, and one UTCSHIFT.2CTA.DOWN.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_commit_multicast"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_control3_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_commit_mc_shared_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.commit.mc.shared.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "commit",
+            "cta_group::1",
+            "mbarrier::arrive::one",
+            "shared::cluster",
+            "multicast::cluster",
+            "b64"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "shared_ptr",
+            "i16"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_shift_down"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_control3_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_shift_down_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.shift.down.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "shift",
+            "cta_group::1",
+            "down"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_shift_down_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_control3_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_shift_down_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.shift.down.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "shift",
+            "cta_group::2",
+            "down"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr"
+          ]
+        }
+      }
+    }
+  ]
+}

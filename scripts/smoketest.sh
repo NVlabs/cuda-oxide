@@ -671,6 +671,10 @@ run_cargo() {
         local st_offset_re='tcgen05\.st\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)(\.unpack::16b)?\.b32'
         local st_offset_unpack16_re='tcgen05\.st\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)\.unpack::16b\.b32'
         local st_offset_raw_re='tcgen05\.st\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)\.b32'
+        local commit_multicast_cg1_re='tcgen05\.commit\.cta_group::1\.mbarrier::arrive::one\.shared::cluster\.multicast::cluster\.b64'
+        local shift_down_cg1_re='tcgen05\.shift\.cta_group::1\.down'
+        local shift_down_cg2_re='tcgen05\.shift\.cta_group::2\.down'
+        local unresolved_control_re='llvm\.nvvm\.tcgen05\.(commit\.mc\.shared\.cg1|shift\.down\.cg[12])'
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local -a llvm_args=("build" "${ex}" "--arch=sm_100a")
         local llvm_ec
@@ -700,6 +704,21 @@ run_cargo() {
             || [[ ${llvm_cp_count} -ne 36 || ${llvm_cp_unique} -ne 36 ]]; then
             printf 'tcgen05 LLVM route expected 18 copy forms per CTA group and 36 unique total; got %s/%s total/unique\n' \
                 "${llvm_cp_count}" "${llvm_cp_unique}" >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
+        local llvm_control_cg1 llvm_control_cg2
+        llvm_control_cg1="$(awk '/^\.visible \.entry compile_tcgen05_control_cg1\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_control_cg2="$(awk '/^\.visible \.entry compile_tcgen05_control_cg2\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        if [[ -z "${llvm_control_cg1}" || -z "${llvm_control_cg2}" ]] \
+            || [[ $(grep -oE "${commit_multicast_cg1_re}" <<<"${llvm_control_cg1}" | wc -l) -ne 1 ]] \
+            || [[ $(grep -oE "${shift_down_cg1_re}" <<<"${llvm_control_cg1}" | wc -l) -ne 1 ]] \
+            || [[ $(grep -oE "${shift_down_cg2_re}" <<<"${llvm_control_cg2}" | wc -l) -ne 1 ]] \
+            || grep -qE 'tcgen05\.(commit|shift)\.cta_group::2' <<<"${llvm_control_cg1}" \
+            || grep -qE 'tcgen05\.(commit|shift)\.cta_group::1' <<<"${llvm_control_cg2}" \
+            || grep -qE "${unresolved_control_re}" "${llvm_ptx}"; then
+            printf 'tcgen05 LLVM route did not emit the exact cg1 multicast commit and cg1/cg2 shift-down forms\n' >>"${log}"
             CARGO_EC=1
             return
         fi
@@ -796,6 +815,41 @@ run_cargo() {
             || grep -q 'llvm\.nvvm\.tcgen05\.cp' "${nvvm_ll}"; then
             printf 'tcgen05 libNVVM route expected 18 inline copy forms per CTA group and 36 unique total; got %s/%s total/unique\n' \
                 "${nvvm_cp_count}" "${nvvm_cp_unique}" >>"${log}"
+            CARGO_EC=1
+        fi
+
+        local nvvm_control_cg1 nvvm_control_cg2
+        nvvm_control_cg1="$(awk '/^define .*@compile_tcgen05_control_cg1\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_control_cg2="$(awk '/^define .*@compile_tcgen05_control_cg2\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        local -a nvvm_control_attrs=()
+        mapfile -t nvvm_control_attrs < <(
+            sed -nE '/call void asm sideeffect "tcgen05\.(commit|shift)\.cta_group::[12]/s/.* (#[0-9]+)$/\1/p' \
+                <<<"${nvvm_control_cg1}"$'\n'"${nvvm_control_cg2}"
+        )
+        local nvvm_control_convergent=1 control_attr control_attr_definition
+        if [[ ${#nvvm_control_attrs[@]} -ne 4 ]]; then
+            nvvm_control_convergent=0
+        else
+            for control_attr in "${nvvm_control_attrs[@]}"; do
+                control_attr_definition="$(grep -E "^attributes ${control_attr} = \\{[^}]*\\}$" "${nvvm_ll}")"
+                if [[ $(wc -l <<<"${control_attr_definition}") -ne 1 ]] \
+                    || ! grep -qw convergent <<<"${control_attr_definition}"; then
+                    nvvm_control_convergent=0
+                    break
+                fi
+            done
+        fi
+        if [[ -z "${nvvm_control_cg1}" || -z "${nvvm_control_cg2}" ]] \
+            || [[ $(grep -oE "${commit_multicast_cg1_re}" <<<"${nvvm_control_cg1}" | wc -l) -ne 1 ]] \
+            || [[ $(grep -oE "${shift_down_cg1_re}" <<<"${nvvm_control_cg1}" | wc -l) -ne 1 ]] \
+            || [[ $(grep -oE "${shift_down_cg2_re}" <<<"${nvvm_control_cg2}" | wc -l) -ne 1 ]] \
+            || ! grep -q 'asm sideeffect' <<<"${nvvm_control_cg1}" \
+            || ! grep -q 'asm sideeffect' <<<"${nvvm_control_cg2}" \
+            || [[ ${nvvm_control_convergent} -ne 1 ]] \
+            || grep -qE 'tcgen05\.(commit|shift)\.cta_group::2' <<<"${nvvm_control_cg1}" \
+            || grep -qE 'tcgen05\.(commit|shift)\.cta_group::1' <<<"${nvvm_control_cg2}" \
+            || grep -qE "${unresolved_control_re}" "${nvvm_ll}"; then
+            printf 'tcgen05 libNVVM route did not emit the exact cg1 multicast commit and cg1/cg2 shift-down inline assembly\n' >>"${log}"
             CARGO_EC=1
         fi
 

@@ -1,4 +1,4 @@
-schema = 55
+schema = 56
 family = "tcgen05"
 
 [tcgen05]
@@ -12,6 +12,8 @@ st_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 st_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-st"
 offset_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 offset_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-ldst-offset"
+control_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+control_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-control"
 runtime_validation = "unexecuted"
 
 [[tcgen05.variant]]
@@ -109,6 +111,18 @@ operation = "commit_multicast_cg2"
 [[tcgen05.variant]]
 abi_id = "i0366"
 operation = "cp_smem_to_tmem_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0760"
+operation = "commit_multicast"
+
+[[tcgen05.variant]]
+abi_id = "i0761"
+operation = "shift_down"
+
+[[tcgen05.variant]]
+abi_id = "i0762"
+operation = "shift_down_cg2"
 
 [[tcgen05.cp_variant]]
 abi_id = "i0578"

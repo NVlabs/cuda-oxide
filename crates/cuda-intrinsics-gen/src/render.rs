@@ -2060,8 +2060,44 @@ fn tcgen05_participation_doc(operation: Tcgen05Operation) -> Option<&'static str
         | Tcgen05Operation::StoreWait => {
             Some("One full warp must execute this instruction uniformly with the same operands.")
         }
+        Tcgen05Operation::Commit
+        | Tcgen05Operation::CommitSharedCluster
+        | Tcgen05Operation::CommitMulticast
+        | Tcgen05Operation::ShiftDown => Some("One thread in the CTA issues this instruction."),
+        Tcgen05Operation::CommitCg2
+        | Tcgen05Operation::CommitSharedClusterCg2
+        | Tcgen05Operation::CommitMulticastCg2
+        | Tcgen05Operation::ShiftDownCg2 => Some(
+            "One thread in the CTA pair issues this instruction; the peer CTA must be active and must not have exited.",
+        ),
         _ => None,
     }
+}
+
+fn tcgen05_is_commit(operation: Tcgen05Operation) -> bool {
+    matches!(
+        operation,
+        Tcgen05Operation::Commit
+            | Tcgen05Operation::CommitSharedCluster
+            | Tcgen05Operation::CommitMulticast
+            | Tcgen05Operation::CommitCg2
+            | Tcgen05Operation::CommitSharedClusterCg2
+            | Tcgen05Operation::CommitMulticastCg2
+    )
+}
+
+fn tcgen05_is_multicast_commit(operation: Tcgen05Operation) -> bool {
+    matches!(
+        operation,
+        Tcgen05Operation::CommitMulticast | Tcgen05Operation::CommitMulticastCg2
+    )
+}
+
+fn tcgen05_is_shift(operation: Tcgen05Operation) -> bool {
+    matches!(
+        operation,
+        Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2
+    )
 }
 
 fn tcgen05_cp_ptx_suffix(member: Tcgen05CpMember) -> &'static str {
@@ -2409,12 +2445,28 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
                 && tcgen05.source_contract
                     == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
         }
-        (Tcgen05Operation::CommitMulticastCg2, Tcgen05Adapter::BarrierPointerMaskToVoid) => {
+        (
+            Tcgen05Operation::CommitMulticast | Tcgen05Operation::CommitMulticastCg2,
+            Tcgen05Adapter::BarrierPointerMaskToVoid,
+        ) => {
             !record.rust.safe
                 && record.rust.arguments == ["*mut u64", "u16"]
                 && record.rust.result == "()"
                 && record.dialect.operands == ["ptr", "i16"]
                 && llvm.arguments == ["shared_ptr", "i16"]
+                && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
+        }
+        (
+            Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2,
+            Tcgen05Adapter::TmemAddressToVoid,
+        ) => {
+            !record.rust.safe
+                && record.rust.arguments == ["u32"]
+                && record.rust.result == "()"
+                && record.dialect.operands == ["i32"]
+                && record.dialect.results.is_empty()
+                && llvm.arguments == ["tmem_ptr"]
+                && llvm.results.is_empty()
                 && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
         }
         (
@@ -3405,6 +3457,11 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
         {
             writeln!(output, "/// {participation}").unwrap();
         }
+        if record.tcgen05.is_some() {
+            output.push_str(
+                "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
+            );
+        }
         if let Some(reason) = &record.rust.safe_allowlist_reason {
             writeln!(output, "/// Safe because {reason}").unwrap();
         }
@@ -3717,7 +3774,25 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     );
                 }
             } else if let Some(tcgen05) = &record.tcgen05 {
-                if tcgen05.operation == Tcgen05Operation::Ld {
+                if tcgen05_is_commit(tcgen05.operation) {
+                    if tcgen05_is_multicast_commit(tcgen05.operation) {
+                        output.push_str(
+                            "/// `_arg0` must point to a live initialized cluster-shared mbarrier. `_arg1` must select valid CTA ranks in its cluster.\n",
+                        );
+                    } else {
+                        output.push_str(
+                            "/// `_arg0` must point to a live initialized mbarrier valid for this CTA-group mode.\n",
+                        );
+                    }
+                    output.push_str(
+                        "/// The same thread that issued the tracked asynchronous tcgen05 operations must issue this commit.\n",
+                    );
+                } else if tcgen05_is_shift(tcgen05.operation) {
+                    output.push_str(
+                        "/// `_arg0` must name a live tensor-memory allocation, and its lane component must be a multiple of 32.\n\
+                         /// Completion must be tracked by a matching commit from that same thread and observed through the selected mbarrier before relying on shifted data.\n",
+                    );
+                } else if tcgen05.operation == Tcgen05Operation::Ld {
                     output.push_str(
                         "/// `_arg0` must name a live tensor-memory allocation covering the selected tile.\n\
                          /// All active warp lanes must execute convergently with the same address.\n\
@@ -4630,7 +4705,7 @@ pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
 }
 
 fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 206);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 209);
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
     for record in tcgen05_intrinsics(catalog) {
@@ -4665,6 +4740,9 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                 )
             };
             writeln!(output, "/// {}", record.summary).unwrap();
+            output.push_str(
+                "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
+            );
             output.push_str("///\n/// # Safety\n");
             output.push_str(
                 "/// The tensor-memory address must be live, and the warp must execute this call uniformly.\n",
@@ -4767,8 +4845,11 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                 Tcgen05Operation::Ld16x256bX8Pure
                 | Tcgen05Operation::Ld16x256bPure
                 | Tcgen05Operation::Ld => ("tmem_addr: u32", "tmem_addr"),
-                Tcgen05Operation::CommitMulticastCg2 => {
+                Tcgen05Operation::CommitMulticast | Tcgen05Operation::CommitMulticastCg2 => {
                     ("mbar: *mut u64, cta_mask: u16", "mbar, cta_mask")
+                }
+                Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2 => {
+                    ("tmem_addr: u32", "tmem_addr")
                 }
                 Tcgen05Operation::St => unreachable!("store handled above"),
             };
@@ -4792,6 +4873,9 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
         if let Some(participation) = tcgen05_participation_doc(operation) {
             writeln!(output, "/// {participation}").unwrap();
         }
+        output.push_str(
+            "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
+        );
         if !record.rust.safe {
             output.push_str("///\n/// # Safety\n");
             if operation == Tcgen05Operation::St {
@@ -4803,6 +4887,24 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// The tensor-memory address must remain live and cover the selected tile.\n\
                      /// All active warp lanes must execute convergently with the same address. Complete the load wait before using the result.\n",
+                );
+            } else if tcgen05_is_commit(operation) {
+                if tcgen05_is_multicast_commit(operation) {
+                    output.push_str(
+                        "/// `mbar` must point to a live initialized cluster-shared mbarrier. `cta_mask` must select valid CTA ranks in its cluster.\n",
+                    );
+                } else {
+                    output.push_str(
+                        "/// `mbar` must point to a live initialized mbarrier valid for this CTA-group mode.\n",
+                    );
+                }
+                output.push_str(
+                    "/// The same thread that issued the tracked asynchronous tcgen05 operations must issue this commit.\n",
+                );
+            } else if tcgen05_is_shift(operation) {
+                output.push_str(
+                    "/// `tmem_addr` must name a live tensor-memory allocation, and its lane component must be a multiple of 32.\n\
+                     /// Completion must be tracked by a matching commit from that same thread and observed through the selected mbarrier before relying on shifted data.\n",
                 );
             } else {
                 output.push_str("/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n");
@@ -9053,7 +9155,7 @@ fn render_tcgen05_carrier_runs(types: &[String]) -> String {
 }
 
 fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 206);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 209);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         r#"//! Generated Tensor Core Generation 5 operations.
@@ -12021,11 +12123,30 @@ fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usiz
             "~{memory}".into(),
             None,
         ),
-        Tcgen05Operation::CommitMulticastCg2 => (
-            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;".into(),
-            "r,h,~{memory}".into(),
-            None,
-        ),
+        Tcgen05Operation::CommitMulticast | Tcgen05Operation::CommitMulticastCg2 => {
+            let group = if operation == Tcgen05Operation::CommitMulticastCg2 {
+                2
+            } else {
+                1
+            };
+            (
+                format!("tcgen05.commit.cta_group::{group}.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;"),
+                "r,h,~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2 => {
+            let group = if operation == Tcgen05Operation::ShiftDownCg2 {
+                2
+            } else {
+                1
+            };
+            (
+                format!("tcgen05.shift.cta_group::{group}.down [$0];"),
+                "r,~{memory}".into(),
+                None,
+            )
+        }
     }
 }
 
@@ -14626,17 +14747,27 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
     .unwrap();
     let (parameters, result_ty, template, constraints, arguments) = match operation {
         Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
-            let group = if operation == Tcgen05Operation::AllocCg2 { "2" } else { "1" };
+            let group = if operation == Tcgen05Operation::AllocCg2 {
+                "2"
+            } else {
+                "1"
+            };
             (
                 "ptr %dst, i32 %ncols".into(),
                 "void".into(),
-                format!("{{ .reg .u64 %shared64; .reg .u32 %shared32; cvta.to.shared.u64 %shared64, $0; cvt.u32.u64 %shared32, %shared64; tcgen05.alloc.cta_group::{group}.sync.aligned.shared::cta.b32 [%shared32], $1; }}"),
+                format!(
+                    "{{ .reg .u64 %shared64; .reg .u32 %shared32; cvta.to.shared.u64 %shared64, $0; cvt.u32.u64 %shared32, %shared64; tcgen05.alloc.cta_group::{group}.sync.aligned.shared::cta.b32 [%shared32], $1; }}"
+                ),
                 "l,r,~{memory}".into(),
                 "ptr %dst, i32 %ncols".into(),
             )
         }
         Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => {
-            let group = if operation == Tcgen05Operation::DeallocCg2 { "2" } else { "1" };
+            let group = if operation == Tcgen05Operation::DeallocCg2 {
+                "2"
+            } else {
+                "1"
+            };
             (
                 "i32 %tmem, i32 %ncols".into(),
                 "void".into(),
@@ -14645,9 +14776,12 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 "i32 %tmem, i32 %ncols".into(),
             )
         }
-        Tcgen05Operation::RelinquishAllocPermit
-        | Tcgen05Operation::RelinquishAllocPermitCg2 => {
-            let group = if operation == Tcgen05Operation::RelinquishAllocPermitCg2 { "2" } else { "1" };
+        Tcgen05Operation::RelinquishAllocPermit | Tcgen05Operation::RelinquishAllocPermitCg2 => {
+            let group = if operation == Tcgen05Operation::RelinquishAllocPermitCg2 {
+                "2"
+            } else {
+                "1"
+            };
             (
                 String::new(),
                 "void".into(),
@@ -14674,8 +14808,18 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
         | Tcgen05Operation::CommitSharedCluster
         | Tcgen05Operation::CommitCg2
         | Tcgen05Operation::CommitSharedClusterCg2 => {
-            let group = if matches!(operation, Tcgen05Operation::CommitCg2 | Tcgen05Operation::CommitSharedClusterCg2) { "2" } else { "1" };
-            let shared = matches!(operation, Tcgen05Operation::CommitSharedCluster | Tcgen05Operation::CommitSharedClusterCg2);
+            let group = if matches!(
+                operation,
+                Tcgen05Operation::CommitCg2 | Tcgen05Operation::CommitSharedClusterCg2
+            ) {
+                "2"
+            } else {
+                "1"
+            };
+            let shared = matches!(
+                operation,
+                Tcgen05Operation::CommitSharedCluster | Tcgen05Operation::CommitSharedClusterCg2
+            );
             (
                 "i32 %mbar".into(),
                 "void".into(),
@@ -14687,20 +14831,28 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 "i32 %mbar".into(),
             )
         }
-        Tcgen05Operation::MmaWsF16
-        | Tcgen05Operation::MmaWsBf16
-        | Tcgen05Operation::MmaWsTf32 => {
-            let kind = if operation == Tcgen05Operation::MmaWsTf32 { "tf32" } else { "f16" };
+        Tcgen05Operation::MmaWsF16 | Tcgen05Operation::MmaWsBf16 | Tcgen05Operation::MmaWsTf32 => {
+            let kind = if operation == Tcgen05Operation::MmaWsTf32 {
+                "tf32"
+            } else {
+                "f16"
+            };
             (
                 "i32 %d, i32 %a, i64 %legacy_a_desc, i64 %b, i32 %idesc, i1 %enable".into(),
                 "void".into(),
-                format!("{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $5, 0; tcgen05.mma.ws.cta_group::1.kind::{kind} [$0], [$1], $3, $4, %enable_pred; }}"),
+                format!(
+                    "{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $5, 0; tcgen05.mma.ws.cta_group::1.kind::{kind} [$0], [$1], $3, $4, %enable_pred; }}"
+                ),
                 "r,r,l,l,r,r,~{memory}".into(),
                 "i32 %d, i32 %a, i64 %legacy_a_desc, i64 %b, i32 %idesc, i1 %enable".into(),
             )
         }
         Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => {
-            let group = if operation == Tcgen05Operation::MmaF16Cg2 { "2" } else { "1" };
+            let group = if operation == Tcgen05Operation::MmaF16Cg2 {
+                "2"
+            } else {
+                "1"
+            };
             let zeros = if operation == Tcgen05Operation::MmaF16Cg2 {
                 "%z, %z, %z, %z, %z, %z, %z, %z"
             } else {
@@ -14709,36 +14861,48 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
             (
                 "i32 %d, i64 %a, i64 %b, i32 %idesc, i1 %enable".into(),
                 "void".into(),
-                format!("{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $4, 0; .reg .u32 %z; mov.u32 %z, 0; tcgen05.mma.cta_group::{group}.kind::f16 [$0], $1, $2, $3, {{{zeros}}}, %enable_pred; }}"),
+                format!(
+                    "{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $4, 0; .reg .u32 %z; mov.u32 %z, 0; tcgen05.mma.cta_group::{group}.kind::f16 [$0], $1, $2, $3, {{{zeros}}}, %enable_pred; }}"
+                ),
                 "r,l,l,r,r,~{memory}".into(),
                 "i32 %d, i64 %a, i64 %b, i32 %idesc, i1 %enable".into(),
             )
         }
-        Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
-            (
-                "i32 %tmem, i64 %desc".into(),
-                "void".into(),
-                format!(
-                    "{}.{} [$0], $1;",
-                    record.expected_ptx.mnemonic,
-                    record.expected_ptx.modifiers.join(".")
-                ),
-                "r,l,~{memory}".into(),
-                "i32 %tmem, i64 %desc".into(),
-            )
-        }
+        Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => (
+            "i32 %tmem, i64 %desc".into(),
+            "void".into(),
+            format!(
+                "{}.{} [$0], $1;",
+                record.expected_ptx.mnemonic,
+                record.expected_ptx.modifiers.join(".")
+            ),
+            "r,l,~{memory}".into(),
+            "i32 %tmem, i64 %desc".into(),
+        ),
         Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
-            let count = if operation == Tcgen05Operation::Ld16x256bX8Pure { 32 } else { 4 };
-            let registers = (0..count).map(|index| format!("${index}")).collect::<Vec<_>>().join(",");
+            let count = if operation == Tcgen05Operation::Ld16x256bX8Pure {
+                32
+            } else {
+                4
+            };
+            let registers = (0..count)
+                .map(|index| format!("${index}"))
+                .collect::<Vec<_>>()
+                .join(",");
             let constraints = std::iter::repeat_n("=f", count)
                 .chain(std::iter::once("r"))
                 .collect::<Vec<_>>()
                 .join(",");
-            let fields = std::iter::repeat_n("float", count).collect::<Vec<_>>().join(", ");
+            let fields = std::iter::repeat_n("float", count)
+                .collect::<Vec<_>>()
+                .join(", ");
             (
                 "i32 %tmem".into(),
                 format!("{{ {fields} }}"),
-                format!("tcgen05.ld.sync.aligned.16x256b.{}.b32 {{{registers}}}, [${count}];", if count == 32 { "x8" } else { "x1" }),
+                format!(
+                    "tcgen05.ld.sync.aligned.16x256b.{}.b32 {{{registers}}}, [${count}];",
+                    if count == 32 { "x8" } else { "x1" }
+                ),
                 constraints,
                 "i32 %tmem".into(),
             )
@@ -14760,13 +14924,7 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 .collect::<Vec<_>>()
                 .join(", ");
             let (template, constraints, _) = tcgen05_inline_asm(record);
-            (
-                parameters,
-                "void".into(),
-                template,
-                constraints,
-                arguments,
-            )
+            (parameters, "void".into(), template, constraints, arguments)
         }
         Tcgen05Operation::Ld => {
             let count = tcgen05_ld_register_count(record);
@@ -14796,7 +14954,11 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
             )
         }
         Tcgen05Operation::LoadWait | Tcgen05Operation::StoreWait => {
-            let kind = if operation == Tcgen05Operation::LoadWait { "ld" } else { "st" };
+            let kind = if operation == Tcgen05Operation::LoadWait {
+                "ld"
+            } else {
+                "st"
+            };
             (
                 String::new(),
                 "void".into(),
@@ -14805,13 +14967,36 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 String::new(),
             )
         }
-        Tcgen05Operation::CommitMulticastCg2 => (
-            "i32 %mbar, i16 %mask".into(),
-            "void".into(),
-            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;".into(),
-            "r,h,~{memory}".into(),
-            "i32 %mbar, i16 %mask".into(),
-        ),
+        Tcgen05Operation::CommitMulticast | Tcgen05Operation::CommitMulticastCg2 => {
+            let group = if operation == Tcgen05Operation::CommitMulticastCg2 {
+                2
+            } else {
+                1
+            };
+            (
+                "i32 %mbar, i16 %mask".into(),
+                "void".into(),
+                format!(
+                    "tcgen05.commit.cta_group::{group}.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;"
+                ),
+                "r,h,~{memory}".into(),
+                "i32 %mbar, i16 %mask".into(),
+            )
+        }
+        Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2 => {
+            let group = if operation == Tcgen05Operation::ShiftDownCg2 {
+                2
+            } else {
+                1
+            };
+            (
+                "i32 %tmem".into(),
+                "void".into(),
+                format!("tcgen05.shift.cta_group::{group}.down [$0];"),
+                "r,~{memory}".into(),
+                "i32 %tmem".into(),
+            )
+        }
     };
     let (lowering_template, lowering_constraints, lowering_results) = tcgen05_inline_asm(record);
     assert_eq!(template, lowering_template);
@@ -16960,7 +17145,7 @@ mod tests {
     fn catalog_with_tcgen05() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
-        assert_eq!(tcgen05_intrinsics(&catalog).count(), 206);
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 209);
         catalog
     }
 
@@ -18640,7 +18825,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 759);
+        assert_eq!(catalog.intrinsics.len(), 762);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -19889,6 +20074,51 @@ mod tests {
         assert!(compatibility.contains(
             "pub(crate) unsafe fn __tcgen05_st_16x32bx2_x128_unpack16(_tmem_addr: u32, _half_split_offset: i64, _data: CuSimd<u32, 128>)"
         ));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_commit_multicast(mbar: *mut u64, cta_mask: u16) -> ()"
+        ));
+        assert!(compatibility.contains("pub unsafe fn tcgen05_shift_down(tmem_addr: u32) -> ()"));
+        assert!(
+            compatibility.contains("pub unsafe fn tcgen05_shift_down_cg2(tmem_addr: u32) -> ()")
+        );
+        assert_eq!(
+            compatibility
+                .matches("/// One thread in the CTA issues this instruction.\n")
+                .count(),
+            4
+        );
+        assert_eq!(
+            compatibility
+                .matches(
+                    "/// One thread in the CTA pair issues this instruction; the peer CTA must be active and must not have exited.\n",
+                )
+                .count(),
+            4
+        );
+        assert_eq!(
+            compatibility
+                .matches(
+                    "/// The same thread that issued the tracked asynchronous tcgen05 operations must issue this commit.\n",
+                )
+                .count(),
+            6
+        );
+        assert_eq!(
+            compatibility
+                .matches(
+                    "/// Completion must be tracked by a matching commit from that same thread and observed through the selected mbarrier before relying on shifted data.\n",
+                )
+                .count(),
+            2
+        );
+        assert_eq!(
+            compatibility
+                .matches(
+                    "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
+                )
+                .count(),
+            209
+        );
         assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -19905,7 +20135,44 @@ mod tests {
         assert!(
             raw.contains("pub unsafe fn i0759(_arg0: u32, _arg1: i64, _arg2: [u32; 128]) -> ()")
         );
+        assert!(raw.contains("pub unsafe fn i0760(_arg0: *mut u64, _arg1: u16) -> ()"));
+        assert!(raw.contains("pub unsafe fn i0761(_arg0: u32) -> ()"));
+        assert!(raw.contains("pub unsafe fn i0762(_arg0: u32) -> ()"));
+        assert!(raw.contains("lane component must be a multiple of 32"));
         assert!(raw.contains("`_arg0` must name a live tensor-memory allocation"));
+        assert_eq!(
+            raw.matches("/// One thread in the CTA issues this instruction.\n")
+                .count(),
+            4
+        );
+        assert_eq!(
+            raw.matches(
+                "/// One thread in the CTA pair issues this instruction; the peer CTA must be active and must not have exited.\n",
+            )
+            .count(),
+            4
+        );
+        assert_eq!(
+            raw.matches(
+                "/// The same thread that issued the tracked asynchronous tcgen05 operations must issue this commit.\n",
+            )
+            .count(),
+            6
+        );
+        assert_eq!(
+            raw.matches(
+                "/// Completion must be tracked by a matching commit from that same thread and observed through the selected mbarrier before relying on shifted data.\n",
+            )
+            .count(),
+            2
+        );
+        assert_eq!(
+            raw.matches(
+                "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
+            )
+            .count(),
+            209
+        );
         assert!(raw.contains("pub fn i0345() -> ()"));
         assert!(raw.contains("pub fn i0357() -> ()"));
         assert!(raw.contains("pub fn i0358() -> ()"));
@@ -19928,11 +20195,20 @@ mod tests {
         assert!(raw_mod.contains(
             "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0759 as tcgen05_st_16x32bx2_x128_unpack16;"
         ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0760 as tcgen05_commit_multicast;"
+        ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0761 as tcgen05_shift_down;"
+        ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0762 as tcgen05_shift_down_cg2;"
+        ));
 
         let dialect = render_dialect_tcgen05(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 206);
-        assert_eq!(dialect.matches("impl Verify for Tcgen05").count(), 206);
-        assert_eq!(dialect.matches("::register(ctx)").count(), 206);
+        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 209);
+        assert_eq!(dialect.matches("impl Verify for Tcgen05").count(), 209);
+        assert_eq!(dialect.matches("::register(ctx)").count(), 209);
         assert_eq!(dialect.matches("            Some(1),").count(), 32);
         assert!(!dialect.contains("verifier = \"succ\""));
         assert!(dialect.contains("Operation::get_op::<MirConstantOp>"));
@@ -19947,6 +20223,9 @@ mod tests {
         assert!(dialect.contains("pub struct Tcgen05St32x32bX128Unpack16Op"));
         assert!(dialect.contains("pub struct Tcgen05Ld16x32bx2X1RawOp"));
         assert!(dialect.contains("pub struct Tcgen05St16x32bx2X128Unpack16Op"));
+        assert!(dialect.contains("pub struct Tcgen05CommitMulticastOp"));
+        assert!(dialect.contains("pub struct Tcgen05ShiftDownOp"));
+        assert!(dialect.contains("pub struct Tcgen05ShiftDownCg2Op"));
         assert!(dialect.contains("NResultsInterface<128>"));
         assert!(dialect.contains("NResultsInterface<32>"));
         assert!(dialect.contains("NResultsInterface<4>"));
@@ -19991,6 +20270,9 @@ mod tests {
         assert!(importer.contains("args, 128, true, block_ptr"));
         assert!(importer.contains("\"v1:i0728\""));
         assert!(importer.contains("\"v1:i0759\""));
+        assert!(importer.contains("\"v1:i0760\""));
+        assert!(importer.contains("\"v1:i0761\""));
+        assert!(importer.contains("\"v1:i0762\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(!lowering.contains("use crate::convert::intrinsics::tcgen05;"));
@@ -20033,6 +20315,12 @@ mod tests {
         );
         assert!(lowering.contains("tcgen05.cp.cta_group::1.64x128b.warpx2::02_13 [$0], $1;"));
         assert!(lowering.contains("\"r,l,~{memory}\""));
+        assert!(lowering.contains(
+            "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;"
+        ));
+        assert!(lowering.contains("tcgen05.shift.cta_group::1.down [$0];"));
+        assert!(lowering.contains("tcgen05.shift.cta_group::2.down [$0];"));
+        assert!(lowering.contains("\"r,h,~{memory}\""));
 
         let bf16 = tcgen05_intrinsics(&catalog)
             .find(|record| record.id == "tcgen05_mma_ws_bf16")
@@ -20054,6 +20342,29 @@ mod tests {
             .unwrap();
         let shared_commit_probe = render_probe(&catalog, shared_commit, "test-hash");
         assert!(shared_commit_probe.contains("one.shared::cluster.b64"));
+
+        for (id, spelling) in [
+            (
+                "tcgen05_commit_multicast",
+                "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;",
+            ),
+            (
+                "tcgen05_shift_down",
+                "tcgen05.shift.cta_group::1.down [$0];",
+            ),
+            (
+                "tcgen05_shift_down_cg2",
+                "tcgen05.shift.cta_group::2.down [$0];",
+            ),
+        ] {
+            let record = tcgen05_intrinsics(&catalog)
+                .find(|record| record.id == id)
+                .unwrap();
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains(spelling));
+            assert!(probe.contains("asm sideeffect"));
+            assert!(probe.contains("attributes #0 = { convergent }"));
+        }
 
         for (id, spelling) in [
             (

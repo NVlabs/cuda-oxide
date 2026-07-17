@@ -73,7 +73,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 43;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 55;
+const OVERLAY_SHARD_SCHEMA: u32 = 56;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -101,6 +101,7 @@ const TCGEN05_CP_SHARD_SCHEMA: u32 = 52;
 const TCGEN05_LD_SHARD_SCHEMA: u32 = 53;
 const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
 const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
+const TCGEN05_CONTROL_SHARD_SCHEMA: u32 = 56;
 pub(crate) const CATALOG_SCHEMA: u32 = 43;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
@@ -374,9 +375,9 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         .filter(|record| record.family == "tcgen05")
         .count();
     match active_count {
-        206 => return Ok(catalog),
+        209 => return Ok(catalog),
         0 => {}
-        count => bail!("active tcgen05 catalog has {count} of 206 records"),
+        count => bail!("active tcgen05 catalog has {count} of 209 records"),
     }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
@@ -405,6 +406,9 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         Tcgen05Operation::CommitSharedClusterCg2,
         Tcgen05Operation::CommitMulticastCg2,
         Tcgen05Operation::CpSmemToTmemCg2,
+        Tcgen05Operation::CommitMulticast,
+        Tcgen05Operation::ShiftDown,
+        Tcgen05Operation::ShiftDownCg2,
     ];
     let admission = Tcgen05Admission {
         llvm_evidence_profile: "llvm-tcgen05-test".into(),
@@ -417,6 +421,8 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         st_libnvvm_evidence_profile: None,
         offset_llvm_evidence_profile: Some("llvm-tcgen05-offset-test".into()),
         offset_libnvvm_evidence_profile: Some("libnvvm-tcgen05-offset-test".into()),
+        control_llvm_evidence_profile: Some("llvm-tcgen05-control-test".into()),
+        control_libnvvm_evidence_profile: Some("libnvvm-tcgen05-control-test".into()),
         runtime_validation: RuntimeValidation::Unexecuted,
         variants: operations
             .into_iter()
@@ -1249,6 +1255,48 @@ fn validate_overlay_shard_schema_with_max(
         "compact tcgen05 offset load/store admission requires overlay shard schema {}",
         TCGEN05_OFFSET_LDST_SHARD_SCHEMA
     );
+    ensure!(
+        shard.tcgen05.as_ref().is_none_or(|admission| {
+            admission.control_llvm_evidence_profile.is_none()
+                && admission.control_libnvvm_evidence_profile.is_none()
+                && !admission.variants.iter().any(|variant| {
+                    matches!(
+                        variant.operation,
+                        Tcgen05Operation::CommitMulticast
+                            | Tcgen05Operation::ShiftDown
+                            | Tcgen05Operation::ShiftDownCg2
+                    )
+                })
+        }) || shard.schema >= TCGEN05_CONTROL_SHARD_SCHEMA,
+        "compact tcgen05 control admission requires overlay shard schema {}",
+        TCGEN05_CONTROL_SHARD_SCHEMA
+    );
+    if let Some(admission) = &shard.tcgen05
+        && shard.schema >= TCGEN05_CONTROL_SHARD_SCHEMA
+    {
+        ensure!(
+            admission
+                .control_llvm_evidence_profile
+                .as_deref()
+                .is_some_and(|profile| !profile.trim().is_empty())
+                && admission
+                    .control_libnvvm_evidence_profile
+                    .as_deref()
+                    .is_some_and(|profile| !profile.trim().is_empty())
+                && [
+                    Tcgen05Operation::CommitMulticast,
+                    Tcgen05Operation::ShiftDown,
+                    Tcgen05Operation::ShiftDownCg2,
+                ]
+                .into_iter()
+                .all(|operation| admission
+                    .variants
+                    .iter()
+                    .any(|variant| variant.operation == operation)),
+            "compact tcgen05 schema {} requires all three control variants and both backend evidence profiles",
+            TCGEN05_CONTROL_SHARD_SCHEMA
+        );
+    }
     Ok(())
 }
 
@@ -4213,6 +4261,39 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             Tcgen05Adapter::TmemDescriptorToVoid,
             Tcgen05SourceContract::ExactTablegenSelection,
         ),
+        Tcgen05Operation::CommitMulticast => (
+            "i0760",
+            "tcgen05_commit_multicast",
+            "tcgen05.commit.multicast.cg1",
+            "int_nvvm_tcgen05_commit_mc_shared_cg1",
+            "llvm.nvvm.tcgen05.commit.mc.shared.cg1",
+            "Tcgen05CommitMulticastOp",
+            "nvvm.tcgen05_commit_multicast",
+            Tcgen05Adapter::BarrierPointerMaskToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::ShiftDown => (
+            "i0761",
+            "tcgen05_shift_down",
+            "tcgen05.shift.down.cg1",
+            "int_nvvm_tcgen05_shift_down_cg1",
+            "llvm.nvvm.tcgen05.shift.down.cg1",
+            "Tcgen05ShiftDownOp",
+            "nvvm.tcgen05_shift_down",
+            Tcgen05Adapter::TmemAddressToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
+        Tcgen05Operation::ShiftDownCg2 => (
+            "i0762",
+            "tcgen05_shift_down_cg2",
+            "tcgen05.shift.down.cg2",
+            "int_nvvm_tcgen05_shift_down_cg2",
+            "llvm.nvvm.tcgen05.shift.down.cg2",
+            "Tcgen05ShiftDownCg2Op",
+            "nvvm.tcgen05_shift_down_cg2",
+            Tcgen05Adapter::TmemAddressToVoid,
+            Tcgen05SourceContract::ExactTablegenSelection,
+        ),
         Tcgen05Operation::Ld | Tcgen05Operation::St => {
             unreachable!("tcgen05 load/store variants use their compact recipes")
         }
@@ -4228,6 +4309,7 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             | Tcgen05Operation::CommitSharedClusterCg2
             | Tcgen05Operation::CommitMulticastCg2
             | Tcgen05Operation::CpSmemToTmemCg2
+            | Tcgen05Operation::ShiftDownCg2
     );
     let group = if cg2 { "cta_group::2" } else { "cta_group::1" };
     let (
@@ -4625,7 +4707,7 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
                 },
             )
         }
-        Tcgen05Operation::CommitMulticastCg2 => (
+        Tcgen05Operation::CommitMulticast | Tcgen05Operation::CommitMulticastCg2 => (
             &["*mut u64", "u16"] as &[_],
             "()",
             &["ptr", "i16"] as &[_],
@@ -4639,18 +4721,50 @@ fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05Recipe {
             "read_write",
             vec![
                 "commit".into(),
-                "cta_group::2".into(),
+                group.into(),
                 "mbarrier::arrive::one".into(),
                 "shared::cluster".into(),
                 "multicast::cluster".into(),
                 "b64".into(),
             ],
             vec![OperandPattern::Address, OperandPattern::Register],
-            Some("TCGEN05_COMMIT_S64_CG2_MC"),
-            Some(
-                "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 \t[$mbar], $mc;",
-            ),
+            Some(if cg2 {
+                "TCGEN05_COMMIT_S64_CG2_MC"
+            } else {
+                "TCGEN05_COMMIT_S64_CG1_MC"
+            }),
+            Some(if cg2 {
+                "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 \t[$mbar], $mc;"
+            } else {
+                "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 \t[$mbar], $mc;"
+            }),
             "Commits tcgen05 completion to the selected cluster mbarriers.",
+        ),
+        Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2 => (
+            &["u32"] as &[_],
+            "()",
+            &["i32"] as &[_],
+            EMPTY,
+            &["tmem_ptr"] as &[_],
+            EMPTY,
+            BASE_CLASSES,
+            CONVERGENT_ARG_MEMORY,
+            false,
+            None,
+            "read_write",
+            vec!["shift".into(), group.into(), "down".into()],
+            vec![OperandPattern::Address],
+            Some(if cg2 {
+                "TCGEN05_SHIFT_CG2"
+            } else {
+                "TCGEN05_SHIFT_CG1"
+            }),
+            Some(if cg2 {
+                "tcgen05.shift.cta_group::2.down \t[$tmem_addr];"
+            } else {
+                "tcgen05.shift.cta_group::1.down \t[$tmem_addr];"
+            }),
+            "Shifts tensor-memory rows down by one row.",
         ),
         Tcgen05Operation::Ld | Tcgen05Operation::St => {
             unreachable!("tcgen05 load/store variants use their compact recipes")
@@ -5360,14 +5474,43 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
         Tcgen05Operation::CommitSharedClusterCg2,
         Tcgen05Operation::CommitMulticastCg2,
         Tcgen05Operation::CpSmemToTmemCg2,
+        Tcgen05Operation::CommitMulticast,
+        Tcgen05Operation::ShiftDown,
+        Tcgen05Operation::ShiftDownCg2,
     ];
+    let has_control_variants = admission.variants.iter().any(|variant| {
+        matches!(
+            variant.operation,
+            Tcgen05Operation::CommitMulticast
+                | Tcgen05Operation::ShiftDown
+                | Tcgen05Operation::ShiftDownCg2
+        )
+    });
+    if has_control_variants {
+        ensure!(
+            admission
+                .control_llvm_evidence_profile
+                .as_deref()
+                .is_some_and(|profile| !profile.trim().is_empty())
+                && admission
+                    .control_libnvvm_evidence_profile
+                    .as_deref()
+                    .is_some_and(|profile| !profile.trim().is_empty()),
+            "compact tcgen05 control admission requires both backend evidence profiles"
+        );
+    }
+    let expected = if has_control_variants {
+        &expected[..]
+    } else {
+        &expected[..24]
+    };
     ensure!(
         admission
             .variants
             .iter()
             .map(|variant| variant.operation)
-            .eq(expected),
-        "compact tcgen05 admission must list all 24 operations in canonical order"
+            .eq(expected.iter().copied()),
+        "compact tcgen05 admission must list all 24 base operations or all 27 current operations in canonical order"
     );
 
     let mut records = admission
@@ -5375,6 +5518,12 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
         .iter()
         .map(|variant| {
             let recipe = tcgen05_recipe(variant.operation);
+            let control = matches!(
+                variant.operation,
+                Tcgen05Operation::CommitMulticast
+                    | Tcgen05Operation::ShiftDown
+                    | Tcgen05Operation::ShiftDownCg2
+            );
             ensure!(
                 variant.abi_id == recipe.abi_id,
                 "{} must keep reserved ABI ID {}",
@@ -5442,7 +5591,15 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                     OverlayBackendLowering {
                         backend: IntrinsicBackend::LlvmNvptx,
                         mechanism: BackendLoweringMechanism::InlinePtx,
-                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        evidence_profile: if control {
+                            admission
+                                .control_llvm_evidence_profile
+                                .as_ref()
+                                .expect("validated tcgen05 control LLVM evidence profile")
+                                .clone()
+                        } else {
+                            admission.llvm_evidence_profile.clone()
+                        },
                         targets: None,
                         minimum_ptx: Some("8.6".into()),
                         minimum_sm: None,
@@ -5450,7 +5607,15 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                     OverlayBackendLowering {
                         backend: IntrinsicBackend::LibNvvm,
                         mechanism: BackendLoweringMechanism::InlinePtx,
-                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        evidence_profile: if control {
+                            admission
+                                .control_libnvvm_evidence_profile
+                                .as_ref()
+                                .expect("validated tcgen05 control libNVVM evidence profile")
+                                .clone()
+                        } else {
+                            admission.libnvvm_evidence_profile.clone()
+                        },
                         targets: Some(TCGEN05_LIBNVVM_TARGETS.into()),
                         minimum_ptx: Some("8.6".into()),
                         minimum_sm: None,
@@ -6365,10 +6530,18 @@ fn validate_tcgen05_source_contract(
                 recipe.id
             );
             let selection = &declaration.selections[0];
+            let expected_predicate = if matches!(
+                recipe.operation,
+                Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2
+            ) {
+                "Subtarget->hasTcgen05ShiftSupport()"
+            } else {
+                "Subtarget->hasTcgen05InstSupport()"
+            };
             ensure!(
                 recipe.selection_record == Some(selection.source_record.as_str())
                     && recipe.selection_asm == Some(selection.asm.as_str())
-                    && selection.predicates == ["Subtarget->hasTcgen05InstSupport()"]
+                    && selection.predicates == [expected_predicate]
                     && selection.constraints.is_empty(),
                 "{} exact tcgen05 selection changed",
                 recipe.id
@@ -8194,6 +8367,7 @@ fn validate_selected_target_predicates(
     let mut has_clc_multicast_support = false;
     let mut has_tma_blackwell_support = false;
     let mut has_tcgen05_support = false;
+    let mut has_tcgen05_shift_support = false;
     let mut has_ldstmatrix_blackwell_support = false;
     let mut has_mma_block_scale_support = false;
     for predicate in &selection.predicates {
@@ -8277,6 +8451,7 @@ fn validate_selected_target_predicates(
             );
             ensure!(
                 !has_tcgen05_support
+                    && !has_tcgen05_shift_support
                     && imported_ptx.is_none()
                     && imported_sm.is_none()
                     && !has_dot_instructions
@@ -8286,6 +8461,30 @@ fn validate_selected_target_predicates(
                 policy.id
             );
             has_tcgen05_support = true;
+        } else if predicate == "Subtarget->hasTcgen05ShiftSupport()" {
+            ensure!(
+                policy.family == "tcgen05"
+                    && policy.tcgen05.as_ref().is_some_and(|tcgen05| {
+                        matches!(
+                            tcgen05.operation,
+                            Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2
+                        )
+                    }),
+                "{} uses the tcgen05 shift target predicate outside a shift operation",
+                policy.id
+            );
+            ensure!(
+                !has_tcgen05_shift_support
+                    && !has_tcgen05_support
+                    && imported_ptx.is_none()
+                    && imported_sm.is_none()
+                    && !has_dot_instructions
+                    && !has_clc_multicast_support
+                    && !has_tma_blackwell_support,
+                "{} has duplicate or conflicting tcgen05 shift target predicates",
+                policy.id
+            );
+            has_tcgen05_shift_support = true;
         } else if predicate == "Subtarget->hasLdStmatrixBlackwellSupport()" {
             ensure!(
                 policy.family == "ldmatrix"
@@ -8303,7 +8502,8 @@ fn validate_selected_target_predicates(
                     && !has_dot_instructions
                     && !has_clc_multicast_support
                     && !has_tma_blackwell_support
-                    && !has_tcgen05_support,
+                    && !has_tcgen05_support
+                    && !has_tcgen05_shift_support,
                 "{} has duplicate or conflicting Blackwell ldmatrix target predicates",
                 policy.id
             );
@@ -8323,6 +8523,7 @@ fn validate_selected_target_predicates(
                     && !has_clc_multicast_support
                     && !has_tma_blackwell_support
                     && !has_tcgen05_support
+                    && !has_tcgen05_shift_support
                     && !has_ldstmatrix_blackwell_support,
                 "{} has duplicate or conflicting MMA block-scale target predicates",
                 policy.id
@@ -8484,8 +8685,15 @@ fn validate_selected_target_predicates(
             );
         }
     } else if policy.family == "tcgen05" {
+        let shift = policy.tcgen05.as_ref().is_some_and(|tcgen05| {
+            matches!(
+                tcgen05.operation,
+                Tcgen05Operation::ShiftDown | Tcgen05Operation::ShiftDownCg2
+            )
+        });
         ensure!(
-            has_tcgen05_support
+            ((shift && has_tcgen05_shift_support && !has_tcgen05_support)
+                || (!shift && has_tcgen05_support && !has_tcgen05_shift_support))
                 && selection.predicates.len() == 1
                 && parse_hardware_target(policy)?
                     == CatalogHardwareTarget::AnyOf {
@@ -25264,7 +25472,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 57);
-        assert_eq!(overlay.intrinsics.len(), 759);
+        assert_eq!(overlay.intrinsics.len(), 762);
         assert_eq!(
             overlay
                 .intrinsics
@@ -25722,6 +25930,9 @@ mod tests {
             Tcgen05Operation::CommitSharedClusterCg2,
             Tcgen05Operation::CommitMulticastCg2,
             Tcgen05Operation::CpSmemToTmemCg2,
+            Tcgen05Operation::CommitMulticast,
+            Tcgen05Operation::ShiftDown,
+            Tcgen05Operation::ShiftDownCg2,
         ];
         Tcgen05Admission {
             llvm_evidence_profile: "llvm-tcgen05-test".into(),
@@ -25734,6 +25945,8 @@ mod tests {
             st_libnvvm_evidence_profile: None,
             offset_llvm_evidence_profile: None,
             offset_libnvvm_evidence_profile: None,
+            control_llvm_evidence_profile: Some("llvm-tcgen05-control-test".into()),
+            control_libnvvm_evidence_profile: Some("libnvvm-tcgen05-control-test".into()),
             runtime_validation: RuntimeValidation::Unexecuted,
             variants: operations
                 .into_iter()
@@ -25748,6 +25961,13 @@ mod tests {
             ld_offset_variants: vec![],
             st_offset_variants: vec![],
         }
+    }
+
+    fn without_tcgen05_control(mut admission: Tcgen05Admission) -> Tcgen05Admission {
+        admission.variants.truncate(24);
+        admission.control_llvm_evidence_profile = None;
+        admission.control_libnvvm_evidence_profile = None;
+        admission
     }
 
     fn test_tcgen05_cp_admission() -> Tcgen05Admission {
@@ -28106,7 +28326,7 @@ scope = "system"
     #[test]
     fn compact_tcgen05_admission_matches_llvm_and_fails_closed() {
         let records = expand_tcgen05_admission(&test_tcgen05_admission()).unwrap();
-        assert_eq!(records.len(), 24);
+        assert_eq!(records.len(), 27);
         assert_eq!(
             records
                 .iter()
@@ -28137,6 +28357,9 @@ scope = "system"
                 ("i0364", "tcgen05_commit_shared_cluster_cg2"),
                 ("i0365", "tcgen05_commit_multicast_cg2"),
                 ("i0366", "tcgen05_cp_smem_to_tmem_cg2"),
+                ("i0760", "tcgen05_commit_multicast"),
+                ("i0761", "tcgen05_shift_down"),
+                ("i0762", "tcgen05_shift_down_cg2"),
             ]
         );
 
@@ -28185,6 +28408,47 @@ scope = "system"
             }
         );
 
+        let legacy_records =
+            expand_tcgen05_admission(&without_tcgen05_control(test_tcgen05_admission())).unwrap();
+        assert_eq!(legacy_records.len(), 24);
+        assert!(legacy_records.iter().all(|record| {
+            record
+                .backend_lowerings
+                .iter()
+                .map(|lowering| lowering.evidence_profile.as_str())
+                .eq(["llvm-tcgen05-test", "libnvvm-tcgen05-test"])
+        }));
+
+        let multicast = records
+            .iter()
+            .find(|record| record.id == "tcgen05_commit_multicast")
+            .unwrap();
+        assert_eq!(multicast.abi_id, "i0760");
+        assert_eq!(multicast.rust_arguments, ["*mut u64", "u16"]);
+        assert_eq!(multicast.llvm_arguments, ["shared_ptr", "i16"]);
+        assert_eq!(multicast.execution_scope, "thread");
+        assert_eq!(
+            multicast.backend_lowerings[0].evidence_profile,
+            "llvm-tcgen05-control-test"
+        );
+        assert_eq!(
+            multicast.backend_lowerings[1].evidence_profile,
+            "libnvvm-tcgen05-control-test"
+        );
+
+        for (id, group) in [
+            ("tcgen05_shift_down", "cta_group::1"),
+            ("tcgen05_shift_down_cg2", "cta_group::2"),
+        ] {
+            let shift = records.iter().find(|record| record.id == id).unwrap();
+            assert_eq!(shift.rust_arguments, ["u32"]);
+            assert_eq!(shift.llvm_arguments, ["tmem_ptr"]);
+            assert_eq!(shift.execution_scope, "thread");
+            assert_eq!(shift.memory, "read_write");
+            assert_eq!(shift.expected_ptx.modifiers, ["shift", group, "down"]);
+            assert_eq!(shift.expected_ptx.operands, [OperandPattern::Address]);
+        }
+
         let mut missing = test_tcgen05_admission();
         missing.variants.pop();
         assert!(expand_tcgen05_admission(&missing).is_err());
@@ -28200,6 +28464,26 @@ scope = "system"
         let mut executed = test_tcgen05_admission();
         executed.runtime_validation = RuntimeValidation::Executed;
         assert!(expand_tcgen05_admission(&executed).is_err());
+
+        let mut missing_control_evidence = test_tcgen05_admission();
+        missing_control_evidence.control_llvm_evidence_profile = None;
+        assert!(expand_tcgen05_admission(&missing_control_evidence).is_err());
+
+        let mut partial_control = without_tcgen05_control(test_tcgen05_admission());
+        partial_control
+            .variants
+            .push(test_tcgen05_admission().variants[24].clone());
+        assert!(expand_tcgen05_admission(&partial_control).is_err());
+
+        let shift = records
+            .iter()
+            .find(|record| record.id == "tcgen05_shift_down")
+            .unwrap();
+        let mut wrong_shift_declaration =
+            declarations[shift.source_record.as_deref().unwrap()].clone();
+        wrong_shift_declaration.selections[0].predicates =
+            vec!["Subtarget->hasTcgen05InstSupport()".into()];
+        assert!(validate_imported_policy(shift, &wrong_shift_declaration).is_err());
 
         let declaration = declarations[records[0].source_record.as_deref().unwrap()];
         let mut wrong_adapter = records[0].clone();
@@ -28228,8 +28512,8 @@ scope = "system"
     #[test]
     fn compact_tcgen05_copy_admission_matches_all_llvm_records_and_fails_closed() {
         let records = expand_tcgen05_admission(&test_tcgen05_cp_admission()).unwrap();
-        assert_eq!(records.len(), 58);
-        let copies = &records[24..];
+        assert_eq!(records.len(), 61);
+        let copies = &records[27..];
         assert_eq!(copies.len(), 34);
         assert_eq!(
             (copies[0].abi_id.as_str(), copies[0].id.as_str()),
@@ -28329,8 +28613,8 @@ scope = "system"
     #[test]
     fn compact_tcgen05_load_admission_matches_all_llvm_records_and_fails_closed() {
         let records = expand_tcgen05_admission(&test_tcgen05_ld_admission()).unwrap();
-        assert_eq!(records.len(), 116);
-        let loads = &records[58..];
+        assert_eq!(records.len(), 119);
+        let loads = &records[61..];
         assert_eq!(loads.len(), 58);
         assert_eq!(
             (loads[0].abi_id.as_str(), loads[0].id.as_str()),
@@ -28465,15 +28749,15 @@ scope = "system"
         assert!(validate_imported_policy(&wrong_scope, declaration).is_err());
 
         let mut unreviewed_sharing = records.clone();
-        unreviewed_sharing[59].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
+        unreviewed_sharing[62].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
         assert!(validate_unique_overlay(&unreviewed_sharing, 1).is_err());
     }
 
     #[test]
     fn compact_tcgen05_store_admission_matches_all_llvm_records_and_fails_closed() {
         let records = expand_tcgen05_admission(&test_tcgen05_st_admission()).unwrap();
-        assert_eq!(records.len(), 174);
-        let stores = &records[116..];
+        assert_eq!(records.len(), 177);
+        let stores = &records[119..];
         assert_eq!(stores.len(), 58);
         assert_eq!(
             (stores[0].abi_id.as_str(), stores[0].id.as_str()),
@@ -28602,16 +28886,16 @@ scope = "system"
         assert!(validate_imported_policy(&wrong_scope, declaration).is_err());
 
         let mut unreviewed_sharing = records.clone();
-        unreviewed_sharing[117].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
+        unreviewed_sharing[120].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
         assert!(validate_unique_overlay(&unreviewed_sharing, 1).is_err());
     }
 
     #[test]
     fn compact_tcgen05_offset_admission_is_exact_and_fails_closed() {
         let records = expand_tcgen05_admission(&test_tcgen05_offset_admission()).unwrap();
-        assert_eq!(records.len(), 206);
-        let loads = &records[174..190];
-        let stores = &records[190..206];
+        assert_eq!(records.len(), 209);
+        let loads = &records[177..193];
+        let stores = &records[193..209];
         assert_eq!(
             (loads[0].abi_id.as_str(), loads[0].id.as_str()),
             ("i0728", "tcgen05_ld_16x32bx2_x1_raw")
@@ -28782,14 +29066,20 @@ scope = "system"
         };
         let path = Path::new("intrinsics/overlay/tcgen05.toml");
         validate_overlay_shard_schema_with_max(
-            &shard(TCGEN05_SHARD_SCHEMA, test_tcgen05_admission()),
+            &shard(
+                TCGEN05_SHARD_SCHEMA,
+                without_tcgen05_control(test_tcgen05_admission()),
+            ),
             path,
             TCGEN05_CP_SHARD_SCHEMA,
         )
         .unwrap();
         assert!(
             validate_overlay_shard_schema_with_max(
-                &shard(TCGEN05_SHARD_SCHEMA - 1, test_tcgen05_admission()),
+                &shard(
+                    TCGEN05_SHARD_SCHEMA - 1,
+                    without_tcgen05_control(test_tcgen05_admission()),
+                ),
                 path,
                 TCGEN05_CP_SHARD_SCHEMA,
             )
@@ -28798,14 +29088,20 @@ scope = "system"
             .contains("requires overlay shard schema 42")
         );
         validate_overlay_shard_schema_with_max(
-            &shard(TCGEN05_CP_SHARD_SCHEMA, test_tcgen05_cp_admission()),
+            &shard(
+                TCGEN05_CP_SHARD_SCHEMA,
+                without_tcgen05_control(test_tcgen05_cp_admission()),
+            ),
             path,
             TCGEN05_CP_SHARD_SCHEMA,
         )
         .unwrap();
         assert!(
             validate_overlay_shard_schema_with_max(
-                &shard(TCGEN05_CP_SHARD_SCHEMA - 1, test_tcgen05_cp_admission(),),
+                &shard(
+                    TCGEN05_CP_SHARD_SCHEMA - 1,
+                    without_tcgen05_control(test_tcgen05_cp_admission()),
+                ),
                 path,
                 TCGEN05_CP_SHARD_SCHEMA,
             )
@@ -28814,14 +29110,20 @@ scope = "system"
             .contains("requires overlay shard schema 52")
         );
         validate_overlay_shard_schema_with_max(
-            &shard(TCGEN05_LD_SHARD_SCHEMA, test_tcgen05_ld_admission()),
+            &shard(
+                TCGEN05_LD_SHARD_SCHEMA,
+                without_tcgen05_control(test_tcgen05_ld_admission()),
+            ),
             path,
             TCGEN05_LD_SHARD_SCHEMA,
         )
         .unwrap();
         assert!(
             validate_overlay_shard_schema_with_max(
-                &shard(TCGEN05_LD_SHARD_SCHEMA - 1, test_tcgen05_ld_admission()),
+                &shard(
+                    TCGEN05_LD_SHARD_SCHEMA - 1,
+                    without_tcgen05_control(test_tcgen05_ld_admission()),
+                ),
                 path,
                 TCGEN05_LD_SHARD_SCHEMA,
             )
@@ -28830,14 +29132,20 @@ scope = "system"
             .contains("requires overlay shard schema 53")
         );
         validate_overlay_shard_schema_with_max(
-            &shard(TCGEN05_ST_SHARD_SCHEMA, test_tcgen05_st_admission()),
+            &shard(
+                TCGEN05_ST_SHARD_SCHEMA,
+                without_tcgen05_control(test_tcgen05_st_admission()),
+            ),
             path,
             TCGEN05_ST_SHARD_SCHEMA,
         )
         .unwrap();
         assert!(
             validate_overlay_shard_schema_with_max(
-                &shard(TCGEN05_ST_SHARD_SCHEMA - 1, test_tcgen05_st_admission()),
+                &shard(
+                    TCGEN05_ST_SHARD_SCHEMA - 1,
+                    without_tcgen05_control(test_tcgen05_st_admission()),
+                ),
                 path,
                 TCGEN05_ST_SHARD_SCHEMA,
             )
@@ -28848,7 +29156,7 @@ scope = "system"
         validate_overlay_shard_schema_with_max(
             &shard(
                 TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
-                test_tcgen05_offset_admission(),
+                without_tcgen05_control(test_tcgen05_offset_admission()),
             ),
             path,
             TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
@@ -28858,7 +29166,7 @@ scope = "system"
             validate_overlay_shard_schema_with_max(
                 &shard(
                     TCGEN05_OFFSET_LDST_SHARD_SCHEMA - 1,
-                    test_tcgen05_offset_admission(),
+                    without_tcgen05_control(test_tcgen05_offset_admission()),
                 ),
                 path,
                 TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
@@ -28866,6 +29174,41 @@ scope = "system"
             .unwrap_err()
             .to_string()
             .contains("requires overlay shard schema 55")
+        );
+        validate_overlay_shard_schema_with_max(
+            &shard(
+                TCGEN05_CONTROL_SHARD_SCHEMA,
+                test_tcgen05_offset_admission(),
+            ),
+            path,
+            TCGEN05_CONTROL_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(
+                    TCGEN05_CONTROL_SHARD_SCHEMA,
+                    without_tcgen05_control(test_tcgen05_offset_admission()),
+                ),
+                path,
+                TCGEN05_CONTROL_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires all three control variants and both backend evidence profiles")
+        );
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(
+                    TCGEN05_CONTROL_SHARD_SCHEMA - 1,
+                    test_tcgen05_offset_admission(),
+                ),
+                path,
+                TCGEN05_CONTROL_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 56")
         );
     }
 

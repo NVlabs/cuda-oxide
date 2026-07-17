@@ -526,6 +526,10 @@ pub struct Tcgen05Admission {
     pub offset_llvm_evidence_profile: Option<String>,
     #[serde(default)]
     pub offset_libnvvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub control_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub control_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<Tcgen05AdmissionVariant>,
@@ -1263,6 +1267,9 @@ pub enum Tcgen05Operation {
     CpSmemToTmemCg2,
     Ld,
     St,
+    CommitMulticast,
+    ShiftDown,
+    ShiftDownCg2,
 }
 
 impl Tcgen05Operation {
@@ -1293,7 +1300,10 @@ impl Tcgen05Operation {
             | Self::CommitCg2
             | Self::CommitSharedClusterCg2
             | Self::CommitMulticastCg2
-            | Self::CpSmemToTmemCg2 => "thread",
+            | Self::CpSmemToTmemCg2
+            | Self::CommitMulticast
+            | Self::ShiftDown
+            | Self::ShiftDownCg2 => "thread",
         }
     }
 }
@@ -1315,6 +1325,7 @@ pub enum Tcgen05Adapter {
     TmemU32RegistersInjectUnpack16ToVoid,
     TmemHalfSplitOffsetInjectPack16ToU32Registers,
     TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid,
+    TmemAddressToVoid,
 }
 
 /// Relationship between the public operation and LLVM's NVPTX selection.
@@ -4076,6 +4087,9 @@ runtime_validation = "unexecuted"
             Tcgen05Operation::CommitSharedClusterCg2,
             Tcgen05Operation::CommitMulticastCg2,
             Tcgen05Operation::CpSmemToTmemCg2,
+            Tcgen05Operation::CommitMulticast,
+            Tcgen05Operation::ShiftDown,
+            Tcgen05Operation::ShiftDownCg2,
         ] {
             assert_eq!(operation.execution_scope(), "thread");
         }

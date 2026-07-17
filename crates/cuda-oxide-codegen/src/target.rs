@@ -1608,7 +1608,7 @@ mod tests {
             .iter()
             .filter(|target| target.id.starts_with("tcgen05_"))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 206);
+        assert_eq!(targets.len(), 209);
 
         for target in targets {
             let llvm = GeneratedModuleRequirements::from_targets(vec![target])
