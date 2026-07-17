@@ -656,9 +656,12 @@ run_cargo() {
         return
     fi
 
-    # The tcgen05 copy family must pass both compiler routes on its exact target.
+    # The tcgen05 copy and load families must pass both compiler routes.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "tcgen05" ]]; then
         local cp_re='tcgen05\.cp\.cta_group::[12]\.(128x128b|128x256b|32x128b\.warpx4|4x256b|64x128b\.warpx2::(01_23|02_13))(\.b8x16\.(b4x16_p64|b6x16_p32))?[[:space:]]'
+        local ld_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)(\.pack::16b)?\.b32'
+        local ld_pack16_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.pack::16b\.b32'
+        local ld_raw_re='tcgen05\.ld\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.b32'
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local -a llvm_args=("build" "${ex}" "--arch=sm_100a")
         local llvm_ec
@@ -692,6 +695,22 @@ run_cargo() {
             return
         fi
 
+        local llvm_ld llvm_ld_count llvm_ld_unique llvm_ld_pack16 llvm_ld_raw
+        llvm_ld="$(awk '/^\.visible \.entry compile_tcgen05_ld\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_ld_count="$(grep -oE "${ld_re}" <<<"${llvm_ld}" | wc -l)"
+        llvm_ld_unique="$(grep -oE "${ld_re}" <<<"${llvm_ld}" | sort -u | wc -l)"
+        llvm_ld_pack16="$(grep -oE "${ld_pack16_re}" <<<"${llvm_ld}" | wc -l)"
+        llvm_ld_raw="$(grep -oE "${ld_raw_re}" <<<"${llvm_ld}" | wc -l)"
+        if [[ -z "${llvm_ld}" ]] \
+            || [[ ${llvm_ld_count} -ne 58 || ${llvm_ld_unique} -ne 58 ]] \
+            || [[ ${llvm_ld_pack16} -ne 29 || ${llvm_ld_raw} -ne 29 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.ld' "${llvm_ptx}"; then
+            printf 'tcgen05 LLVM route expected 58 unique loads (29 raw and 29 pack16); got %s/%s total/unique and %s/%s raw/pack16\n' \
+                "${llvm_ld_count}" "${llvm_ld_unique}" "${llvm_ld_raw}" "${llvm_ld_pack16}" >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
         local -a nvvm_args=("emit-ltoir" "${ex}" "--arch=sm_100a")
         if [[ ${VERBOSE} -eq 1 ]]; then
             cargo oxide "${nvvm_args[@]}" 2>&1 | tee -a "${log}"
@@ -705,6 +724,7 @@ run_cargo() {
         fi
 
         local nvvm_ll="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local nvvm_target="crates/rustc-codegen-cuda/examples/${ex}/${ex}.target"
         local nvvm_cg1 nvvm_cg2 nvvm_cp_count nvvm_cp_unique
         nvvm_cg1="$(awk '/^define .*@compile_tcgen05_cp_cg1\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
         nvvm_cg2="$(awk '/^define .*@compile_tcgen05_cp_cg2\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
@@ -719,6 +739,22 @@ run_cargo() {
             || grep -q 'llvm\.nvvm\.tcgen05\.cp' "${nvvm_ll}"; then
             printf 'tcgen05 libNVVM route expected 18 inline copy forms per CTA group and 36 unique total; got %s/%s total/unique\n' \
                 "${nvvm_cp_count}" "${nvvm_cp_unique}" >>"${log}"
+            CARGO_EC=1
+        fi
+
+        local nvvm_ld nvvm_ld_count nvvm_ld_unique nvvm_ld_pack16 nvvm_ld_raw
+        nvvm_ld="$(awk '/^define .*@compile_tcgen05_ld\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_ld_count="$(grep -oE "${ld_re}" <<<"${nvvm_ld}" | wc -l)"
+        nvvm_ld_unique="$(grep -oE "${ld_re}" <<<"${nvvm_ld}" | sort -u | wc -l)"
+        nvvm_ld_pack16="$(grep -oE "${ld_pack16_re}" <<<"${nvvm_ld}" | wc -l)"
+        nvvm_ld_raw="$(grep -oE "${ld_raw_re}" <<<"${nvvm_ld}" | wc -l)"
+        if [[ -z "${nvvm_ld}" ]] \
+            || [[ "$(head -n 1 "${nvvm_target}" 2>/dev/null)" != "sm_100a" ]] \
+            || [[ ${nvvm_ld_count} -ne 58 || ${nvvm_ld_unique} -ne 58 ]] \
+            || [[ ${nvvm_ld_pack16} -ne 29 || ${nvvm_ld_raw} -ne 29 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.ld' "${nvvm_ll}"; then
+            printf 'tcgen05 libNVVM route expected sm_100a and 58 unique inline loads (29 raw and 29 pack16); got %s/%s total/unique and %s/%s raw/pack16\n' \
+                "${nvvm_ld_count}" "${nvvm_ld_unique}" "${nvvm_ld_raw}" "${nvvm_ld_pack16}" >>"${log}"
             CARGO_EC=1
         fi
         return

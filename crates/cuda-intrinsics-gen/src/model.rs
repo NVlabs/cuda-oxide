@@ -514,11 +514,17 @@ pub struct Tcgen05Admission {
     pub cp_llvm_evidence_profile: Option<String>,
     #[serde(default)]
     pub cp_libnvvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub ld_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub ld_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<Tcgen05AdmissionVariant>,
     #[serde(rename = "cp_variant", default)]
     pub cp_variants: Vec<Tcgen05CpAdmissionVariant>,
+    #[serde(rename = "ld_variant", default)]
+    pub ld_variants: Vec<Tcgen05LdAdmissionVariant>,
 }
 
 /// One reviewed tcgen05 operation and its reserved ABI ID.
@@ -536,6 +542,16 @@ pub struct Tcgen05CpAdmissionVariant {
     pub abi_id: String,
     pub member: Tcgen05CpMember,
     pub group: Tcgen05CpGroup,
+}
+
+/// One reviewed tcgen05 load shape, repetition, and packing mode.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05LdAdmissionVariant {
+    pub abi_id: String,
+    pub shape: Tcgen05LdShape,
+    pub multiplicity: Tcgen05LdMultiplicity,
+    pub pack16: bool,
 }
 
 /// Compact admission for the closed `prmt` family.
@@ -1062,6 +1078,8 @@ pub struct Tcgen05 {
     pub operation: Tcgen05Operation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp: Option<Tcgen05Cp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ld: Option<Tcgen05Ld>,
     pub adapter: Tcgen05Adapter,
     pub source_contract: Tcgen05SourceContract,
     pub runtime_validation: RuntimeValidation,
@@ -1120,6 +1138,65 @@ pub enum Tcgen05CpGroup {
     Cg2,
 }
 
+/// Closed identity for one tcgen05 tensor-memory load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tcgen05Ld {
+    pub shape: Tcgen05LdShape,
+    pub multiplicity: Tcgen05LdMultiplicity,
+    pub pack16: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Tcgen05LdShape {
+    #[serde(rename = "16x64b")]
+    M16x64b,
+    #[serde(rename = "16x128b")]
+    M16x128b,
+    #[serde(rename = "16x256b")]
+    M16x256b,
+    #[serde(rename = "32x32b")]
+    M32x32b,
+}
+
+impl Tcgen05LdShape {
+    pub const fn register_multiplier(self) -> usize {
+        match self {
+            Self::M16x64b | Self::M32x32b => 1,
+            Self::M16x128b => 2,
+            Self::M16x256b => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tcgen05LdMultiplicity {
+    X1,
+    X2,
+    X4,
+    X8,
+    X16,
+    X32,
+    X64,
+    X128,
+}
+
+impl Tcgen05LdMultiplicity {
+    pub const fn count(self) -> usize {
+        match self {
+            Self::X1 => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+            Self::X16 => 16,
+            Self::X32 => 32,
+            Self::X64 => 64,
+            Self::X128 => 128,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tcgen05Operation {
@@ -1147,6 +1224,7 @@ pub enum Tcgen05Operation {
     CommitSharedClusterCg2,
     CommitMulticastCg2,
     CpSmemToTmemCg2,
+    Ld,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1162,6 +1240,7 @@ pub enum Tcgen05Adapter {
     TmemToF32x32,
     TmemToF32x4,
     BarrierPointerMaskToVoid,
+    TmemInjectPack16ToU32Registers,
 }
 
 /// Relationship between the public operation and LLVM's NVPTX selection.

@@ -292,6 +292,76 @@ mod kernels {
         }
     }
 
+    /// Keeps every generated tcgen05 load form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_ld(tmem_addr: u32) {
+        unsafe {
+            let _ = tcgen05::tcgen05_ld_16x64b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x32_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x64_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x64_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x128_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x128_pack16(tmem_addr);
+
+            let _ = tcgen05::tcgen05_ld_16x128b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x32_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x64_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x64_pack16(tmem_addr);
+
+            let _ = tcgen05::tcgen05_ld_16x256b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x32_pack16(tmem_addr);
+
+            let _ = tcgen05::tcgen05_ld_32x32b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x32_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x64_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x64_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x128_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x128_pack16(tmem_addr);
+        }
+    }
+
     // =============================================================================
     // CTA Pair (cta_group::2) Test Kernels
     // =============================================================================
