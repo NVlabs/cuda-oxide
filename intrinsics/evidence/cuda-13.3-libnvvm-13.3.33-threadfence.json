@@ -1,0 +1,95 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-threadfence",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": [],
+    "llvm_results": [],
+    "concrete_llvm_arguments": [],
+    "concrete_llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_80",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "declaration_attributes_canonicalized": true,
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "threadfence_libnvvm_typed_probe",
+      "coverage_count": 3,
+      "stages": [
+        {
+          "targets": ["sm_80"],
+          "representation": "one NVVM IR 2.0 module declaring all three typed llvm.nvvm.membar intrinsics",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified the 614-byte source module with SHA-256 f11112eb44a00edcb349bd511051277471941e522df16085960dfe4c3826b5f6."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "one typed libNVVM probe retaining membar.cta, membar.gl, and membar.sys",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM emitted 319-byte PTX containing each exact instruction once, with SHA-256 d8fa0b45f2670cef336d07f5adb669d73c5a9789a89e029d5a2d0ecf5e4add16."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "linked cubin retaining the combined typed threadfence kernel",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced PTX into a 3,496-byte cubin with SHA-256 32485fd3021ef42b89a78cd410e367961b4a050ef2e8bb455eebab9d8d182b87.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["threadfence_block"]}],
+      "product_count": 1,
+      "fixtures": ["threadfence_libnvvm_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_membar_cta",
+        "llvm_symbol": "llvm.nvvm.membar.cta",
+        "expected_ptx": {"mnemonic": "membar", "modifiers": ["cta"], "operands": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["threadfence"]}],
+      "product_count": 1,
+      "fixtures": ["threadfence_libnvvm_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_membar_gl",
+        "llvm_symbol": "llvm.nvvm.membar.gl",
+        "expected_ptx": {"mnemonic": "membar", "modifiers": ["gl"], "operands": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["threadfence_system"]}],
+      "product_count": 1,
+      "fixtures": ["threadfence_libnvvm_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_membar_sys",
+        "llvm_symbol": "llvm.nvvm.membar.sys",
+        "expected_ptx": {"mnemonic": "membar", "modifiers": ["sys"], "operands": []}
+      }
+    }
+  ]
+}

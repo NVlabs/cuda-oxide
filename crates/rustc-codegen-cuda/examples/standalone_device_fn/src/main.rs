@@ -20,9 +20,10 @@
 //! 4. Device function using GPU intrinsics (thread indexing)
 //! 5. F16, TF32, and INT8 warp-MMA lowering through the complete PTX pipeline
 
+use cuda_device::convert::cvt_rna_tf32_f32;
+use cuda_device::device;
 use cuda_device::thread;
 use cuda_device::wmma::{mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_f16, mma_m16n8k32_s32_s8};
-use cuda_device::{device, ptx_asm};
 
 // =============================================================================
 // TEST 1: Simple standalone device functions
@@ -183,21 +184,13 @@ pub unsafe fn mma_m16n8k8_f32_tf32_from_f32_stub(
     a: [f32; 4],
     b: [f32; 2],
 ) -> [f32; 4] {
-    let a0: u32;
-    let a1: u32;
-    let a2: u32;
-    let a3: u32;
-    let b0: u32;
-    let b1: u32;
-    unsafe {
-        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a0, in("f") a[0], options(register_only));
-        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a1, in("f") a[1], options(register_only));
-        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a2, in("f") a[2], options(register_only));
-        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a3, in("f") a[3], options(register_only));
-        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") b0, in("f") b[0], options(register_only));
-        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") b1, in("f") b[1], options(register_only));
-        mma_m16n8k8_f32_tf32(c, [a0, a1, a2, a3], [b0, b1])
-    }
+    let a0 = cvt_rna_tf32_f32(a[0]);
+    let a1 = cvt_rna_tf32_f32(a[1]);
+    let a2 = cvt_rna_tf32_f32(a[2]);
+    let a3 = cvt_rna_tf32_f32(a[3]);
+    let b0 = cvt_rna_tf32_f32(b[0]);
+    let b1 = cvt_rna_tf32_f32(b[1]);
+    unsafe { mma_m16n8k8_f32_tf32(c, [a0, a1, a2, a3], [b0, b1]) }
 }
 
 /// Emits one register-only signed INT8 tensor-core MMA instruction.

@@ -319,6 +319,7 @@ extern crate rustc_codegen_llvm;
 
 mod collector;
 mod device_codegen;
+mod generated_intrinsics;
 
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind};

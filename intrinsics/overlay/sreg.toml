@@ -1,0 +1,644 @@
+# Reviewed cuda-oxide policy for one intrinsic family.
+
+schema = 26
+family = "sreg"
+
+[[intrinsic]]
+id = "block_dim_x"
+abi_id = "i0003"
+operation_key = "launch.block_dimension.x"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_ntid_x"
+rust_module = "sreg"
+rust_name = "block_dim_x"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only CTA X dimension has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::block_dim_x"
+compatibility_rust_paths = [
+    "cuda_device::thread::blockDim_x",
+    "cuda_device::blockDim_x",
+]
+dialect_op_type = "ReadPtxSregNtidXOp"
+dialect_op_name = "nvvm.read_ptx_sreg_ntid_x"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.ntid.x"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "cta"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.2 Special Registers: %ntid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ntid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%ntid.x" }] }
+summary = "Returns the X dimension of the current cooperative thread array (CTA)."
+
+[[intrinsic]]
+id = "block_idx_x"
+abi_id = "i0002"
+operation_key = "launch.block_index.x"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_ctaid_x"
+rust_module = "sreg"
+rust_name = "block_idx_x"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only CTA X index has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::block_idx_x"
+compatibility_rust_paths = [
+    "cuda_device::thread::blockIdx_x",
+    "cuda_device::blockIdx_x",
+]
+dialect_op_type = "ReadPtxSregCtaidXOp"
+dialect_op_name = "nvvm.read_ptx_sreg_ctaid_x"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.ctaid.x"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "cta"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.6 Special Registers: %ctaid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ctaid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%ctaid.x" }] }
+summary = "Returns the X index of the current cooperative thread array (CTA) within its grid."
+
+[[intrinsic]]
+id = "thread_idx_x"
+abi_id = "i0001"
+operation_key = "launch.thread_index.x"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_tid_x"
+rust_module = "sreg"
+rust_name = "thread_idx_x"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only thread-index register has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::thread_idx_x"
+compatibility_rust_paths = [
+    "cuda_device::thread::threadIdx_x",
+    "cuda_device::threadIdx_x",
+]
+dialect_op_type = "ReadPtxSregTidXOp"
+dialect_op_name = "nvvm.read_ptx_sreg_tid_x"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.tid.x"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.1 Special Registers: %tid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-tid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%tid.x" }] }
+summary = "Returns the X thread index within the current cooperative thread array (CTA)."
+
+[[intrinsic]]
+id = "grid_dim_x"
+abi_id = "i0004"
+operation_key = "launch.grid_dimension.x"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_nctaid_x"
+rust_module = "sreg"
+rust_name = "grid_dim_x"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only grid X dimension has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::grid_dim_x"
+compatibility_rust_paths = [
+    "cuda_device::thread::gridDim_x",
+    "cuda_device::gridDim_x",
+]
+dialect_op_type = "ReadPtxSregNctaidXOp"
+dialect_op_name = "nvvm.read_ptx_sreg_nctaid_x"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.nctaid.x"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "grid"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.7 Special Registers: %nctaid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nctaid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%nctaid.x" }] }
+summary = "Returns the number of cooperative thread arrays (CTAs) in the grid's X dimension."
+
+[[intrinsic]]
+id = "thread_idx_y"
+abi_id = "i0005"
+operation_key = "launch.thread_index.y"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_tid_y"
+rust_module = "sreg"
+rust_name = "thread_idx_y"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only thread Y index has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::thread_idx_y"
+compatibility_rust_paths = [
+    "cuda_device::thread::threadIdx_y",
+    "cuda_device::threadIdx_y",
+]
+dialect_op_type = "ReadPtxSregTidYOp"
+dialect_op_name = "nvvm.read_ptx_sreg_tid_y"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.tid.y"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.1 Special Registers: %tid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-tid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%tid.y" }] }
+summary = "Returns the Y thread index within the current cooperative thread array (CTA)."
+
+[[intrinsic]]
+id = "block_idx_y"
+abi_id = "i0006"
+operation_key = "launch.block_index.y"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_ctaid_y"
+rust_module = "sreg"
+rust_name = "block_idx_y"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only CTA Y index has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::block_idx_y"
+compatibility_rust_paths = [
+    "cuda_device::thread::blockIdx_y",
+    "cuda_device::blockIdx_y",
+]
+dialect_op_type = "ReadPtxSregCtaidYOp"
+dialect_op_name = "nvvm.read_ptx_sreg_ctaid_y"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.ctaid.y"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "cta"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.6 Special Registers: %ctaid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ctaid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%ctaid.y" }] }
+summary = "Returns the Y index of the current cooperative thread array (CTA) within its grid."
+
+[[intrinsic]]
+id = "block_dim_y"
+abi_id = "i0007"
+operation_key = "launch.block_dimension.y"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_ntid_y"
+rust_module = "sreg"
+rust_name = "block_dim_y"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only CTA Y dimension has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::block_dim_y"
+compatibility_rust_paths = [
+    "cuda_device::thread::blockDim_y",
+    "cuda_device::blockDim_y",
+]
+dialect_op_type = "ReadPtxSregNtidYOp"
+dialect_op_name = "nvvm.read_ptx_sreg_ntid_y"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.ntid.y"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "cta"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.2 Special Registers: %ntid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ntid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%ntid.y" }] }
+summary = "Returns the Y dimension of the current cooperative thread array (CTA)."
+
+[[intrinsic]]
+id = "grid_dim_y"
+abi_id = "i0008"
+operation_key = "launch.grid_dimension.y"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_nctaid_y"
+rust_module = "sreg"
+rust_name = "grid_dim_y"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only grid Y dimension has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::grid_dim_y"
+compatibility_rust_paths = [
+    "cuda_device::thread::gridDim_y",
+    "cuda_device::gridDim_y",
+]
+dialect_op_type = "ReadPtxSregNctaidYOp"
+dialect_op_name = "nvvm.read_ptx_sreg_nctaid_y"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.nctaid.y"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "grid"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.7 Special Registers: %nctaid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nctaid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%nctaid.y" }] }
+summary = "Returns the number of cooperative thread arrays (CTAs) in the grid's Y dimension."
+
+[[intrinsic]]
+id = "thread_idx_z"
+abi_id = "i0009"
+operation_key = "launch.thread_index.z"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_tid_z"
+rust_module = "sreg"
+rust_name = "thread_idx_z"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only thread Z index has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::thread_idx_z"
+compatibility_rust_paths = [
+    "cuda_device::thread::threadIdx_z",
+    "cuda_device::threadIdx_z",
+]
+dialect_op_type = "ReadPtxSregTidZOp"
+dialect_op_name = "nvvm.read_ptx_sreg_tid_z"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.tid.z"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.1 Special Registers: %tid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-tid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%tid.z" }] }
+summary = "Returns the Z thread index within the current cooperative thread array (CTA)."
+
+[[intrinsic]]
+id = "block_idx_z"
+abi_id = "i0010"
+operation_key = "launch.block_index.z"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_ctaid_z"
+rust_module = "sreg"
+rust_name = "block_idx_z"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only CTA Z index has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::block_idx_z"
+compatibility_rust_paths = [
+    "cuda_device::thread::blockIdx_z",
+    "cuda_device::blockIdx_z",
+]
+dialect_op_type = "ReadPtxSregCtaidZOp"
+dialect_op_name = "nvvm.read_ptx_sreg_ctaid_z"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.ctaid.z"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "cta"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.6 Special Registers: %ctaid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ctaid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%ctaid.z" }] }
+summary = "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+
+[[intrinsic]]
+id = "block_dim_z"
+abi_id = "i0011"
+operation_key = "launch.block_dimension.z"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_ntid_z"
+rust_module = "sreg"
+rust_name = "block_dim_z"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only CTA Z dimension has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::block_dim_z"
+compatibility_rust_paths = [
+    "cuda_device::thread::blockDim_z",
+    "cuda_device::blockDim_z",
+]
+dialect_op_type = "ReadPtxSregNtidZOp"
+dialect_op_name = "nvvm.read_ptx_sreg_ntid_z"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.ntid.z"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "cta"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.2 Special Registers: %ntid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ntid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%ntid.z" }] }
+summary = "Returns the Z dimension of the current cooperative thread array (CTA)."
+
+[[intrinsic]]
+id = "grid_dim_z"
+abi_id = "i0012"
+operation_key = "launch.grid_dimension.z"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_nctaid_z"
+rust_module = "sreg"
+rust_name = "grid_dim_z"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only grid Z dimension has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::grid_dim_z"
+compatibility_rust_paths = [
+    "cuda_device::thread::gridDim_z",
+    "cuda_device::gridDim_z",
+]
+dialect_op_type = "ReadPtxSregNctaidZOp"
+dialect_op_name = "nvvm.read_ptx_sreg_nctaid_z"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.nctaid.z"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "grid"
+minimum_ptx = "2.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.7 Special Registers: %nctaid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nctaid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%nctaid.z" }] }
+summary = "Returns the number of cooperative thread arrays (CTAs) in the grid's Z dimension."
+
+[[intrinsic]]
+id = "lane_id"
+abi_id = "i0016"
+operation_key = "warp.lane_identifier"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_laneid"
+rust_module = "sreg"
+rust_name = "lane_id"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+safe_allowlist_reason = "reading the read-only lane identifier has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lane_id"
+compatibility_rust_paths = ["cuda_device::warp::lane_id"]
+dialect_op_type = "ReadPtxSregLaneIdOp"
+dialect_op_name = "nvvm.read_ptx_sreg_laneid"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.laneid"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "1.3"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.3 Special Registers: %laneid"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-laneid"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%laneid" }] }
+summary = "Returns this thread's lane identifier within its warp."
+
+[[intrinsic]]
+id = "lanemask_lt"
+abi_id = "i0035"
+operation_key = "warp.lane_mask.lt"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_lt"
+rust_module = "sreg"
+rust_name = "lanemask_lt"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only lower-lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_lt"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_lt"]
+dialect_op_type = "ReadPtxSregLanemaskLtOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_lt"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.lt"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.13 Special Registers: %lanemask_lt"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-lt"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_lt" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are lower than this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_le"
+abi_id = "i0036"
+operation_key = "warp.lane_mask.le"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_le"
+rust_module = "sreg"
+rust_name = "lanemask_le"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only lower-or-equal lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_le"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_le"]
+dialect_op_type = "ReadPtxSregLanemaskLeOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_le"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.le"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.12 Special Registers: %lanemask_le"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-le"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_le" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are less than or equal to this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_eq"
+abi_id = "i0037"
+operation_key = "warp.lane_mask.eq"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_eq"
+rust_module = "sreg"
+rust_name = "lanemask_eq"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only current-lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_eq"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_eq"]
+dialect_op_type = "ReadPtxSregLanemaskEqOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_eq"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.eq"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.11 Special Registers: %lanemask_eq"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-eq"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_eq" }] }
+summary = "Returns a mask containing only this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_ge"
+abi_id = "i0038"
+operation_key = "warp.lane_mask.ge"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_ge"
+rust_module = "sreg"
+rust_name = "lanemask_ge"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only greater-or-equal lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_ge"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_ge"]
+dialect_op_type = "ReadPtxSregLanemaskGeOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_ge"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.ge"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.14 Special Registers: %lanemask_ge"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-ge"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_ge" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are greater than or equal to this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_gt"
+abi_id = "i0039"
+operation_key = "warp.lane_mask.gt"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_gt"
+rust_module = "sreg"
+rust_name = "lanemask_gt"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only higher-lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_gt"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_gt"]
+dialect_op_type = "ReadPtxSregLanemaskGtOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_gt"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.gt"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.15 Special Registers: %lanemask_gt"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-gt"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_gt" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are higher than this thread's lane identifier."

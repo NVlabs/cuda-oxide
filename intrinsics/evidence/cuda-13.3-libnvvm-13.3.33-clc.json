@@ -1,0 +1,164 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_100",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "declaration_attributes_canonicalized": true,
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "clc_unicast_typed_probe",
+      "coverage_count": 5,
+      "stages": [
+        {
+          "targets": ["sm_100"],
+          "representation": "one NVVM IR 2.0 module declaring unicast try-cancel and all four query operations",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified the 1,898-byte source with SHA-256 37ddba55e2ee9cd6643285442a3eb625a2a3cb626d8da8627ab0b7ccf9910b15."
+        },
+        {
+          "targets": ["sm_100", "ptx93"],
+          "representation": "one typed libNVVM kernel retaining unicast try-cancel and all four CLC queries",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM produced 3,096-byte LTOIR with SHA-256 ef38dfe4cca9b5ef09d0ba5d0eefa3874c24ef29af751f880a461e1567f28db4. nvJitLink's 1,700-byte PTX had SHA-256 dd4e2baaeb1704866cbe790baf7880a7f71d17b8f6231b9d3a778a47453cb4ee and retained all five exact instructions with no extern calls."
+        },
+        {
+          "targets": ["sm_100", "ptx93"],
+          "representation": "linked cubin retaining the unicast and query kernel",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 6,000-byte cubin with SHA-256 3d1ae4180befb13753735b0457f9292ec10d593873dee4e77ef1fb634dfa3aea.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "clc_multicast_typed_probe",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": ["sm_100a"],
+          "representation": "one NVVM IR 2.0 module declaring multicast try-cancel",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified the 789-byte source with SHA-256 41969303d126b015e653137ac3ebf7cca283544cd0f2a85067a631241ee27582."
+        },
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "one typed libNVVM kernel retaining multicast try-cancel",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM produced 2,484-byte LTOIR with SHA-256 e18003b9fd91884b03a64dcabad7f091061d9a28300346ff815b6b5499e8b6bd. nvJitLink's 677-byte PTX had SHA-256 6d65ac91ef71804809bb05a81d454b1598a83df7ba1f1bc45f4635e582419678 and retained the exact multicast instruction with no extern call. Plain sm_100 failed terminal compilation, as required."
+        },
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "linked cubin retaining the multicast kernel",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 5,408-byte cubin with SHA-256 16e900a28f60744304dc5629f4742d971dbc5b7438cb895f5bbfd2dea2ea031f.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["clc_try_cancel"]}],
+      "product_count": 1,
+      "fixtures": ["clc_unicast_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_shared",
+        "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.shared",
+        "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["try_cancel", "async", "shared::cta", "mbarrier::complete_tx::bytes", "b128"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_ptr", "shared_ptr"], "llvm_results": [], "concrete_llvm_arguments": ["ptr addrspace(3)", "ptr addrspace(3)"], "concrete_llvm_results": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["clc_try_cancel_multicast"]}],
+      "product_count": 1,
+      "fixtures": ["clc_multicast_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_multicast_shared",
+        "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.multicast.shared",
+        "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["try_cancel", "async", "shared::cta", "mbarrier::complete_tx::bytes", "multicast::cluster::all", "b128"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"gpu_target": "compute_100a", "llvm_arguments": ["shared_ptr", "shared_ptr"], "llvm_results": [], "concrete_llvm_arguments": ["ptr addrspace(3)", "ptr addrspace(3)"], "concrete_llvm_results": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["clc_query_is_canceled"]}],
+      "product_count": 1,
+      "fixtures": ["clc_unicast_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_is_canceled",
+        "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.is_canceled",
+        "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "is_canceled", "pred", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]},
+        "facts": {"llvm_arguments": ["i128"], "llvm_results": ["i1"], "concrete_llvm_arguments": ["i128"], "concrete_llvm_results": ["i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["clc_query_get_first_ctaid_x"]}],
+      "product_count": 1,
+      "fixtures": ["clc_unicast_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_x",
+        "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.x",
+        "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::x", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]},
+        "facts": {"llvm_arguments": ["i128"], "llvm_results": ["i32"], "concrete_llvm_arguments": ["i128"], "concrete_llvm_results": ["i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["clc_query_get_first_ctaid_y"]}],
+      "product_count": 1,
+      "fixtures": ["clc_unicast_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_y",
+        "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.y",
+        "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::y", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]},
+        "facts": {"llvm_arguments": ["i128"], "llvm_results": ["i32"], "concrete_llvm_arguments": ["i128"], "concrete_llvm_results": ["i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["clc_query_get_first_ctaid_z"]}],
+      "product_count": 1,
+      "fixtures": ["clc_unicast_typed_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_z",
+        "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.z",
+        "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::z", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]},
+        "facts": {"llvm_arguments": ["i128"], "llvm_results": ["i32"], "concrete_llvm_arguments": ["i128"], "concrete_llvm_results": ["i32"]}
+      }
+    }
+  ]
+}

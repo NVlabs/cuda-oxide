@@ -1,0 +1,201 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "cp_async_ca_4",
+      "source_record": "int_nvvm_cp_async_ca_shared_global_4",
+      "llvm_symbol": "llvm.nvvm.cp.async.ca.shared.global.4",
+      "llvm_arguments": ["shared_ptr", "global_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact four-byte cache-all copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","ca","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"4"}]}
+    },
+    {
+      "id": "cp_async_ca_zfill_4",
+      "source_record": "int_nvvm_cp_async_ca_shared_global_4_s",
+      "llvm_symbol": "llvm.nvvm.cp.async.ca.shared.global.4.s",
+      "llvm_arguments": ["shared_ptr", "global_ptr", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,r,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact four-byte cache-all source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","ca","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"4"},{"kind":"register_or_immediate"}]}
+    },
+    {
+      "id": "cp_async_ca_8",
+      "source_record": "int_nvvm_cp_async_ca_shared_global_8",
+      "llvm_symbol": "llvm.nvvm.cp.async.ca.shared.global.8",
+      "llvm_arguments": ["shared_ptr", "global_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact eight-byte cache-all copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","ca","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"8"}]}
+    },
+    {
+      "id": "cp_async_ca_zfill_8",
+      "source_record": "int_nvvm_cp_async_ca_shared_global_8_s",
+      "llvm_symbol": "llvm.nvvm.cp.async.ca.shared.global.8.s",
+      "llvm_arguments": ["shared_ptr", "global_ptr", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,r,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact eight-byte cache-all source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","ca","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"8"},{"kind":"register_or_immediate"}]}
+    },
+    {
+      "id": "cp_async_ca_16",
+      "source_record": "int_nvvm_cp_async_ca_shared_global_16",
+      "llvm_symbol": "llvm.nvvm.cp.async.ca.shared.global.16",
+      "llvm_arguments": ["shared_ptr", "global_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact sixteen-byte cache-all copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","ca","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"16"}]}
+    },
+    {
+      "id": "cp_async_ca_zfill_16",
+      "source_record": "int_nvvm_cp_async_ca_shared_global_16_s",
+      "llvm_symbol": "llvm.nvvm.cp.async.ca.shared.global.16.s",
+      "llvm_arguments": ["shared_ptr", "global_ptr", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,r,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact sixteen-byte cache-all source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","ca","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"16"},{"kind":"register_or_immediate"}]}
+    },
+    {
+      "id": "cp_async_cg_16",
+      "source_record": "int_nvvm_cp_async_cg_shared_global_16",
+      "llvm_symbol": "llvm.nvvm.cp.async.cg.shared.global.16",
+      "llvm_arguments": ["shared_ptr", "global_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.cg.shared.global with l,l,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact sixteen-byte cache-global copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","cg","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"16"}]}
+    },
+    {
+      "id": "cp_async_cg_zfill_16",
+      "source_record": "int_nvvm_cp_async_cg_shared_global_16_s",
+      "llvm_symbol": "llvm.nvvm.cp.async.cg.shared.global.16.s",
+      "llvm_arguments": ["shared_ptr", "global_ptr", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.cg.shared.global with l,l,r,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact sixteen-byte cache-global source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","cg","shared","global"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"exact","value":"16"},{"kind":"register_or_immediate"}]}
+    },
+    {
+      "id": "cp_async_commit_group",
+      "source_record": "int_nvvm_cp_async_commit_group",
+      "llvm_symbol": "llvm.nvvm.cp.async.commit.group",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.commit_group with ~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact commit-group instruction in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","commit_group"],"operands":[]}
+    },
+    {
+      "id": "cp_async_wait_all",
+      "source_record": "int_nvvm_cp_async_wait_all",
+      "llvm_symbol": "llvm.nvvm.cp.async.wait.all",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.wait_all with ~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact wait-all instruction in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","wait_all"],"operands":[]}
+    },
+    {
+      "id": "cp_async_wait_group",
+      "source_record": "int_nvvm_cp_async_wait_group",
+      "llvm_symbol": "llvm.nvvm.cp.async.wait.group",
+      "llvm_arguments": ["i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets":["sm_80","ptx93"],"representation":"legacy NVVM IR side-effecting inline PTX cp.async.wait_group with n,~{memory}","stage":"backend_codegen","mechanism":"inline_ptx","outcome":"succeeded","detail":"CUDA 13.3 libNVVM retained the exact constant wait-group instruction in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199)."},
+        {"targets":["sm_80","ptx93"],"representation":"retained combined classic cp.async kernel","stage":"device_link","mechanism":"inline_ptx","outcome":"succeeded","artifact_kind":"cubin","detail":"CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.","tool_path":"/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33","tool_version":"V13.3.33","tool_sha256":"3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic":"cp","modifiers":["async","wait_group"],"operands":[{"kind":"immediate"}]}
+    }
+  ]
+}

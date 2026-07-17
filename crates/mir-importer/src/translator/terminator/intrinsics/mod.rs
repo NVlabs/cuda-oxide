@@ -10,8 +10,9 @@
 //!
 //! | Module      | Intrinsics                                                                   |
 //! |-------------|------------------------------------------------------------------------------|
+//! | `generated` | Admitted generated intrinsics, including `sync_threads`                     |
 //! | `indexing`  | `threadIdx_*`, `blockIdx_*`, `index_1d`, `index_2d::<S>`, `index_2d_runtime` |
-//! | `sync`      | `sync_threads`, `mbarrier_*`, `fence_*`                                      |
+//! | `sync`      | `mbarrier_*`, `fence_*`                                                     |
 //! | `cluster`   | `cluster_ctaidX`, `cluster_sync`, `map_shared_rank`                          |
 //! | `warp`      | `shuffle_*`, `vote_*`, `lane_id`                                             |
 //! | `wgmma`     | Hopper WGMMA matrix operations                                               |
@@ -37,23 +38,14 @@
 // Submodules for intrinsic categories (to be populated incrementally)
 pub mod asm;
 pub mod atomic;
-pub mod bf16x2;
 pub mod bigint;
 pub mod bitops;
-pub mod clc;
-pub mod cluster;
-pub mod convert;
-pub mod cp_async;
 pub mod debug;
-pub mod dotprod;
 pub mod float_math;
+pub mod generated;
 pub mod indexing;
-pub mod ldmatrix;
 pub mod memory;
 pub mod saturating;
-pub mod sync;
-pub mod tcgen05;
 pub mod tma;
 pub mod warp;
 pub mod wgmma;
-pub mod wmma;

@@ -1,0 +1,81 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-mbarrier-extended",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "inline_ptx_sm90_ptx93",
+      "coverage_count": 10,
+      "stages": [
+        { "targets": ["compute_90", "ptx93"], "representation": "convergent NVVM IR 2.0 probes containing the exact generated inline-PTX forms", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "CUDA 13.3 libNVVM verified the modules and retained each exact extended-mbarrier or async-proxy fence instruction." },
+        { "targets": ["sm_90", "ptx93"], "representation": "linked cubins retaining the generated inline-PTX forms", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into cubins for sm_90.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8" }
+      ]
+    },
+    {
+      "id": "nanosleep_sm75_ptx93",
+      "coverage_count": 1,
+      "stages": [
+        { "targets": ["compute_75", "ptx93"], "representation": "convergent NVVM IR 2.0 nanosleep inline-PTX probe", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "CUDA 13.3 libNVVM verified the module and retained exact nanosleep.u32. The libNVVM route starts at sm_75 because CUDA 13.3 no longer accepts sm_70." },
+        { "targets": ["sm_75", "ptx93"], "representation": "linked cubin retaining nanosleep.u32", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a cubin for sm_75.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8" }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{ "name": "id", "values": ["mbarrier_arrive_expect_tx"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_mbarrier_arrive_expect_tx_scope_cta_space_cta", "llvm_symbol": "llvm.nvvm.mbarrier.arrive.expect.tx.scope.cta.space.cta", "expected_ptx": { "mnemonic": "mbarrier", "modifiers": ["arrive", "expect_tx", "release", "cta", "shared::cta", "b64"], "operands": [{ "kind": "register" }, { "kind": "address" }, { "kind": "register" }] }, "facts": { "llvm_arguments": ["shared_ptr", "i32"], "llvm_results": ["i64"], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["mbarrier_arrive_expect_tx_cluster"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_mbarrier_arrive_expect_tx_relaxed_scope_cluster_space_cta", "llvm_symbol": "llvm.nvvm.mbarrier.arrive.expect.tx.relaxed.scope.cluster.space.cta", "expected_ptx": { "mnemonic": "mbarrier", "modifiers": ["arrive", "expect_tx", "relaxed", "cluster", "shared::cta", "b64"], "operands": [{ "kind": "register" }, { "kind": "address" }, { "kind": "register" }] }, "facts": { "llvm_arguments": ["shared_ptr", "i32"], "llvm_results": ["i64"], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["mbarrier_arrive_cluster"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source": { "kind": "ptx_native", "instruction": "mbarrier.arrive.release.cluster.shared::cluster.b64" }, "llvm_symbol": null, "expected_ptx": { "mnemonic": "mbarrier", "modifiers": ["arrive", "release", "cluster", "shared::cluster", "b64"], "operands": [{ "kind": "exact", "value": "_" }, { "kind": "address" }] }, "facts": { "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["mbarrier_try_wait"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_mbarrier_try_wait_scope_cta_space_cta", "llvm_symbol": "llvm.nvvm.mbarrier.try.wait.scope.cta.space.cta", "expected_ptx": { "mnemonic": "mbarrier", "modifiers": ["try_wait", "shared", "b64"], "operands": [{ "kind": "register" }, { "kind": "address" }, { "kind": "register" }] }, "facts": { "llvm_arguments": ["shared_ptr", "i64"], "llvm_results": ["i1"], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["mbarrier_try_wait_parity"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_mbarrier_try_wait_parity_scope_cta_space_cta", "llvm_symbol": "llvm.nvvm.mbarrier.try.wait.parity.scope.cta.space.cta", "expected_ptx": { "mnemonic": "mbarrier", "modifiers": ["try_wait", "parity", "shared::cta", "b64"], "operands": [{ "kind": "register" }, { "kind": "address" }, { "kind": "register" }] }, "facts": { "llvm_arguments": ["shared_ptr", "i32"], "llvm_results": ["i1"], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["mbarrier_try_wait_parity_cluster"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_mbarrier_try_wait_parity_scope_cluster_space_cta", "llvm_symbol": "llvm.nvvm.mbarrier.try.wait.parity.scope.cluster.space.cta", "expected_ptx": { "mnemonic": "mbarrier", "modifiers": ["try_wait", "parity", "acquire", "cluster", "shared::cta", "b64"], "operands": [{ "kind": "register" }, { "kind": "address" }, { "kind": "register" }] }, "facts": { "llvm_arguments": ["shared_ptr", "i32"], "llvm_results": ["i1"], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["fence_proxy_async_shared_cta"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_fence_proxy_async_shared_cta", "llvm_symbol": "llvm.nvvm.fence.proxy.async.shared_cta", "expected_ptx": { "mnemonic": "fence", "modifiers": ["proxy", "async", "shared::cta"], "operands": [] }, "facts": { "llvm_arguments": [], "llvm_results": [], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["fence_mbarrier_init_release_cluster"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_fence_mbarrier_init_release_cluster", "llvm_symbol": "llvm.nvvm.fence.mbarrier_init.release.cluster", "expected_ptx": { "mnemonic": "fence", "modifiers": ["mbarrier_init", "release", "cluster"], "operands": [] }, "facts": { "llvm_arguments": [], "llvm_results": [], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["fence_proxy_async_generic_release_shared_cta_cluster"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_fence_proxy_async_generic_release_sync_restrict_space_cta_scope_cluster", "llvm_symbol": "llvm.nvvm.fence.proxy.async_generic.release.sync_restrict.space.cta.scope.cluster", "expected_ptx": { "mnemonic": "fence", "modifiers": ["proxy", "async::generic", "release", "sync_restrict::shared::cta", "cluster"], "operands": [] }, "facts": { "llvm_arguments": [], "llvm_results": [], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["fence_proxy_async_generic_acquire_shared_cluster_cluster"] }], "product_count": 1, "fixtures": ["inline_ptx_sm90_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_fence_proxy_async_generic_acquire_sync_restrict_space_cluster_scope_cluster", "llvm_symbol": "llvm.nvvm.fence.proxy.async_generic.acquire.sync_restrict.space.cluster.scope.cluster", "expected_ptx": { "mnemonic": "fence", "modifiers": ["proxy", "async::generic", "acquire", "sync_restrict::shared::cluster", "cluster"], "operands": [] }, "facts": { "llvm_arguments": [], "llvm_results": [], "gpu_target": "compute_90", "ptx_feature": "PTX ISA 9.3" } }
+    },
+    {
+      "axes": [{ "name": "id", "values": ["nanosleep"] }], "product_count": 1, "fixtures": ["nanosleep_sm75_ptx93"],
+      "template": { "id": "${id}", "source_record": "int_nvvm_nanosleep", "llvm_symbol": "llvm.nvvm.nanosleep", "expected_ptx": { "mnemonic": "nanosleep", "modifiers": ["u32"], "operands": [{ "kind": "register_or_immediate" }] }, "facts": { "llvm_arguments": ["i32"], "llvm_results": [], "gpu_target": "compute_75", "ptx_feature": "PTX ISA 9.3" } }
+    }
+  ]
+}

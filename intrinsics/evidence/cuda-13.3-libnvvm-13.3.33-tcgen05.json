@@ -1,0 +1,1086 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-tcgen05",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_100a",
+    "ptx_feature": "PTX ISA 8.6 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "tcgen05_libnvvm_inline_probe",
+      "coverage_count": 24,
+      "stages": [
+        {
+          "targets": [
+          "compute_100a",
+          "ptx93"
+          ],
+          "representation": "one convergent NVVM IR 2.0 module containing the exact inline-PTX carrier for all 24 generated tcgen05 routes",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified the combined module and retained all 24 exact tcgen05 instructions through LTOIR and linked PTX. LTOIR SHA-256 was 234ddb423fd986e4ac7df3c50c265734fe851f8fcd3fc97827a5a70f7c1f56b3 for compute_100a, ca5840112666fac59bde59b8a7777f66bc864e5a8e2832a122b458ce38485f50 for compute_103a, and 3545a605caea9c50008d7ecb8ab1c41f7ffeea129e791baf79eef522608f33bf for compute_110a. Linked PTX SHA-256 was 18b127dd78c7a7ed3ca0b08a1e24d73c0ca32e2d29d51c726ddbde71f60eb7a9, 7b8944889d6d4ee5ce99639ce869f841437ef9b181f4449eb402c9004844758b, and 06431b22f61484cf3b51e7e2090acd747f4a515a219cbf53bdec284797a1729c. A direct compute_101a probe failed before code generation with NVVM_ERROR_INVALID_INPUT, so this backend route excludes sm_101a. The BF16 public route intentionally emitted PTX kind::f16 and no kind::bf16."
+        },
+        {
+          "targets": [
+          "sm_100a",
+          "ptx93"
+          ],
+          "representation": "nvJitLink cubins retaining the combined 24-route tcgen05 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink accepted every route on sm_100a, sm_103a, and sm_110a. Cubin SHA-256 was 1bab3647f9af53b36a52caa8323aeeacdf4244386f1ab0584e9823dcc1f13014, 57f3f660825a5d2970b34127c72cee000291ae352e4a33b508998bb0410d8a75, and 9bb5d9ded614b742960d19ed430d0f91a0fb8c90e675c7912c664cbad695a2de. The same exact LTO route reached PTX but cubin linking rejected every family on sm_120a and sm_121a; those architectures are deliberately excluded.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_alloc"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_alloc_shared_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.alloc.shared.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "alloc",
+            "cta_group::1",
+            "sync",
+            "aligned",
+            "shared::cta",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "shared_ptr",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_alloc_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_alloc_shared_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.alloc.shared.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "alloc",
+            "cta_group::2",
+            "sync",
+            "aligned",
+            "shared::cta",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "shared_ptr",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_commit"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_commit_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.commit.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "commit",
+            "cta_group::1",
+            "mbarrier::arrive::one",
+            "b64"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "ptr"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_commit_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_commit_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.commit.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "commit",
+            "cta_group::2",
+            "mbarrier::arrive::one",
+            "b64"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "ptr"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_commit_multicast_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_commit_mc_shared_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.commit.mc.shared.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "commit",
+            "cta_group::2",
+            "mbarrier::arrive::one",
+            "shared::cluster",
+            "multicast::cluster",
+            "b64"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "shared_ptr",
+            "i16"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_commit_shared_cluster"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_commit_shared_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.commit.shared.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "commit",
+            "cta_group::1",
+            "mbarrier::arrive::one",
+            "shared::cluster",
+            "b64"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "shared_ptr"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_commit_shared_cluster_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_commit_shared_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.commit.shared.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "commit",
+            "cta_group::2",
+            "mbarrier::arrive::one",
+            "shared::cluster",
+            "b64"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "shared_ptr"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_cp_smem_to_tmem"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_cp_128x256b_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.cp.128x256b.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "cp",
+            "cta_group::1",
+            "128x256b"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_cp_smem_to_tmem_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_cp_128x256b_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.cp.128x256b.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "cp",
+            "cta_group::2",
+            "128x256b"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_dealloc"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_dealloc_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.dealloc.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "dealloc",
+            "cta_group::1",
+            "sync",
+            "aligned",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_dealloc_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_dealloc_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.dealloc.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "dealloc",
+            "cta_group::2",
+            "sync",
+            "aligned",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_fence_after_thread_sync"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_fence_after_thread_sync",
+        "llvm_symbol": "llvm.nvvm.tcgen05.fence.after.thread.sync",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "fence::after_thread_sync"
+          ],
+          "operands": []
+        },
+        "facts": {
+          "llvm_arguments": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_fence_before_thread_sync"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_fence_before_thread_sync",
+        "llvm_symbol": "llvm.nvvm.tcgen05.fence.before.thread.sync",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "fence::before_thread_sync"
+          ],
+          "operands": []
+        },
+        "facts": {
+          "llvm_arguments": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x256b_pure"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x256b_x1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x256b.x1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x256b",
+            "x1",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 4
+            },
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i1"
+          ],
+          "llvm_results": [
+            "v4i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x256b_x8_pure"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x256b_x8",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x256b.x8",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x256b",
+            "x8",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 32
+            },
+            {
+              "kind": "address"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i1"
+          ],
+          "llvm_results": [
+            "v32i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_load_wait"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_wait_ld",
+        "llvm_symbol": "llvm.nvvm.tcgen05.wait.ld",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "wait::ld",
+            "sync",
+            "aligned"
+          ],
+          "operands": []
+        },
+        "facts": {
+          "llvm_arguments": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_mma_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_mma_shared_disable_output_lane_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.mma.shared.disable_output_lane.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "mma",
+            "cta_group::1",
+            "kind::f16"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "exact",
+              "value": "{%z, %z, %z, %z}"
+            },
+            {
+              "kind": "exact",
+              "value": "%enable_pred"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i64",
+            "i32",
+            "i1",
+            "v4i32",
+            "i32",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_mma_f16_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_mma_shared_disable_output_lane_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.mma.shared.disable_output_lane.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "mma",
+            "cta_group::2",
+            "kind::f16"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "exact",
+              "value": "{%z, %z, %z, %z, %z, %z, %z, %z}"
+            },
+            {
+              "kind": "exact",
+              "value": "%enable_pred"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i64",
+            "i32",
+            "i1",
+            "v8i32",
+            "i32",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_mma_ws_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_mma_ws_tensor",
+        "llvm_symbol": "llvm.nvvm.tcgen05.mma.ws.tensor",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "mma",
+            "ws",
+            "cta_group::1",
+            "kind::f16"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "exact",
+              "value": "%enable_pred"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "tmem_ptr",
+            "i64",
+            "i32",
+            "i1",
+            "i32",
+            "i32",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_mma_ws_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_mma_ws_tensor",
+        "llvm_symbol": "llvm.nvvm.tcgen05.mma.ws.tensor",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "mma",
+            "ws",
+            "cta_group::1",
+            "kind::f16"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "exact",
+              "value": "%enable_pred"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "tmem_ptr",
+            "i64",
+            "i32",
+            "i1",
+            "i32",
+            "i32",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_mma_ws_tf32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_mma_ws_tensor",
+        "llvm_symbol": "llvm.nvvm.tcgen05.mma.ws.tensor",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "mma",
+            "ws",
+            "cta_group::1",
+            "kind::tf32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "exact",
+              "value": "%enable_pred"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "tmem_ptr",
+            "i64",
+            "i32",
+            "i1",
+            "i32",
+            "i32",
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_relinquish_alloc_permit"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_relinq_alloc_permit_cg1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.relinq.alloc.permit.cg1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "relinquish_alloc_permit",
+            "cta_group::1",
+            "sync",
+            "aligned"
+          ],
+          "operands": []
+        },
+        "facts": {
+          "llvm_arguments": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_relinquish_alloc_permit_cg2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_relinq_alloc_permit_cg2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.relinq.alloc.permit.cg2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "relinquish_alloc_permit",
+            "cta_group::2",
+            "sync",
+            "aligned"
+          ],
+          "operands": []
+        },
+        "facts": {
+          "llvm_arguments": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_store_wait"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_wait_st",
+        "llvm_symbol": "llvm.nvvm.tcgen05.wait.st",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "wait::st",
+            "sync",
+            "aligned"
+          ],
+          "operands": []
+        },
+        "facts": {
+          "llvm_arguments": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb627e6f8e2597ba015a8fc53f58f4956dee58",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": ["f32", "f32"],
+    "llvm_results": ["i16"],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_89",
+    "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "fp8_conversion_compute89_ptx93",
+      "coverage_count": 4,
+      "stages": [
+        {
+          "targets": ["compute_89", "ptx93"],
+          "representation": "pure inline PTX with u16 output and public low, high inputs",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,184-byte NVVM IR fixture (SHA-256 1f48f717966e2249dc5f2d82492c9fd945cc7bf1a87becef38df48881995fd88) to 1,068-byte PTX (SHA-256 371b97f7ec8b94fbe36b4406dc227fe62e4df8dbba8541b512b5e7c998e13323) and 2,080-byte LTOIR (SHA-256 f29c9bdfd76cb78bdd90783f31c97d9a984379f171df011ed97926faaebc5596). All four forms retained high, low PTX source order."
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "libNVVM-emitted packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all four forms at sm_89 and produced a 3,368-byte cubin (SHA-256 e52e9372da7213161b9c6987cb718ca9c508e325c91a6f76538eff35fda911e7).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "libNVVM LTOIR retaining all four packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced the 3,368-byte cubin (SHA-256 e52e9372da7213161b9c6987cb718ca9c508e325c91a6f76538eff35fda911e7). The same route at sm_87 failed terminal compilation with the sm_89 requirement for every form.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {"name": "format", "values": ["e4m3x2", "e5m2x2"]}
+      ],
+      "product_count": 2,
+      "fixtures": ["fp8_conversion_compute89_ptx93"],
+      "template": {
+        "id": "cvt_rn_satfinite_${format}_f32",
+        "source_record": "int_nvvm_ff_to_${format}_rn",
+        "llvm_symbol": "llvm.nvvm.ff.to.${format}.rn",
+        "expected_ptx": {
+          "mnemonic": "cvt",
+          "modifiers": ["rn", "satfinite", "${format}", "f32"],
+          "operands": [
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "register"}
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {"name": "format", "values": ["e4m3x2", "e5m2x2"]}
+      ],
+      "product_count": 2,
+      "fixtures": ["fp8_conversion_compute89_ptx93"],
+      "template": {
+        "id": "cvt_rn_satfinite_relu_${format}_f32",
+        "source_record": "int_nvvm_ff_to_${format}_rn_relu",
+        "llvm_symbol": "llvm.nvvm.ff.to.${format}.rn.relu",
+        "expected_ptx": {
+          "mnemonic": "cvt",
+          "modifiers": ["rn", "satfinite", "relu", "${format}", "f32"],
+          "operands": [
+            {"kind": "register"},
+            {"kind": "register"},
+            {"kind": "register"}
+          ]
+        }
+      }
+    }
+  ]
+}

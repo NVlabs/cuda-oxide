@@ -4,10 +4,13 @@
  */
 
 use crate::error::PipelineError;
+use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
 use crate::target::{
-    detect_module_requirements_in_llvm_file, required_ptx_feature, resolve_ptx_target,
+    detect_module_requirements_in_llvm_file, merge_generated_module_requirements,
+    merge_generated_module_requirements_for_target, required_ptx_feature,
+    resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
     validate_target_for_llvm_major,
 };
 use llvm_export::export::DebugKind;
@@ -108,6 +111,12 @@ pub struct GeneratedPtx {
     pub diagnostics: Vec<String>,
 }
 
+struct PtxBackend<'a> {
+    options: &'a BackendOptions,
+    toolchain: &'a LlvmToolchain,
+    generated: &'a GeneratedModuleRequirements,
+}
+
 /// Generates PTX from LLVM IR using `llc`.
 ///
 /// LLVM 21+ is the minimum supported version: earlier `llc` releases reject
@@ -133,6 +142,7 @@ pub fn generate_ptx(
     debug_kind: DebugKind,
     opts: &BackendOptions,
     diagnostic_sink: Option<fn(&str)>,
+    generated: &GeneratedModuleRequirements,
 ) -> Result<GeneratedPtx, PipelineError> {
     let Some(toolchain) = LlvmToolchain::resolve(opts) else {
         return Err(PipelineError::PtxGeneration(
@@ -168,8 +178,11 @@ pub fn generate_ptx(
         ll_path,
         ptx_path,
         debug_kind,
-        opts,
-        &toolchain,
+        PtxBackend {
+            options: opts,
+            toolchain: &toolchain,
+            generated,
+        },
         false,
         diagnostic_sink,
     )?;
@@ -188,27 +201,47 @@ pub(crate) fn generate_ptx_with_toolchain(
     debug_kind: DebugKind,
     opts: &BackendOptions,
     toolchain: &LlvmToolchain,
+    generated: &GeneratedModuleRequirements,
 ) -> Result<String, PipelineError> {
-    generate_ptx_impl(ll_path, ptx_path, debug_kind, opts, toolchain, true, None)
-        .map(|generated| generated.target)
+    generate_ptx_impl(
+        ll_path,
+        ptx_path,
+        debug_kind,
+        PtxBackend {
+            options: opts,
+            toolchain,
+            generated,
+        },
+        true,
+        None,
+    )
+    .map(|generated| generated.target)
 }
 
 fn generate_ptx_impl(
     ll_path: &Path,
     ptx_path: &Path,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
-    toolchain: &LlvmToolchain,
+    backend: PtxBackend<'_>,
     strict_optimization: bool,
     diagnostic_sink: Option<fn(&str)>,
 ) -> Result<GeneratedPtx, PipelineError> {
+    let PtxBackend {
+        options: opts,
+        toolchain,
+        generated,
+    } = backend;
     // Explicit, hard override: `--arch` or a caller-set `opts.target_arch`.
     let explicit_override = opts.target_arch.clone();
     // Advisory hint: the arch of the GPU in this machine, forwarded by
     // `cargo oxide run`. Used only when that GPU can actually run the kernel.
     let device_hint = opts.device_arch_hint.clone();
 
-    let requirements = detect_module_requirements_in_llvm_file(ll_path)?;
+    let requirements = merge_generated_module_requirements(
+        detect_module_requirements_in_llvm_file(ll_path)?,
+        generated,
+    )
+    .map_err(PipelineError::PtxGeneration)?;
     let detected = requirements.features;
 
     // Resolve the final target:
@@ -219,11 +252,15 @@ fn generate_ptx_impl(
     //      load on this GPU, but feature-gated examples handle that at load time
     //      (cuModuleLoad reports INVALID_PTX and they skip execution).
     //   3. neither set -- the feature floor.
-    let (target, target_source) = resolve_ptx_target(
+    let (target, target_source) = resolve_ptx_target_with_generated(
         explicit_override.as_deref(),
         device_hint.as_deref(),
         detected,
+        generated,
     )?;
+    let requirements =
+        merge_generated_module_requirements_for_target(requirements, generated, &target)
+            .map_err(PipelineError::PtxGeneration)?;
 
     let mut diagnostics = Vec::new();
     if opts.verbose {
@@ -235,6 +272,8 @@ fn generate_ptx_impl(
     }
 
     validate_target_for_llvm_major(&target, toolchain.llc_major)
+        .map_err(PipelineError::PtxGeneration)?;
+    validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
         .map_err(PipelineError::PtxGeneration)?;
 
     // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
@@ -494,6 +533,7 @@ mod tests {
             DebugKind::Off,
             &opts,
             Some(collect_legacy_diagnostic),
+            &GeneratedModuleRequirements::default(),
         )
         .unwrap_err();
         assert!(matches!(error, PipelineError::PtxGeneration(_)));

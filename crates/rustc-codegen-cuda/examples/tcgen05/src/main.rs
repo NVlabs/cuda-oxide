@@ -33,13 +33,13 @@ use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig, sys};
 use cuda_device::barrier::Barrier;
 use cuda_device::shared::SharedArray;
 use cuda_device::tcgen05::{
-    Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
-    Tcgen05SmemDescriptor, Tcgen05SwizzleMode, tcgen05_alloc, tcgen05_alloc_cg2, tcgen05_commit,
-    tcgen05_commit_multicast_cg2, tcgen05_cp_smem_to_tmem, tcgen05_dealloc, tcgen05_dealloc_cg2,
-    tcgen05_fence_after_thread_sync, tcgen05_fence_before_thread_sync, tcgen05_ld_16x256b_pure,
-    tcgen05_load_wait, tcgen05_mma_f16_cg2, tcgen05_mma_ws_f16,
+    self, Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor,
+    Tcgen05MmaShape, Tcgen05SmemDescriptor, Tcgen05SwizzleMode, tcgen05_alloc, tcgen05_alloc_cg2,
+    tcgen05_commit, tcgen05_commit_multicast_cg2, tcgen05_cp_smem_to_tmem, tcgen05_dealloc,
+    tcgen05_dealloc_cg2, tcgen05_fence_after_thread_sync, tcgen05_fence_before_thread_sync,
+    tcgen05_ld_16x256b_pure, tcgen05_load_wait, tcgen05_mma_f16_cg2, tcgen05_mma_ws_f16,
 };
-use cuda_device::{DisjointSlice, cluster, cluster_launch, kernel, thread, warp};
+use cuda_device::{CuSimd, DisjointSlice, cluster, cluster_launch, kernel, thread, warp};
 use cuda_host::cuda_module;
 use std::sync::Arc;
 
@@ -265,6 +265,356 @@ mod kernels {
         }
     }
 
+    /// Keeps every cta_group::1 tcgen05 copy form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_cp_cg1(tmem_addr: u32, smem_desc: u64) {
+        unsafe {
+            tcgen05::tcgen05_cp_smem_to_tmem(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b4x16_p64(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b6x16_p32(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13(tmem_addr, smem_desc);
+        }
+    }
+
+    /// Keeps the cta_group::1 tcgen05 control forms in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_control_cg1(tmem_addr: u32, mbar: *mut u64) {
+        unsafe {
+            if thread::threadIdx_x() == 0 {
+                tcgen05::tcgen05_shift_down(tmem_addr);
+                tcgen05::tcgen05_commit_multicast(mbar, 1);
+            }
+        }
+    }
+
+    /// Keeps every base tcgen05 MMA form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_mma_base(
+        d_tmem: u32,
+        a_tmem: u32,
+        metadata_tmem: u32,
+        a_desc: u64,
+        b_desc: u64,
+        idesc: u32,
+    ) {
+        unsafe {
+            tcgen05::tcgen05_mma_shared::<0, 1, 0>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<1, 2, 1>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<2, 1, 2>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<3, 2, 3>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_tensor::<0, 1, 0>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_tensor_ashift::<1, 2, 1>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_sp_shared::<2, 1, 2>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_sp_tensor::<3, 2, 3>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_sp_tensor_ashift::<0, 1, 0>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+        }
+    }
+
+    /// Keeps every warp-specialized tcgen05 MMA form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_mma_ws(
+        d_tmem: u32,
+        a_tmem: u32,
+        metadata_tmem: u32,
+        a_desc: u64,
+        b_desc: u64,
+        zero_column_mask: u64,
+        idesc: u32,
+    ) {
+        unsafe {
+            tcgen05::tcgen05_mma_ws_shared::<0, 0, 0>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_shared_zero_col_mask::<1, 1, 1>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                zero_column_mask,
+            );
+            tcgen05::tcgen05_mma_ws_sp_shared::<2, 2, 2>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_ws_sp_shared_zero_col_mask::<3, 3, 3>(
+                d_tmem,
+                a_desc,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+                zero_column_mask,
+            );
+            tcgen05::tcgen05_mma_ws_sp_tensor::<0, 1, 2>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+            );
+            tcgen05::tcgen05_mma_ws_sp_tensor_zero_col_mask::<1, 2, 3>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                metadata_tmem,
+                zero_column_mask,
+            );
+            tcgen05::tcgen05_mma_ws_tensor::<0, 0, 0>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_tensor::<1, 1, 1>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_tensor::<2, 2, 2>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_tensor::<3, 3, 3>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_tensor_zero_col_mask::<2, 3, 0>(
+                d_tmem,
+                a_tmem,
+                b_desc,
+                idesc,
+                false,
+                zero_column_mask,
+            );
+
+            tcgen05::tcgen05_mma_ws_e4m3(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e5m2(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e2m3(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e3m2(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_ws_e2m1(d_tmem, a_tmem, a_desc, b_desc, idesc, false);
+        }
+    }
+
+    /// Keeps every generated tcgen05 load form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_ld(tmem_addr: u32) {
+        unsafe {
+            let _ = tcgen05::tcgen05_ld_16x64b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x32_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x64_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x64_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x128_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x64b_x128_pack16(tmem_addr);
+
+            let _ = tcgen05::tcgen05_ld_16x128b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x32_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x64_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x128b_x64_pack16(tmem_addr);
+
+            let _ = tcgen05::tcgen05_ld_16x256b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x256b_x32_pack16(tmem_addr);
+
+            let _ = tcgen05::tcgen05_ld_32x32b_x1_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x1_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x2_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x2_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x4_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x4_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x8_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x8_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x16_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x16_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x32_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x32_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x64_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x64_pack16(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x128_raw(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_32x32b_x128_pack16(tmem_addr);
+        }
+    }
+
+    /// Keeps every generated non-offset tcgen05 store form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_st(tmem_addr: u32) {
+        unsafe {
+            tcgen05::tcgen05_st_16x64b_x1_raw(tmem_addr, 0);
+            tcgen05::tcgen05_st_16x64b_x1_unpack16(tmem_addr, 0);
+            tcgen05::tcgen05_st_16x64b_x2_raw(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x64b_x2_unpack16(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x64b_x4_raw(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x64b_x4_unpack16(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x64b_x8_raw(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x64b_x8_unpack16(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x64b_x16_raw(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x64b_x16_unpack16(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x64b_x32_raw(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x64b_x32_unpack16(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x64b_x64_raw(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x64b_x64_unpack16(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x64b_x128_raw(tmem_addr, CuSimd::new([0; 128]));
+            tcgen05::tcgen05_st_16x64b_x128_unpack16(tmem_addr, CuSimd::new([0; 128]));
+
+            tcgen05::tcgen05_st_16x128b_x1_raw(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x128b_x1_unpack16(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x128b_x2_raw(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x128b_x2_unpack16(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x128b_x4_raw(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x128b_x4_unpack16(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x128b_x8_raw(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x128b_x8_unpack16(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x128b_x16_raw(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x128b_x16_unpack16(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x128b_x32_raw(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x128b_x32_unpack16(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x128b_x64_raw(tmem_addr, CuSimd::new([0; 128]));
+            tcgen05::tcgen05_st_16x128b_x64_unpack16(tmem_addr, CuSimd::new([0; 128]));
+
+            tcgen05::tcgen05_st_16x256b_x1_raw(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x256b_x1_unpack16(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x256b_x2_raw(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x256b_x2_unpack16(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x256b_x4_raw(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x256b_x4_unpack16(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x256b_x8_raw(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x256b_x8_unpack16(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x256b_x16_raw(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x256b_x16_unpack16(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x256b_x32_raw(tmem_addr, CuSimd::new([0; 128]));
+            tcgen05::tcgen05_st_16x256b_x32_unpack16(tmem_addr, CuSimd::new([0; 128]));
+
+            tcgen05::tcgen05_st_32x32b_x1_raw(tmem_addr, 0);
+            tcgen05::tcgen05_st_32x32b_x1_unpack16(tmem_addr, 0);
+            tcgen05::tcgen05_st_32x32b_x2_raw(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_32x32b_x2_unpack16(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_32x32b_x4_raw(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_32x32b_x4_unpack16(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_32x32b_x8_raw(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_32x32b_x8_unpack16(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_32x32b_x16_raw(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_32x32b_x16_unpack16(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_32x32b_x32_raw(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_32x32b_x32_unpack16(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_32x32b_x64_raw(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_32x32b_x64_unpack16(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_32x32b_x128_raw(tmem_addr, CuSimd::new([0; 128]));
+            tcgen05::tcgen05_st_32x32b_x128_unpack16(tmem_addr, CuSimd::new([0; 128]));
+        }
+    }
+
+    /// Keeps every half-split-offset tcgen05 load form in device code.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_ld_offset(tmem_addr: u32) {
+        unsafe {
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x1_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x1_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x2_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x2_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x4_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x4_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x8_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x8_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x16_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x16_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x32_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x32_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x64_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x64_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x128_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x128_pack16::<16>(tmem_addr);
+        }
+    }
+
+    /// Keeps every half-split-offset tcgen05 store form in device code.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_st_offset(tmem_addr: u32) {
+        unsafe {
+            tcgen05::tcgen05_st_16x32bx2_x1_raw::<16>(tmem_addr, 0);
+            tcgen05::tcgen05_st_16x32bx2_x1_unpack16::<16>(tmem_addr, 0);
+            tcgen05::tcgen05_st_16x32bx2_x2_raw::<16>(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x32bx2_x2_unpack16::<16>(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x32bx2_x4_raw::<16>(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x32bx2_x4_unpack16::<16>(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x32bx2_x8_raw::<16>(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x32bx2_x8_unpack16::<16>(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x32bx2_x16_raw::<16>(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x32bx2_x16_unpack16::<16>(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x32bx2_x32_raw::<16>(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x32bx2_x32_unpack16::<16>(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x32bx2_x64_raw::<16>(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x32bx2_x64_unpack16::<16>(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x32bx2_x128_raw::<16>(tmem_addr, CuSimd::new([0; 128]));
+            tcgen05::tcgen05_st_16x32bx2_x128_unpack16::<16>(tmem_addr, CuSimd::new([0; 128]));
+        }
+    }
+
     // =============================================================================
     // CTA Pair (cta_group::2) Test Kernels
     // =============================================================================
@@ -385,6 +735,48 @@ mod kernels {
 
             if tid == 0 {
                 cuda_device::barrier::mbarrier_inval(&raw mut MBAR);
+            }
+        }
+    }
+
+    /// Keeps every cta_group::2 tcgen05 copy form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    #[cluster_launch(2, 1, 1)]
+    pub unsafe fn compile_tcgen05_cp_cg2(tmem_addr: u32, smem_desc: u64) {
+        unsafe {
+            tcgen05::tcgen05_cp_smem_to_tmem_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x128b_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_128x256b_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_32x128b_warpx4_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_4x256b_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_01_23_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b4x16_p64_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_b6x16_p32_cg2(tmem_addr, smem_desc);
+            tcgen05::tcgen05_cp_64x128b_warpx2_02_13_cg2(tmem_addr, smem_desc);
+        }
+    }
+
+    /// Keeps the cta_group::2 tcgen05 control form in device code.
+    ///
+    /// This kernel is compile-only and is never launched.
+    #[kernel]
+    #[cluster_launch(2, 1, 1)]
+    pub unsafe fn compile_tcgen05_control_cg2(tmem_addr: u32, mbar: *mut u64) {
+        unsafe {
+            if thread::threadIdx_x() == 0 && cluster::block_rank() == 0 {
+                tcgen05::tcgen05_shift_down_cg2(tmem_addr);
+                tcgen05::tcgen05_commit_cg2(mbar);
             }
         }
     }

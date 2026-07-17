@@ -1,0 +1,300 @@
+# Reviewed cuda-oxide policy for one intrinsic family.
+
+schema = 26
+family = "redux"
+
+[[intrinsic]]
+id = "redux_sync_add"
+abi_id = "i0017"
+operation_key = "warp.redux.sync.add.wrap32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_add"
+rust_module = "warp"
+rust_name = "redux_sync_add"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_add"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_add"]
+dialect_op_type = "ReduxSyncAddOp"
+dialect_op_name = "nvvm.redux_sync_add"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.add"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "add", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "add", "s32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, adds their 32-bit values modulo 2^32, and broadcasts the result to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_min_u32"
+abi_id = "i0018"
+operation_key = "warp.redux.sync.min.u32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_umin"
+rust_module = "warp"
+rust_name = "redux_sync_min_u32"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_min_u32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_min_u32"]
+dialect_op_type = "ReduxSyncUminOp"
+dialect_op_name = "nvvm.redux_sync_umin"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.umin"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "umin", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "min", "u32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their unsigned 32-bit minimum, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_min_i32"
+abi_id = "i0019"
+operation_key = "warp.redux.sync.min.s32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_min"
+rust_module = "warp"
+rust_name = "redux_sync_min_i32"
+rust_arguments = ["u32", "i32"]
+rust_result = "i32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_min_i32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_min_i32"]
+dialect_op_type = "ReduxSyncMinOp"
+dialect_op_name = "nvvm.redux_sync_min"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.min"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "i32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "min", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "min", "s32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their signed 32-bit minimum, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_max_u32"
+abi_id = "i0020"
+operation_key = "warp.redux.sync.max.u32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_umax"
+rust_module = "warp"
+rust_name = "redux_sync_max_u32"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_max_u32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_max_u32"]
+dialect_op_type = "ReduxSyncUmaxOp"
+dialect_op_name = "nvvm.redux_sync_umax"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.umax"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "umax", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "max", "u32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their unsigned 32-bit maximum, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_max_i32"
+abi_id = "i0021"
+operation_key = "warp.redux.sync.max.s32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_max"
+rust_module = "warp"
+rust_name = "redux_sync_max_i32"
+rust_arguments = ["u32", "i32"]
+rust_result = "i32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_max_i32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_max_i32"]
+dialect_op_type = "ReduxSyncMaxOp"
+dialect_op_name = "nvvm.redux_sync_max"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.max"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "i32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "max", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "max", "s32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their signed 32-bit maximum, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_and"
+abi_id = "i0022"
+operation_key = "warp.redux.sync.and.b32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_and"
+rust_module = "warp"
+rust_name = "redux_sync_and"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_and"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_and"]
+dialect_op_type = "ReduxSyncAndOp"
+dialect_op_name = "nvvm.redux_sync_and"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.and"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "and", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "and", "b32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise AND, and broadcasts the result."
+
+[[intrinsic]]
+id = "redux_sync_or"
+abi_id = "i0023"
+operation_key = "warp.redux.sync.or.b32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_or"
+rust_module = "warp"
+rust_name = "redux_sync_or"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_or"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_or"]
+dialect_op_type = "ReduxSyncOrOp"
+dialect_op_name = "nvvm.redux_sync_or"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.or"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "or", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "or", "b32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise OR, and broadcasts the result."
+
+[[intrinsic]]
+id = "redux_sync_xor"
+abi_id = "i0024"
+operation_key = "warp.redux.sync.xor.b32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_xor"
+rust_module = "warp"
+rust_name = "redux_sync_xor"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_xor"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_xor"]
+dialect_op_type = "ReduxSyncXorOp"
+dialect_op_name = "nvvm.redux_sync_xor"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.redux.sync.xor"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "xor", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "xor", "b32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise XOR, and broadcasts the result."

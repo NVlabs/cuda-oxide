@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#![allow(clippy::approx_constant)]
+#![allow(clippy::approx_constant, internal_features)]
+#![feature(core_intrinsics)]
 
 //! Unified Atomics Test Example
 //!
@@ -32,6 +33,7 @@
 //! 18. `atomic_block_scope_test` -- BlockAtomicU32 fetch_add (.cta scope, Relaxed)
 //! 19. `atomic_block_scope_acqrel_test` -- BlockAtomicU32 fetch_add (.cta scope, AcqRel)
 //! 20. `core_atomic_fetch_add_test` -- core::sync::atomic::AtomicU32 (system scope)
+//! 21. `core_atomic_ordering_probe` -- compile-only core intrinsic ordering coverage
 //!
 //! Build and run with:
 //!   cargo oxide run atomics
@@ -529,6 +531,39 @@ mod kernels {
 
         if let Some(out_elem) = out.get_mut(gid) {
             *out_elem = old;
+        }
+    }
+
+    /// Compile-only coverage for core intrinsic generic layouts and tuple results.
+    #[kernel]
+    pub fn core_atomic_ordering_probe(counter: &[u32], mut out: DisjointSlice<u32>) {
+        let gid = thread::index_1d();
+        let pointer = counter.as_ptr() as *mut u32;
+        let current = unsafe {
+            core::intrinsics::atomic_load::<u32, { core::intrinsics::AtomicOrdering::Acquire }>(
+                pointer,
+            )
+        };
+        unsafe {
+            core::intrinsics::atomic_store::<u32, { core::intrinsics::AtomicOrdering::Release }>(
+                pointer, current,
+            )
+        };
+        let swapped = unsafe {
+            core::intrinsics::atomic_xchg::<u32, { core::intrinsics::AtomicOrdering::AcqRel }>(
+                pointer, current,
+            )
+        };
+        let (observed, succeeded) = unsafe {
+            core::intrinsics::atomic_cxchg::<
+                u32,
+                { core::intrinsics::AtomicOrdering::Release },
+                { core::intrinsics::AtomicOrdering::Acquire },
+            >(pointer, swapped, swapped + 1)
+        };
+
+        if let Some(out_elem) = out.get_mut(gid) {
+            *out_elem = observed + succeeded as u32;
         }
     }
 }

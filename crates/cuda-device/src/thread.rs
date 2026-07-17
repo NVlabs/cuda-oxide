@@ -505,167 +505,10 @@ pub fn index_2d_col() -> usize {
 }
 
 // =============================================================================
-// X-Dimension Intrinsics
+// Generated Thread, Block, and Grid Intrinsics
 // =============================================================================
 
-/// Get threadIdx.x (thread index within block, X dimension)
-///
-/// This function is recognized by the cuda-oxide compiler and replaced
-/// with the appropriate PTX intrinsic. The body should never execute.
-#[inline(never)]
-pub fn threadIdx_x() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
-    unreachable!("threadIdx_x called outside CUDA kernel context")
-}
-
-/// Get blockIdx.x (block index within grid, X dimension)
-///
-/// This function is recognized by the cuda-oxide compiler and replaced
-/// with the appropriate PTX intrinsic. The body should never execute.
-#[inline(never)]
-pub fn blockIdx_x() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
-    unreachable!("blockIdx_x called outside CUDA kernel context")
-}
-
-/// Get blockDim.x (block dimension, X dimension)
-///
-/// This function is recognized by the cuda-oxide compiler and replaced
-/// with the appropriate PTX intrinsic. The body should never execute.
-#[inline(never)]
-pub fn blockDim_x() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
-    unreachable!("blockDim_x called outside CUDA kernel context")
-}
-
-// =============================================================================
-// Y-Dimension Intrinsics
-// =============================================================================
-
-/// Get threadIdx.y (thread index within block, Y dimension)
-///
-/// This function is recognized by the cuda-oxide compiler and replaced
-/// with the appropriate PTX intrinsic. The body should never execute.
-#[inline(never)]
-pub fn threadIdx_y() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.tid.y()
-    unreachable!("threadIdx_y called outside CUDA kernel context")
-}
-
-/// Get blockIdx.y (block index within grid, Y dimension)
-///
-/// This function is recognized by the cuda-oxide compiler and replaced
-/// with the appropriate PTX intrinsic. The body should never execute.
-#[inline(never)]
-pub fn blockIdx_y() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.ctaid.y()
-    unreachable!("blockIdx_y called outside CUDA kernel context")
-}
-
-/// Get blockDim.y (block dimension, Y dimension)
-///
-/// This function is recognized by the cuda-oxide compiler and replaced
-/// with the appropriate PTX intrinsic. The body should never execute.
-#[inline(never)]
-pub fn blockDim_y() -> u32 {
-    unreachable!("blockDim_y called outside CUDA kernel context")
-}
-
-// =============================================================================
-// Z-Dimension Intrinsics
-// =============================================================================
-
-/// Get threadIdx.z (thread index within block, Z dimension).
-#[inline(never)]
-pub fn threadIdx_z() -> u32 {
-    unreachable!("threadIdx_z called outside CUDA kernel context")
-}
-
-/// Get blockIdx.z (block index within grid, Z dimension).
-#[inline(never)]
-pub fn blockIdx_z() -> u32 {
-    unreachable!("blockIdx_z called outside CUDA kernel context")
-}
-
-/// Get blockDim.z (block dimension, Z dimension).
-#[inline(never)]
-pub fn blockDim_z() -> u32 {
-    unreachable!("blockDim_z called outside CUDA kernel context")
-}
-
-// =============================================================================
-// Grid Dimensions (gridDim)
-// =============================================================================
-
-/// Get gridDim.x — number of blocks along the X axis of the grid.
-#[inline(never)]
-pub fn gridDim_x() -> u32 {
-    unreachable!("gridDim_x called outside CUDA kernel context")
-}
-
-/// Get gridDim.y — number of blocks along the Y axis of the grid.
-#[inline(never)]
-pub fn gridDim_y() -> u32 {
-    unreachable!("gridDim_y called outside CUDA kernel context")
-}
-
-/// Get gridDim.z — number of blocks along the Z axis of the grid.
-#[inline(never)]
-pub fn gridDim_z() -> u32 {
-    unreachable!("gridDim_z called outside CUDA kernel context")
-}
-
-// =============================================================================
-// SM and Grid Identification
-// =============================================================================
-
-/// Sample the current SM (streaming multiprocessor) identifier.
-///
-/// Returns the `%smid` special register: the SM on which this thread is
-/// executing at the moment of the read. The value may change if the thread is
-/// rescheduled after preemption, so use this for profiling and diagnostics,
-/// not as a stable work-partitioning key.
-///
-/// Values are below [`nsmid()`], but SM identifiers need not be contiguous.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %smid;`
-#[inline(never)]
-pub fn smid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.smid()
-    unreachable!("smid called outside CUDA kernel context")
-}
-
-/// Read the maximum SM ID + 1 (number of SM slots).
-///
-/// Returns the `%nsmid` special register. Note that SM IDs may not be
-/// contiguous, so this is the upper bound, not the count of active SMs.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %nsmid;`
-#[inline(never)]
-pub fn nsmid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nsmid()
-    unreachable!("nsmid called outside CUDA kernel context")
-}
-
-/// Read the grid's temporal launch identifier.
-///
-/// Returns the full 64-bit `%gridid` special register. CUDA debuggers use this
-/// per-grid value to distinguish CTAs and clusters in concurrently executing
-/// grids and across repeated launches.
-///
-/// # PTX
-///
-/// `mov.u64 %rd, %gridid;`
-#[inline(never)]
-pub fn gridid() -> u64 {
-    // Lowered to exact inline PTX because LLVM's intrinsic exposes only the
-    // legacy low-32-bit form.
-    unreachable!("gridid called outside CUDA kernel context")
-}
+include!("generated/sreg.rs");
 
 // =============================================================================
 // Synchronization Intrinsics
@@ -698,7 +541,7 @@ pub fn gridid() -> u64 {
 ///   will cause deadlock
 #[inline(never)]
 pub fn sync_threads() {
-    // Lowered to: call void @llvm.nvvm.barrier0()
+    // Replaced by the generated CTA barrier during device compilation.
     unreachable!("sync_threads called outside CUDA kernel context")
 }
 

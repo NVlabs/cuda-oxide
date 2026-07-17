@@ -38,7 +38,7 @@ use crate::{
 
 use super::{
     literals::{format_float_literal, format_half_literal},
-    names::{has_device_prefix, strip_device_prefix},
+    names::{decode_intrinsic_identifier, has_device_prefix, strip_device_prefix},
     state::{
         KernelClusterConfig, KernelInfo, KernelLaunchBounds, ModuleExportState, PredecessorMap,
     },
@@ -182,7 +182,7 @@ impl<'a> ModuleExportState<'a> {
         // LLVM intrinsics (NVVM and standard, e.g. llvm.fptosi.sat) use dots in IR
         // but Pliron IR identifiers use underscores; convert for export.
         let fixed_func_name = if func_name.starts_with("llvm_") {
-            func_name.replace('_', ".")
+            decode_intrinsic_identifier(&func_name)
         } else {
             // Strip cuda_oxide_device_ prefix for clean export names.
             // Internal MIR translation uses prefixed names; we strip at the final
@@ -494,7 +494,7 @@ impl<'a> ModuleExportState<'a> {
                             symbol_name
                         } else {
                             let function_name = if symbol_name.starts_with("llvm_") {
-                                symbol_name.replace('_', ".")
+                                decode_intrinsic_identifier(&symbol_name)
                             } else {
                                 strip_device_prefix(&symbol_name)
                             };

@@ -1,0 +1,64 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-movmatrix",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_75",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "movmatrix_inline_probe",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": ["compute_75", "ptx93"],
+          "representation": "one CUDA device probe with volatile inline PTX for the packed b16 transpose",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 emitted a 776-byte PTX 9.3 module containing one exact movmatrix instruction; source SHA-256 b739bbbdb128536727c6d7fe1b9a68475d290b17890620b93723b5ba1f86f7c0 and PTX SHA-256 fc7891162851c2656b68e3a7d5570aad52c06d75ab7ea1a864ab66256783053a."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked CUDA movmatrix probe retaining the exact instruction",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 produced a 3,240-byte cubin with SHA-256 5d975d8240f586224c39bc2599939ea724d488a0b5c4944e955c13025b1a3bcc.",
+          "tool_path": "/usr/local/cuda-13.3/bin/nvcc",
+          "tool_version": "CUDA compilation tools, release 13.3, V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "6b55d91cd23f314ccb6801d71d64d20760a7ec31d37d87017ea0681d79bd3285"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["movmatrix_trans_b16"]}],
+      "product_count": 1,
+      "fixtures": ["movmatrix_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "movmatrix.sync.aligned.m8n8.trans.b16"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "movmatrix",
+          "modifiers": ["sync", "aligned", "m8n8", "trans", "b16"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        }
+      }
+    }
+  ]
+}

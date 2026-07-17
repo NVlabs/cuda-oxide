@@ -1,0 +1,118 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-cluster-barrier",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": [],
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "cluster_barrier_inline_probe",
+      "coverage_count": 6,
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "typed libNVVM probe using all six llvm.nvvm.barrier.cluster calls",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "libNVVM accepted source IR SHA-256 311879881b865fd8094b574f4e4cef82be548f2349eef07d8abffb5f9608870c but emitted six unresolved extern functions instead of barrier.cluster instructions; LTOIR SHA-256 5c8e1b263481c6281022e9bdd0d73a870abfd8ec4e849163bb40abc91e241b2f and PTX SHA-256 81a5de0a13d9f0ebba19e108b9ea74cba3ae0f3e2efaf8561dd7f1f1f279cb18."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "CUDA 13.3 nvJitLink exited with code 22 after rejecting the generated PTX near the unresolved .extern function names; no cubin was produced.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "one libNVVM LTO probe retaining all six cluster-barrier instructions",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM produced 2,092-byte LTOIR with SHA-256 741b16f401ce6dbe85c24eaaf48eb3b49eca46336ae02cf152dce734d83f0151 and PTX SHA-256 6c7b50ae9f833d4bab127cb83ba22571cdf544c63b0b993399122b52d8ba8a7e."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "linked cubin retaining all six cluster-barrier instructions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 4,200-byte cubin with SHA-256 bd103d9213745d04e97d3b046b154c95329b03ddbd1d75ea5e04d9bb3e852714; cuobjdump retained four UCGABAR_ARV and two UCGABAR_WAIT instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "operation", "values": ["arrive", "wait"]}],
+      "product_count": 2,
+      "fixtures": ["cluster_barrier_inline_probe"],
+      "template": {
+        "id": "barrier_cluster_${operation}",
+        "source_record": "int_nvvm_barrier_cluster_${operation}",
+        "llvm_symbol": "llvm.nvvm.barrier.cluster.${operation}",
+        "expected_ptx": {"mnemonic": "barrier", "modifiers": ["cluster", "${operation}"], "operands": []},
+        "facts": {}
+      }
+    },
+    {
+      "axes": [{"name": "operation", "values": ["arrive", "wait"]}],
+      "product_count": 2,
+      "fixtures": ["cluster_barrier_inline_probe"],
+      "template": {
+        "id": "barrier_cluster_${operation}_aligned",
+        "source_record": "int_nvvm_barrier_cluster_${operation}_aligned",
+        "llvm_symbol": "llvm.nvvm.barrier.cluster.${operation}.aligned",
+        "expected_ptx": {"mnemonic": "barrier", "modifiers": ["cluster", "${operation}", "aligned"], "operands": []},
+        "facts": {}
+      }
+    },
+    {
+      "axes": [{"name": "mode", "values": ["relaxed"]}],
+      "product_count": 1,
+      "fixtures": ["cluster_barrier_inline_probe"],
+      "template": {
+        "id": "barrier_cluster_arrive_${mode}",
+        "source_record": "int_nvvm_barrier_cluster_arrive_${mode}",
+        "llvm_symbol": "llvm.nvvm.barrier.cluster.arrive.${mode}",
+        "expected_ptx": {"mnemonic": "barrier", "modifiers": ["cluster", "arrive", "${mode}"], "operands": []},
+        "facts": {}
+      }
+    },
+    {
+      "axes": [{"name": "mode", "values": ["relaxed"]}],
+      "product_count": 1,
+      "fixtures": ["cluster_barrier_inline_probe"],
+      "template": {
+        "id": "barrier_cluster_arrive_${mode}_aligned",
+        "source_record": "int_nvvm_barrier_cluster_arrive_${mode}_aligned",
+        "llvm_symbol": "llvm.nvvm.barrier.cluster.arrive.${mode}.aligned",
+        "expected_ptx": {"mnemonic": "barrier", "modifiers": ["cluster", "arrive", "${mode}", "aligned"], "operands": []},
+        "facts": {}
+      }
+    }
+  ]
+}

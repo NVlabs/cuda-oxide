@@ -1,0 +1,355 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-scalar-arithmetic",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA compilation tools, release 13.3, V13.3.33; libNVVM IR 2.0 debug 3.2",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_80",
+    "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "scalar_arithmetic_compute80_ptx93",
+      "coverage_count": 44,
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "44 pure inline-PTX scalar arithmetic calls in one retained NVVM IR kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 9,966-byte typed-pointer NVVM IR fixture (SHA-256 1887e2d19e9253874b9cc04aa9ddf6fecfe626021185f23c6023da7ec55e1d6f) to 5,956-byte PTX 9.3 (SHA-256 d84a9f54933f0a6d231f81bca8b68939dab13ff12be30ab09f823107dbdce574) and 5,908-byte LTOIR (SHA-256 d11a9ec3ee80833f14fbf0aa68710a1a1e4135a9314f5b7978313ffe6b442ce2). The PTX retained all 44 exact, unique instructions with no extern calls or unresolved llvm.nvvm symbols."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "libNVVM-emitted PTX retaining all 44 scalar arithmetic forms",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas assembled the retained PTX into a 25,000-byte sm_80 cubin with SHA-256 8d204a91958f0abeeaa94e65dda13f8a3238c941ccfca69f81df16ef1dae42f7.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained libNVVM LTOIR linked to an sm_80 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink emitted linked PTX byte-identical to the direct libNVVM PTX and a 25,000-byte cubin with SHA-256 8a820550050fdd6239eea0a9cc5dc0573926fbb49dc58c94ec226e96c8e21f6e. The cubin exports scalar_arithmetic_inline with a 0x4a00-byte text section.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "nvJitLinkVersion 13.3; CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "scalar_add_compute80_ptx93",
+      "coverage_count": 20,
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "20 pure inline-PTX scalar add calls in one retained NVVM IR kernel",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 4,719-byte typed-pointer NVVM IR fixture (SHA-256 4115a5696631ec940f8f90cb4f70c21f929f58fa259b34533528e58b11c0968b) to 3,023-byte PTX 9.3 (SHA-256 943adbcba0c1004fe6d4bff9af24f15c965ab426c1b47b878a9425a70ce5bb5f) and 3,540-byte LTOIR (SHA-256 1b10b69dae868b3f058b31d75e855d5433966b87af138cf74cf3b8a99af46e3c). The PTX retained all 20 exact, unique add forms with no extern calls or unresolved llvm.nvvm symbols."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "libNVVM-emitted PTX retaining all 20 scalar add forms",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas assembled the retained PTX into a 4,008-byte sm_80 cubin with SHA-256 bf08ec6f01a1a355c9d39c967d133ff8146de0cfb5da01bb5f1679cbc0551b27.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained scalar-add libNVVM LTOIR linked to an sm_80 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink emitted linked PTX byte-identical to the direct libNVVM PTX and a 4,008-byte cubin with SHA-256 55b093a238d90be57b1962928326d1ca597ad54189fa2097b3e2207177d708c0.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "nvJitLinkVersion 13.3; CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "mul_${rounding}_f64",
+        "source_record": "int_nvvm_mul_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.mul.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "mul",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f64", "f64"], "llvm_results": ["f64"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "div_${rounding}_f64",
+        "source_record": "int_nvvm_div_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.div.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "div",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f64", "f64"], "llvm_results": ["f64"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "fma_${rounding}_f64",
+        "source_record": "int_nvvm_fma_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.fma.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f64", "f64", "f64"], "llvm_results": ["f64"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "mul_${rounding}_f32",
+        "source_record": "int_nvvm_mul_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.mul.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "mul",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "mul_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_mul_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.mul.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "mul",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "div_${rounding}_f32",
+        "source_record": "int_nvvm_div_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.div.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "div",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "div_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_div_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.div.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "div",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "fma_${rounding}_f32",
+        "source_record": "int_nvvm_fma_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.fma.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "fma_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_fma_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.fma.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "fma_${rounding}_sat_f32",
+        "source_record": "int_nvvm_fma_${rounding}_sat_f",
+        "llvm_symbol": "llvm.nvvm.fma.${rounding}.sat.f",
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["${rounding}", "sat", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_arithmetic_compute80_ptx93"],
+      "template": {
+        "id": "fma_${rounding}_ftz_sat_f32",
+        "source_record": "int_nvvm_fma_${rounding}_ftz_sat_f",
+        "llvm_symbol": "llvm.nvvm.fma.${rounding}.ftz.sat.f",
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["${rounding}", "ftz", "sat", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_compute80_ptx93"],
+      "template": {
+        "id": "add_${rounding}_f64",
+        "source_record": "int_nvvm_add_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f64", "f64"], "llvm_results": ["f64"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_compute80_ptx93"],
+      "template": {
+        "id": "add_${rounding}_f32",
+        "source_record": "int_nvvm_add_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_compute80_ptx93"],
+      "template": {
+        "id": "add_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_add_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_compute80_ptx93"],
+      "template": {
+        "id": "add_${rounding}_sat_f32",
+        "source_record": "int_nvvm_add_${rounding}_sat_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.sat.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "sat", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_add_compute80_ptx93"],
+      "template": {
+        "id": "add_${rounding}_ftz_sat_f32",
+        "source_record": "int_nvvm_add_${rounding}_ftz_sat_f",
+        "llvm_symbol": "llvm.nvvm.add.${rounding}.ftz.sat.f",
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["${rounding}", "sat", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {"llvm_arguments": ["f32", "f32"], "llvm_results": ["f32"]}
+      }
+    }
+  ]
+}

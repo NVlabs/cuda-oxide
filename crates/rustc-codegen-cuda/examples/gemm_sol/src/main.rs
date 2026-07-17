@@ -3789,9 +3789,7 @@ mod kernels {
                     tile_iter += 1;
                 }
 
-                if elect_one_cta {
-                    tcgen05_relinquish_alloc_permit_cg2();
-                }
+                tcgen05_relinquish_alloc_permit_cg2();
             }
 
             if warp_id < 4 {

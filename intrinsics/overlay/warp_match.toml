@@ -1,0 +1,152 @@
+# Reviewed cuda-oxide policy for synchronized warp matching.
+
+schema = 26
+family = "warp_match"
+
+[[intrinsic]]
+id = "match_any_sync"
+abi_id = "i0045"
+operation_key = "warp.match.sync.any.b32"
+family = "warp_match"
+source_record = "int_nvvm_match_any_sync_i32"
+rust_module = "warp"
+rust_name = "match_any_sync"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::match_any_sync"
+compatibility_rust_paths = ["cuda_device::warp::match_any_sync"]
+dialect_op_type = "MatchAnySyncI32Op"
+dialect_op_name = "nvvm.match_any_sync_i32"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.match.any.sync.i32"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+lowering = "generated_warp_match"
+warp_match = { mode = "any", value_width = "b32", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "direct_mask", value_encoding = "register_or_immediate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "match", modifiers = ["any", "sync", "b32"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }] }
+summary = "Returns the named warp lanes whose 32-bit value equals this lane's value."
+
+[[intrinsic]]
+id = "match_any_i64_sync"
+abi_id = "i0046"
+operation_key = "warp.match.sync.any.b64"
+family = "warp_match"
+source_record = "int_nvvm_match_any_sync_i64"
+rust_module = "warp"
+rust_name = "match_any_i64_sync"
+rust_arguments = ["u32", "u64"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::match_any_i64_sync"
+compatibility_rust_paths = ["cuda_device::warp::match_any_i64_sync"]
+dialect_op_type = "MatchAnySyncI64Op"
+dialect_op_name = "nvvm.match_any_sync_i64"
+dialect_operands = ["i32", "i64"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.match.any.sync.i64"
+llvm_arguments = ["i32", "i64"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+lowering = "generated_warp_match"
+warp_match = { mode = "any", value_width = "b64", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "direct_mask", value_encoding = "register_or_immediate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "match", modifiers = ["any", "sync", "b64"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }] }
+summary = "Returns the named warp lanes whose 64-bit value equals this lane's value."
+
+[[intrinsic]]
+id = "match_all_sync"
+abi_id = "i0047"
+operation_key = "warp.match.sync.all.b32"
+family = "warp_match"
+source_record = "int_nvvm_match_all_sync_i32p"
+rust_module = "warp"
+rust_name = "match_all_sync"
+rust_arguments = ["u32", "u32"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::match_all_sync"
+compatibility_rust_paths = ["cuda_device::warp::match_all_sync"]
+dialect_op_type = "MatchAllSyncI32Op"
+dialect_op_name = "nvvm.match_all_sync_i32"
+dialect_operands = ["i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.match.all.sync.i32p"
+llvm_arguments = ["i32", "i32"]
+llvm_results = ["i32", "i1"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+lowering = "generated_warp_match"
+warp_match = { mode = "all", value_width = "b32", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "project_mask_discard_predicate", value_encoding = "register_or_immediate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "match", modifiers = ["all", "sync", "b32"], operands = [{ kind = "register_predicate_pair" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }] }
+summary = "Returns the named non-exited warp lanes when every 32-bit value agrees, otherwise zero."
+
+[[intrinsic]]
+id = "match_all_i64_sync"
+abi_id = "i0048"
+operation_key = "warp.match.sync.all.b64"
+family = "warp_match"
+source_record = "int_nvvm_match_all_sync_i64p"
+rust_module = "warp"
+rust_name = "match_all_i64_sync"
+rust_arguments = ["u32", "u64"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::match_all_i64_sync"
+compatibility_rust_paths = ["cuda_device::warp::match_all_i64_sync"]
+dialect_op_type = "MatchAllSyncI64Op"
+dialect_op_name = "nvvm.match_all_sync_i64"
+dialect_operands = ["i32", "i64"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.match.all.sync.i64p"
+llvm_arguments = ["i32", "i64"]
+llvm_results = ["i32", "i1"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+lowering = "generated_warp_match"
+warp_match = { mode = "all", value_width = "b64", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "project_mask_discard_predicate", value_encoding = "register_or_immediate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "match", modifiers = ["all", "sync", "b64"], operands = [{ kind = "register_predicate_pair" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }] }
+summary = "Returns the named non-exited warp lanes when every 64-bit value agrees, otherwise zero."

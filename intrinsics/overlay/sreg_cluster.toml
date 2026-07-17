@@ -1,0 +1,11 @@
+# Reviewed Hopper cluster special registers.
+# The four LLVM `.w` records are excluded because PTX defines them as zero:
+# `cluster_ctaid_w`, `cluster_nctaid_w`, `clusterid_w`, and `nclusterid_w`.
+
+schema = 30
+family = "sreg"
+
+[cluster_sreg]
+axes = ["x", "y", "z"]
+xyz_product_count = 12
+record_count = 14

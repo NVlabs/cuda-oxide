@@ -154,6 +154,21 @@ use type_conversion_interface::MirConvertibleType;
 // DialectConversion driver
 // ============================================================================
 
+/// Backend whose intrinsic ABI the lowering pass must emit.
+///
+/// LLVM's NVPTX backend and NVIDIA's libNVVM accept overlapping but not
+/// identical intrinsic signatures. The pipeline chooses this once, before
+/// any typed MIR operation is lowered, so generated intrinsic conversions do
+/// not have to guess from environment variables or partially lowered IR.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IntrinsicBackend {
+    /// Emit intrinsic forms consumed by LLVM's NVPTX backend (`llc`).
+    #[default]
+    LlvmNvptx,
+    /// Emit intrinsic forms consumed by NVIDIA's libNVVM compiler.
+    LibNvvm,
+}
+
 /// Options controlling the `dialect-mir` to LLVM dialect lowering pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoweringOptions {
@@ -162,12 +177,15 @@ pub struct LoweringOptions {
     ///
     /// This does not affect explicit fused operations such as `f32::mul_add`.
     pub allow_fma_contraction: bool,
+    /// Intrinsic ABI expected by the selected LLVM-to-device backend.
+    pub intrinsic_backend: IntrinsicBackend,
 }
 
 impl Default for LoweringOptions {
     fn default() -> Self {
         Self {
             allow_fma_contraction: true,
+            intrinsic_backend: IntrinsicBackend::LlvmNvptx,
         }
     }
 }

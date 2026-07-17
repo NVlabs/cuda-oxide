@@ -29,13 +29,13 @@
 //! mir-lower handle ordering-to-fence and scope-to-syncscope mapping through
 //! one code path.
 
-use dialect_mir::types::{MirPtrType, address_space};
+use dialect_mir::types::{MirFP16Type, MirPtrType};
 use pliron::{
     attribute::Attribute,
     builtin::op_interfaces::{
         NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface,
     },
-    builtin::types::{IntegerType, Signedness},
+    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
     common_traits::Verify,
     context::{Context, Ptr},
     derive::{op_interface, op_interface_impl},
@@ -43,7 +43,7 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Error,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
     value::Value,
     verify_err,
 };
@@ -125,7 +125,9 @@ pub trait NvvmAtomicOpInterface {
     /// The scope (which threads observe the atomic).
     fn scope(&self, ctx: &Context) -> AtomicScope;
 
-    /// The pointer operand (always the first operand).
+    /// The pointer operand.
+    ///
+    /// This is operand 1 for stores and operand 0 for the other atomic ops.
     fn ptr_operand(&self, ctx: &Context) -> Value;
 
     fn verify(_op: &dyn Op, _ctx: &Context) -> pliron::result::Result<()>
@@ -134,6 +136,69 @@ pub trait NvvmAtomicOpInterface {
     {
         // Structural verification is done by each op's own Verify impl.
         Ok(())
+    }
+}
+
+fn is_integer_atomic_type(ctx: &Context, ty: TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| matches!(integer.width(), 32 | 64))
+}
+
+fn is_float_atomic_type(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty = ty.deref(ctx);
+    ty.downcast_ref::<MirFP16Type>().is_some()
+        || ty.downcast_ref::<FP32Type>().is_some()
+        || ty.downcast_ref::<FP64Type>().is_some()
+}
+
+fn is_atomic_value_type(ctx: &Context, ty: TypeHandle) -> bool {
+    is_integer_atomic_type(ctx, ty) || is_float_atomic_type(ctx, ty)
+}
+
+fn verify_atomic_pointer(
+    ctx: &Context,
+    op: &Operation,
+    operand: usize,
+    name: &str,
+) -> Result<(), Error> {
+    let pointer_ty = op.get_operand(operand).get_type(ctx);
+    let pointer_ty = pointer_ty.deref(ctx);
+    if pointer_ty.downcast_ref::<MirPtrType>().is_none() {
+        return verify_err!(op.loc(), "{name} address must be a MIR pointer");
+    }
+    Ok(())
+}
+
+fn verify_atomic_value_type(
+    ctx: &Context,
+    op: &Operation,
+    ty: TypeHandle,
+    name: &str,
+) -> Result<(), Error> {
+    if !is_atomic_value_type(ctx, ty) {
+        return verify_err!(op.loc(), "{name} has an unsupported value type");
+    }
+    Ok(())
+}
+
+fn verify_rmw_kind(ctx: &Context, ty: TypeHandle, kind: &AtomicRmwKind) -> bool {
+    let ty_obj = ty.deref(ctx);
+    let integer = ty_obj.downcast_ref::<IntegerType>();
+    match kind {
+        AtomicRmwKind::FAdd => is_float_atomic_type(ctx, ty),
+        AtomicRmwKind::Xchg => is_atomic_value_type(ctx, ty),
+        AtomicRmwKind::Min | AtomicRmwKind::Max => integer.is_some_and(|integer| {
+            matches!(integer.width(), 32 | 64) && integer.signedness() == Signedness::Signed
+        }),
+        AtomicRmwKind::UMin | AtomicRmwKind::UMax => integer.is_some_and(|integer| {
+            matches!(integer.width(), 32 | 64) && integer.signedness() == Signedness::Unsigned
+        }),
+        AtomicRmwKind::Add
+        | AtomicRmwKind::Sub
+        | AtomicRmwKind::And
+        | AtomicRmwKind::Or
+        | AtomicRmwKind::Xor => is_integer_atomic_type(ctx, ty),
     }
 }
 
@@ -149,7 +214,7 @@ pub trait NvvmAtomicOpInterface {
 ///
 /// # Results
 ///
-/// - loaded value (i32, i64, f32, f64)
+/// - loaded value (i32, i64, f16, f32, f64)
 ///
 /// # Attributes
 ///
@@ -158,7 +223,6 @@ pub trait NvvmAtomicOpInterface {
 #[pliron_op(
     name = "nvvm.atomic_load",
     format,
-    verifier = "succ",
     interfaces = [NResultsInterface<1>, OneResultInterface, NOpdsInterface<1>, OneOpdInterface],
     attributes = (nvvm_ld_ordering: AtomicOrdering, nvvm_ld_scope: AtomicScope)
 )]
@@ -190,6 +254,33 @@ impl NvvmAtomicLoadOp {
         this.set_attr_nvvm_ld_ordering(ctx, ordering);
         this.set_attr_nvvm_ld_scope(ctx, scope);
         this
+    }
+}
+
+impl Verify for NvvmAtomicLoadOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 1 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_load requires one operand and one result"
+            );
+        }
+        verify_atomic_pointer(ctx, &op, 0, "nvvm.atomic_load")?;
+        verify_atomic_value_type(ctx, &op, op.get_result(0).get_type(ctx), "nvvm.atomic_load")?;
+        let Some(ordering) = self.get_attr_nvvm_ld_ordering(ctx) else {
+            return verify_err!(op.loc(), "nvvm.atomic_load requires an ordering");
+        };
+        if !matches!(
+            &*ordering,
+            AtomicOrdering::Relaxed | AtomicOrdering::Acquire | AtomicOrdering::SeqCst
+        ) {
+            return verify_err!(op.loc(), "nvvm.atomic_load has an invalid ordering");
+        }
+        if self.get_attr_nvvm_ld_scope(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_load requires a scope");
+        }
+        Ok(())
     }
 }
 
@@ -234,7 +325,6 @@ impl NvvmAtomicOpInterface for NvvmAtomicLoadOp {
 #[pliron_op(
     name = "nvvm.atomic_store",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
     attributes = (nvvm_st_ordering: AtomicOrdering, nvvm_st_scope: AtomicScope)
 )]
@@ -276,6 +366,38 @@ impl NvvmAtomicStoreOp {
     /// Get the pointer operand.
     pub fn address_opd(&self, ctx: &Context) -> Value {
         self.get_operation().deref(ctx).get_operand(1)
+    }
+}
+
+impl Verify for NvvmAtomicStoreOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 2 || op.get_num_results() != 0 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_store requires two operands and no results"
+            );
+        }
+        verify_atomic_pointer(ctx, &op, 1, "nvvm.atomic_store")?;
+        verify_atomic_value_type(
+            ctx,
+            &op,
+            op.get_operand(0).get_type(ctx),
+            "nvvm.atomic_store",
+        )?;
+        let Some(ordering) = self.get_attr_nvvm_st_ordering(ctx) else {
+            return verify_err!(op.loc(), "nvvm.atomic_store requires an ordering");
+        };
+        if !matches!(
+            &*ordering,
+            AtomicOrdering::Relaxed | AtomicOrdering::Release | AtomicOrdering::SeqCst
+        ) {
+            return verify_err!(op.loc(), "nvvm.atomic_store has an invalid ordering");
+        }
+        if self.get_attr_nvvm_st_scope(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_store requires a scope");
+        }
+        Ok(())
     }
 }
 
@@ -323,7 +445,6 @@ impl NvvmAtomicOpInterface for NvvmAtomicStoreOp {
 #[pliron_op(
     name = "nvvm.atomic_rmw",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<2>, NResultsInterface<1>, OneResultInterface],
     attributes = (
         nvvm_rmw_ordering: AtomicOrdering,
@@ -382,6 +503,43 @@ impl NvvmAtomicRmwOp {
     }
 }
 
+impl Verify for NvvmAtomicRmwOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_rmw requires two operands and one result"
+            );
+        }
+        verify_atomic_pointer(ctx, &op, 0, "nvvm.atomic_rmw")?;
+        let value_ty = op.get_operand(1).get_type(ctx);
+        verify_atomic_value_type(ctx, &op, value_ty, "nvvm.atomic_rmw")?;
+        if op.get_result(0).get_type(ctx) != value_ty {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_rmw value and result types must match"
+            );
+        }
+        let Some(kind) = self.get_attr_nvvm_rmw_kind(ctx) else {
+            return verify_err!(op.loc(), "nvvm.atomic_rmw requires a kind");
+        };
+        if !verify_rmw_kind(ctx, value_ty, &kind) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_rmw kind does not support its value type"
+            );
+        }
+        if self.get_attr_nvvm_rmw_ordering(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_rmw requires an ordering");
+        }
+        if self.get_attr_nvvm_rmw_scope(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_rmw requires a scope");
+        }
+        Ok(())
+    }
+}
+
 #[op_interface_impl]
 impl NvvmAtomicOpInterface for NvvmAtomicRmwOp {
     fn ordering(&self, ctx: &Context) -> AtomicOrdering {
@@ -428,7 +586,6 @@ impl NvvmAtomicOpInterface for NvvmAtomicRmwOp {
 #[pliron_op(
     name = "nvvm.atomic_cmpxchg",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<3>, NResultsInterface<1>, OneResultInterface],
     attributes = (
         nvvm_cas_success_ordering: AtomicOrdering,
@@ -501,6 +658,50 @@ impl NvvmAtomicCmpxchgOp {
     }
 }
 
+impl Verify for NvvmAtomicCmpxchgOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 3 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_cmpxchg requires three operands and one result"
+            );
+        }
+        verify_atomic_pointer(ctx, &op, 0, "nvvm.atomic_cmpxchg")?;
+        let value_ty = op.get_operand(1).get_type(ctx);
+        verify_atomic_value_type(ctx, &op, value_ty, "nvvm.atomic_cmpxchg")?;
+        if !is_integer_atomic_type(ctx, value_ty) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_cmpxchg supports only 32-bit or 64-bit integers"
+            );
+        }
+        if op.get_operand(2).get_type(ctx) != value_ty || op.get_result(0).get_type(ctx) != value_ty
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_cmpxchg compare, new value, and result types must match"
+            );
+        }
+        if self.get_attr_nvvm_cas_success_ordering(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_cmpxchg requires a success ordering");
+        }
+        let Some(failure) = self.get_attr_nvvm_cas_failure_ordering(ctx) else {
+            return verify_err!(op.loc(), "nvvm.atomic_cmpxchg requires a failure ordering");
+        };
+        if matches!(&*failure, AtomicOrdering::Release | AtomicOrdering::AcqRel) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_cmpxchg failure ordering cannot be release or acq_rel"
+            );
+        }
+        if self.get_attr_nvvm_cas_scope(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_cmpxchg requires a scope");
+        }
+        Ok(())
+    }
+}
+
 #[op_interface_impl]
 impl NvvmAtomicOpInterface for NvvmAtomicCmpxchgOp {
     /// For cmpxchg, `ordering()` returns the **success** ordering.
@@ -520,153 +721,6 @@ impl NvvmAtomicOpInterface for NvvmAtomicCmpxchgOp {
 }
 
 // =============================================================================
-// Packed Atomic Helpers
-// =============================================================================
-
-fn is_u32_type(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
-    ty.deref(ctx)
-        .downcast_ref::<IntegerType>()
-        .is_some_and(|integer| {
-            integer.width() == 32 && integer.signedness() == Signedness::Unsigned
-        })
-}
-
-/// Verify the exact raw-`u32` shape used by packed atomic-add intrinsics.
-fn verify_packed_atomic(ctx: &Context, op_ptr: Ptr<Operation>, op_name: &str) -> Result<(), Error> {
-    let op = &*op_ptr.deref(ctx);
-    if op.get_num_operands() != 2 || op.get_num_results() != 1 {
-        return verify_err!(op.loc(), "{} requires 2 operands and 1 result", op_name);
-    }
-
-    let addr_ty = op.get_operand(0).get_type(ctx);
-    let addr_ty_obj = addr_ty.deref(ctx);
-    let Some(addr_ty) = addr_ty_obj.downcast_ref::<MirPtrType>() else {
-        return verify_err!(op.loc(), "{} address must be a MIR pointer", op_name);
-    };
-    if !addr_ty.is_mutable() || !is_u32_type(ctx, addr_ty.pointee) {
-        return verify_err!(
-            op.loc(),
-            "{} address must be a mutable pointer to u32",
-            op_name
-        );
-    }
-    if !matches!(
-        addr_ty.address_space(),
-        address_space::GENERIC | address_space::GLOBAL
-    ) {
-        return verify_err!(
-            op.loc(),
-            "{} address must be generic or global memory",
-            op_name
-        );
-    }
-
-    if !is_u32_type(ctx, op.get_operand(1).get_type(ctx)) {
-        return verify_err!(op.loc(), "{} addend must be u32", op_name);
-    }
-    if !is_u32_type(ctx, op.get_result(0).get_type(ctx)) {
-        return verify_err!(op.loc(), "{} result must be u32", op_name);
-    }
-    Ok(())
-}
-
-// =============================================================================
-// NvvmAtomAddF16x2Op
-// =============================================================================
-
-/// Packed f16x2 atomic add on global memory.
-///
-/// Adds two packed f16 lanes element-wise with independent 16-bit atomicity.
-/// The two lane operations occur in unspecified order, so the returned `u32`
-/// is not guaranteed to be one coherent previous 32-bit snapshot.
-///
-/// Lowered to inline PTX:
-/// ```ptx
-/// atom.global.add.noftz.f16x2 $0, [$1], $2;
-/// ```
-///
-/// # Operands
-///
-/// - `addr` (ptr): pointer to the packed f16x2 value in global memory
-/// - `val`  (u32): packed f16x2 addend
-///
-/// # Results
-///
-/// - `old` (u32): the previous packed f16x2 value at `*addr`
-///
-/// # Verification
-///
-/// - `addr` must be a mutable generic/global pointer to `u32`
-/// - `val` and `old` must be `u32`
-#[pliron_op(
-    name = "nvvm.atom_add_f16x2",
-    format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct NvvmAtomAddF16x2Op;
-
-impl NvvmAtomAddF16x2Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomAddF16x2Op { op }
-    }
-}
-
-impl Verify for NvvmAtomAddF16x2Op {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_packed_atomic(ctx, self.get_operation(), "nvvm.atom_add_f16x2")
-    }
-}
-
-// =============================================================================
-// NvvmAtomAddBf16x2Op
-// =============================================================================
-
-/// Packed bf16x2 atomic add on global memory.
-///
-/// Adds two packed bf16 lanes element-wise with independent 16-bit atomicity.
-/// The two lane operations occur in unspecified order, so the returned `u32`
-/// is not guaranteed to be one coherent previous 32-bit snapshot.
-///
-/// Lowered to inline PTX:
-/// ```ptx
-/// atom.global.add.noftz.bf16x2 $0, [$1], $2;
-/// ```
-///
-/// # Operands
-///
-/// - `addr` (ptr): pointer to the packed bf16x2 value in global memory
-/// - `val`  (u32): packed bf16x2 addend
-///
-/// # Results
-///
-/// - `old` (u32): the previous packed bf16x2 value at `*addr`
-///
-/// # Verification
-///
-/// - `addr` must be a mutable generic/global pointer to `u32`
-/// - `val` and `old` must be `u32`
-#[pliron_op(
-    name = "nvvm.atom_add_bf16x2",
-    format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct NvvmAtomAddBf16x2Op;
-
-impl NvvmAtomAddBf16x2Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomAddBf16x2Op { op }
-    }
-}
-
-impl Verify for NvvmAtomAddBf16x2Op {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_packed_atomic(ctx, self.get_operation(), "nvvm.atom_add_bf16x2")
-    }
-}
-
-// =============================================================================
 // Registration
 // =============================================================================
 
@@ -682,6 +736,4 @@ pub fn register(ctx: &mut Context) {
     NvvmAtomicStoreOp::register(ctx);
     NvvmAtomicRmwOp::register(ctx);
     NvvmAtomicCmpxchgOp::register(ctx);
-    NvvmAtomAddF16x2Op::register(ctx);
-    NvvmAtomAddBf16x2Op::register(ctx);
 }

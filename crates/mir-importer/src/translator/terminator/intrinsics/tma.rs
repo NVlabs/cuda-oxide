@@ -7,7 +7,7 @@
 //!
 //! Handles asynchronous bulk data movement between global and shared memory.
 
-use super::super::helpers::emit_goto;
+use super::super::helpers::{emit_goto, set_generated_intrinsic_marker};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
@@ -60,6 +60,7 @@ pub fn emit_tma_g2s(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
     dims: usize,
+    marker: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     // Expected args: dst, tensor_map, coord0, [coord1, ...], barrier
     let expected_args = 3 + dims; // dst + tensor_map + coords + barrier
@@ -217,6 +218,7 @@ pub fn emit_tma_g2s(
         0,
     );
     tma_op.deref_mut(ctx).set_loc(loc.clone());
+    set_generated_intrinsic_marker(ctx, tma_op, marker);
     tma_op.insert_after(ctx, cache_hint_const.get_operation());
 
     // Emit goto to target block
@@ -251,6 +253,7 @@ pub fn emit_tma_s2g(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
     dims: usize,
+    marker: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     // Expected args: src, tensor_map, coords...
     let expected_args = 2 + dims;
@@ -339,6 +342,7 @@ pub fn emit_tma_s2g(
         0,
     );
     tma_op.deref_mut(ctx).set_loc(loc.clone());
+    set_generated_intrinsic_marker(ctx, tma_op, marker);
 
     if let Some(prev) = last_op {
         tma_op.insert_after(ctx, prev);
@@ -382,6 +386,7 @@ pub fn emit_tma_g2s_multicast(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
+    marker: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     if args.len() != 6 {
         return input_err!(
@@ -515,6 +520,7 @@ pub fn emit_tma_g2s_multicast(
         0,
     );
     tma_op.deref_mut(ctx).set_loc(loc.clone());
+    set_generated_intrinsic_marker(ctx, tma_op, marker);
     tma_op.insert_after(ctx, cache_hint_const.get_operation());
 
     if let Some(target_idx) = target {
@@ -553,6 +559,7 @@ pub fn emit_tma_g2s_multicast_cg2(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
+    marker: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     if args.len() != 6 {
         return input_err!(
@@ -686,6 +693,7 @@ pub fn emit_tma_g2s_multicast_cg2(
         0,
     );
     tma_op.deref_mut(ctx).set_loc(loc.clone());
+    set_generated_intrinsic_marker(ctx, tma_op, marker);
     tma_op.insert_after(ctx, cache_hint_const.get_operation());
 
     if let Some(target_idx) = target {
@@ -713,6 +721,7 @@ pub fn emit_tma_commit_group(
     prev_op: Option<Ptr<Operation>>,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
+    marker: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     if !args.is_empty() {
         return input_err!(
@@ -734,6 +743,7 @@ pub fn emit_tma_commit_group(
         0,
     );
     commit_op.deref_mut(ctx).set_loc(loc.clone());
+    set_generated_intrinsic_marker(ctx, commit_op, marker);
 
     if let Some(prev) = prev_op {
         commit_op.insert_after(ctx, prev);
@@ -770,6 +780,7 @@ pub fn emit_tma_wait_group(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
     read_variant: bool,
+    marker: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     if args.len() != 1 {
         return input_err!(
@@ -809,6 +820,7 @@ pub fn emit_tma_wait_group(
         0,
     );
     wait_op.deref_mut(ctx).set_loc(loc.clone());
+    set_generated_intrinsic_marker(ctx, wait_op, marker);
 
     if let Some(prev) = last_op {
         wait_op.insert_after(ctx, prev);

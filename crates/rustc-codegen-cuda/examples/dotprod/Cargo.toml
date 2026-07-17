@@ -9,7 +9,7 @@ license = "Apache-2.0"
 
 # End-to-end test for integer dot product intrinsics (dp4a, dp2a).
 # Build with:
-#   cargo oxide run dotprod --arch sm_61
+#   cargo oxide run dotprod --arch sm_80
 
 [dependencies]
 # Device-side intrinsics (dotprod::dp4a_*, dotprod::dp2a_*, thread indexing)

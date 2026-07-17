@@ -1,0 +1,1748 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-tcgen05-ldst-offset",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_100a",
+    "ptx_feature": "PTX ISA 8.6 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "tcgen05_ldst_offset32_libnvvm_inline_probe",
+      "coverage_count": 32,
+      "stages": [
+        {
+          "targets": [
+            "compute_100a",
+            "ptx93"
+          ],
+          "representation": "32 convergent NVVM IR 2.0 inline-PTX kernels covering every raw/pack16 load and raw/unpack16 store leaf for tcgen05 16x32bx2",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Direct PTX retained 32 entries, 16 loads, 16 stores, 8 pack::16b forms, and 8 unpack::16b forms. PTX SHA-256: compute_100a 0b69ee77a14d958c3857778d2bc6d95216a169793ec93d457c8f7d985cc2d59e; compute_100f 000a052d030990964ad52d3528ec0eaca1aad1fd74660ab7055a937bcf91198f; compute_103a 657fef7ae567c5e422be96428699472b09e399b06df72218e61deacad4320f01; compute_103f 5dc48412591c8c440ce988e129845c7569c1554ebf3c063f2ab41eb2df73e618; compute_110a bc86af044bea85df48423d1753a53a711a59bc569324cc97ca3f67987b155c4a; compute_110f 8814e93e62924a4926ed737a2e5f4d9db061895e27c289e2e04a80bafc12b7bc. LTOIR SHA-256: sm_100a ec97940a75fa160ed9b0ef9ff5dc582abbf536a7da9148d05d2f661c36ef8ac4; sm_100f ee252c6fd3c005fcb55113c77df0e477000055604e5a6fc042d80fd12e7df11a; sm_103a 69cd047c5845166a3da070b39403ac54ade7cc6485bd7512090a54952e5ec695; sm_103f c13ca599567deaa87eb4f777009e05ffaa284be16c5ae656e69296e8dabd17e9; sm_110a 47a504ee4d1048fdca4fa38c437ee8bac5534fee0a8905c37a9640a3a9e580df; sm_110f 88ac04e5505b1306b30fd365823631e1357a9713cd3d71d44fc5046c0fb47bbe.",
+          "tool_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "tool_version": "CUDA toolkit 13.3; libNVVM 2.0; NVVM IR 2.0; debug IR 3.2; release V13.3.33",
+          "tool_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0"
+        },
+        {
+          "targets": [
+            "compute_101a",
+            "ptx93"
+          ],
+          "representation": "the same NVVM IR 2.0 paired fixture requested for compute_101a and compute_101f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "CUDA 13.3 libNVVM rejected compute_101a and compute_101f with NVVM_ERROR_INVALID_OPTION because neither architecture spelling is supported."
+        },
+        {
+          "targets": [
+            "sm_100a",
+            "ptx93"
+          ],
+          "representation": "libNVVM-produced PTX retaining all 32 paired offset kernels",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced the same terminal cubins as the pinned-LLVM PTX route: sm_100a 31c10575f4abc1e08b67332565641d620d9174d72f3be907f654fea38fc3449d; sm_100f f222a38081bea23819ddf67f48c8e14b1672513d59e4c47fcad5c726ece892fc; sm_103a 558a6b8b226bc089613d31589e40ff9f4bbcb976f07d20d72c3b70d3767330c3; sm_103f 9766d55146e1be1d52ca6f47b0ee059c23aa6dbf1f8e3e908e7fd16bd0ed92e9; sm_110a ee853129023a8a296d0c5f46ff33562dcb97b8ee85aa4f5872d01bbf5c6a38ed; sm_110f d1f14616cd2fb70649cea20be2d42f11f7c613ffebcd1a295e44180d3b32828e. Each has 32 kernel sections, 32 LDTM, 32 STTM, 16 PACK16BIT, 16 EXPAND16BIT, 32 base halves, and 32 second halves at +0x10.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_100a",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR linked with all 32 paired offset kernels retained through llvm.used",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink cubin SHA-256: sm_100a 81bfb82f0a8eed5ffbd37066c79b46e0c6b5302b2e293872fcbe5e5b929efd15; sm_100f e43b2afba55de137df03c68d998ead08d9dbd2052de984771a92d0c4421fbb9c; sm_103a b443ed7f8306f0cf48460dc4be4c067686463c1238ea73295fec70dea2111a33; sm_103f ff0489ac2481b5eaa2437cd9b009da8e7760806221a1823e7315b376438ad49c; sm_110a 1725799b8e2212f4fff9b7a6fde12778fc1c03dc0efbc91230ce1e9f8e96a9d2; sm_110f 6e8e5536d22abd70c8c91c0bbf1b65f9b9519311bfc51cee68c6ed202f24acb2. Every linked cubin retains 32 kernel sections, 32 LDTM, 32 STTM, 16 PACK16BIT, 16 EXPAND16BIT, 32 base halves, and 32 second halves at +0x10. The reviewed libNVVM policy may remain exact to sm_100a, sm_103a, and sm_110a; family-target results are separately proven evidence.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x1_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x1",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 1
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x1_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x1",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 1
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x2_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x2",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 2
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v2i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x2_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x2",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 2
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v2i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x4_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x4",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x4",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x4",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 4
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v4i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x4_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x4",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x4",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x4",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 4
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v4i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x8_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x8",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x8",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x8",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 8
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v8i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x8_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x8",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x8",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x8",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 8
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v8i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x16_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x16",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x16",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x16",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 16
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v16i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x16_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x16",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x16",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x16",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 16
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v16i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x32_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x32",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x32",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x32",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 32
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v32i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x32_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x32",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x32",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x32",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 32
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v32i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x64_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x64",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x64",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x64",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 64
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v64i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x64_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x64",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x64",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x64",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 64
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v64i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x128_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x128",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x128",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x128",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 128
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v128i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_ld_16x32bx2_x128_pack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_ld_16x32bx2_x128",
+        "llvm_symbol": "llvm.nvvm.tcgen05.ld.16x32bx2.x128",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "ld",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x128",
+            "pack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 128
+            },
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i1"
+          ],
+          "llvm_results": [
+            "v128i32"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x1_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x1",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 1
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x1_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x1",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x1",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x1",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 1
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x2_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x2",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 2
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v2i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x2_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x2",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x2",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x2",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 2
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v2i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x4_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x4",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x4",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x4",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 4
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v4i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x4_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x4",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x4",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x4",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 4
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v4i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x8_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x8",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x8",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x8",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 8
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v8i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x8_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x8",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x8",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x8",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 8
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v8i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x16_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x16",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x16",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x16",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 16
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v16i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x16_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x16",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x16",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x16",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 16
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v16i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x32_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x32",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x32",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x32",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 32
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v32i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x32_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x32",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x32",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x32",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 32
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v32i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x64_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x64",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x64",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x64",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 64
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v64i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x64_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x64",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x64",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x64",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 64
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v64i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x128_raw"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x128",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x128",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x128",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 128
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v128i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tcgen05_st_16x32bx2_x128_unpack16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "tcgen05_ldst_offset32_libnvvm_inline_probe"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tcgen05_st_16x32bx2_x128",
+        "llvm_symbol": "llvm.nvvm.tcgen05.st.16x32bx2.x128",
+        "expected_ptx": {
+          "mnemonic": "tcgen05",
+          "modifiers": [
+            "st",
+            "sync",
+            "aligned",
+            "16x32bx2",
+            "x128",
+            "unpack::16b",
+            "b32"
+          ],
+          "operands": [
+            {
+              "kind": "address"
+            },
+            {
+              "kind": "immediate"
+            },
+            {
+              "kind": "register_list",
+              "length": 128
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "tmem_ptr",
+            "i64",
+            "v128i32",
+            "i1"
+          ],
+          "llvm_results": []
+        }
+      }
+    }
+  ]
+}

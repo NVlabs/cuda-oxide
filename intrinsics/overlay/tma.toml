@@ -1,0 +1,69 @@
+# Reviewed Tensor Memory Accelerator operations.
+
+schema = 41
+family = "tma"
+
+[tma]
+llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383-tma"
+libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tma"
+runtime_validation = "unexecuted"
+
+[[tma.variant]]
+abi_id = "i0328"
+operation = "g2s_tile1d"
+
+[[tma.variant]]
+abi_id = "i0329"
+operation = "g2s_tile2d"
+
+[[tma.variant]]
+abi_id = "i0330"
+operation = "g2s_tile2d_multicast"
+
+[[tma.variant]]
+abi_id = "i0331"
+operation = "g2s_tile2d_multicast_cg2"
+
+[[tma.variant]]
+abi_id = "i0332"
+operation = "g2s_tile3d"
+
+[[tma.variant]]
+abi_id = "i0333"
+operation = "g2s_tile4d"
+
+[[tma.variant]]
+abi_id = "i0334"
+operation = "g2s_tile5d"
+
+[[tma.variant]]
+abi_id = "i0335"
+operation = "s2g_tile1d"
+
+[[tma.variant]]
+abi_id = "i0336"
+operation = "s2g_tile2d"
+
+[[tma.variant]]
+abi_id = "i0337"
+operation = "s2g_tile3d"
+
+[[tma.variant]]
+abi_id = "i0338"
+operation = "s2g_tile4d"
+
+[[tma.variant]]
+abi_id = "i0339"
+operation = "s2g_tile5d"
+
+[[tma.variant]]
+abi_id = "i0340"
+operation = "commit_group"
+
+[[tma.variant]]
+abi_id = "i0341"
+operation = "wait_group"
+
+[[tma.variant]]
+abi_id = "i0342"
+operation = "wait_group_read"

@@ -7,10 +7,9 @@ producing PTX that multiplies-accumulates to zero.
 
 ## What this tests
 
-Until full WGMMA MMA lowering lands (it requires register allocation for
-16+ output registers), `convert_mma` must fail loud. This crate calls
-`wgmma_mma_m64n64k16_f32_bf16` from a `#[kernel]`; the build is expected
-to fail.
+Until full WGMMA MMA lowering can preserve delayed 32-register accumulator
+state across commit and wait, the importer must reject these calls. The
+dialect lowering remains fail-closed as a second guard.
 
 ## Usage
 
@@ -23,17 +22,12 @@ cargo oxide run error_wgmma_mma_unimplemented
 The build **must fail** with a diagnostic similar to:
 
 ```
-error: [rustc_codegen_cuda] Device codegen failed: PTX generation failed:
-       Lowering failed: Compilation error: invalid input program.
-       wgmma.mma_async lowering is not yet implemented; calls to
-       `cuda_device::wgmma::wgmma_mma_*` from a kernel are currently
-       unsupported. Tracking issue: full lowering requires register
-       allocation for 16+ output registers.
+Unsupported construct: WGMMA MMA is not yet supported: lowering must
+preserve delayed 32-register accumulator state across commit_group and
+wait_group
 ```
 
-If the build succeeds, the silent-miscompile regression has returned —
-`convert_mma` is once again emitting `// wgmma.mma placeholder` and the
-multiply-accumulate is being erased.
+If the build succeeds, the unsupported call escaped both fail-closed guards.
 
 ## Categorisation
 

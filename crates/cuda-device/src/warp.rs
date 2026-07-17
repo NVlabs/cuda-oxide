@@ -100,7 +100,7 @@ pub fn lane_id() -> u32 {
 /// satisfied the ballot predicate.
 #[inline(never)]
 pub fn lanemask_lt() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.lt()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_lt called outside CUDA kernel context")
 }
 
@@ -111,7 +111,7 @@ pub fn lanemask_lt() -> u32 {
 /// giving an inclusive prefix mask.
 #[inline(never)]
 pub fn lanemask_le() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.le()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_le called outside CUDA kernel context")
 }
 
@@ -122,7 +122,7 @@ pub fn lanemask_le() -> u32 {
 /// directly from a hardware register.
 #[inline(never)]
 pub fn lanemask_eq() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.eq()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_eq called outside CUDA kernel context")
 }
 
@@ -132,7 +132,7 @@ pub fn lanemask_eq() -> u32 {
 /// `i` the result sets bits `i..=31` (i.e. `lanemask_gt() | lanemask_eq()`).
 #[inline(never)]
 pub fn lanemask_ge() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.ge()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_ge called outside CUDA kernel context")
 }
 
@@ -143,45 +143,11 @@ pub fn lanemask_ge() -> u32 {
 /// scans and for finding the next active lane via `(ballot & lanemask_gt())`.
 #[inline(never)]
 pub fn lanemask_gt() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.gt()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_gt called outside CUDA kernel context")
 }
 
-// =============================================================================
-// Hardware Warp Identification
-// =============================================================================
-
-/// Sample the current warp identifier within this thread block (CTA).
-///
-/// Returns the `%warpid` special register. It is the same for every thread in
-/// a warp and unique only within the current CTA, not across CTAs. The value
-/// may change if the thread is rescheduled after preemption. For a stable
-/// logical warp index, derive one from `threadIdx` instead.
-///
-/// Valid range: `0 ..< nwarpid()`.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %warpid;`
-#[inline(never)]
-pub fn warpid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.warpid()
-    unreachable!("warpid called outside CUDA kernel context")
-}
-
-/// Read the maximum number of warp identifiers.
-///
-/// Returns the `%nwarpid` special register. This is an identifier bound, not
-/// the number of warps currently active.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %nwarpid;`
-#[inline(never)]
-pub fn nwarpid() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nwarpid()
-    unreachable!("nwarpid called outside CUDA kernel context")
-}
+include!("generated/warp_sreg.rs");
 
 /// Synchronize a subset of warp lanes given by `mask`.
 ///
@@ -199,10 +165,10 @@ pub fn nwarpid() -> u32 {
 /// # Example
 ///
 /// ```rust,ignore
+/// let mask = warp::ballot_sync(u32::MAX, some_predicate);
 /// if some_predicate {
-///     let mask = warp::active_mask();
-///     // ... do divergent work ...
-///     warp::sync_mask(mask);  // formal convergence point
+///     // Every lane in `mask` must reach this call.
+///     warp::sync_mask(mask);
 ///     let leader = mask.trailing_zeros();
 ///     let value = warp::shuffle_sync(mask, my_value, leader);
 /// }
@@ -213,32 +179,28 @@ pub fn sync_mask(mask: u32) {
     unreachable!("sync_mask called outside CUDA kernel context")
 }
 
-/// Bitmask of currently-converged lanes in this warp.
+/// Bitmask of lanes active at this instruction.
 ///
 /// PTX `activemask.b32` (PTX 6.2+, sm_30+). Returns a 32-bit value where bit
-/// `k` is set iff lane `k` is currently converged with this thread (i.e.
-/// participating in this dynamic execution region).
+/// `k` is set when lane `k` is active as this instruction executes.
 ///
-/// In straight-line warp-uniform code this is `0xFFFFFFFF`. In divergent
-/// branches it shrinks to the subset of lanes that took the same branch.
+/// This is only a snapshot. It does not prove that the returned lanes are
+/// converged or will all execute a later collective. In straight-line,
+/// full-warp code the result is normally `0xFFFFFFFF`.
 ///
 /// # Common uses
 ///
-/// - **Build a mask for `*_sync` calls inside divergent code**: when only
-///   some lanes reach a `ballot`/`shuffle`/`match` call site, pass
-///   `active_mask()` as the mask so the intrinsic only synchronises the
-///   participating lanes.
-/// - **Construct a `CoalescedThreads` group**: the typed group's membership
-///   set is the active mask captured at construction time.
+/// - Inspect which lanes are active at a specific point.
+/// - Capture the mask used by [`crate::cooperative_groups::CoalescedThreads`].
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// if some_predicate {
-///     // Only some lanes get here. Build a mask of who's actually present.
+///     // Only some lanes get here. Observe the active lanes at this point.
 ///     let mask = warp::active_mask();
-///     let count = mask.count_ones();        // how many lanes converged here
-///     let leader = mask.trailing_zeros();   // lowest converged lane
+///     let count = mask.count_ones();
+///     let leader = mask.trailing_zeros();
 /// }
 /// ```
 #[inline(never)]
@@ -438,8 +400,10 @@ pub fn shuffle_up_f32(var: f32, delta: u32) -> f32 {
 // instruction and no `@llvm.nvvm.shfl.sync.*.i64` intrinsic. A 64-bit shuffle
 // is therefore two 32-bit shuffles: split the value into its low/high halves,
 // shuffle each with the same lane argument, and reassemble. We do that split in
-// one convergent inline-PTX block (`mov.b64 {lo,hi}, x; shfl…; shfl…; mov.b64`)
-// so the two halves stay a single fused collective at the call site.
+// one compiler-visible convergent inline-PTX block
+// (`mov.b64 {lo,hi}, x; shfl…; shfl…; mov.b64`). The hardware still executes
+// two sequential b32 collectives; the block keeps the compiler from separating
+// them.
 //
 // `u64` is the carrier (data movement is bit-exact, so it also covers `i64` —
 // cast with `as u64` / `as i64`). The `f64` forms are zero-cost wrappers that
@@ -455,6 +419,16 @@ pub fn shuffle_up_f32(var: f32, delta: u32) -> f32 {
 /// - `mask`: warp lane participation mask (`u32::MAX` = all 32 lanes)
 /// - `var`: the 64-bit value to share (each lane provides its own)
 /// - `src_lane`: the lane ID (0-31) to read from
+///
+/// # Participation contract
+///
+/// This compatibility function keeps its existing safe signature. The calling
+/// lane must be named in `mask`, and every non-exited named lane must execute
+/// the same shuffle with the same mask. A source lane computed as in range by
+/// PTX must be active and named in `mask`; if PTX marks it out of range, the
+/// calling lane's input is copied.
+/// On `sm_6x` and earlier, all named lanes must execute in convergence, and no
+/// lane outside `mask` may be active.
 #[inline(never)]
 pub fn shuffle_u64_sync(mask: u32, var: u64, src_lane: u32) -> u64 {
     let _ = (mask, var, src_lane);
@@ -465,6 +439,9 @@ pub fn shuffle_u64_sync(mask: u32, var: u64, src_lane: u32) -> u64 {
 ///
 /// 64-bit analogue of [`shuffle_xor_sync`] (PTX `shfl.sync.bfly`). The full-warp
 /// shorthand is [`shuffle_xor_u64`].
+///
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(never)]
 pub fn shuffle_xor_u64_sync(mask: u32, var: u64, lane_mask: u32) -> u64 {
     let _ = (mask, var, lane_mask);
@@ -475,6 +452,9 @@ pub fn shuffle_xor_u64_sync(mask: u32, var: u64, lane_mask: u32) -> u64 {
 ///
 /// 64-bit analogue of [`shuffle_down_sync`] (PTX `shfl.sync.down`). The full-warp
 /// shorthand is [`shuffle_down_u64`].
+///
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(never)]
 pub fn shuffle_down_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
     let _ = (mask, var, delta);
@@ -485,6 +465,9 @@ pub fn shuffle_down_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
 ///
 /// 64-bit analogue of [`shuffle_up_sync`] (PTX `shfl.sync.up`). The full-warp
 /// shorthand is [`shuffle_up_u64`].
+///
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(never)]
 pub fn shuffle_up_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
     let _ = (mask, var, delta);
@@ -492,24 +475,32 @@ pub fn shuffle_up_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
 }
 
 /// Shuffle u64 (full-warp): equivalent to [`shuffle_u64_sync`]`(u32::MAX, ...)`.
+/// All 32 non-exited lanes must execute the same shuffle. A source computed as
+/// in range by PTX must be active.
 #[inline(always)]
 pub fn shuffle_u64(var: u64, src_lane: u32) -> u64 {
     shuffle_u64_sync(u32::MAX, var, src_lane)
 }
 
 /// Shuffle XOR u64 (full-warp): equivalent to [`shuffle_xor_u64_sync`]`(u32::MAX, ...)`.
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(always)]
 pub fn shuffle_xor_u64(var: u64, lane_mask: u32) -> u64 {
     shuffle_xor_u64_sync(u32::MAX, var, lane_mask)
 }
 
 /// Shuffle down u64 (full-warp): equivalent to [`shuffle_down_u64_sync`]`(u32::MAX, ...)`.
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(always)]
 pub fn shuffle_down_u64(var: u64, delta: u32) -> u64 {
     shuffle_down_u64_sync(u32::MAX, var, delta)
 }
 
 /// Shuffle up u64 (full-warp): equivalent to [`shuffle_up_u64_sync`]`(u32::MAX, ...)`.
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(always)]
 pub fn shuffle_up_u64(var: u64, delta: u32) -> u64 {
     shuffle_up_u64_sync(u32::MAX, var, delta)
@@ -575,6 +566,7 @@ pub fn shuffle_up_f64(var: f64, delta: u32) -> f64 {
 /// PTX `vote.sync.all`. The full-warp shorthand is [`all`].
 #[inline(never)]
 pub fn all_sync(mask: u32, predicate: bool) -> bool {
+    // Recognized through the generated intrinsic catalog.
     let _ = (mask, predicate);
     unreachable!("all_sync called outside CUDA kernel context")
 }
@@ -584,6 +576,7 @@ pub fn all_sync(mask: u32, predicate: bool) -> bool {
 /// PTX `vote.sync.any`. The full-warp shorthand is [`any`].
 #[inline(never)]
 pub fn any_sync(mask: u32, predicate: bool) -> bool {
+    // Recognized through the generated intrinsic catalog.
     let _ = (mask, predicate);
     unreachable!("any_sync called outside CUDA kernel context")
 }
@@ -595,6 +588,7 @@ pub fn any_sync(mask: u32, predicate: bool) -> bool {
 /// is [`ballot`].
 #[inline(never)]
 pub fn ballot_sync(mask: u32, predicate: bool) -> u32 {
+    // Recognized through the generated intrinsic catalog.
     let _ = (mask, predicate);
     unreachable!("ballot_sync called outside CUDA kernel context")
 }
@@ -711,13 +705,14 @@ pub fn match_any_i64_sync(mask: u32, value: u64) -> u32 {
     unreachable!("match_any_i64_sync called outside CUDA kernel context")
 }
 
-/// Match-all (32-bit, masked): full mask if every participating lane agrees, else 0.
+/// Match-all (32-bit, masked): participating-lane mask if every value agrees, else 0.
 ///
 /// PTX `match.all.sync.b32`. Lowered to `@llvm.nvvm.match.all.sync.i32p`
 /// with the predicate field discarded. Requires sm_70+.
 ///
-/// Returns `mask` if every lane in `mask` has the same `value`; otherwise 0.
-/// Recover the all-match predicate as `result != 0`.
+/// Returns the non-exited participating lanes if every participating lane has
+/// the same `value`; otherwise 0. Recover the all-match predicate as
+/// `result != 0`.
 ///
 /// # Example
 ///
@@ -754,13 +749,13 @@ pub fn match_all_i64_sync(mask: u32, value: u64) -> u32 {
 ///
 /// # Convergence
 ///
-/// Like all `*_sync` collectives, the lanes named in `mask` must be
-/// **converged** at the call. Straight-line warp-uniform code is fine,
-/// but after a divergent branch you must first reconverge the subset —
-/// e.g. `warp::sync_mask(mask)` — otherwise the result is undefined.
-/// (This is a runtime requirement on the caller; it is distinct from the
-/// `convergent` attribute on the lowered intrinsic, which only stops LLVM
-/// from moving the instruction across control flow.)
+/// Every non-exited lane named in `mask` must execute the same reduction
+/// instruction, with the same qualifiers and `mask`; the calling lane must
+/// itself be named in `mask`. The instruction waits for those lanes, so a
+/// separate [`sync_mask`] is not required merely because they arrived through
+/// divergent control flow. Violating the participation contract makes the PTX
+/// behavior undefined. This runtime contract is distinct from LLVM's
+/// `convergent` attribute, which constrains compiler motion and duplication.
 #[inline(never)]
 pub fn redux_sync_add(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -782,7 +777,7 @@ pub fn redux_sync_add(mask: u32, value: u32) -> u32 {
 /// Warp-wide unsigned minimum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.umin` → PTX `redux.sync.min.u32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_min_u32(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -792,7 +787,7 @@ pub fn redux_sync_min_u32(mask: u32, value: u32) -> u32 {
 /// Warp-wide signed minimum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.min` → PTX `redux.sync.min.s32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_min_i32(mask: u32, value: i32) -> i32 {
     let _ = (mask, value);
@@ -802,7 +797,7 @@ pub fn redux_sync_min_i32(mask: u32, value: i32) -> i32 {
 /// Warp-wide unsigned maximum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.umax` → PTX `redux.sync.max.u32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_max_u32(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -812,7 +807,7 @@ pub fn redux_sync_max_u32(mask: u32, value: u32) -> u32 {
 /// Warp-wide signed maximum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.max` → PTX `redux.sync.max.s32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_max_i32(mask: u32, value: i32) -> i32 {
     let _ = (mask, value);
@@ -822,7 +817,7 @@ pub fn redux_sync_max_i32(mask: u32, value: i32) -> i32 {
 /// Warp-wide bitwise AND reduction (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.and` → PTX `redux.sync.and.b32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_and(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -832,7 +827,7 @@ pub fn redux_sync_and(mask: u32, value: u32) -> u32 {
 /// Warp-wide bitwise OR reduction (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.or` → PTX `redux.sync.or.b32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_or(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -842,7 +837,7 @@ pub fn redux_sync_or(mask: u32, value: u32) -> u32 {
 /// Warp-wide bitwise XOR reduction (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.xor` → PTX `redux.sync.xor.b32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -853,10 +848,10 @@ pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
 // Leader election (sm_90+)
 // =============================================================================
 //
-// `elect.sync` collectively chooses a single "leader" lane out of those named
-// in `mask`. The hardware picks the lowest-numbered participating lane and
-// hands every lane two facts: the leader's lane id, and whether *it* is the
-// leader. It replaces the pre-Hopper idiom
+// `elect.sync` collectively chooses one leader lane from those named in
+// `mask`. The choice is deterministic for the same mask. Every participating
+// lane receives the leader's lane id and whether it is the leader. It replaces
+// a multi-instruction election sequence such as
 //
 // ```rust,ignore
 // let active = warp::active_mask();
@@ -869,15 +864,12 @@ pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
 
 /// Elect a single leader lane from the participating `mask` (sm_90+).
 ///
-/// PTX `elect.sync d|p, membermask` (emitted as convergent inline PTX — the
-/// `@llvm.nvvm.elect.sync` intrinsic has no NVPTX lowering in current LLVM).
-/// The lowest-numbered lane set in `mask` becomes the leader. Returns
+/// PTX `elect.sync d|p, membermask`, lowered through the generated route for
+/// the selected backend. PTX does not promise which participating lane is
+/// chosen, but the choice is deterministic for the same mask. Returns
 /// `(leader_lane, is_elected)`:
 ///
-/// - `leader_lane`: the lane id of the elected leader. PTX only defines this
-///   value on the elected lane itself; it is unspecified on non-elected lanes,
-///   so broadcast it (e.g. via [`shuffle_sync`]) if the rest of the warp needs
-///   it.
+/// - `leader_lane`: the elected lane id, returned to each participating lane.
 /// - `is_elected`: `true` only for the calling lane if it is the leader.
 ///
 /// Requires Hopper (sm_90+). Convergent: every lane named in `mask` must be
@@ -924,4 +916,37 @@ pub fn elect_sync(mask: u32) -> (u32, bool) {
 #[inline(always)]
 pub fn is_elected_sync(mask: u32) -> bool {
     elect_sync(mask).1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_64_bit_shuffle_signatures_stay_stable() {
+        let _: [fn(u32, u64, u32) -> u64; 4] = [
+            shuffle_u64_sync,
+            shuffle_xor_u64_sync,
+            shuffle_down_u64_sync,
+            shuffle_up_u64_sync,
+        ];
+        let _: [fn(u64, u32) -> u64; 4] = [
+            shuffle_u64,
+            shuffle_xor_u64,
+            shuffle_down_u64,
+            shuffle_up_u64,
+        ];
+        let _: [fn(u32, f64, u32) -> f64; 4] = [
+            shuffle_f64_sync,
+            shuffle_xor_f64_sync,
+            shuffle_down_f64_sync,
+            shuffle_up_f64_sync,
+        ];
+        let _: [fn(f64, u32) -> f64; 4] = [
+            shuffle_f64,
+            shuffle_xor_f64,
+            shuffle_down_f64,
+            shuffle_up_f64,
+        ];
+    }
 }

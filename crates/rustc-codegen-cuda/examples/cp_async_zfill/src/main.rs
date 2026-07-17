@@ -18,8 +18,8 @@
 //!   cargo oxide run cp_async_zfill
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::async_copy::cp_async_ca_zfill_4;
-use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, ptx_asm, thread};
+use cuda_device::async_copy::{cp_async_ca_zfill_4, cp_async_commit_group, cp_async_wait_all};
+use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 
 // =============================================================================
 // KERNELS
@@ -51,8 +51,8 @@ mod kernels {
         // Initiate the zero-fill copy, commit, and wait.
         unsafe {
             cp_async_ca_zfill_4(dst_ptr, src_ptr, src_size);
-            ptx_asm!("cp.async.commit_group;", clobber("memory"));
-            ptx_asm!("cp.async.wait_all;", clobber("memory"));
+            cp_async_commit_group();
+            cp_async_wait_all();
         }
 
         thread::sync_threads();

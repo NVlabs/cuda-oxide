@@ -6932,6 +6932,24 @@ fn translate_reify_fn_pointer(
             ))
         );
     };
+    let raw_intrinsic =
+        crate::translator::terminator::intrinsics::generated::require_supported_raw_intrinsic(
+            fn_def, &loc,
+        )?;
+    let compatibility_path = fn_def.name().as_str().to_string();
+    if let Some(path) = raw_intrinsic.or_else(|| {
+        crate::translator::terminator::intrinsics::generated::is_generated_intrinsic_path(
+            &compatibility_path,
+        )
+        .then_some(compatibility_path)
+    }) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "generated CUDA intrinsic `{path}` must be called directly and cannot be converted to a function pointer"
+            ))
+        );
+    }
     let mangled = Instance::resolve(fn_def, &substs)
         .map_err(|e| {
             input_error_noloc!(TranslationErr::unsupported(format!(

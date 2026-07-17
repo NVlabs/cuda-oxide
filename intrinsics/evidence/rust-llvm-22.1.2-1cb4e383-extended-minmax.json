@@ -1,0 +1,1736 @@
+{
+  "schema": 6,
+  "backend_profile": "rust-llvm-22.1.2-1cb4e383",
+  "backend_kind": "llvm_nvptx",
+  "llvm_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
+  "backend_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+  "backend_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "status": "validated",
+    "declaration_attributes_canonicalized": true,
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "extended_minmax_base_sm80_ptx70",
+      "coverage_count": 8,
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "8 imported typed LLVM declarations and calls",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llvm-as and llvm-dis canonicalized the 2,671-byte bundle (SHA-256 633c71128514c154f6265a81ecccaaf07403bb43f7506c43169745fa637186e0) to 3,657 bytes (SHA-256 cd5eff71081080c10456c5940a336f9cf2ab7aa81ddb9c4a74de48becf0e96e4). Every declaration gained the canonical nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) attributes."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "8 typed llvm.nvvm min/max calls",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llc emitted all 8 exact instruction heads once in 1,714-byte PTX (SHA-256 82bde5e15b99be603b82355420fe0833e33ac4fa99aa2913a948766a930cce5c)."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "typed LLVM PTX 7.0 at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 1,464-byte sm_80 cubin (SHA-256 6bcec1b1eab13da703fdade053704aa6ab00591a1b38dd7daf48ac0dec541df2).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "8 pure production inline-PTX min/max calls",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 8 exact, unique instruction heads in 1,799-byte PTX 7.0 (SHA-256 36fb6f2975e9fafed81eaac714d6aad034242d3fec23e3aaada22274bd340d10). The typed and inline instruction indexes match."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "production inline PTX 7.0 at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 3,752-byte sm_80 cubin (SHA-256 5dc8854447fdad3cf21f7b63544880e98e1489646e4dda143b6775922c5fea09). PTX 6.5 and sm_75 comparisons failed with explicit PTX 7.0 and sm_80 requirements; stderr SHA-256 values are d319aa283a002fe31332d2bc659cd576cf12780ccef0da41902d951b45b72b7a and 51e54157842779ffd1528b1dd45f179d59f3bc8ec2f17d61689c4787ac250593.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
+    },
+    {
+      "id": "extended_minmax_xorsign_sm86_ptx72",
+      "coverage_count": 20,
+      "stages": [
+        {
+          "targets": [
+            "sm_86",
+            "ptx78"
+          ],
+          "representation": "20 imported typed LLVM declarations and calls",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llvm-as and llvm-dis canonicalized the 6,304-byte bundle (SHA-256 0593b8e4f092e81c9b689784cc9fc4d546e5f2d0e4ae0d18de7942163ed77364) to 8,414 bytes (SHA-256 6df82bf883df8028630c87d191014cd929906625eac0f3fbc50f4f3520a83999). Every declaration gained the canonical nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) attributes."
+        },
+        {
+          "targets": [
+            "sm_86",
+            "ptx78"
+          ],
+          "representation": "20 typed llvm.nvvm xorsign.abs calls using LLVM's +ptx78 carrier",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llc emitted all 20 exact instruction heads once in 2,986-byte PTX 7.8 (SHA-256 4d23b35b4fdbfed5e6ec50bcf6ad941c03997c98e383ef06e4434acaa0bedf9a)."
+        },
+        {
+          "targets": [
+            "sm_86",
+            "ptx78"
+          ],
+          "representation": "typed LLVM PTX 7.8 carrier",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 1,464-byte sm_86 cubin (SHA-256 ac87a5754b27655c80d8e61387ce051754d199d422f7d209f16a4208816152df).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_86",
+            "ptx72"
+          ],
+          "representation": "20 pure production inline-PTX calls at catalog floor PTX 7.2, mapped to LLVM +ptx78",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 20 exact, unique instruction heads in 3,529-byte PTX 7.8 (SHA-256 a0c8374e49cae0b20a1f2b2a9f5999ec9c69f3b7b023a4661e05d9ca02f47867). cuda-oxide maps catalog PTX 7.2 through 7.8 to LLVM's available +ptx78 feature. The typed and inline instruction indexes match."
+        },
+        {
+          "targets": [
+            "sm_86",
+            "ptx72"
+          ],
+          "representation": "production inline PTX rewritten only to its exact PTX 7.2 admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the 3,529-byte PTX 7.2 module (SHA-256 7d8f296b827a63d0fae7424822bcbe9df8758cf8c1c7a82016b7d501a9c669ab) and produced a 4,136-byte sm_86 cubin (SHA-256 dd975a09af37a8a7a825d287383ebb15f492f4d004223b494af0c0ba1185c26d). PTX 7.1 and sm_80 comparisons failed with explicit PTX 7.2 and sm_86 requirements; stderr SHA-256 values are bda2abd9758354188439be0cb81ea5693be653c095aacbd153848d0a3df46a0c and 55636d5221bf3d6b9eca0222d13f7957936a20d1bfe09e491f2756a6eb234afd.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_nan_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_nan_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.nan.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_nan_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_nan_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.nan.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_nan_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_nan_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.nan.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_bf16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_bf16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.bf16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "bf16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "llvm_results": [
+            "v2bf16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "concrete_llvm_results": [
+            "v2bf16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_xorsign_abs_bf16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_xorsign_abs_bf16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.xorsign.abs.bf16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "bf16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "llvm_results": [
+            "v2bf16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "concrete_llvm_results": [
+            "v2bf16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_xorsign_abs_bf16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_xorsign_abs_bf16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.xorsign.abs.bf16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "bf16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "llvm_results": [
+            "v2bf16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "concrete_llvm_results": [
+            "v2bf16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmin.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmin.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_nan_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_nan_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.nan.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_nan_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_nan_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.nan.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_nan_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_nan_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.nan.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_bf16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_bf16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.bf16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "bf16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "llvm_results": [
+            "v2bf16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "concrete_llvm_results": [
+            "v2bf16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_base_sm80_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_80",
+          "ptx_feature": "+ptx70"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_xorsign_abs_bf16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_xorsign_abs_bf16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.xorsign.abs.bf16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "bf16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "llvm_results": [
+            "v2bf16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "concrete_llvm_results": [
+            "v2bf16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_xorsign_abs_bf16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_xorsign_abs_bf16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.xorsign.abs.bf16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "bf16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "llvm_results": [
+            "v2bf16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2bf16",
+            "v2bf16"
+          ],
+          "concrete_llvm_results": [
+            "v2bf16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_xorsign_abs_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_xorsign_abs_f",
+        "llvm_symbol": "llvm.nvvm.fmax.xorsign.abs.f",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ],
+          "concrete_llvm_arguments": [
+            "f32",
+            "f32"
+          ],
+          "concrete_llvm_results": [
+            "f32"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_xorsign_abs_f16x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_xorsign_sm86_ptx72"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_xorsign_abs_f16x2",
+        "llvm_symbol": "llvm.nvvm.fmax.xorsign.abs.f16x2",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "f16x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "llvm_results": [
+            "v2f16"
+          ],
+          "concrete_llvm_arguments": [
+            "v2f16",
+            "v2f16"
+          ],
+          "concrete_llvm_results": [
+            "v2f16"
+          ],
+          "gpu_target": "sm_86",
+          "ptx_feature": "+ptx78"
+        }
+      }
+    }
+  ]
+}

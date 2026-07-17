@@ -285,7 +285,7 @@ pub(crate) fn convert_atomic_cmpxchg(
 ///
 /// Uses `SideEffect` (not convergent): atomics are per-thread, not
 /// warp-synchronous.
-fn convert_packed_atom_add(
+pub(crate) fn convert_packed_atom_add(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
@@ -316,24 +316,4 @@ fn convert_packed_atom_add(
     rewriter.insert_operation(ctx, asm_op);
     rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
-}
-
-/// Convert `nvvm.atom_add_f16x2` to inline PTX.
-pub(crate) fn convert_atom_add_f16x2(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_packed_atom_add(ctx, rewriter, op, "f16x2")
-}
-
-/// Convert `nvvm.atom_add_bf16x2` to inline PTX.
-pub(crate) fn convert_atom_add_bf16x2(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_packed_atom_add(ctx, rewriter, op, "bf16x2")
 }

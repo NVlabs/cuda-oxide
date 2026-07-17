@@ -1205,7 +1205,7 @@ impl<'a> ModuleExportState<'a> {
             CallOpCallable::Direct(identifier) => {
                 let name = identifier.to_string();
                 let fixed = if name.starts_with("llvm_") {
-                    name.replace('_', ".")
+                    super::names::decode_intrinsic_identifier(&name)
                 } else {
                     super::names::strip_device_prefix(&name)
                 };
@@ -1324,7 +1324,7 @@ impl<'a> ModuleExportState<'a> {
                 let name = identifier.to_string();
                 // LLVM intrinsics use dots in IR; Pliron IR identifiers use underscores.
                 let fixed = if name.starts_with("llvm_") {
-                    name.replace('_', ".")
+                    super::names::decode_intrinsic_identifier(&name)
                 } else {
                     super::names::strip_device_prefix(&name)
                 };
@@ -1699,7 +1699,7 @@ impl<'a> ModuleExportState<'a> {
         }
 
         let function_name = if symbol_name.starts_with("llvm_") {
-            symbol_name.replace('_', ".")
+            super::names::decode_intrinsic_identifier(&symbol_name)
         } else {
             super::names::strip_device_prefix(&symbol_name)
         };

@@ -467,37 +467,4 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
     }
 }
 
-// =============================================================================
-// Shared Memory Size Queries
-// =============================================================================
-
-/// Read the size (in bytes) of dynamic shared memory allocated for this kernel.
-///
-/// Returns the `%dynamic_smem_size` special register -- the number of bytes of
-/// shared memory requested at launch time via `LaunchConfig::shared_mem_bytes`
-/// (or the CUDA driver equivalent). This does *not* include statically allocated
-/// shared memory (`SharedArray`).
-///
-/// # PTX
-///
-/// `mov.u32 %r, %dynamic_smem_size;`
-#[inline(never)]
-pub fn dynamic_smem_size() -> u32 {
-    // Lowered to exact inline PTX for LLVM 21/22 compatibility.
-    unreachable!("dynamic_smem_size called outside CUDA kernel context")
-}
-
-/// Read the allocated user shared-memory size for this kernel's thread block.
-///
-/// Returns `%total_smem_size` in bytes. It includes static and dynamic user
-/// allocations, excludes memory reserved for NVIDIA system software, and is
-/// rounded to the target architecture's shared-memory allocation unit.
-///
-/// # PTX
-///
-/// `mov.u32 %r, %total_smem_size;`
-#[inline(never)]
-pub fn total_smem_size() -> u32 {
-    // Lowered to exact inline PTX for LLVM 21/22 compatibility.
-    unreachable!("total_smem_size called outside CUDA kernel context")
-}
+include!("generated/shared_sreg.rs");

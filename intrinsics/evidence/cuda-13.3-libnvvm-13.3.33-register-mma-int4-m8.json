@@ -1,0 +1,270 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "mma_m8n8k32_s32_s4",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_s4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for m8n8k32 signed INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "s32", "s4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4_u4",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_s4_u4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.s4.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for m8n8k32 mixed-sign INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "s32", "s4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_u4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for m8n8k32 unsigned INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "s32", "u4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4_s4",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_u4_s4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.u4.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for m8n8k32 mixed-sign INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "s32", "u4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4_satfinite",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_s4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for saturating m8n8k32 signed INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "satfinite", "s32", "s4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4_u4_satfinite",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_s4_u4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.s4.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for saturating m8n8k32 mixed-sign INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "satfinite", "s32", "s4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4_satfinite",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_u4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for saturating m8n8k32 unsigned INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "satfinite", "s32", "u4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4_s4_satfinite",
+      "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_u4_s4",
+      "llvm_symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [{
+        "targets": ["compute_75", "ptx93"],
+        "representation": "convergent register-only inline PTX for saturating m8n8k32 mixed-sign INT4 MMA",
+        "stage": "backend_codegen",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33."
+      }, {
+        "targets": ["sm_75", "ptx93"],
+        "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+        "stage": "device_link",
+        "mechanism": "inline_ptx",
+        "outcome": "succeeded",
+        "artifact_kind": "cubin",
+        "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+        "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+        "tool_version": "V13.3.33",
+        "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+      }],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sync", "aligned", "m8n8k32", "row", "col", "satfinite", "s32", "u4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 2}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 1}, {"kind": "register_list", "length": 2}]}
+    }
+  ]
+}

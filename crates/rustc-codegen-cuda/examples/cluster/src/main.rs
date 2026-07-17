@@ -25,6 +25,18 @@ use cuda_host::cuda_module;
 mod kernels {
     use super::*;
 
+    /// Keeps the generated cluster-grid helper path in the compiled module.
+    #[kernel]
+    pub fn compile_cluster_grid_helpers(mut output: DisjointSlice<u32>) {
+        if thread::threadIdx_x() == 0 && output.len() >= 2 {
+            // SAFETY: the length check covers both output slots.
+            unsafe {
+                *output.get_unchecked_mut(0) = cluster::cluster_idx();
+                *output.get_unchecked_mut(1) = cluster::num_clusters();
+            }
+        }
+    }
+
     /// Test kernel with compile-time cluster configuration.
     ///
     /// The `#[cluster_launch(4, 1, 1)]` attribute tells the compiler to emit:

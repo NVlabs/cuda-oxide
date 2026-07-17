@@ -8,7 +8,7 @@
 //! Demonstrates mbarrier (async barrier) intrinsics:
 //! - mbarrier_init: Initialize barrier
 //! - mbarrier_arrive: Arrive at barrier, get token
-//! - mbarrier_test_wait: Non-blocking check if phase complete
+//! - mbarrier_wait: Wait for the phase using generated mbarrier_test_wait
 //! - mbarrier_inval: Invalidate barrier
 //!
 //! Build and run with:
@@ -16,7 +16,7 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::barrier::{
-    Barrier, mbarrier_arrive, mbarrier_init, mbarrier_inval, mbarrier_test_wait,
+    Barrier, mbarrier_arrive, mbarrier_init, mbarrier_inval, mbarrier_wait,
 };
 use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
 use cuda_host::cuda_module;
@@ -50,17 +50,16 @@ mod kernels {
         // Each thread arrives at the barrier
         let token = unsafe { mbarrier_arrive(&raw const BAR) };
 
-        // Spin until barrier phase completes
-        unsafe {
-            while !mbarrier_test_wait(&raw const BAR, token) {
-                // Spin-wait
-            }
-        }
+        // Wait until the generated test-wait intrinsic reports completion.
+        unsafe { mbarrier_wait(&raw const BAR, token) }
 
         // All threads reached here - barrier complete
         if let Some(out_elem) = out.get_mut(gid) {
             *out_elem = 1u32;
         }
+
+        // Ensure every thread is done before invalidation.
+        thread::sync_threads();
 
         // Thread 0 invalidates the barrier
         if tid == 0 {
@@ -95,7 +94,7 @@ mod kernels {
 
         // Arrive and wait for all threads
         let token = unsafe { mbarrier_arrive(&raw const BAR) };
-        unsafe { while !mbarrier_test_wait(&raw const BAR, token) {} }
+        unsafe { mbarrier_wait(&raw const BAR, token) }
 
         // Read neighbor's data (with wraparound)
         let neighbor_idx = ((tid + 1) % block_size) as usize;
@@ -105,6 +104,9 @@ mod kernels {
         if let Some(out_elem) = out.get_mut(gid) {
             *out_elem = neighbor_val;
         }
+
+        // Ensure every thread is done before invalidation.
+        thread::sync_threads();
 
         // Cleanup
         if tid == 0 {

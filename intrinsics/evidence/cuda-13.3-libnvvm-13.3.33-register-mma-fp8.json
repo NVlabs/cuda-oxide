@@ -1,0 +1,372 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_89",
+    "ptx_feature": "PTX ISA 8.7 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "standard_fp8_register_mma_k16_f16",
+      "coverage_count": 4,
+      "stages": [
+        {
+          "targets": ["compute_89", "ptx93"],
+          "representation": "convergent standard FP8 MMA inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled a 13717-byte typed-pointer IR fixture (SHA-256 add55fcb64ff5a318dc20e775f57cd17d775dac1215a43828a3b2d1b6b513cd6) to 9034-byte PTX (SHA-256 902cb73837cc693df499fd107cc437dd344315e57e4b29ad8b980d269452f0dc) and 6932-byte LTOIR (SHA-256 ff6619b9b8cf44f6bec07aeca7d6f2ed5bffda01501d0d0a96a06bf4fdd48f2b), with all 16 forms live. An eight-call convergent duplicate fixture remained eight instructions. The same fixture emitted all forms for compute_90 and also emitted compute_87 intermediates that terminal tools rejected."
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "libNVVM standard FP8 MMA PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "ptxas produced a 10088-byte cubin (SHA-256 bb4610329a1066be83c4306c9b46b5f58300387b496a33415420537be89e4cbc); its 43177-byte SASS dump (SHA-256 2693f93687940907f276c0383cbdb32e17a2b4d7a94886cc14895fea9e5d2f6b) contains 16 QMMA instructions. The same all-form PTX assembled for newer sm_90 into a 13296-byte cubin.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "libNVVM LTOIR retaining all standard FP8 MMA forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 10088-byte cubin (SHA-256 bd21c8f939a126734119f9b6e0cfbf45d5552ceb6069c5f8de6f4209234b8640); its SASS is byte-identical to the direct ptxas dump and contains 16 QMMA instructions. Newer sm_90 device linking also succeeded with cubin SHA-256 a83dcd59c27fad87a17e5308e245639743bdddc5e7327aa01acff9d624c27c99.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM direct assembly boundary",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "ptxas rejected all forms because standard FP8 MMA requires sm_89 or higher; the diagnostic SHA-256 is d25b354f14d618d6202a98bbfe3292fb19e1a0894aea8f5aba28d0e2530a071f.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM device-link boundary",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the compute_87 LTOIR because standard FP8 MMA requires sm_89 or higher; the diagnostic SHA-256 is bf2ed0ca6d60259bc52c0449bbbf7a68af6811b581e338d04fdeda562b6587fc.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "standard_fp8_register_mma_k16_f32",
+      "coverage_count": 4,
+      "stages": [
+        {
+          "targets": ["compute_89", "ptx93"],
+          "representation": "convergent k16 F32 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The all-form libNVVM fixture emitted all four k16/F32 forms in PTX and LTOIR at compute_89, retained representative duplicate convergent calls, and also accepted compute_90."
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "k16 F32 direct assembly",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "The 16-form ptxas cubin is 10088 bytes with SHA-256 bb4610329a1066be83c4306c9b46b5f58300387b496a33415420537be89e4cbc; newer sm_90 also assembled.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "k16 F32 device link",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink retained all forms in a 10088-byte cubin with SHA-256 bd21c8f939a126734119f9b6e0cfbf45d5552ceb6069c5f8de6f4209234b8640; newer sm_90 also linked.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM direct assembly boundary",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "libNVVM emitted compute_87 intermediates, but ptxas rejected standard FP8 MMA below sm_89.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM device-link boundary",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected compute_87 LTOIR because standard FP8 MMA requires sm_89 or higher.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "standard_fp8_register_mma_k32_f16",
+      "coverage_count": 4,
+      "stages": [
+        {
+          "targets": ["compute_89", "ptx93"],
+          "representation": "convergent k32 F16 inline PTX at its ptxas-safe admission floor",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM emitted all four k32/F16 forms at compute_89 and compute_90. Admission remains PTX 8.7 because CUDA ptxas rejects this accumulator at PTX 8.6 despite LLVM's PTX 8.4 selector predicate."
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "k32 F16 direct assembly",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "ptxas retained all k32/F16 forms in the 10088-byte all-form cubin; newer sm_90 also assembled.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "k32 F16 device link",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink retained all k32/F16 forms in the 10088-byte all-form cubin; newer sm_90 also linked.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM direct assembly boundary",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "ptxas rejected the compute_87 intermediate below sm_89.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM device-link boundary",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the compute_87 LTOIR below sm_89.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "standard_fp8_register_mma_k32_f32",
+      "coverage_count": 4,
+      "stages": [
+        {
+          "targets": ["compute_89", "ptx93"],
+          "representation": "convergent k32 F32 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM emitted all four k32/F32 forms at compute_89 and compute_90; the admitted PTX ISA floor for this group is 8.4."
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "k32 F32 direct assembly",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "ptxas retained all k32/F32 forms in the 10088-byte all-form cubin; separate LLVM evidence proves the exact PTX 8.4 floor.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_89", "ptx93"],
+          "representation": "k32 F32 device link",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink retained all k32/F32 forms in the 10088-byte all-form cubin; newer sm_90 also linked.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM direct assembly boundary",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "ptxas rejected the compute_87 intermediate below sm_89.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_87", "ptx93"],
+          "representation": "lower-SM device-link boundary",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the compute_87 LTOIR below sm_89.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {"name": "a_element", "values": ["e4m3", "e5m2"]},
+        {"name": "b_element", "values": ["e4m3", "e5m2"]}
+      ],
+      "product_count": 4,
+      "fixtures": ["standard_fp8_register_mma_k16_f16"],
+      "template": {
+        "id": "mma_m16n8k16_fp8_f16_${a_element}_${b_element}",
+        "source_record": "int_nvvm_mma_m16n8k16_row_col_f16_${a_element}_${b_element}_f16",
+        "llvm_symbol": "llvm.nvvm.mma.m16n8k16.row.col.f16.${a_element}.${b_element}.f16",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": ["sync", "aligned", "m16n8k16", "row", "col", "f16", "${a_element}", "${b_element}", "f16"],
+          "operands": [
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 1},
+            {"kind": "register_list", "length": 2}
+          ]
+        },
+        "facts": {
+          "llvm_arguments": ["i32", "i32", "i32", "v2f16", "v2f16"],
+          "llvm_results": ["v2f16", "v2f16"]
+        }
+      }
+    },
+    {
+      "axes": [
+        {"name": "a_element", "values": ["e4m3", "e5m2"]},
+        {"name": "b_element", "values": ["e4m3", "e5m2"]}
+      ],
+      "product_count": 4,
+      "fixtures": ["standard_fp8_register_mma_k16_f32"],
+      "template": {
+        "id": "mma_m16n8k16_fp8_f32_${a_element}_${b_element}",
+        "source_record": "int_nvvm_mma_m16n8k16_row_col_f32_${a_element}_${b_element}_f32",
+        "llvm_symbol": "llvm.nvvm.mma.m16n8k16.row.col.f32.${a_element}.${b_element}.f32",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": ["sync", "aligned", "m16n8k16", "row", "col", "f32", "${a_element}", "${b_element}", "f32"],
+          "operands": [
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 1},
+            {"kind": "register_list", "length": 4}
+          ]
+        },
+        "facts": {
+          "llvm_arguments": ["i32", "i32", "i32", "f32", "f32", "f32", "f32"],
+          "llvm_results": ["f32", "f32", "f32", "f32"]
+        }
+      }
+    },
+    {
+      "axes": [
+        {"name": "a_element", "values": ["e4m3", "e5m2"]},
+        {"name": "b_element", "values": ["e4m3", "e5m2"]}
+      ],
+      "product_count": 4,
+      "fixtures": ["standard_fp8_register_mma_k32_f16"],
+      "template": {
+        "id": "mma_m16n8k32_fp8_f16_${a_element}_${b_element}",
+        "source_record": "int_nvvm_mma_m16n8k32_row_col_f16_${a_element}_${b_element}_f16",
+        "llvm_symbol": "llvm.nvvm.mma.m16n8k32.row.col.f16.${a_element}.${b_element}.f16",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": ["sync", "aligned", "m16n8k32", "row", "col", "f16", "${a_element}", "${b_element}", "f16"],
+          "operands": [
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 2}
+          ]
+        },
+        "facts": {
+          "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "v2f16", "v2f16"],
+          "llvm_results": ["v2f16", "v2f16"]
+        }
+      }
+    },
+    {
+      "axes": [
+        {"name": "a_element", "values": ["e4m3", "e5m2"]},
+        {"name": "b_element", "values": ["e4m3", "e5m2"]}
+      ],
+      "product_count": 4,
+      "fixtures": ["standard_fp8_register_mma_k32_f32"],
+      "template": {
+        "id": "mma_m16n8k32_fp8_f32_${a_element}_${b_element}",
+        "source_record": "int_nvvm_mma_m16n8k32_row_col_f32_${a_element}_${b_element}_f32",
+        "llvm_symbol": "llvm.nvvm.mma.m16n8k32.row.col.f32.${a_element}.${b_element}.f32",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": ["sync", "aligned", "m16n8k32", "row", "col", "f32", "${a_element}", "${b_element}", "f32"],
+          "operands": [
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 4}
+          ]
+        },
+        "facts": {
+          "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32"],
+          "llvm_results": ["f32", "f32", "f32", "f32"],
+          "ptx_feature": "PTX ISA 8.4 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    }
+  ]
+}

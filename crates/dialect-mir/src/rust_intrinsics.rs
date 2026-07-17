@@ -204,3 +204,123 @@ pub const CALLEE_FMUL_FAST: &str = placeholder!("fmul_fast");
 pub const CALLEE_FDIV_FAST: &str = placeholder!("fdiv_fast");
 /// Placeholder call used for `core::intrinsics::frem_fast` (generic over float type).
 pub const CALLEE_FREM_FAST: &str = placeholder!("frem_fast");
+
+/// Return whether an internal placeholder lowers to a CUDA libdevice call.
+///
+/// This is deliberately an exact allow-list. Other placeholder families lower
+/// to LLVM operations directly, including integer, saturating, bigint, and
+/// `f*_fast` intrinsics, so matching the common placeholder prefix would select
+/// the libNVVM backend for modules that do not need it.
+pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
+    matches!(
+        callee,
+        CALLEE_SQRT_F32
+            | CALLEE_SQRT_F64
+            | CALLEE_POWI_F32
+            | CALLEE_POWI_F64
+            | CALLEE_SIN_F32
+            | CALLEE_SIN_F64
+            | CALLEE_COS_F32
+            | CALLEE_COS_F64
+            | CALLEE_TAN_F32
+            | CALLEE_TAN_F64
+            | CALLEE_POWF_F32
+            | CALLEE_POWF_F64
+            | CALLEE_EXP_F32
+            | CALLEE_EXP_F64
+            | CALLEE_EXP2_F32
+            | CALLEE_EXP2_F64
+            | CALLEE_LOG_F32
+            | CALLEE_LOG_F64
+            | CALLEE_LOG2_F32
+            | CALLEE_LOG2_F64
+            | CALLEE_LOG10_F32
+            | CALLEE_LOG10_F64
+            | CALLEE_FMA_F32
+            | CALLEE_FMA_F64
+            | CALLEE_FMULADD_F32
+            | CALLEE_FMULADD_F64
+            | CALLEE_FLOOR_F32
+            | CALLEE_FLOOR_F64
+            | CALLEE_CEIL_F32
+            | CALLEE_CEIL_F64
+            | CALLEE_TRUNC_F32
+            | CALLEE_TRUNC_F64
+            | CALLEE_ROUND_F32
+            | CALLEE_ROUND_F64
+            | CALLEE_ROUNDEVEN_F32
+            | CALLEE_ROUNDEVEN_F64
+            | CALLEE_FABS
+            | CALLEE_COPYSIGN_F32
+            | CALLEE_COPYSIGN_F64
+            | CALLEE_MAXNUM_NSZ_F32
+            | CALLEE_MAXNUM_NSZ_F64
+            | CALLEE_MINNUM_NSZ_F32
+            | CALLEE_MINNUM_NSZ_F64
+            | CALLEE_ASIN_F32
+            | CALLEE_ASIN_F64
+            | CALLEE_ACOS_F32
+            | CALLEE_ACOS_F64
+            | CALLEE_ATAN2_F32
+            | CALLEE_ATAN2_F64
+            | CALLEE_ATAN_F32
+            | CALLEE_ATAN_F64
+            | CALLEE_CBRT_F32
+            | CALLEE_CBRT_F64
+            | CALLEE_SINH_F32
+            | CALLEE_SINH_F64
+            | CALLEE_COSH_F32
+            | CALLEE_COSH_F64
+            | CALLEE_TANH_F32
+            | CALLEE_TANH_F64
+            | CALLEE_EXPM1_F32
+            | CALLEE_EXPM1_F64
+            | CALLEE_LOG1P_F32
+            | CALLEE_LOG1P_F64
+            | CALLEE_HYPOT_F32
+            | CALLEE_HYPOT_F64
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn libdevice_placeholder_classification_is_exact() {
+        for callee in [
+            CALLEE_SQRT_F32,
+            CALLEE_POWI_F64,
+            CALLEE_SIN_F32,
+            CALLEE_FMA_F64,
+            CALLEE_FABS,
+            CALLEE_MAXNUM_NSZ_F32,
+            CALLEE_ASIN_F64,
+            CALLEE_HYPOT_F32,
+        ] {
+            assert!(
+                is_libdevice_backed_placeholder(callee),
+                "expected `{callee}` to require libdevice"
+            );
+        }
+
+        for callee in [
+            CALLEE_ROTATE_LEFT,
+            CALLEE_CTPOP,
+            CALLEE_SATURATING_ADD,
+            CALLEE_CARRYING_MUL_ADD,
+            CALLEE_FADD_FAST,
+            CALLEE_FSUB_FAST,
+            CALLEE_FMUL_FAST,
+            CALLEE_FDIV_FAST,
+            CALLEE_FREM_FAST,
+            "__cuda_oxide_rust_intrinsic_unknown",
+            "__nv_sinf",
+        ] {
+            assert!(
+                !is_libdevice_backed_placeholder(callee),
+                "expected `{callee}` not to require libdevice"
+            );
+        }
+    }
+}

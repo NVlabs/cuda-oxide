@@ -5,18 +5,16 @@
 
 //! Negative test: `wgmma_mma_*` is not yet implemented.
 //!
-//! `cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16` and friends call into
-//! a placeholder lowering whose full implementation requires register
-//! allocation for 16+ output registers. Until that lands, the codegen
-//! backend is expected to reject these calls at build time with a clear
-//! diagnostic — not silently emit a comment and produce PTX that
-//! multiplies-accumulates to zero.
+//! The importer rejects `cuda_device::wgmma::wgmma_mma_*` because sound
+//! lowering must preserve delayed 32-register accumulator state across
+//! commit and wait. The dialect lowering also rejects the operation as a
+//! second guard against silently erasing the multiply-accumulate.
 //!
 //! Usage:
 //!   cargo oxide run error_wgmma_mma_unimplemented
 //!
 //! Expected: build FAILS with
-//!   "wgmma.mma_async lowering is not yet implemented; ..."
+//!   "WGMMA MMA is not yet supported: lowering must preserve delayed ..."
 
 use cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16;
 use cuda_device::{DisjointSlice, kernel, thread};

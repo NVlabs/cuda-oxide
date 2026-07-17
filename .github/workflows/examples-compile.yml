@@ -18,7 +18,8 @@ jobs:
   examples-compile:
     name: compile all examples (device pipeline, GPU-less)
     runs-on: ubuntu-latest
-    # ~85 example crates: backend build + shared dep tree + per-example
+    # 141 example crates as of the generated-intrinsics vertical slice:
+    # backend build + shared dep tree + per-example
     # device codegen. Typically well under an hour with the shared
     # CARGO_TARGET_DIR; the timeout leaves headroom for cold runners.
     timeout-minutes: 60

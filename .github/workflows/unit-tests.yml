@@ -31,6 +31,8 @@ jobs:
         #   * `rustc-codegen-cuda` — its own [workspace] that links against
         #     `rustc-private` dylibs; covered by the dedicated clippy job.
         include:
+          - package: cuda-intrinsics-gen
+          - package: cuda-intrinsics
           - package: llvm-export
           - package: dialect-mir
           - package: dialect-nvvm
@@ -138,3 +140,51 @@ jobs:
           out="$(cargo run -p cargo-oxide -- doctor 2>&1)" || true
           printf '%s\n' "${out}"
           printf '%s\n' "${out}" | grep -q "CUDA headers (cuda.h)"
+
+  generated-intrinsics:
+    name: generated intrinsics are current and ABI-compatible
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone repository with ABI history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install rustfmt for the pinned nightly
+        run: rustup component add rustfmt
+
+      - name: Check generated intrinsic outputs
+        run: cargo run -p cuda-intrinsics-gen -- check
+
+      - name: Probe every generated LLVM-NVPTX route
+        run: |
+          set -euo pipefail
+          mapfile -t intrinsic_ids < <(
+            python3 -c 'import json; data=json.load(open("intrinsics/catalog.json")); print(*(item["id"] for item in data["intrinsics"]), sep="\n")'
+          )
+          for intrinsic in "${intrinsic_ids[@]}"; do
+            # Stock runners do not carry the exact CUDA 13.3 ptxas binary
+            # recorded by selected terminal evidence. This still checks the
+            # pinned llc identity and exact emitted PTX; full evidence probes
+            # deliberately omit --skip-terminal and fail if ptxas is absent.
+            cargo run -p cuda-intrinsics-gen -- probe \
+              --intrinsic "${intrinsic}" --skip-terminal
+          done
+
+      - name: Check append-only intrinsic ABI ledger
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_ref="${{ github.event.pull_request.base.sha }}"
+          else
+            before="${{ github.event.before }}"
+            zero="0000000000000000000000000000000000000000"
+            if [ -n "${before}" ] && [ "${before}" != "${zero}" ] && git cat-file -e "${before}^{commit}"; then
+              base_ref="${before}"
+            elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              base_ref="HEAD^"
+            else
+              base_ref="HEAD"
+            fi
+          fi
+          cargo run -p cuda-intrinsics-gen -- check-abi-history --base-ref "${base_ref}"

@@ -1,0 +1,27 @@
+schema = 1
+
+[llvm]
+repository = "https://github.com/rust-lang/llvm-project.git"
+revision = "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e"
+provenance = "Public rust-lang/llvm-project source revision used by Rust commit 55e86c996"
+public_output_allowed = true
+
+[llvm_tblgen]
+name = "llvm-tblgen"
+version_line = "LLVM version 22.1.2"
+sha256 = "9129c2d0db0846c721f02fce0b156eff17ddedfbe4b97fc80a71d978670da1b8"
+enforce_sha256 = false
+provenance = "Reference artifact built locally from the pinned public LLVM revision; its hash identifies that build, while dump hashes are the reproducibility gate"
+built_from_llvm_revision = "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e"
+
+[[comparison_tools]]
+name = "llvm-tblgen-22"
+version_line = "Ubuntu LLVM version 22.1.7"
+sha256 = "986d0d5a19e4f44086092adf9a54f13ad0058a60ac2adad7ba156a97eb01b046"
+enforce_sha256 = false
+provenance = "Ubuntu package binary used only for a byte-for-byte dump comparison; it was not built from the pinned LLVM source revision"
+
+[dumps]
+intrinsics_sha256 = "9145c0fb1703acd2b369e97b806cfa067f91344e131c6149d568b96e92dc817c"
+nvptx_sha256 = "ecb3467b6b196856d382a29a75e49b10a1b1181f3cc47abf2692583cf0a11758"
+normalized_imported_sha256 = "7fc84823d448f56192e265a6c057ea72155c84df2b6575b0235199d445db6a2f"

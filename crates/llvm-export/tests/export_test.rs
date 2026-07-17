@@ -520,6 +520,48 @@ fn indirect_call_rejects_non_program_address_space() {
 }
 
 #[test]
+fn intrinsic_export_preserves_legacy_dots_and_literal_underscores() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "intrinsic_names".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let void_ty = VoidType::get(&ctx);
+    let function_ty = FuncType::get(&ctx, void_ty.into(), vec![], false);
+    let legacy = "llvm_nvvm_wgmma_fence_sync_aligned";
+    let escaped = "llvm__nvvm_dwgmma_dcommit_ugroup_dsync_daligned";
+
+    for name in [legacy, escaped] {
+        FuncOp::new(&mut ctx, name.try_into().unwrap(), function_ty)
+            .get_operation()
+            .insert_at_back(module_block, &ctx);
+    }
+
+    let caller = FuncOp::new(&mut ctx, "caller".try_into().unwrap(), function_ty);
+    let entry = caller.get_or_create_entry_block(&mut ctx);
+    for name in [legacy, escaped] {
+        CallOp::new(
+            &mut ctx,
+            CallOpCallable::Direct(name.try_into().unwrap()),
+            function_ty,
+            vec![],
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    }
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("intrinsic export succeeds");
+    assert!(ir.contains("@llvm.nvvm.wgmma.fence.sync.aligned"), "{ir}");
+    assert!(
+        ir.contains("@llvm.nvvm.wgmma.commit_group.sync.aligned"),
+        "{ir}"
+    );
+    assert!(!ir.contains("@llvm.nvvm.wgmma.commit.group"), "{ir}");
+}
+
+#[test]
 fn pointer_bitcast_cannot_cross_address_spaces_in_either_nvvm_dialect() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "invalid_pointer_bitcast".try_into().unwrap());
@@ -655,11 +697,11 @@ fn modern_function_address_uses_the_normalized_definition_name() {
     let module_block = module_top_block(&mut ctx, &module);
     let void_ty = VoidType::get(&ctx);
     let callee_ty = FuncType::get(&ctx, void_ty.into(), vec![], false);
-    let prefixed_name = "cuda_oxide_device_246e25db_target";
+    let prefixed_name = reserved_oxide_symbols::device_symbol("target");
 
     let caller = FuncOp::new(&mut ctx, "caller".try_into().unwrap(), callee_ty);
     let caller_entry = caller.get_or_create_entry_block(&mut ctx);
-    let address = AddressOfOp::new(&mut ctx, prefixed_name.try_into().unwrap(), 0);
+    let address = AddressOfOp::new(&mut ctx, prefixed_name.as_str().try_into().unwrap(), 0);
     let address_value = address.get_operation().deref(&ctx).get_result(0);
     address.get_operation().insert_at_back(caller_entry, &ctx);
     CallOp::new(
@@ -675,7 +717,11 @@ fn modern_function_address_uses_the_normalized_definition_name() {
         .insert_at_back(caller_entry, &ctx);
     caller.get_operation().insert_at_back(module_block, &ctx);
 
-    let target = FuncOp::new(&mut ctx, prefixed_name.try_into().unwrap(), callee_ty);
+    let target = FuncOp::new(
+        &mut ctx,
+        prefixed_name.as_str().try_into().unwrap(),
+        callee_ty,
+    );
     let target_entry = target.get_or_create_entry_block(&mut ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
@@ -690,7 +736,7 @@ fn modern_function_address_uses_the_normalized_definition_name() {
     .expect("modern function-address export succeeds");
     assert!(ir.contains("define void @target()"), "{ir}");
     assert!(ir.contains("call void @target()"), "{ir}");
-    assert!(!ir.contains(prefixed_name), "{ir}");
+    assert!(!ir.contains(&prefixed_name), "{ir}");
 }
 
 #[test]

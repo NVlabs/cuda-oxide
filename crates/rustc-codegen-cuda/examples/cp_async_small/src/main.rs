@@ -6,8 +6,8 @@
 //! End-to-end test for `cp.async` 4-byte and 8-byte copy intrinsics.
 //!
 //! Demonstrates asynchronous global-to-shared memory copies using
-//! `cp_async_ca_4` (4 bytes) and `cp_async_ca_8` (8 bytes), with
-//! `cp.async.commit_group` / `cp.async.wait_all` issued via inline PTX.
+//! `cp_async_ca_4` (4 bytes) and `cp_async_ca_8` (8 bytes), including their
+//! generated commit and wait operations.
 //!
 //! Requires **sm_80+** (Ampere or later).
 //!
@@ -15,8 +15,17 @@
 //!   cargo oxide run cp_async_small
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::async_copy::{cp_async_ca_4, cp_async_ca_8};
-use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, ptx_asm, thread};
+use cuda_device::async_copy::{
+    cp_async_ca_4, cp_async_ca_8, cp_async_ca_16, cp_async_ca_zfill_4, cp_async_ca_zfill_8,
+    cp_async_ca_zfill_16, cp_async_cg_16, cp_async_cg_zfill_16, cp_async_commit_group,
+    cp_async_mbarrier_arrive, cp_async_mbarrier_arrive_noinc,
+    cp_async_mbarrier_arrive_noinc_shared, cp_async_mbarrier_arrive_shared, cp_async_wait_all,
+    cp_async_wait_group,
+};
+use cuda_device::barrier::{
+    Barrier, mbarrier_arrive, mbarrier_init, mbarrier_inval, mbarrier_wait,
+};
+use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 
 // =============================================================================
 // KERNELS
@@ -42,8 +51,8 @@ mod kernels {
         // Initiate the 4-byte async copy, commit, and wait.
         unsafe {
             cp_async_ca_4(dst_ptr, src_ptr);
-            ptx_asm!("cp.async.commit_group;", clobber("memory"));
-            ptx_asm!("cp.async.wait_all;", clobber("memory"));
+            cp_async_commit_group();
+            cp_async_wait_all();
         }
 
         // Ensure every thread's copy has landed before reading.
@@ -76,8 +85,8 @@ mod kernels {
         // Initiate the 8-byte async copy, commit, and wait.
         unsafe {
             cp_async_ca_8(dst_ptr, src_ptr);
-            ptx_asm!("cp.async.commit_group;", clobber("memory"));
-            ptx_asm!("cp.async.wait_all;", clobber("memory"));
+            cp_async_commit_group();
+            cp_async_wait_all();
         }
 
         thread::sync_threads();
@@ -90,6 +99,80 @@ mod kernels {
             let base = gid * 2;
             *out.get_unchecked_mut(base) = lo;
             *out.get_unchecked_mut(base + 1) = hi;
+        }
+    }
+
+    /// Exercises every classic `cp.async` form without changing host output.
+    #[kernel]
+    pub fn compile_all_classic_cp_async(input: &[u32]) {
+        static mut SMEM: SharedArray<u32, 24, 16> = SharedArray::UNINIT;
+
+        if thread::threadIdx_x() == 0 {
+            let dst = core::ptr::addr_of_mut!(SMEM) as *mut u32;
+            let src = input.as_ptr();
+
+            unsafe {
+                cp_async_ca_4(dst, src);
+                cp_async_ca_8(dst.add(2), src.add(2));
+                cp_async_ca_16(dst.add(4), src.add(4));
+                cp_async_ca_zfill_4(dst.add(8), src.add(8).cast(), 3);
+                cp_async_ca_zfill_8(dst.add(10), src.add(10).cast(), 3);
+                cp_async_ca_zfill_16(dst.add(12), src.add(12).cast(), 3);
+                cp_async_cg_16(dst.add(16), src.add(16));
+                cp_async_cg_zfill_16(dst.add(20), src.add(20).cast(), 3);
+                cp_async_commit_group();
+                cp_async_wait_group(0);
+                cp_async_wait_all();
+            }
+        }
+    }
+
+    /// Checks all classic copy-to-mbarrier bridge forms without printing.
+    #[kernel]
+    pub fn test_cp_async_mbarrier_bridges(input: &[u32], mut out: DisjointSlice<u32>) {
+        static mut BAR: Barrier = Barrier::UNINIT;
+        static mut SMEM: SharedArray<u32, 4> = SharedArray::UNINIT;
+
+        let barrier = core::ptr::addr_of_mut!(BAR);
+        let shared = core::ptr::addr_of_mut!(SMEM) as *mut u32;
+        let source = input.as_ptr();
+
+        unsafe {
+            SMEM[0] = 0;
+            mbarrier_init(barrier, 1);
+            cp_async_ca_4(shared, source);
+            cp_async_mbarrier_arrive(barrier);
+            let token = mbarrier_arrive(barrier);
+            mbarrier_wait(barrier, token);
+            *out.get_unchecked_mut(0) = SMEM[0];
+            mbarrier_inval(barrier);
+
+            SMEM[1] = 0;
+            mbarrier_init(barrier, 1);
+            cp_async_ca_4(shared.add(1), source.add(1));
+            cp_async_mbarrier_arrive_shared(barrier);
+            let token = mbarrier_arrive(barrier);
+            mbarrier_wait(barrier, token);
+            *out.get_unchecked_mut(1) = SMEM[1];
+            mbarrier_inval(barrier);
+
+            SMEM[2] = 0;
+            mbarrier_init(barrier, 2);
+            cp_async_ca_4(shared.add(2), source.add(2));
+            cp_async_mbarrier_arrive_noinc(barrier);
+            let token = mbarrier_arrive(barrier);
+            mbarrier_wait(barrier, token);
+            *out.get_unchecked_mut(2) = SMEM[2];
+            mbarrier_inval(barrier);
+
+            SMEM[3] = 0;
+            mbarrier_init(barrier, 2);
+            cp_async_ca_4(shared.add(3), source.add(3));
+            cp_async_mbarrier_arrive_noinc_shared(barrier);
+            let token = mbarrier_arrive(barrier);
+            mbarrier_wait(barrier, token);
+            *out.get_unchecked_mut(3) = SMEM[3];
+            mbarrier_inval(barrier);
         }
     }
 }
@@ -121,6 +204,34 @@ fn main() {
         block_dim: (32, 1, 1),
         shared_mem_bytes: 0,
     };
+
+    let coverage_input_dev = DeviceBuffer::from_host(&stream, &[0u32; 24]).unwrap();
+    // SAFETY: thread zero owns every copy and all source and destination ranges are valid.
+    unsafe { module.compile_all_classic_cp_async(&stream, cfg32, &coverage_input_dev) }
+        .expect("classic cp.async coverage launch failed");
+
+    let barrier_cfg = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let barrier_input = [11u32, 22, 33, 44];
+    let barrier_input_dev = DeviceBuffer::from_host(&stream, &barrier_input).unwrap();
+    let mut barrier_output_dev = DeviceBuffer::<u32>::zeroed(&stream, 4).unwrap();
+    // SAFETY: one thread owns the barrier and all four source and destination slots.
+    unsafe {
+        module.test_cp_async_mbarrier_bridges(
+            &stream,
+            barrier_cfg,
+            &barrier_input_dev,
+            &mut barrier_output_dev,
+        )
+    }
+    .expect("cp.async mbarrier coverage launch failed");
+    assert_eq!(
+        barrier_output_dev.to_host_vec(&stream).unwrap(),
+        barrier_input
+    );
 
     // ===== Test 1: cp.async.ca 4-byte copy =====
     println!("--- Test 1: cp.async.ca 4-byte copy ---");

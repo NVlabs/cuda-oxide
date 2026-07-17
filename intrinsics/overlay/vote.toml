@@ -1,0 +1,152 @@
+# Reviewed cuda-oxide policy for synchronized warp votes.
+
+schema = 26
+family = "vote"
+
+[[intrinsic]]
+id = "all_sync"
+abi_id = "i0040"
+operation_key = "warp.vote.sync.all.pred"
+family = "vote"
+source_record = "int_nvvm_vote_all_sync"
+rust_module = "warp"
+rust_name = "all_sync"
+rust_arguments = ["u32", "bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::all_sync"
+compatibility_rust_paths = ["cuda_device::warp::all_sync"]
+dialect_op_type = "VoteSyncAllOp"
+dialect_op_name = "nvvm.vote_sync_all"
+dialect_operands = ["i32", "i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.vote.all.sync"
+llvm_arguments = ["i32", "i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+lowering = "generated_vote"
+vote = { mode = "all", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "vote", modifiers = ["sync", "all", "pred"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
+summary = "Returns true when every named warp lane has a true predicate."
+
+[[intrinsic]]
+id = "any_sync"
+abi_id = "i0041"
+operation_key = "warp.vote.sync.any.pred"
+family = "vote"
+source_record = "int_nvvm_vote_any_sync"
+rust_module = "warp"
+rust_name = "any_sync"
+rust_arguments = ["u32", "bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::any_sync"
+compatibility_rust_paths = ["cuda_device::warp::any_sync"]
+dialect_op_type = "VoteSyncAnyOp"
+dialect_op_name = "nvvm.vote_sync_any"
+dialect_operands = ["i32", "i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.vote.any.sync"
+llvm_arguments = ["i32", "i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+lowering = "generated_vote"
+vote = { mode = "any", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "vote", modifiers = ["sync", "any", "pred"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
+summary = "Returns true when at least one named warp lane has a true predicate."
+
+[[intrinsic]]
+id = "ballot_sync"
+abi_id = "i0042"
+operation_key = "warp.vote.sync.ballot.b32"
+family = "vote"
+source_record = "int_nvvm_vote_ballot_sync"
+rust_module = "warp"
+rust_name = "ballot_sync"
+rust_arguments = ["u32", "bool"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::ballot_sync"
+compatibility_rust_paths = ["cuda_device::warp::ballot_sync"]
+dialect_op_type = "VoteSyncBallotOp"
+dialect_op_name = "nvvm.vote_sync_ballot"
+dialect_operands = ["i32", "i1"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.vote.ballot.sync"
+llvm_arguments = ["i32", "i1"]
+llvm_results = ["i32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+lowering = "generated_vote"
+vote = { mode = "ballot", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "vote", modifiers = ["sync", "ballot", "b32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
+summary = "Returns a mask of named warp lanes whose predicates are true."
+
+[[intrinsic]]
+id = "uni_sync"
+abi_id = "i0043"
+operation_key = "warp.vote.sync.uni.pred"
+family = "vote"
+source_record = "int_nvvm_vote_uni_sync"
+rust_module = "warp"
+rust_name = "uni_sync"
+rust_arguments = ["u32", "bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::uni_sync"
+compatibility_rust_paths = []
+dialect_op_type = "VoteSyncUniOp"
+dialect_op_name = "nvvm.vote_sync_uni"
+dialect_operands = ["i32", "i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.vote.uni.sync"
+llvm_arguments = ["i32", "i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+lowering = "generated_vote"
+vote = { mode = "uni", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+expected_ptx = { mnemonic = "vote", modifiers = ["sync", "uni", "pred"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
+summary = "Returns true when every named warp lane has the same predicate."

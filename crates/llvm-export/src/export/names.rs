@@ -17,6 +17,37 @@
 
 use reserved_oxide_symbols::{device_base_name, is_device_extern_symbol, is_device_symbol};
 
+/// Convert a Pliron LLVM intrinsic identifier to its exact LLVM symbol.
+///
+/// Ordinary identifiers use underscores for dots. Identifiers starting with
+/// `llvm__` use `_d` for dots and `_u` for literal underscores.
+pub(super) fn decode_intrinsic_identifier(name: &str) -> String {
+    debug_assert!(name.starts_with("llvm_"));
+    let Some(encoded) = name.strip_prefix("llvm__") else {
+        return name.replace('_', ".");
+    };
+
+    let mut output = String::with_capacity(name.len());
+    output.push_str("llvm.");
+    let mut chars = encoded.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '_' {
+            output.push(ch);
+        } else {
+            match chars.next() {
+                Some('d') => output.push('.'),
+                Some('u') => output.push('_'),
+                Some(other) => {
+                    output.push('_');
+                    output.push(other);
+                }
+                None => output.push('_'),
+            }
+        }
+    }
+    output
+}
+
 /// Returns true if `name` is a device function (definition, not extern).
 pub(super) fn has_device_prefix(name: &str) -> bool {
     is_device_symbol(name)
@@ -35,4 +66,27 @@ pub(super) fn strip_device_prefix(name: &str) -> String {
     device_base_name(name)
         .map(str::to_string)
         .unwrap_or_else(|| name.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_intrinsic_identifier;
+
+    #[test]
+    fn intrinsic_identifier_decoding_preserves_dots_and_literal_underscores() {
+        assert_eq!(
+            decode_intrinsic_identifier("llvm_nvvm_read_ptx_sreg_tid_x"),
+            "llvm.nvvm.read.ptx.sreg.tid.x"
+        );
+        assert_eq!(
+            decode_intrinsic_identifier("llvm__nvvm_dwgmma_dcommit_ugroup_dsync_daligned"),
+            "llvm.nvvm.wgmma.commit_group.sync.aligned"
+        );
+        assert_eq!(
+            decode_intrinsic_identifier(
+                "llvm__nvvm_dldmatrix_dsync_daligned_dm16n16_dx1_dtrans_db8x16_db4x16_up64_dp3"
+            ),
+            "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3"
+        );
+    }
 }

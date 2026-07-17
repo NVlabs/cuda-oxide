@@ -18,6 +18,9 @@
 mod api;
 mod error;
 mod export;
+mod generated;
+#[allow(dead_code, missing_docs)]
+mod generated_intrinsic_targets;
 mod llvm_tools;
 mod lower;
 mod options;
@@ -116,6 +119,18 @@ pub mod __private {
     pub use crate::verify::verify_operation;
     #[doc(hidden)]
     pub use llvm_export::export::DeviceExternType;
+
+    /// Compiler-only attribute used to carry the Rust generated-intrinsic ABI marker.
+    #[doc(hidden)]
+    pub const GENERATED_INTRINSIC_MARKER_ATTR: &str =
+        crate::generated_intrinsic_targets::GENERATED_INTRINSIC_MARKER_ATTR;
+
+    /// Return the unique generated ABI marker for a dialect operation name.
+    #[doc(hidden)]
+    pub fn generated_intrinsic_marker_by_op_name(op_name: &str) -> Option<&'static str> {
+        crate::generated_intrinsic_targets::generated_intrinsic_target_by_op_name(op_name)
+            .map(|target| target.marker)
+    }
 }
 
 #[cfg(test)]
