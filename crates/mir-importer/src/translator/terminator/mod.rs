@@ -1116,8 +1116,7 @@ fn translate_call(
     // ordinary type it compiles to nothing. We decide which case applies
     // from the monomorphized type's layout: uninhabited types are exactly
     // those whose layout has `VariantsShape::Empty`. Inhabited types lower
-    // to a unit no-op; uninhabited ones lower to `unreachable`, matching
-    // how device code models panics (they cannot execute on the GPU).
+    // to a unit no-op; uninhabited ones lower to a trap.
     // If the generic argument or its layout cannot be read, fall through
     // to the loud "not yet supported" rejection below.
     if let Some(ref name) = pattern_name
@@ -1134,21 +1133,7 @@ fn translate_call(
             rustc_public::abi::VariantsShape::Empty
         );
         if uninhabited {
-            let op = Operation::new(
-                ctx,
-                dialect_mir::ops::MirUnreachableOp::get_concrete_op_info(),
-                vec![],
-                vec![],
-                vec![],
-                0,
-            );
-            op.deref_mut(ctx).set_loc(loc);
-            if let Some(prev) = prev_op {
-                op.insert_after(ctx, prev);
-            } else {
-                op.insert_at_front(block_ptr, ctx);
-            }
-            return Ok(op);
+            return Ok(emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc));
         }
         return helpers::emit_unit_noop_intrinsic(
             ctx,
