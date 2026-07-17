@@ -168,6 +168,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub sparse_mma_f8f6f4_f32: Option<SparseMmaF8F6F4Admission>,
     #[serde(default)]
+    pub sparse_mma_f8f6f4_f16: Option<SparseMmaF8F6F4F16Admission>,
+    #[serde(default)]
     pub prmt: Option<PrmtAdmission>,
     #[serde(default)]
     pub packed_conversion_fp8: Option<PackedConversionFp8Admission>,
@@ -713,6 +715,19 @@ pub struct SparseMmaF8F6F4Admission {
     pub llvm_evidence_profile: String,
     pub libnvvm_evidence_profile: String,
     pub runtime_validation: RuntimeValidation,
+    pub a_elements: Vec<SparseMmaElement>,
+    pub b_elements: Vec<SparseMmaElement>,
+    pub product_count: usize,
+}
+
+/// Compact admission for ordered sparse `kind::f8f6f4` packed-F16 MMA.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaF8F6F4F16Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub first_abi_id: String,
     pub a_elements: Vec<SparseMmaElement>,
     pub b_elements: Vec<SparseMmaElement>,
     pub product_count: usize,
@@ -1467,6 +1482,7 @@ pub enum SparseMmaShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaAccumulator {
+    F16,
     F32,
     S32,
 }
@@ -1524,6 +1540,7 @@ pub enum SparseMmaParticipation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaAdapter {
+    C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32,
     C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32,
     C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32,
     C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32,
@@ -1533,6 +1550,7 @@ pub enum SparseMmaAdapter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaLlvmAdapter {
+    A4I32B4I32C2V2F16MetadataI32SelectorI32ToD2V2F16,
     A4I32B4I32C4F32MetadataI32SelectorI32ToD4F32,
     A2I32B2I32C4I32MetadataI32SelectorI32ToD4I32,
     A4I32B4I32C4I32MetadataI32SelectorI32ToD4I32,

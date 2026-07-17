@@ -1,0 +1,207 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "v2f16", "v2f16", "i32", "i32"],
+    "llvm_results": ["v2f16", "v2f16"],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_120a",
+    "ptx_feature": "PTX ISA 8.7 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "ordered_f8f6f4_f16_compute120a_ptx93",
+      "coverage_count": 25,
+      "stages": [
+        {
+          "targets": ["compute_120a", "ptx93"],
+          "representation": "convergent ordered kind::f8f6f4 packed-F16 inline PTX in public C, A, B, metadata, selector order",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained the exact 25-form matrix in 8,886-byte PTX (SHA-256 fe613b565fd6028eaaff9b7df078c93af5b47163f19a9685a43bd6dee28fea6d), produced 11,504-byte LTOIR (SHA-256 aac8c70c26474ccd692e45a453d9f7236c8e040d66dd47047b582524d9deff4c), and emitted no unresolved llvm.nvvm calls or extern declarations."
+        },
+        {
+          "targets": ["sm_120a", "ptx93"],
+          "representation": "libNVVM-emitted ordered kind::f8f6f4 packed-F16 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 9,728-byte cubin (SHA-256 560446ab6b41e45ca208fddc2c1439d9e851b1b67a9de920e6e81026863352b2) retaining all 25 unique QMMA forms; the 27,724-byte SASS dump has SHA-256 3c27689195cd558cd3df06db75ba6e46b1905d39e636536c0a52e01ba3323270.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_120a", "ptx93"],
+          "representation": "libNVVM LTOIR retaining the ordered kind::f8f6f4 packed-F16 matrix",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 9,856-byte cubin (SHA-256 a7acfd0a342d4b87745305a9c0eb0b7fc1a4e6a8afffdd63bfcbc6a9188a35fb); its 27,724-byte SASS dump (SHA-256 3c27689195cd558cd3df06db75ba6e46b1905d39e636536c0a52e01ba3323270) retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "ordered_f8f6f4_f16_compute120f_ptx93",
+      "coverage_count": 25,
+      "stages": [
+        {
+          "targets": ["compute_120f", "ptx93"],
+          "representation": "convergent ordered kind::f8f6f4 packed-F16 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained the exact 25-form matrix in 8,886-byte PTX (SHA-256 51f4c9986dc2523a8745ee1a131c400b87b714f44c881d6d102b363529e1b429), produced 11,500-byte LTOIR (SHA-256 678e88e228100ca0802c84918f31d08c024a76e9078074fc6e8671b342d27a6e), and emitted no unresolved calls."
+        },
+        {
+          "targets": ["sm_120f", "ptx93"],
+          "representation": "libNVVM-emitted ordered kind::f8f6f4 packed-F16 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 9,728-byte cubin (SHA-256 90a0b9bf02df8ca3cb34f867b29b56a65d79a5c9033ea9dc5084ee210b5f6f1d); its 27,701-byte SASS dump (SHA-256 80831cd9a7cde8fd67343302591ea08a30327606719fb232d8e28e812d9c5e46) retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_120f", "ptx93"],
+          "representation": "libNVVM LTOIR retaining the ordered kind::f8f6f4 packed-F16 matrix",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 9,856-byte cubin (SHA-256 e3da7f6df18cbc6f195ebf2127f542d93d22301d33406ad9fc86209583209b1b); its terminal SASS matches the 27,701-byte ptxas result and retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "ordered_f8f6f4_f16_compute121a_ptx93",
+      "coverage_count": 25,
+      "stages": [
+        {
+          "targets": ["compute_121a", "ptx93"],
+          "representation": "convergent ordered kind::f8f6f4 packed-F16 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained the exact 25-form matrix in 8,886-byte PTX (SHA-256 d667d6730fb487ff7b7812afbb66ca3ddc3ece9ee59230883d91a7286fb8cf35), produced 11,504-byte LTOIR (SHA-256 2c1de19d40ea54c10e3f7f9c5fdad148f8fed26db5a775c63301e695d4a486b8), and emitted no unresolved calls."
+        },
+        {
+          "targets": ["sm_121a", "ptx93"],
+          "representation": "libNVVM-emitted ordered kind::f8f6f4 packed-F16 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 9,728-byte cubin (SHA-256 acd74cced6969aaf6f09afb935d33978ed2753a7f1558240dc4607027b15d502); its 27,724-byte SASS dump (SHA-256 16087533ef8f20e8804dda13de37ea8fce10b505d82ca7c93c5d9d484b0b26e9) retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_121a", "ptx93"],
+          "representation": "libNVVM LTOIR retaining the ordered kind::f8f6f4 packed-F16 matrix",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 9,856-byte cubin (SHA-256 5686bd4d7d44b05d50052c4e12c6385af60430e6717e53c535acc7e5b17daac6); its terminal SASS matches the 27,724-byte ptxas result and retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "ordered_f8f6f4_f16_compute121f_ptx93",
+      "coverage_count": 25,
+      "stages": [
+        {
+          "targets": ["compute_121f", "ptx93"],
+          "representation": "convergent ordered kind::f8f6f4 packed-F16 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained the exact 25-form matrix in 8,886-byte PTX (SHA-256 8a939f3816e414a14d24fe9e2bcb28b97f30db931b2c71c6c0e1c2c793329855), produced 11,500-byte LTOIR (SHA-256 778bc963dbd6301055eaf20892234aea60113ca053682d6c6010b1f1b915bcbe), and emitted no unresolved calls."
+        },
+        {
+          "targets": ["sm_121f", "ptx93"],
+          "representation": "libNVVM-emitted ordered kind::f8f6f4 packed-F16 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 9,728-byte cubin (SHA-256 501b5715323e83c1543a76999f6fb747c6ce1ab0be09aeb637fb95ce69cb28da); its 27,701-byte SASS dump (SHA-256 677ac56dab06986c7ec8938dcc82e23d3637bca8f58282140d0fbce8f483d353) retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": ["sm_121f", "ptx93"],
+          "representation": "libNVVM LTOIR retaining the ordered kind::f8f6f4 packed-F16 matrix",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 9,856-byte cubin (SHA-256 7dbcfbe36d9fca5c8916689289754c0041ace50971ff0f9a337c649bc326e2f5); its terminal SASS matches the 27,701-byte ptxas result and retains 25 unique QMMA forms.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {"name": "a_element", "values": ["e2m1", "e2m3", "e3m2", "e4m3", "e5m2"]},
+        {"name": "b_element", "values": ["e2m1", "e2m3", "e3m2", "e4m3", "e5m2"]}
+      ],
+      "product_count": 25,
+      "fixtures": [
+        "ordered_f8f6f4_f16_compute120a_ptx93",
+        "ordered_f8f6f4_f16_compute120f_ptx93",
+        "ordered_f8f6f4_f16_compute121a_ptx93",
+        "ordered_f8f6f4_f16_compute121f_ptx93"
+      ],
+      "template": {
+        "id": "mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_${a_element}_${b_element}_f16",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_kind_f8f6f4_f16_${a_element}_${b_element}_f16",
+        "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.kind.f8f6f4.f16.${a_element}.${b_element}.f16",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k64", "row", "col", "kind::f8f6f4", "f16", "${a_element}", "${b_element}", "f16"],
+          "operands": [
+            {"kind": "register_list", "length": 2},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 4},
+            {"kind": "register_list", "length": 2},
+            {"kind": "register"},
+            {"kind": "immediate"}
+          ]
+        }
+      }
+    }
+  ]
+}

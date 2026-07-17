@@ -142,6 +142,107 @@ mod kernels {
         }
     }
 
+    /// Keeps the complete ordered sparse F16 matrix in device code.
+    ///
+    /// This kernel is compile-only and is never launched by the example.
+    #[kernel]
+    pub fn compile_ordered_f8f6f4_f16(mut output: DisjointSlice<u32>) {
+        let c = [0; 2];
+        let a = [0; 4];
+        let b = [0; 4];
+        let metadata = 0x4444_4444;
+
+        // SAFETY: every lane follows the same warp-synchronous sequence. The
+        // selector and ordered metadata use their only admitted forms.
+        let values = unsafe {
+            [
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e2m1_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e2m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e3m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e4m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e5m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m3_e2m1_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m3_e2m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m3_e3m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m3_e4m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m3_e5m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e3m2_e2m1_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e3m2_e2m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e3m2_e3m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e3m2_e4m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e3m2_e5m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e4m3_e2m1_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e4m3_e2m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e4m3_e3m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e4m3_e4m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e4m3_e5m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e5m2_e2m1_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e5m2_e2m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e5m2_e3m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e5m2_e4m3_f16(
+                    c, a, b, metadata, 0,
+                ),
+                matrix::mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e5m2_e5m2_f16(
+                    c, a, b, metadata, 0,
+                ),
+            ]
+        };
+        let mut value = 0;
+        for lanes in values {
+            value ^= lanes[0] ^ lanes[1];
+        }
+
+        if let Some((slot, _)) = output.get_mut_indexed() {
+            *slot = value;
+        }
+    }
+
     /// Keeps every dense `kind::f8f6f4` F32 MMA form in device code.
     ///
     /// This kernel is compile-only and is never launched by the example.

@@ -520,6 +520,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 let (c_count, a_count, b_count, d_count) =
                     sparse_mma_fragment_counts(record);
                 let accumulator = match record.sparse_mma.as_ref().unwrap().accumulator {
+                    SparseMmaAccumulator::F16 => "u32",
                     SparseMmaAccumulator::F32 => "f32",
                     SparseMmaAccumulator::S32 => "i32",
                 };
@@ -2628,6 +2629,7 @@ fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
 
 fn sparse_mma_fragment_counts(record: &CatalogIntrinsic) -> (usize, usize, usize, usize) {
     match record.sparse_mma.as_ref().unwrap().adapter {
+        SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32 => (2, 4, 4, 2),
         SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32
         | SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32 => (4, 4, 4, 4),
         SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32 => (4, 2, 2, 4),
@@ -2671,6 +2673,9 @@ fn sparse_mma_metadata_rule(mma: &SparseMma) -> &'static str {
 
 fn sparse_mma_import_adapter(record: &CatalogIntrinsic) -> &'static str {
     match record.sparse_mma.as_ref().unwrap().adapter {
+        SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32 => {
+            "GeneratedMmaImportAdapter::C2U32A4U32B4U32ToD2U32"
+        }
         SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32 => {
             "GeneratedMmaImportAdapter::C4F32A4U32B4U32ToD4F32"
         }
@@ -2703,6 +2708,7 @@ fn sparse_mma_attr_variants(
         SparseMmaShape::M16n8k128 => "SparseMmaShapeAttr::M16n8k128",
     };
     let accumulator = match mma.accumulator {
+        SparseMmaAccumulator::F16 => "SparseMmaAccumulatorAttr::F16",
         SparseMmaAccumulator::F32 => "SparseMmaAccumulatorAttr::F32",
         SparseMmaAccumulator::S32 => "SparseMmaAccumulatorAttr::S32",
     };
@@ -2773,6 +2779,7 @@ fn sparse_mma_constraints(record: &CatalogIntrinsic) -> String {
     let mma = record.sparse_mma.as_ref().unwrap();
     let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
     let (output, accumulator) = match mma.accumulator {
+        SparseMmaAccumulator::F16 => ("=r", "r"),
         SparseMmaAccumulator::F32 => ("=f", "f"),
         SparseMmaAccumulator::S32 => ("=r", "r"),
     };
@@ -2786,6 +2793,7 @@ fn sparse_mma_constraints(record: &CatalogIntrinsic) -> String {
 
 fn sparse_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
     match record.sparse_mma.as_ref().unwrap().accumulator {
+        SparseMmaAccumulator::F16 => "GeneratedMmaResultType::I32",
         SparseMmaAccumulator::F32 => "GeneratedMmaResultType::F32",
         SparseMmaAccumulator::S32 => "GeneratedMmaResultType::I32",
     }
@@ -2795,6 +2803,7 @@ fn sparse_mma_carriers(record: &CatalogIntrinsic) -> (String, String) {
     let mma = record.sparse_mma.as_ref().unwrap();
     let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
     let accumulator = match mma.accumulator {
+        SparseMmaAccumulator::F16 => "MmaCarrier::U32",
         SparseMmaAccumulator::F32 => "MmaCarrier::F32",
         SparseMmaAccumulator::S32 => "MmaCarrier::I32",
     };
@@ -3420,7 +3429,8 @@ fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
         assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
         assert!(matches!(
             mma.adapter,
-            SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32
+            SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32
+                | SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32
                 | SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
                 | SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32
         ));
@@ -6826,7 +6836,7 @@ pub enum SparseMmaShapeAttr { M16n8k32, M16n8k64, M16n8k128 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaAccumulatorAttr { F32, S32 }
+pub enum SparseMmaAccumulatorAttr { F16, F32, S32 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -10271,6 +10281,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 enum GeneratedMmaImportAdapter {
     C2U32A2U32B1U32ToD2U32,
     C2U32A4U32B2U32ToD2U32,
+    C2U32A4U32B4U32ToD2U32,
     C4F32A2U32B1U32ToD4F32,
     C4F32A4U32B2U32ToD4F32,
     C4F32A4U32B4U32ToD4F32,
@@ -10349,6 +10360,8 @@ fn import_generated_mma_operands(
                 (u32_ty, 2, u32_ty, 2, true, u32_ty, 1, false, u32_ty, 2),
             GeneratedMmaImportAdapter::C2U32A4U32B2U32ToD2U32 =>
                 (u32_ty, 2, u32_ty, 4, true, u32_ty, 2, true, u32_ty, 2),
+            GeneratedMmaImportAdapter::C2U32A4U32B4U32ToD2U32 =>
+                (u32_ty, 2, u32_ty, 4, true, u32_ty, 4, true, u32_ty, 2),
             GeneratedMmaImportAdapter::C4F32A2U32B1U32ToD4F32 =>
                 (f32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, f32_ty, 4),
             GeneratedMmaImportAdapter::C4F32A4U32B2U32ToD4F32 =>
@@ -12462,6 +12475,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             SparseMmaShape::M16n8k128 => "GeneratedSparseMmaShape::M16n8k128",
         };
         let accumulator = match mma.accumulator {
+            SparseMmaAccumulator::F16 => "GeneratedSparseMmaAccumulator::F16",
             SparseMmaAccumulator::F32 => "GeneratedSparseMmaAccumulator::F32",
             SparseMmaAccumulator::S32 => "GeneratedSparseMmaAccumulator::S32",
         };
@@ -12660,7 +12674,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedClusterBarrierMode { Arrive, ArriveAligned, ArriveRelaxed, ArriveRelaxedAligned, Wait, WaitAligned }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarConversionRounding { NearestAway, NearestEven, TowardZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarConversionSaturation { None, Relu, Satfinite, ReluSatfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F16, F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedClusterBarrierMode { Arrive, ArriveAligned, ArriveRelaxed, ArriveRelaxedAligned, Wait, WaitAligned }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarConversionRounding { NearestAway, NearestEven, TowardZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarConversionSaturation { None, Relu, Satfinite, ReluSatfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -12828,7 +12842,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)",
-        "            let shape_matches = match shape {\n                GeneratedSparseMmaShape::M16n8k32 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32),\n                GeneratedSparseMmaShape::M16n8k64 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k64),\n                GeneratedSparseMmaShape::M16n8k128 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k128),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedSparseMmaAccumulator::F32 => op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::F32),\n                GeneratedSparseMmaAccumulator::S32 => op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32),\n            };\n            let selector_matches = match selector {\n                GeneratedSparseMmaSelector::ImmediateZeroOrOne => op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne),\n                GeneratedSparseMmaSelector::ImmediateZero => op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZero),\n            };\n            shape_matches\n                && accumulator_matches",
+        "            let shape_matches = match shape {\n                GeneratedSparseMmaShape::M16n8k32 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32),\n                GeneratedSparseMmaShape::M16n8k64 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k64),\n                GeneratedSparseMmaShape::M16n8k128 => op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k128),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedSparseMmaAccumulator::F16 => op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::F16),\n                GeneratedSparseMmaAccumulator::F32 => op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::F32),\n                GeneratedSparseMmaAccumulator::S32 => op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32),\n            };\n            let selector_matches = match selector {\n                GeneratedSparseMmaSelector::ImmediateZeroOrOne => op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne),\n                GeneratedSparseMmaSelector::ImmediateZero => op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZero),\n            };\n            shape_matches\n                && accumulator_matches",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -14182,6 +14196,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         output.push_str("  ret i32 %result\n}\n");
     } else if record.sparse_mma.is_some() {
         let accumulator = match record.sparse_mma.as_ref().unwrap().accumulator {
+            SparseMmaAccumulator::F16 => "i32",
             SparseMmaAccumulator::F32 => "float",
             SparseMmaAccumulator::S32 => "i32",
         };
@@ -17085,7 +17100,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 524);
+        assert_eq!(catalog.intrinsics.len(), 549);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -17510,7 +17525,7 @@ mod tests {
             .iter()
             .filter(|record| record.sparse_mma.as_ref().unwrap().shape == SparseMmaShape::M16n8k128)
             .count();
-        assert_eq!((records.len(), k32, k64, k128), (89, 16, 57, 16));
+        assert_eq!((records.len(), k32, k64, k128), (114, 16, 82, 16));
         let standard_k64 = records
             .iter()
             .copied()
@@ -17626,6 +17641,34 @@ mod tests {
                 "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32]".into(),
             )
         );
+        let ordered_f8f6f4_f16 = records
+            .iter()
+            .copied()
+            .find(|record| {
+                record.id == "mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e2m1_f16"
+            })
+            .unwrap();
+        assert_eq!(
+            ordered_f8f6f4_f16.sparse_mma.as_ref().unwrap().adapter,
+            SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32
+        );
+        assert_eq!(sparse_mma_fragment_counts(ordered_f8f6f4_f16), (2, 4, 4, 2));
+        assert_eq!(
+            sparse_mma_template(ordered_f8f6f4_f16),
+            "mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.kind::f8f6f4.f16.e2m1.e2m1.f16 {$0, $1}, {$4, $5, $6, $7}, {$8, $9, $10, $11}, {$2, $3}, $12, $13;"
+        );
+        assert_eq!(
+            sparse_mma_constraints(ordered_f8f6f4_f16),
+            "=r,=r,r,r,r,r,r,r,r,r,r,r,r,n"
+        );
+        assert_eq!(
+            sparse_mma_carriers(ordered_f8f6f4_f16),
+            (
+                "&[MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]".into(),
+                "&[MmaCarrier::U32, MmaCarrier::U32]".into(),
+            )
+        );
+        assert_eq!(sparse_mma_selector_values(ordered_f8f6f4_f16), &[0]);
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
@@ -17633,6 +17676,7 @@ mod tests {
         for record in &records {
             let (c_count, a_count, b_count, d_count) = sparse_mma_fragment_counts(record);
             let scalar = match record.sparse_mma.as_ref().unwrap().accumulator {
+                SparseMmaAccumulator::F16 => "u32",
                 SparseMmaAccumulator::F32 => "f32",
                 SparseMmaAccumulator::S32 => "i32",
             };
@@ -17643,7 +17687,7 @@ mod tests {
         }
 
         let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 89);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 114);
         assert!(
             compatibility
                 .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
@@ -17656,6 +17700,10 @@ mod tests {
             compatibility
                 .contains("c: [f32; 4], a: [u32; 4], b: [u32; 4], metadata: u32, selector: u32")
         );
+        assert!(
+            compatibility
+                .contains("c: [u32; 2], a: [u32; 4], b: [u32; 4], metadata: u32, selector: u32")
+        );
 
         let dialect = render_dialect_sparse_mma(&catalog, "test-hash");
         assert_eq!(dialect.matches("pub struct SparseMmaOp").count(), 1);
@@ -17664,7 +17712,7 @@ mod tests {
         assert!(dialect.contains("MmaCarrier::U32"));
         assert!(dialect.contains("operands.len() != expected_operands"));
         assert!(dialect.contains("SparseMmaShapeAttr { M16n8k32, M16n8k64, M16n8k128 }"));
-        assert!(dialect.contains("SparseMmaAccumulatorAttr { F32, S32 }"));
+        assert!(dialect.contains("SparseMmaAccumulatorAttr { F16, F32, S32 }"));
         assert!(dialect.contains("SparseMmaSelectorAttr { ImmediateZeroOrOne, ImmediateZero }"));
         assert!(dialect.contains("SparseMmaElementAttr::E2m1"));
         assert!(dialect.contains("SparseMmaElementAttr::E2m3"));
@@ -17686,6 +17734,8 @@ mod tests {
         assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32"));
         assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A4U32B4U32ToD4I32"));
         assert!(importer.contains("GeneratedMmaImportAdapter::C4F32A4U32B4U32ToD4F32"));
+        assert!(importer.contains("GeneratedMmaImportAdapter::C2U32A4U32B4U32ToD2U32"));
+        assert!(importer.contains("(u32_ty, 2, u32_ty, 4, true, u32_ty, 4, true, u32_ty, 2)"));
         assert!(importer.contains("let (c_array, last_op) = rvalue::translate_operand("));
         assert!(importer.contains("ctx, body, &args[0], value_map"));
         assert!(importer.contains("let (a_value, last_after_a) = rvalue::translate_operand("));
@@ -17729,12 +17779,13 @@ mod tests {
         assert!(targets.contains("SparseMmaMetadataAttr::Standard"));
         assert!(targets.contains("GeneratedSparseMmaMetadata::Ordered"));
         assert!(targets.contains("SparseMmaMetadataAttr::Ordered"));
+        assert!(targets.contains("GeneratedSparseMmaAccumulator::F16"));
         assert!(targets.contains("GeneratedSparseMmaAccumulator::F32"));
         assert!(targets.contains("GeneratedSparseMmaOverflow::NotApplicable"));
         assert!(targets.contains("GeneratedHardwareAlternative::ExactArchitecture(120)"));
 
         assert_eq!(raw.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(), 32);
-        assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 57);
+        assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 82);
         assert_eq!(
             compatibility
                 .matches(SPARSE_MMA_STANDARD_METADATA_RULE)
@@ -17745,7 +17796,7 @@ mod tests {
             compatibility
                 .matches(SPARSE_MMA_ORDERED_METADATA_RULE)
                 .count(),
-            57
+            82
         );
         assert!(
             lowering
@@ -17772,6 +17823,14 @@ mod tests {
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::F32, 4, 14, "mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.kind::f8f6f4.f32.e2m1.e2m1.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13, $14, $15}, {$4, $5, $6, $7}, $16, $17;", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r,r,r,r,n")"#
         ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 2, 12, "mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.kind::f8f6f4.f16.e2m1.e2m1.f16 {$0, $1}, {$4, $5, $6, $7}, {$8, $9, $10, $11}, {$2, $3}, $12, $13;", "=r,=r,r,r,r,r,r,r,r,r,r,r,r,n")"#
+        ));
+        let f16_probe = render_probe(&catalog, ordered_f8f6f4_f16, "test-hash");
+        assert!(f16_probe.contains(
+            "define { i32, i32 } @probe_mma_sp_ordered_metadata_m16n8k64_kind_f8f6f4_f16_e2m1_e2m1_f16_selector_0"
+        ));
+        assert!(!f16_probe.contains("_selector_1"));
 
         for record in &records {
             let probe = render_probe(&catalog, record, "test-hash");
@@ -17797,7 +17856,7 @@ mod tests {
         );
         assert_eq!(
             reference.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(),
-            57
+            82
         );
         let sparse_reference = reference
             .split("## Sparse-MMA contracts")

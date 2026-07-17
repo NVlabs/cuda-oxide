@@ -40,6 +40,7 @@ shards = [
     "overlay/sparse_mma_int4_m16n8k64.toml",
     "overlay/sparse_mma_int8.toml",
     "overlay/sparse_mma_int8_m16n8k64.toml",
+    "overlay/sparse_mma_ordered_f8f6f4_f16.toml",
     "overlay/sparse_mma_ordered_f8f6f4_f32.toml",
     "overlay/sparse_mma_ordered_int4_m16n8k128.toml",
     "overlay/sparse_mma_ordered_int4_m16n8k64.toml",
