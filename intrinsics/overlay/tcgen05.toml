@@ -1,4 +1,4 @@
-schema = 54
+schema = 55
 family = "tcgen05"
 
 [tcgen05]
@@ -10,6 +10,8 @@ ld_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 ld_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-ld"
 st_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 st_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-st"
+offset_llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+offset_libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05-ldst-offset"
 runtime_validation = "unexecuted"
 
 [[tcgen05.variant]]
@@ -971,5 +973,197 @@ unpack16 = false
 [[tcgen05.st_variant]]
 abi_id = "i0727"
 shape = "32x32b"
+multiplicity = "x128"
+unpack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0728"
+shape = "16x32bx2"
+multiplicity = "x1"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0729"
+shape = "16x32bx2"
+multiplicity = "x1"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0730"
+shape = "16x32bx2"
+multiplicity = "x2"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0731"
+shape = "16x32bx2"
+multiplicity = "x2"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0732"
+shape = "16x32bx2"
+multiplicity = "x4"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0733"
+shape = "16x32bx2"
+multiplicity = "x4"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0734"
+shape = "16x32bx2"
+multiplicity = "x8"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0735"
+shape = "16x32bx2"
+multiplicity = "x8"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0736"
+shape = "16x32bx2"
+multiplicity = "x16"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0737"
+shape = "16x32bx2"
+multiplicity = "x16"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0738"
+shape = "16x32bx2"
+multiplicity = "x32"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0739"
+shape = "16x32bx2"
+multiplicity = "x32"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0740"
+shape = "16x32bx2"
+multiplicity = "x64"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0741"
+shape = "16x32bx2"
+multiplicity = "x64"
+pack16 = true
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0742"
+shape = "16x32bx2"
+multiplicity = "x128"
+pack16 = false
+
+[[tcgen05.ld_offset_variant]]
+abi_id = "i0743"
+shape = "16x32bx2"
+multiplicity = "x128"
+pack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0744"
+shape = "16x32bx2"
+multiplicity = "x1"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0745"
+shape = "16x32bx2"
+multiplicity = "x1"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0746"
+shape = "16x32bx2"
+multiplicity = "x2"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0747"
+shape = "16x32bx2"
+multiplicity = "x2"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0748"
+shape = "16x32bx2"
+multiplicity = "x4"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0749"
+shape = "16x32bx2"
+multiplicity = "x4"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0750"
+shape = "16x32bx2"
+multiplicity = "x8"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0751"
+shape = "16x32bx2"
+multiplicity = "x8"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0752"
+shape = "16x32bx2"
+multiplicity = "x16"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0753"
+shape = "16x32bx2"
+multiplicity = "x16"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0754"
+shape = "16x32bx2"
+multiplicity = "x32"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0755"
+shape = "16x32bx2"
+multiplicity = "x32"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0756"
+shape = "16x32bx2"
+multiplicity = "x64"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0757"
+shape = "16x32bx2"
+multiplicity = "x64"
+unpack16 = true
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0758"
+shape = "16x32bx2"
+multiplicity = "x128"
+unpack16 = false
+
+[[tcgen05.st_offset_variant]]
+abi_id = "i0759"
+shape = "16x32bx2"
 multiplicity = "x128"
 unpack16 = true

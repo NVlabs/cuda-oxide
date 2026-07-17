@@ -522,6 +522,10 @@ pub struct Tcgen05Admission {
     pub st_llvm_evidence_profile: Option<String>,
     #[serde(default)]
     pub st_libnvvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub offset_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub offset_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<Tcgen05AdmissionVariant>,
@@ -531,6 +535,10 @@ pub struct Tcgen05Admission {
     pub ld_variants: Vec<Tcgen05LdAdmissionVariant>,
     #[serde(rename = "st_variant", default)]
     pub st_variants: Vec<Tcgen05StAdmissionVariant>,
+    #[serde(rename = "ld_offset_variant", default)]
+    pub ld_offset_variants: Vec<Tcgen05LdAdmissionVariant>,
+    #[serde(rename = "st_offset_variant", default)]
+    pub st_offset_variants: Vec<Tcgen05StAdmissionVariant>,
 }
 
 /// One reviewed tcgen05 operation and its reserved ABI ID.
@@ -1176,6 +1184,8 @@ pub struct Tcgen05St {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Tcgen05LdShape {
+    #[serde(rename = "16x32bx2")]
+    M16x32bx2,
     #[serde(rename = "16x64b")]
     M16x64b,
     #[serde(rename = "16x128b")]
@@ -1189,7 +1199,7 @@ pub enum Tcgen05LdShape {
 impl Tcgen05LdShape {
     pub const fn register_multiplier(self) -> usize {
         match self {
-            Self::M16x64b | Self::M32x32b => 1,
+            Self::M16x32bx2 | Self::M16x64b | Self::M32x32b => 1,
             Self::M16x128b => 2,
             Self::M16x256b => 4,
         }
@@ -1255,6 +1265,39 @@ pub enum Tcgen05Operation {
     St,
 }
 
+impl Tcgen05Operation {
+    pub const fn execution_scope(self) -> &'static str {
+        match self {
+            Self::Alloc
+            | Self::Dealloc
+            | Self::RelinquishAllocPermit
+            | Self::Ld16x256bX8Pure
+            | Self::Ld16x256bPure
+            | Self::LoadWait
+            | Self::StoreWait
+            | Self::AllocCg2
+            | Self::DeallocCg2
+            | Self::RelinquishAllocPermitCg2
+            | Self::Ld
+            | Self::St => "warp",
+            Self::FenceBeforeThreadSync
+            | Self::FenceAfterThreadSync
+            | Self::Commit
+            | Self::CommitSharedCluster
+            | Self::MmaWsF16
+            | Self::MmaF16
+            | Self::MmaWsBf16
+            | Self::MmaWsTf32
+            | Self::CpSmemToTmem
+            | Self::MmaF16Cg2
+            | Self::CommitCg2
+            | Self::CommitSharedClusterCg2
+            | Self::CommitMulticastCg2
+            | Self::CpSmemToTmemCg2 => "thread",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tcgen05Adapter {
@@ -1270,6 +1313,8 @@ pub enum Tcgen05Adapter {
     BarrierPointerMaskToVoid,
     TmemInjectPack16ToU32Registers,
     TmemU32RegistersInjectUnpack16ToVoid,
+    TmemHalfSplitOffsetInjectPack16ToU32Registers,
+    TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid,
 }
 
 /// Relationship between the public operation and LLVM's NVPTX selection.
@@ -3995,6 +4040,44 @@ runtime_validation = "unexecuted"
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<Tma>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn tcgen05_execution_scope_is_closed() {
+        for operation in [
+            Tcgen05Operation::Alloc,
+            Tcgen05Operation::Dealloc,
+            Tcgen05Operation::RelinquishAllocPermit,
+            Tcgen05Operation::AllocCg2,
+            Tcgen05Operation::DeallocCg2,
+            Tcgen05Operation::RelinquishAllocPermitCg2,
+            Tcgen05Operation::Ld16x256bX8Pure,
+            Tcgen05Operation::Ld16x256bPure,
+            Tcgen05Operation::LoadWait,
+            Tcgen05Operation::StoreWait,
+            Tcgen05Operation::Ld,
+            Tcgen05Operation::St,
+        ] {
+            assert_eq!(operation.execution_scope(), "warp");
+        }
+        for operation in [
+            Tcgen05Operation::FenceBeforeThreadSync,
+            Tcgen05Operation::FenceAfterThreadSync,
+            Tcgen05Operation::Commit,
+            Tcgen05Operation::CommitSharedCluster,
+            Tcgen05Operation::MmaWsF16,
+            Tcgen05Operation::MmaWsBf16,
+            Tcgen05Operation::MmaWsTf32,
+            Tcgen05Operation::MmaF16,
+            Tcgen05Operation::CpSmemToTmem,
+            Tcgen05Operation::MmaF16Cg2,
+            Tcgen05Operation::CommitCg2,
+            Tcgen05Operation::CommitSharedClusterCg2,
+            Tcgen05Operation::CommitMulticastCg2,
+            Tcgen05Operation::CpSmemToTmemCg2,
+        ] {
+            assert_eq!(operation.execution_scope(), "thread");
         }
     }
 }

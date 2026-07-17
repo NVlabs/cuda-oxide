@@ -73,7 +73,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 43;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 54;
+const OVERLAY_SHARD_SCHEMA: u32 = 55;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -100,6 +100,7 @@ const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 51;
 const TCGEN05_CP_SHARD_SCHEMA: u32 = 52;
 const TCGEN05_LD_SHARD_SCHEMA: u32 = 53;
 const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
+const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
 pub(crate) const CATALOG_SCHEMA: u32 = 43;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
@@ -373,9 +374,9 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         .filter(|record| record.family == "tcgen05")
         .count();
     match active_count {
-        174 => return Ok(catalog),
+        206 => return Ok(catalog),
         0 => {}
-        count => bail!("active tcgen05 catalog has {count} of 174 records"),
+        count => bail!("active tcgen05 catalog has {count} of 206 records"),
     }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
@@ -414,6 +415,8 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         ld_libnvvm_evidence_profile: None,
         st_llvm_evidence_profile: None,
         st_libnvvm_evidence_profile: None,
+        offset_llvm_evidence_profile: Some("llvm-tcgen05-offset-test".into()),
+        offset_libnvvm_evidence_profile: Some("libnvvm-tcgen05-offset-test".into()),
         runtime_validation: RuntimeValidation::Unexecuted,
         variants: operations
             .into_iter()
@@ -425,6 +428,40 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         cp_variants: vec![],
         ld_variants: vec![],
         st_variants: vec![],
+        ld_offset_variants: TCGEN05_OFFSET_LDST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |pack16| (shape, multiplicity, pack16))
+            })
+            .enumerate()
+            .map(
+                |(index, (shape, multiplicity, pack16))| Tcgen05LdAdmissionVariant {
+                    abi_id: format!("i{:04}", 728 + index),
+                    shape,
+                    multiplicity,
+                    pack16,
+                },
+            )
+            .collect(),
+        st_offset_variants: TCGEN05_OFFSET_LDST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |unpack16| (shape, multiplicity, unpack16))
+            })
+            .enumerate()
+            .map(
+                |(index, (shape, multiplicity, unpack16))| Tcgen05StAdmissionVariant {
+                    abi_id: format!("i{:04}", 744 + index),
+                    shape,
+                    multiplicity,
+                    unpack16,
+                },
+            )
+            .collect(),
     };
     for policy in expand_tcgen05_admission(&admission)? {
         let source = resolve_policy_source(&policy)?;
@@ -1204,6 +1241,13 @@ fn validate_overlay_shard_schema_with_max(
             || shard.schema >= TCGEN05_ST_SHARD_SCHEMA,
         "compact tcgen05 store admission requires overlay shard schema {}",
         TCGEN05_ST_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.tcgen05.as_ref().is_none_or(|admission| {
+            admission.ld_offset_variants.is_empty() && admission.st_offset_variants.is_empty()
+        }) || shard.schema >= TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
+        "compact tcgen05 offset load/store admission requires overlay shard schema {}",
+        TCGEN05_OFFSET_LDST_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -4878,8 +4922,24 @@ const TCGEN05_LD_VARIANTS: [(Tcgen05LdShape, Tcgen05LdMultiplicity); 29] = {
     ]
 };
 
+const TCGEN05_OFFSET_LDST_VARIANTS: [(Tcgen05LdShape, Tcgen05LdMultiplicity); 8] = {
+    use Tcgen05LdMultiplicity::*;
+    use Tcgen05LdShape::*;
+    [
+        (M16x32bx2, X1),
+        (M16x32bx2, X2),
+        (M16x32bx2, X4),
+        (M16x32bx2, X8),
+        (M16x32bx2, X16),
+        (M16x32bx2, X32),
+        (M16x32bx2, X64),
+        (M16x32bx2, X128),
+    ]
+};
+
 fn tcgen05_ld_shape_name(shape: Tcgen05LdShape) -> &'static str {
     match shape {
+        Tcgen05LdShape::M16x32bx2 => "16x32bx2",
         Tcgen05LdShape::M16x64b => "16x64b",
         Tcgen05LdShape::M16x128b => "16x128b",
         Tcgen05LdShape::M16x256b => "16x256b",
@@ -4974,7 +5034,11 @@ fn tcgen05_ld_operands(ld: Tcgen05Ld) -> Vec<OperandPattern> {
         1 => OperandPattern::Register,
         length => OperandPattern::RegisterList { length },
     };
-    vec![result, OperandPattern::Address]
+    let mut operands = vec![result, OperandPattern::Address];
+    if ld.shape == Tcgen05LdShape::M16x32bx2 {
+        operands.push(OperandPattern::Immediate);
+    }
+    operands
 }
 
 fn materialize_tcgen05_ld_variant(
@@ -5003,36 +5067,67 @@ fn materialize_tcgen05_ld_variant(
     );
     record.source_record = Some(tcgen05_ld_source_record(ld));
     record.rust_name = id.clone();
-    record.rust_arguments = vec!["u32".into()];
+    let has_half_split_offset = ld.shape == Tcgen05LdShape::M16x32bx2;
+    record.rust_arguments = if has_half_split_offset {
+        vec!["u32".into(), "i64".into()]
+    } else {
+        vec!["u32".into()]
+    };
     record.rust_result = rust_result.clone();
     record.must_use = true;
     record.public_rust_path = format!("cuda_intrinsics::tcgen05::{id}");
-    record.compatibility_rust_paths = vec![format!("cuda_device::tcgen05::{id}")];
+    record.compatibility_rust_paths = vec![format!(
+        "cuda_device::tcgen05::{}",
+        if has_half_split_offset {
+            format!("__{id}")
+        } else {
+            id.clone()
+        }
+    )];
     record.dialect_op_type = tcgen05_ld_op_type(ld);
     record.dialect_op_name = format!("nvvm.{id}");
-    record.dialect_operands = vec!["i32".into()];
+    record.dialect_operands = if has_half_split_offset {
+        vec!["i32".into(), "i64".into()]
+    } else {
+        vec!["i32".into()]
+    };
     record.dialect_results = vec!["i32".into(); register_count];
     record.llvm_symbol = Some(tcgen05_ld_llvm_symbol(ld));
     record.resolved_llvm_symbol = None;
-    record.llvm_arguments = vec!["tmem_ptr".into(), "i1".into()];
+    record.llvm_arguments = if has_half_split_offset {
+        vec!["tmem_ptr".into(), "i64".into(), "i1".into()]
+    } else {
+        vec!["tmem_ptr".into(), "i1".into()]
+    };
     record.llvm_results = vec![llvm_result];
     record.ptx_result = rust_result;
-    record.backend_lowerings[0].evidence_profile = admission
-        .ld_llvm_evidence_profile
-        .as_ref()
-        .expect("validated tcgen05 load LLVM evidence profile")
-        .clone();
-    record.backend_lowerings[1].evidence_profile = admission
-        .ld_libnvvm_evidence_profile
-        .as_ref()
-        .expect("validated tcgen05 load libNVVM evidence profile")
-        .clone();
+    record.execution_scope = Tcgen05Operation::Ld.execution_scope().into();
+    record.backend_lowerings[0].evidence_profile = if has_half_split_offset {
+        &admission.offset_llvm_evidence_profile
+    } else {
+        &admission.ld_llvm_evidence_profile
+    }
+    .as_ref()
+    .expect("validated tcgen05 load LLVM evidence profile")
+    .clone();
+    record.backend_lowerings[1].evidence_profile = if has_half_split_offset {
+        &admission.offset_libnvvm_evidence_profile
+    } else {
+        &admission.ld_libnvvm_evidence_profile
+    }
+    .as_ref()
+    .expect("validated tcgen05 load libNVVM evidence profile")
+    .clone();
     record.tcgen05 = Some(Tcgen05 {
         operation: Tcgen05Operation::Ld,
         cp: None,
         ld: Some(ld),
         st: None,
-        adapter: Tcgen05Adapter::TmemInjectPack16ToU32Registers,
+        adapter: if has_half_split_offset {
+            Tcgen05Adapter::TmemHalfSplitOffsetInjectPack16ToU32Registers
+        } else {
+            Tcgen05Adapter::TmemInjectPack16ToU32Registers
+        },
         source_contract: Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
         runtime_validation: admission.runtime_validation,
     });
@@ -5122,7 +5217,12 @@ fn tcgen05_st_operands(st: Tcgen05St) -> Vec<OperandPattern> {
         1 => OperandPattern::Register,
         length => OperandPattern::RegisterList { length },
     };
-    vec![OperandPattern::Address, data]
+    let mut operands = vec![OperandPattern::Address];
+    if st.shape == Tcgen05LdShape::M16x32bx2 {
+        operands.push(OperandPattern::Immediate);
+    }
+    operands.push(data);
+    operands
 }
 
 fn materialize_tcgen05_st_variant(
@@ -5151,39 +5251,67 @@ fn materialize_tcgen05_st_variant(
     );
     record.source_record = Some(tcgen05_st_source_record(st));
     record.rust_name = id.clone();
-    record.rust_arguments = vec!["u32".into(), rust_data];
+    let has_half_split_offset = st.shape == Tcgen05LdShape::M16x32bx2;
+    record.rust_arguments = if has_half_split_offset {
+        vec!["u32".into(), "i64".into(), rust_data]
+    } else {
+        vec!["u32".into(), rust_data]
+    };
     record.rust_result = "()".into();
     record.must_use = false;
     record.public_rust_path = format!("cuda_intrinsics::tcgen05::{id}");
-    record.compatibility_rust_paths = vec![format!("cuda_device::tcgen05::{id}")];
+    record.compatibility_rust_paths = vec![format!(
+        "cuda_device::tcgen05::{}",
+        if has_half_split_offset {
+            format!("__{id}")
+        } else {
+            id.clone()
+        }
+    )];
     record.dialect_op_type = tcgen05_st_op_type(st);
     record.dialect_op_name = format!("nvvm.{id}");
     record.dialect_operands = std::iter::once("i32".into())
+        .chain(has_half_split_offset.then(|| "i64".into()))
         .chain(std::iter::repeat_n("i32".into(), register_count))
         .collect();
     record.dialect_results.clear();
     record.llvm_symbol = Some(tcgen05_st_llvm_symbol(st));
     record.resolved_llvm_symbol = None;
-    record.llvm_arguments = vec!["tmem_ptr".into(), llvm_data, "i1".into()];
+    record.llvm_arguments = if has_half_split_offset {
+        vec!["tmem_ptr".into(), "i64".into(), llvm_data, "i1".into()]
+    } else {
+        vec!["tmem_ptr".into(), llvm_data, "i1".into()]
+    };
     record.llvm_results.clear();
     record.memory = "write".into();
     record.ptx_result = "()".into();
-    record.backend_lowerings[0].evidence_profile = admission
-        .st_llvm_evidence_profile
-        .as_ref()
-        .expect("validated tcgen05 store LLVM evidence profile")
-        .clone();
-    record.backend_lowerings[1].evidence_profile = admission
-        .st_libnvvm_evidence_profile
-        .as_ref()
-        .expect("validated tcgen05 store libNVVM evidence profile")
-        .clone();
+    record.execution_scope = Tcgen05Operation::St.execution_scope().into();
+    record.backend_lowerings[0].evidence_profile = if has_half_split_offset {
+        &admission.offset_llvm_evidence_profile
+    } else {
+        &admission.st_llvm_evidence_profile
+    }
+    .as_ref()
+    .expect("validated tcgen05 store LLVM evidence profile")
+    .clone();
+    record.backend_lowerings[1].evidence_profile = if has_half_split_offset {
+        &admission.offset_libnvvm_evidence_profile
+    } else {
+        &admission.st_libnvvm_evidence_profile
+    }
+    .as_ref()
+    .expect("validated tcgen05 store libNVVM evidence profile")
+    .clone();
     record.tcgen05 = Some(Tcgen05 {
         operation: Tcgen05Operation::St,
         cp: None,
         ld: None,
         st: Some(st),
-        adapter: Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid,
+        adapter: if has_half_split_offset {
+            Tcgen05Adapter::TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid
+        } else {
+            Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid
+        },
         source_contract: Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection,
         runtime_validation: admission.runtime_validation,
     });
@@ -5300,7 +5428,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 pure: false,
                 memory: recipe.memory.into(),
                 convergent: true,
-                execution_scope: "thread".into(),
+                execution_scope: recipe.operation.execution_scope().into(),
                 minimum_ptx: "8.6".into(),
                 minimum_sm: None,
                 ptx_result: recipe.rust_result.into(),
@@ -5564,6 +5692,115 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
             );
         }
     }
+
+    if admission.ld_offset_variants.is_empty() && admission.st_offset_variants.is_empty() {
+        ensure!(
+            admission.offset_llvm_evidence_profile.is_none()
+                && admission.offset_libnvvm_evidence_profile.is_none(),
+            "tcgen05 offset evidence profiles require admitted offset load/store variants"
+        );
+    } else {
+        ensure!(
+            admission
+                .offset_llvm_evidence_profile
+                .as_deref()
+                .is_some_and(|profile| !profile.trim().is_empty())
+                && admission
+                    .offset_libnvvm_evidence_profile
+                    .as_deref()
+                    .is_some_and(|profile| !profile.trim().is_empty()),
+            "compact tcgen05 offset admission requires both backend evidence profiles"
+        );
+        let expected_ld = TCGEN05_OFFSET_LDST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |pack16| (shape, multiplicity, pack16))
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            admission
+                .ld_offset_variants
+                .iter()
+                .map(|variant| (variant.shape, variant.multiplicity, variant.pack16))
+                .eq(expected_ld),
+            "compact tcgen05 offset load admission must list all 16 variants in canonical order"
+        );
+        let expected_st = TCGEN05_OFFSET_LDST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |unpack16| (shape, multiplicity, unpack16))
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            admission
+                .st_offset_variants
+                .iter()
+                .map(|variant| (variant.shape, variant.multiplicity, variant.unpack16))
+                .eq(expected_st),
+            "compact tcgen05 offset store admission must list all 16 variants in canonical order"
+        );
+
+        let base = records
+            .iter()
+            .find(|record| record.id == "tcgen05_ld_16x256b_pure")
+            .expect("closed tcgen05 offset load/store base")
+            .clone();
+        let first_load = records.len();
+        for (index, variant) in admission.ld_offset_variants.iter().enumerate() {
+            let reserved = format!("i{:04}", 728 + index);
+            ensure!(
+                variant.abi_id == reserved,
+                "tcgen05 offset load variant {} must keep reserved ABI ID {reserved}",
+                index + 1
+            );
+            records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
+        }
+        for pair in records[first_load..].chunks_exact(2) {
+            let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
+            let packed = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
+            ensure!(
+                raw.is_some_and(|ld| !ld.pack16)
+                    && packed.is_some_and(|ld| ld.pack16)
+                    && raw.map(|mut ld| {
+                        ld.pack16 = true;
+                        ld
+                    }) == packed
+                    && pair[0].source_record == pair[1].source_record
+                    && pair[0].llvm_symbol == pair[1].llvm_symbol,
+                "tcgen05 offset load source sharing must pair raw and pack16 leaves"
+            );
+        }
+
+        let first_store = records.len();
+        for (index, variant) in admission.st_offset_variants.iter().enumerate() {
+            let reserved = format!("i{:04}", 744 + index);
+            ensure!(
+                variant.abi_id == reserved,
+                "tcgen05 offset store variant {} must keep reserved ABI ID {reserved}",
+                index + 1
+            );
+            records.push(materialize_tcgen05_st_variant(&base, admission, variant));
+        }
+        for pair in records[first_store..].chunks_exact(2) {
+            let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
+            let unpacked = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
+            ensure!(
+                raw.is_some_and(|st| !st.unpack16)
+                    && unpacked.is_some_and(|st| st.unpack16)
+                    && raw.map(|mut st| {
+                        st.unpack16 = true;
+                        st
+                    }) == unpacked
+                    && pair[0].source_record == pair[1].source_record
+                    && pair[0].llvm_symbol == pair[1].llvm_symbol,
+                "tcgen05 offset store source sharing must pair raw and unpack16 leaves"
+            );
+        }
+    }
     Ok(records)
 }
 
@@ -5638,7 +5875,7 @@ fn validate_tcgen05_policy(
         !policy.pure
             && policy.memory == recipe.memory
             && policy.convergent
-            && policy.execution_scope == "thread"
+            && policy.execution_scope == recipe.operation.execution_scope()
             && tcgen05.ld.is_none()
             && tcgen05.st.is_none()
             && tcgen05.adapter == recipe.adapter
@@ -5671,11 +5908,21 @@ fn validate_tcgen05_ld_policy(
     tcgen05: &Tcgen05,
     ld: Tcgen05Ld,
 ) -> Result<()> {
-    let source_index = TCGEN05_LD_VARIANTS
+    let has_half_split_offset = ld.shape == Tcgen05LdShape::M16x32bx2;
+    let variants: &[(Tcgen05LdShape, Tcgen05LdMultiplicity)] = if has_half_split_offset {
+        &TCGEN05_OFFSET_LDST_VARIANTS
+    } else {
+        &TCGEN05_LD_VARIANTS
+    };
+    let source_index = variants
         .iter()
         .position(|identity| *identity == (ld.shape, ld.multiplicity))
         .with_context(|| format!("{} has an unsupported tcgen05 load identity", policy.id))?;
-    let expected_abi_id = format!("i{:04}", 612 + source_index * 2 + usize::from(ld.pack16));
+    let first_abi = if has_half_split_offset { 728 } else { 612 };
+    let expected_abi_id = format!(
+        "i{:04}",
+        first_abi + source_index * 2 + usize::from(ld.pack16)
+    );
     let id = tcgen05_ld_id(ld);
     let source_record = tcgen05_ld_source_record(ld);
     let llvm_symbol = tcgen05_ld_llvm_symbol(ld);
@@ -5683,6 +5930,42 @@ fn validate_tcgen05_ld_policy(
     let llvm_result = tcgen05_ld_llvm_result(ld);
     let register_count = tcgen05_ld_register_count(ld);
     let mode = if ld.pack16 { "pack16" } else { "raw" };
+    let expected_rust_arguments = if has_half_split_offset {
+        vec!["u32", "i64"]
+    } else {
+        vec!["u32"]
+    };
+    let compatibility_name = if has_half_split_offset {
+        format!("__{id}")
+    } else {
+        id.clone()
+    };
+    let expected_dialect_operands = if has_half_split_offset {
+        vec!["i32", "i64"]
+    } else {
+        vec!["i32"]
+    };
+    let expected_llvm_arguments = if has_half_split_offset {
+        vec!["tmem_ptr", "i64", "i1"]
+    } else {
+        vec!["tmem_ptr", "i1"]
+    };
+    let expected_properties = if has_half_split_offset {
+        vec![
+            "ImmArg<arg1>",
+            "ImmArg<arg2>",
+            "IntrArgMemOnly",
+            "IntrConvergent",
+            "NoCapture<arg0>",
+        ]
+    } else {
+        vec![
+            "ImmArg<arg1>",
+            "IntrArgMemOnly",
+            "IntrConvergent",
+            "NoCapture<arg0>",
+        ]
+    };
     ensure!(
         policy.id == id
             && policy.abi_id == expected_abi_id
@@ -5705,33 +5988,28 @@ fn validate_tcgen05_ld_policy(
     ensure!(
         policy.rust_module == "tcgen05"
             && policy.rust_name == id
-            && policy.rust_arguments == ["u32"]
+            && policy.rust_arguments == expected_rust_arguments
             && policy.rust_result == rust_result
             && !policy.safe
             && policy.must_use
             && policy.safe_allowlist_reason.is_none()
             && policy.public_rust_path == format!("cuda_intrinsics::tcgen05::{id}")
-            && policy.compatibility_rust_paths == [format!("cuda_device::tcgen05::{id}")],
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::tcgen05::{compatibility_name}")],
         "{} tcgen05 load Rust API changed",
         policy.id
     );
     ensure!(
         policy.dialect_op_type == tcgen05_ld_op_type(ld)
             && policy.dialect_op_name == format!("nvvm.{id}")
-            && policy.dialect_operands == ["i32"]
+            && policy.dialect_operands == expected_dialect_operands
             && policy.dialect_results == vec!["i32"; register_count]
-            && policy.llvm_arguments == ["tmem_ptr", "i1"]
+            && policy.llvm_arguments == expected_llvm_arguments
             && policy.llvm_results == [llvm_result.as_str()]
-            && declaration.arguments == ["tmem_ptr", "i1"]
+            && declaration.arguments == expected_llvm_arguments
             && declaration.results == [llvm_result.as_str()]
             && declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_TCGEN05_LD"]
-            && declaration.properties
-                == [
-                    "ImmArg<arg1>",
-                    "IntrArgMemOnly",
-                    "IntrConvergent",
-                    "NoCapture<arg0>",
-                ]
+            && declaration.properties == expected_properties
             && declaration.selections.is_empty()
             && policy.lowering == "generated_tcgen05",
         "{} tcgen05 load carrier or imported declaration changed",
@@ -5741,12 +6019,17 @@ fn validate_tcgen05_ld_policy(
         !policy.pure
             && policy.memory == "read"
             && policy.convergent
-            && policy.execution_scope == "thread"
+            && policy.execution_scope == Tcgen05Operation::Ld.execution_scope()
             && tcgen05.operation == Tcgen05Operation::Ld
             && tcgen05.cp.is_none()
             && tcgen05.ld == Some(ld)
             && tcgen05.st.is_none()
-            && tcgen05.adapter == Tcgen05Adapter::TmemInjectPack16ToU32Registers
+            && tcgen05.adapter
+                == if has_half_split_offset {
+                    Tcgen05Adapter::TmemHalfSplitOffsetInjectPack16ToU32Registers
+                } else {
+                    Tcgen05Adapter::TmemInjectPack16ToU32Registers
+                }
             && tcgen05.source_contract == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
             && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
         "{} tcgen05 load semantics changed",
@@ -5775,11 +6058,21 @@ fn validate_tcgen05_st_policy(
     tcgen05: &Tcgen05,
     st: Tcgen05St,
 ) -> Result<()> {
-    let source_index = TCGEN05_ST_VARIANTS
+    let has_half_split_offset = st.shape == Tcgen05LdShape::M16x32bx2;
+    let variants: &[(Tcgen05LdShape, Tcgen05LdMultiplicity)] = if has_half_split_offset {
+        &TCGEN05_OFFSET_LDST_VARIANTS
+    } else {
+        &TCGEN05_ST_VARIANTS
+    };
+    let source_index = variants
         .iter()
         .position(|identity| *identity == (st.shape, st.multiplicity))
         .with_context(|| format!("{} has an unsupported tcgen05 store identity", policy.id))?;
-    let expected_abi_id = format!("i{:04}", 670 + source_index * 2 + usize::from(st.unpack16));
+    let first_abi = if has_half_split_offset { 744 } else { 670 };
+    let expected_abi_id = format!(
+        "i{:04}",
+        first_abi + source_index * 2 + usize::from(st.unpack16)
+    );
     let id = tcgen05_st_id(st);
     let source_record = tcgen05_st_source_record(st);
     let llvm_symbol = tcgen05_st_llvm_symbol(st);
@@ -5787,6 +6080,41 @@ fn validate_tcgen05_st_policy(
     let llvm_data = tcgen05_st_llvm_data(st);
     let register_count = tcgen05_st_register_count(st);
     let mode = if st.unpack16 { "unpack16" } else { "raw" };
+    let expected_rust_arguments = if has_half_split_offset {
+        vec!["u32", "i64", rust_data.as_str()]
+    } else {
+        vec!["u32", rust_data.as_str()]
+    };
+    let compatibility_name = if has_half_split_offset {
+        format!("__{id}")
+    } else {
+        id.clone()
+    };
+    let expected_dialect_operands = std::iter::once("i32".to_owned())
+        .chain(has_half_split_offset.then(|| "i64".to_owned()))
+        .chain(std::iter::repeat_n("i32".to_owned(), register_count))
+        .collect::<Vec<_>>();
+    let expected_llvm_arguments = if has_half_split_offset {
+        vec!["tmem_ptr", "i64", llvm_data.as_str(), "i1"]
+    } else {
+        vec!["tmem_ptr", llvm_data.as_str(), "i1"]
+    };
+    let expected_properties = if has_half_split_offset {
+        vec![
+            "ImmArg<arg1>",
+            "ImmArg<arg3>",
+            "IntrArgMemOnly",
+            "IntrConvergent",
+            "NoCapture<arg0>",
+        ]
+    } else {
+        vec![
+            "ImmArg<arg2>",
+            "IntrArgMemOnly",
+            "IntrConvergent",
+            "NoCapture<arg0>",
+        ]
+    };
     ensure!(
         policy.id == id
             && policy.abi_id == expected_abi_id
@@ -5809,36 +6137,28 @@ fn validate_tcgen05_st_policy(
     ensure!(
         policy.rust_module == "tcgen05"
             && policy.rust_name == id
-            && policy.rust_arguments == ["u32", rust_data.as_str()]
+            && policy.rust_arguments == expected_rust_arguments
             && policy.rust_result == "()"
             && !policy.safe
             && !policy.must_use
             && policy.safe_allowlist_reason.is_none()
             && policy.public_rust_path == format!("cuda_intrinsics::tcgen05::{id}")
-            && policy.compatibility_rust_paths == [format!("cuda_device::tcgen05::{id}")],
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::tcgen05::{compatibility_name}")],
         "{} tcgen05 store Rust API changed",
         policy.id
     );
     ensure!(
         policy.dialect_op_type == tcgen05_st_op_type(st)
             && policy.dialect_op_name == format!("nvvm.{id}")
-            && policy.dialect_operands
-                == std::iter::once("i32".into())
-                    .chain(std::iter::repeat_n("i32".into(), register_count))
-                    .collect::<Vec<String>>()
+            && policy.dialect_operands == expected_dialect_operands
             && policy.dialect_results.is_empty()
-            && policy.llvm_arguments == ["tmem_ptr", llvm_data.as_str(), "i1"]
+            && policy.llvm_arguments == expected_llvm_arguments
             && policy.llvm_results.is_empty()
-            && declaration.arguments == ["tmem_ptr", llvm_data.as_str(), "i1"]
+            && declaration.arguments == expected_llvm_arguments
             && declaration.results.is_empty()
             && declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_TCGEN05_ST"]
-            && declaration.properties
-                == [
-                    "ImmArg<arg2>",
-                    "IntrArgMemOnly",
-                    "IntrConvergent",
-                    "NoCapture<arg0>",
-                ]
+            && declaration.properties == expected_properties
             && declaration.selections.is_empty()
             && policy.lowering == "generated_tcgen05",
         "{} tcgen05 store carrier or imported declaration changed",
@@ -5848,12 +6168,17 @@ fn validate_tcgen05_st_policy(
         !policy.pure
             && policy.memory == "write"
             && policy.convergent
-            && policy.execution_scope == "thread"
+            && policy.execution_scope == Tcgen05Operation::St.execution_scope()
             && tcgen05.operation == Tcgen05Operation::St
             && tcgen05.cp.is_none()
             && tcgen05.ld.is_none()
             && tcgen05.st == Some(st)
-            && tcgen05.adapter == Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid
+            && tcgen05.adapter
+                == if has_half_split_offset {
+                    Tcgen05Adapter::TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid
+                } else {
+                    Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid
+                }
             && tcgen05.source_contract == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
             && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
         "{} tcgen05 store semantics changed",
@@ -24939,7 +25264,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 57);
-        assert_eq!(overlay.intrinsics.len(), 727);
+        assert_eq!(overlay.intrinsics.len(), 759);
         assert_eq!(
             overlay
                 .intrinsics
@@ -25407,6 +25732,8 @@ mod tests {
             ld_libnvvm_evidence_profile: None,
             st_llvm_evidence_profile: None,
             st_libnvvm_evidence_profile: None,
+            offset_llvm_evidence_profile: None,
+            offset_libnvvm_evidence_profile: None,
             runtime_validation: RuntimeValidation::Unexecuted,
             variants: operations
                 .into_iter()
@@ -25418,6 +25745,8 @@ mod tests {
             cp_variants: vec![],
             ld_variants: vec![],
             st_variants: vec![],
+            ld_offset_variants: vec![],
+            st_offset_variants: vec![],
         }
     }
 
@@ -25481,6 +25810,47 @@ mod tests {
             .map(
                 |(index, (shape, multiplicity, unpack16))| Tcgen05StAdmissionVariant {
                     abi_id: format!("i{:04}", 670 + index),
+                    shape,
+                    multiplicity,
+                    unpack16,
+                },
+            )
+            .collect();
+        admission
+    }
+
+    fn test_tcgen05_offset_admission() -> Tcgen05Admission {
+        let mut admission = test_tcgen05_st_admission();
+        admission.offset_llvm_evidence_profile = Some("llvm-tcgen05-offset-test".into());
+        admission.offset_libnvvm_evidence_profile = Some("libnvvm-tcgen05-offset-test".into());
+        admission.ld_offset_variants = TCGEN05_OFFSET_LDST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |pack16| (shape, multiplicity, pack16))
+            })
+            .enumerate()
+            .map(
+                |(index, (shape, multiplicity, pack16))| Tcgen05LdAdmissionVariant {
+                    abi_id: format!("i{:04}", 728 + index),
+                    shape,
+                    multiplicity,
+                    pack16,
+                },
+            )
+            .collect();
+        admission.st_offset_variants = TCGEN05_OFFSET_LDST_VARIANTS
+            .into_iter()
+            .flat_map(|(shape, multiplicity)| {
+                [false, true]
+                    .into_iter()
+                    .map(move |unpack16| (shape, multiplicity, unpack16))
+            })
+            .enumerate()
+            .map(
+                |(index, (shape, multiplicity, unpack16))| Tcgen05StAdmissionVariant {
+                    abi_id: format!("i{:04}", 744 + index),
                     shape,
                     multiplicity,
                     unpack16,
@@ -27782,6 +28152,10 @@ scope = "system"
             let declaration = declarations[record.source_record.as_deref().unwrap()];
             validate_imported_policy(record, declaration).unwrap();
             assert_tcgen05_backend_target_split(record);
+            assert_eq!(
+                record.execution_scope,
+                record.tcgen05.as_ref().unwrap().operation.execution_scope()
+            );
         }
 
         let bf16 = records
@@ -27839,6 +28213,16 @@ scope = "system"
         let mut broadened_libnvvm = records[0].clone();
         broadened_libnvvm.backend_lowerings[1].targets = None;
         assert!(validate_imported_policy(&broadened_libnvvm, declaration).is_err());
+
+        let mut wrong_alloc_scope = records[0].clone();
+        wrong_alloc_scope.execution_scope = "thread".into();
+        assert!(validate_imported_policy(&wrong_alloc_scope, declaration).is_err());
+
+        let pure_load = &records[12];
+        let pure_declaration = declarations[pure_load.source_record.as_deref().unwrap()];
+        let mut wrong_pure_load_scope = pure_load.clone();
+        wrong_pure_load_scope.execution_scope = "thread".into();
+        assert!(validate_imported_policy(&wrong_pure_load_scope, pure_declaration).is_err());
     }
 
     #[test]
@@ -27982,6 +28366,7 @@ scope = "system"
             assert!(!record.pure);
             assert_eq!(record.memory, "read");
             assert!(record.convergent);
+            assert_eq!(record.execution_scope, "warp");
             assert!(
                 !record
                     .rust_arguments
@@ -28075,6 +28460,10 @@ scope = "system"
         changed_declaration.properties.pop();
         assert!(validate_imported_policy(&loads[0], &changed_declaration).is_err());
 
+        let mut wrong_scope = loads[0].clone();
+        wrong_scope.execution_scope = "thread".into();
+        assert!(validate_imported_policy(&wrong_scope, declaration).is_err());
+
         let mut unreviewed_sharing = records.clone();
         unreviewed_sharing[59].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
         assert!(validate_unique_overlay(&unreviewed_sharing, 1).is_err());
@@ -28121,6 +28510,7 @@ scope = "system"
             assert!(!record.pure);
             assert_eq!(record.memory, "write");
             assert!(record.convergent);
+            assert_eq!(record.execution_scope, "warp");
             assert_eq!(record.dialect_results, Vec::<String>::new());
             assert_eq!(record.llvm_results, Vec::<String>::new());
             assert_eq!(record.llvm_arguments, declaration.arguments);
@@ -28207,9 +28597,153 @@ scope = "system"
         changed_declaration.properties.pop();
         assert!(validate_imported_policy(&stores[0], &changed_declaration).is_err());
 
+        let mut wrong_scope = stores[0].clone();
+        wrong_scope.execution_scope = "thread".into();
+        assert!(validate_imported_policy(&wrong_scope, declaration).is_err());
+
         let mut unreviewed_sharing = records.clone();
         unreviewed_sharing[117].tcgen05.as_mut().unwrap().operation = Tcgen05Operation::Alloc;
         assert!(validate_unique_overlay(&unreviewed_sharing, 1).is_err());
+    }
+
+    #[test]
+    fn compact_tcgen05_offset_admission_is_exact_and_fails_closed() {
+        let records = expand_tcgen05_admission(&test_tcgen05_offset_admission()).unwrap();
+        assert_eq!(records.len(), 206);
+        let loads = &records[174..190];
+        let stores = &records[190..206];
+        assert_eq!(
+            (loads[0].abi_id.as_str(), loads[0].id.as_str()),
+            ("i0728", "tcgen05_ld_16x32bx2_x1_raw")
+        );
+        assert_eq!(
+            (loads[15].abi_id.as_str(), loads[15].id.as_str()),
+            ("i0743", "tcgen05_ld_16x32bx2_x128_pack16")
+        );
+        assert_eq!(
+            (stores[0].abi_id.as_str(), stores[0].id.as_str()),
+            ("i0744", "tcgen05_st_16x32bx2_x1_raw")
+        );
+        assert_eq!(
+            (stores[15].abi_id.as_str(), stores[15].id.as_str()),
+            ("i0759", "tcgen05_st_16x32bx2_x128_unpack16")
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        let mut load_sources = BTreeMap::new();
+        for record in loads {
+            let source = record.source_record.as_deref().unwrap();
+            *load_sources.entry(source).or_insert(0) += 1;
+            let declaration = declarations[source];
+            validate_imported_policy(record, declaration).unwrap();
+            assert_tcgen05_backend_target_split(record);
+            assert_eq!(record.rust_arguments, ["u32", "i64"]);
+            assert_eq!(record.dialect_operands, ["i32", "i64"]);
+            assert_eq!(record.llvm_arguments, ["tmem_ptr", "i64", "i1"]);
+            assert_eq!(record.execution_scope, "warp");
+            assert!(record.must_use);
+            assert_eq!(
+                record.compatibility_rust_paths,
+                [format!("cuda_device::tcgen05::__{}", record.id)]
+            );
+            assert_eq!(
+                record.expected_ptx.operands.last(),
+                Some(&OperandPattern::Immediate)
+            );
+            assert_eq!(
+                declaration.properties,
+                [
+                    "ImmArg<arg1>",
+                    "ImmArg<arg2>",
+                    "IntrArgMemOnly",
+                    "IntrConvergent",
+                    "NoCapture<arg0>",
+                ]
+            );
+        }
+        assert_eq!(load_sources.len(), 8);
+        assert!(load_sources.values().all(|count| *count == 2));
+
+        let mut store_sources = BTreeMap::new();
+        for record in stores {
+            let source = record.source_record.as_deref().unwrap();
+            *store_sources.entry(source).or_insert(0) += 1;
+            let declaration = declarations[source];
+            validate_imported_policy(record, declaration).unwrap();
+            assert_tcgen05_backend_target_split(record);
+            assert_eq!(record.rust_arguments[0..2], ["u32", "i64"]);
+            assert_eq!(record.dialect_operands[0..2], ["i32", "i64"]);
+            assert_eq!(record.llvm_arguments[0..2], ["tmem_ptr", "i64"]);
+            assert_eq!(record.execution_scope, "warp");
+            assert!(!record.must_use);
+            assert_eq!(
+                record.compatibility_rust_paths,
+                [format!("cuda_device::tcgen05::__{}", record.id)]
+            );
+            assert_eq!(
+                record.expected_ptx.operands.get(1),
+                Some(&OperandPattern::Immediate)
+            );
+            assert_eq!(
+                declaration.properties,
+                [
+                    "ImmArg<arg1>",
+                    "ImmArg<arg3>",
+                    "IntrArgMemOnly",
+                    "IntrConvergent",
+                    "NoCapture<arg0>",
+                ]
+            );
+        }
+        assert_eq!(store_sources.len(), 8);
+        assert!(store_sources.values().all(|count| *count == 2));
+        validate_unique_overlay(&records, 1).unwrap();
+
+        let mut missing = test_tcgen05_offset_admission();
+        missing.ld_offset_variants.pop();
+        assert!(expand_tcgen05_admission(&missing).is_err());
+
+        let mut reordered = test_tcgen05_offset_admission();
+        reordered.st_offset_variants.swap(0, 1);
+        assert!(expand_tcgen05_admission(&reordered).is_err());
+
+        let mut wrong_abi = test_tcgen05_offset_admission();
+        wrong_abi.ld_offset_variants[0].abi_id = "i9999".into();
+        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+
+        let mut missing_evidence = test_tcgen05_offset_admission();
+        missing_evidence.offset_llvm_evidence_profile = None;
+        assert!(expand_tcgen05_admission(&missing_evidence).is_err());
+
+        let load_declaration = declarations[loads[0].source_record.as_deref().unwrap()];
+        let mut wrong_offset_type = loads[0].clone();
+        wrong_offset_type.rust_arguments[1] = "i32".into();
+        assert!(validate_imported_policy(&wrong_offset_type, load_declaration).is_err());
+
+        let mut wrong_scope = loads[0].clone();
+        wrong_scope.execution_scope = "thread".into();
+        assert!(validate_imported_policy(&wrong_scope, load_declaration).is_err());
+
+        let mut missing_immediate = loads[0].clone();
+        missing_immediate.expected_ptx.operands.pop();
+        assert!(validate_imported_policy(&missing_immediate, load_declaration).is_err());
+
+        let store_declaration = declarations[stores[0].source_record.as_deref().unwrap()];
+        let mut wrong_adapter = stores[0].clone();
+        wrong_adapter.tcgen05.as_mut().unwrap().adapter =
+            Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid;
+        assert!(validate_imported_policy(&wrong_adapter, store_declaration).is_err());
+
+        let mut changed_declaration = store_declaration.clone();
+        changed_declaration.properties.remove(0);
+        assert!(validate_imported_policy(&stores[0], &changed_declaration).is_err());
     }
 
     #[test]
@@ -28310,6 +28844,28 @@ scope = "system"
             .unwrap_err()
             .to_string()
             .contains("requires overlay shard schema 54")
+        );
+        validate_overlay_shard_schema_with_max(
+            &shard(
+                TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
+                test_tcgen05_offset_admission(),
+            ),
+            path,
+            TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(
+                    TCGEN05_OFFSET_LDST_SHARD_SCHEMA - 1,
+                    test_tcgen05_offset_admission(),
+                ),
+                path,
+                TCGEN05_OFFSET_LDST_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 55")
         );
     }
 

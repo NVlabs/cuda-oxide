@@ -33,9 +33,10 @@ use dialect_nvvm::ops::{
     ScalarConversionSaturationAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
     ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr,
     SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr,
-    SparseMmaShapeAttr, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
-    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp,
-    WgmmaMmaM64N64K16F32Bf16Op,
+    SparseMmaShapeAttr, StmatrixM8n8X4Op, Tcgen05AllocOp, Tcgen05CommitMulticastCg2Op,
+    Tcgen05Ld16x32bx2X1RawOp, Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op, ThreadfenceBlockOp,
+    ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
+    VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -407,6 +408,140 @@ fn test_generated_cp_async_accepts_pointer_shapes_and_both_constant_kinds() {
 
     let dynamic_wait = CpAsyncWaitGroupOp::build(&mut ctx, dynamic);
     assert!(verify_op(&CpAsyncWaitGroupOp::new(dynamic_wait), &ctx).is_err());
+}
+
+#[test]
+fn generated_tcgen05_verifies_carriers_and_half_split_constants() {
+    use dialect_mir::ops::MirConstantOp;
+    use pliron::builtin::{attributes::IntegerAttr, ops::ConstantOp};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let i16_ty = IntegerType::get(&ctx, 16, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let pointer_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            pointer_ty.into(),
+            i1_ty.into(),
+            i16_ty.into(),
+            i32_ty.into(),
+            i64_ty.into(),
+            f32_ty.into(),
+        ],
+    );
+    let pointer = block.deref(&ctx).get_argument(0);
+    let predicate = block.deref(&ctx).get_argument(1);
+    let mask = block.deref(&ctx).get_argument(2);
+    let address = block.deref(&ctx).get_argument(3);
+    let dynamic_offset = block.deref(&ctx).get_argument(4);
+
+    let offset_attr = IntegerAttr::new(i64_ty, APInt::from_i64(16, NonZeroUsize::new(64).unwrap()));
+    let builtin_offset = ConstantOp::new(&mut ctx, offset_attr.clone().into())
+        .get_operation()
+        .deref(&ctx)
+        .get_result(0);
+    let mir_constant = Operation::new(
+        &mut ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![i64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    MirConstantOp::new(mir_constant).set_attr_value(&ctx, offset_attr);
+    let mir_offset = mir_constant.deref(&ctx).get_result(0);
+
+    for offset in [builtin_offset, mir_offset] {
+        let load = Operation::new(
+            &mut ctx,
+            Tcgen05Ld16x32bx2X1RawOp::get_concrete_op_info(),
+            vec![i32_ty.into()],
+            vec![address, offset],
+            vec![],
+            0,
+        );
+        assert!(verify_op(&Tcgen05Ld16x32bx2X1RawOp::new(load), &ctx).is_ok());
+    }
+
+    let dynamic = Operation::new(
+        &mut ctx,
+        Tcgen05Ld16x32bx2X1RawOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![address, dynamic_offset],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05Ld16x32bx2X1RawOp::new(dynamic), &ctx).is_err());
+
+    let wrong_offset_type = Operation::new(
+        &mut ctx,
+        Tcgen05Ld16x32bx2X1RawOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![address, address],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05Ld16x32bx2X1RawOp::new(wrong_offset_type), &ctx).is_err());
+
+    let wrong_result_type = Operation::new(
+        &mut ctx,
+        Tcgen05Ld16x32bx2X1RawOp::get_concrete_op_info(),
+        vec![i64_ty.into()],
+        vec![address, builtin_offset],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05Ld16x32bx2X1RawOp::new(wrong_result_type), &ctx).is_err());
+
+    let alloc = Operation::new(
+        &mut ctx,
+        Tcgen05AllocOp::get_concrete_op_info(),
+        vec![],
+        vec![pointer, address],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05AllocOp::new(alloc), &ctx).is_ok());
+
+    let multicast = Operation::new(
+        &mut ctx,
+        Tcgen05CommitMulticastCg2Op::get_concrete_op_info(),
+        vec![],
+        vec![pointer, mask],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05CommitMulticastCg2Op::new(multicast), &ctx).is_ok());
+
+    let mma = Operation::new(
+        &mut ctx,
+        Tcgen05MmaF16Op::get_concrete_op_info(),
+        vec![],
+        vec![address, dynamic_offset, dynamic_offset, address, predicate],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05MmaF16Op::new(mma), &ctx).is_ok());
+
+    let pure_load = Operation::new(
+        &mut ctx,
+        Tcgen05Ld16x256bPureOp::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        vec![address],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Tcgen05Ld16x256bPureOp::new(pure_load), &ctx).is_ok());
 }
 
 #[test]

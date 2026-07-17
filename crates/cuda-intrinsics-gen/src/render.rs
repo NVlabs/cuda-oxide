@@ -2044,6 +2044,26 @@ fn tcgen05_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .filter(|record| record.family == "tcgen05")
 }
 
+fn tcgen05_participation_doc(operation: Tcgen05Operation) -> Option<&'static str> {
+    match operation {
+        Tcgen05Operation::AllocCg2
+        | Tcgen05Operation::DeallocCg2
+        | Tcgen05Operation::RelinquishAllocPermitCg2 => Some(
+            "One full warp in each peer CTA must execute this instruction; lanes within each warp must execute uniformly with the same operands.",
+        ),
+        Tcgen05Operation::Alloc
+        | Tcgen05Operation::Dealloc
+        | Tcgen05Operation::RelinquishAllocPermit
+        | Tcgen05Operation::Ld16x256bX8Pure
+        | Tcgen05Operation::Ld16x256bPure
+        | Tcgen05Operation::LoadWait
+        | Tcgen05Operation::StoreWait => {
+            Some("One full warp must execute this instruction uniformly with the same operands.")
+        }
+        _ => None,
+    }
+}
+
 fn tcgen05_cp_ptx_suffix(member: Tcgen05CpMember) -> &'static str {
     use Tcgen05CpMember::*;
     match member {
@@ -2069,6 +2089,7 @@ fn tcgen05_cp_ptx_suffix(member: Tcgen05CpMember) -> &'static str {
 
 fn tcgen05_ld_shape_label(shape: Tcgen05LdShape) -> &'static str {
     match shape {
+        Tcgen05LdShape::M16x32bx2 => "16x32bx2",
         Tcgen05LdShape::M16x64b => "16x64b",
         Tcgen05LdShape::M16x128b => "16x128b",
         Tcgen05LdShape::M16x256b => "16x256b",
@@ -2133,6 +2154,7 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
         || record.rust.must_use != (tcgen05.operation == Tcgen05Operation::Ld)
         || record.lowering != "generated_tcgen05"
         || !record.semantics.convergent
+        || record.semantics.execution_scope != tcgen05.operation.execution_scope()
         || record.target.minimum_ptx.to_string() != "8.6"
         || record.target.targets != "sm_100a|sm_101a|sm_103a|sm_110a"
         || llvm_route.backend != IntrinsicBackend::LlvmNvptx
@@ -2206,13 +2228,16 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
             } else {
                 crate::ptx::OperandPattern::RegisterList { length: count }
             };
+            let mut operands = vec![destination, crate::ptx::OperandPattern::Address];
+            if ld.shape == Tcgen05LdShape::M16x32bx2 {
+                operands.push(crate::ptx::OperandPattern::Immediate);
+            }
             if tcgen05.operation != Tcgen05Operation::Ld
                 || tcgen05.cp.is_some()
                 || tcgen05.st.is_some()
                 || record.expected_ptx.mnemonic != "tcgen05"
                 || record.expected_ptx.modifiers != modifiers
-                || record.expected_ptx.operands
-                    != [destination, crate::ptx::OperandPattern::Address]
+                || record.expected_ptx.operands != operands
             {
                 return false;
             }
@@ -2239,12 +2264,17 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
             } else {
                 crate::ptx::OperandPattern::RegisterList { length: count }
             };
+            let mut operands = vec![crate::ptx::OperandPattern::Address];
+            if st.shape == Tcgen05LdShape::M16x32bx2 {
+                operands.push(crate::ptx::OperandPattern::Immediate);
+            }
+            operands.push(data);
             if tcgen05.operation != Tcgen05Operation::St
                 || tcgen05.cp.is_some()
                 || tcgen05.ld.is_some()
                 || record.expected_ptx.mnemonic != "tcgen05"
                 || record.expected_ptx.modifiers != modifiers
-                || record.expected_ptx.operands != [crate::ptx::OperandPattern::Address, data]
+                || record.expected_ptx.operands != operands
             {
                 return false;
             }
@@ -2387,8 +2417,14 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
                 && llvm.arguments == ["shared_ptr", "i16"]
                 && tcgen05.source_contract == Tcgen05SourceContract::ExactTablegenSelection
         }
-        (Tcgen05Operation::Ld, Tcgen05Adapter::TmemInjectPack16ToU32Registers) => {
+        (
+            Tcgen05Operation::Ld,
+            Tcgen05Adapter::TmemInjectPack16ToU32Registers
+            | Tcgen05Adapter::TmemHalfSplitOffsetInjectPack16ToU32Registers,
+        ) => {
             let count = tcgen05_ld_register_count(record);
+            let has_half_split_offset =
+                tcgen05.adapter == Tcgen05Adapter::TmemHalfSplitOffsetInjectPack16ToU32Registers;
             let rust_result = if count == 1 {
                 "u32".into()
             } else {
@@ -2400,19 +2436,40 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
                 format!("v{count}i32")
             };
             !record.rust.safe
-                && record.rust.arguments == ["u32"]
+                && record.rust.arguments
+                    == if has_half_split_offset {
+                        vec!["u32", "i64"]
+                    } else {
+                        vec!["u32"]
+                    }
                 && record.rust.result == rust_result
-                && record.dialect.operands == ["i32"]
+                && record.dialect.operands
+                    == if has_half_split_offset {
+                        vec!["i32", "i64"]
+                    } else {
+                        vec!["i32"]
+                    }
                 && record.dialect.results == vec!["i32"; count]
-                && llvm.arguments == ["tmem_ptr", "i1"]
+                && llvm.arguments
+                    == if has_half_split_offset {
+                        vec!["tmem_ptr", "i64", "i1"]
+                    } else {
+                        vec!["tmem_ptr", "i1"]
+                    }
                 && llvm.results == [llvm_result]
                 && !record.semantics.pure
                 && record.semantics.memory == "read"
                 && tcgen05.source_contract
                     == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
         }
-        (Tcgen05Operation::St, Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid) => {
+        (
+            Tcgen05Operation::St,
+            Tcgen05Adapter::TmemU32RegistersInjectUnpack16ToVoid
+            | Tcgen05Adapter::TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid,
+        ) => {
             let count = tcgen05_st_register_count(record);
+            let has_half_split_offset = tcgen05.adapter
+                == Tcgen05Adapter::TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid;
             let rust_data = if count == 1 {
                 "u32".into()
             } else {
@@ -2424,11 +2481,25 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
                 format!("v{count}i32")
             };
             !record.rust.safe
-                && record.rust.arguments == ["u32", rust_data.as_str()]
+                && record.rust.arguments
+                    == if has_half_split_offset {
+                        vec!["u32", "i64", rust_data.as_str()]
+                    } else {
+                        vec!["u32", rust_data.as_str()]
+                    }
                 && record.rust.result == "()"
-                && record.dialect.operands == vec!["i32"; count + 1]
+                && record.dialect.operands
+                    == std::iter::once("i32")
+                        .chain(has_half_split_offset.then_some("i64"))
+                        .chain(std::iter::repeat_n("i32", count))
+                        .collect::<Vec<_>>()
                 && record.dialect.results.is_empty()
-                && llvm.arguments == ["tmem_ptr", llvm_data.as_str(), "i1"]
+                && llvm.arguments
+                    == if has_half_split_offset {
+                        vec!["tmem_ptr", "i64", llvm_data.as_str(), "i1"]
+                    } else {
+                        vec!["tmem_ptr", llvm_data.as_str(), "i1"]
+                    }
                 && llvm.results.is_empty()
                 && !record.semantics.pure
                 && record.semantics.memory == "write"
@@ -3329,6 +3400,11 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
             )
             .unwrap();
         }
+        if let Some(operation) = record.tcgen05.as_ref().map(|tcgen05| tcgen05.operation)
+            && let Some(participation) = tcgen05_participation_doc(operation)
+        {
+            writeln!(output, "/// {participation}").unwrap();
+        }
         if let Some(reason) = &record.rust.safe_allowlist_reason {
             writeln!(output, "/// Safe because {reason}").unwrap();
         }
@@ -3644,15 +3720,31 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 if tcgen05.operation == Tcgen05Operation::Ld {
                     output.push_str(
                         "/// `_arg0` must name a live tensor-memory allocation covering the selected tile.\n\
-                         /// All threads required by `tcgen05.ld.sync.aligned` must execute convergently with the same address.\n\
+                         /// All active warp lanes must execute convergently with the same address.\n\
                          /// Complete the matching tensor-memory load wait before consuming the returned registers.\n",
                     );
+                    if tcgen05
+                        .ld
+                        .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2)
+                    {
+                        output.push_str(
+                            "/// `_arg1` must be a compile-time constant; inline PTX encodes its low 32 bits.\n",
+                        );
+                    }
                 } else if tcgen05.operation == Tcgen05Operation::St {
                     output.push_str(
                         "/// `_arg0` must name a live tensor-memory allocation covering the selected tile.\n\
-                         /// All threads required by `tcgen05.st.sync.aligned` must execute convergently with the same address.\n\
+                         /// All active warp lanes must execute convergently with the same address.\n\
                          /// Complete the matching tensor-memory store wait before relying on completion or reusing the affected storage.\n",
                     );
+                    if tcgen05
+                        .st
+                        .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2)
+                    {
+                        output.push_str(
+                            "/// `_arg1` must be a compile-time constant; inline PTX encodes its low 32 bits.\n",
+                        );
+                    }
                 } else {
                     output.push_str(
                         "/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n",
@@ -4538,11 +4630,98 @@ pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
 }
 
 fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 174);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 206);
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
     for record in tcgen05_intrinsics(catalog) {
-        let operation = record.tcgen05.as_ref().unwrap().operation;
+        let tcgen05 = record.tcgen05.as_ref().unwrap();
+        let operation = tcgen05.operation;
+        let has_half_split_offset = tcgen05
+            .ld
+            .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2)
+            || tcgen05
+                .st
+                .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2);
+        if has_half_split_offset {
+            let (result, data) = if operation == Tcgen05Operation::Ld {
+                let count = tcgen05_ld_register_count(record);
+                (
+                    if count == 1 {
+                        "u32".into()
+                    } else {
+                        format!("CuSimd<u32, {count}>")
+                    },
+                    None,
+                )
+            } else {
+                let count = tcgen05_st_register_count(record);
+                (
+                    "()".into(),
+                    Some(if count == 1 {
+                        "u32".into()
+                    } else {
+                        format!("CuSimd<u32, {count}>")
+                    }),
+                )
+            };
+            writeln!(output, "/// {}", record.summary).unwrap();
+            output.push_str("///\n/// # Safety\n");
+            output.push_str(
+                "/// The tensor-memory address must be live, and the warp must execute this call uniformly.\n",
+            );
+            output.push_str("#[inline(always)]\n");
+            if let Some(data) = &data {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}<const HALF_SPLIT_OFFSET: i32>(tmem_addr: u32, data: {data}) {{",
+                    record.rust.name
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "    unsafe {{ __{}(tmem_addr, HALF_SPLIT_OFFSET as i64, data) }}",
+                    record.rust.name
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}<const HALF_SPLIT_OFFSET: i32>(tmem_addr: u32) -> {result} {{",
+                    record.rust.name
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "    unsafe {{ __{}(tmem_addr, HALF_SPLIT_OFFSET as i64) }}",
+                    record.rust.name
+                )
+                .unwrap();
+            }
+            output.push_str("}\n\n#[doc(hidden)]\n#[inline(never)]\n");
+            if let Some(data) = data {
+                writeln!(
+                    output,
+                    "pub(crate) unsafe fn __{}(_tmem_addr: u32, _half_split_offset: i64, _data: {data}) {{",
+                    record.rust.name
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    output,
+                    "pub(crate) unsafe fn __{}(_tmem_addr: u32, _half_split_offset: i64) -> {result} {{",
+                    record.rust.name
+                )
+                .unwrap();
+            }
+            writeln!(
+                output,
+                "    unreachable!(\"{} called outside CUDA kernel context\")",
+                record.rust.name
+            )
+            .unwrap();
+            output.push_str("}\n\n");
+            continue;
+        }
         let (arguments, values): (String, String) = if operation == Tcgen05Operation::St {
             let count = tcgen05_st_register_count(record);
             let data = if count == 1 {
@@ -4610,12 +4789,20 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
             _ => "()".into(),
         };
         writeln!(output, "/// {}", record.summary).unwrap();
+        if let Some(participation) = tcgen05_participation_doc(operation) {
+            writeln!(output, "/// {participation}").unwrap();
+        }
         if !record.rust.safe {
             output.push_str("///\n/// # Safety\n");
             if operation == Tcgen05Operation::St {
                 output.push_str(
                     "/// The tensor-memory address must remain live and cover the selected tile.\n\
-                     /// Required threads must execute convergently with the same address. Complete the store wait before relying on completion.\n",
+                     /// All active warp lanes must execute convergently with the same address. Complete the store wait before relying on completion.\n",
+                );
+            } else if operation == Tcgen05Operation::Ld {
+                output.push_str(
+                    "/// The tensor-memory address must remain live and cover the selected tile.\n\
+                     /// All active warp lanes must execute convergently with the same address. Complete the load wait before using the result.\n",
                 );
             } else {
                 output.push_str("/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n");
@@ -8829,25 +9016,213 @@ fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn tcgen05_carrier_name(ty: &str) -> &'static str {
+    match ty {
+        "ptr" => "Ptr",
+        "i1" => "I1",
+        "i16" => "I16",
+        "i32" => "I32",
+        "i64" => "I64",
+        "f32" => "F32",
+        _ => panic!("unsupported tcgen05 dialect carrier {ty}"),
+    }
+}
+
+fn render_tcgen05_carrier_runs(types: &[String]) -> String {
+    let mut runs = Vec::<(&str, usize)>::new();
+    for ty in types {
+        let carrier = tcgen05_carrier_name(ty);
+        if let Some((previous, count)) = runs.last_mut()
+            && *previous == carrier
+        {
+            *count += 1;
+        } else {
+            runs.push((carrier, 1));
+        }
+    }
+
+    let mut output = String::from("&[");
+    for (index, (carrier, count)) in runs.into_iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        write!(output, "(Tcgen05Carrier::{carrier}, {count})").unwrap();
+    }
+    output.push(']');
+    output
+}
+
 fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 174);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 206);
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated Tensor Core Generation 5 operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+        r#"//! Generated Tensor Core Generation 5 operations.
+
+use dialect_mir::{ops::MirConstantOp, types::MirPtrType};
+use pliron::{
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        ops::ConstantOp,
+        types::{FP32Type, IntegerType},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::{TypeHandle, Typed},
+    verify_err,
+};
+use pliron_derive::pliron_op;
+
+#[derive(Clone, Copy)]
+enum Tcgen05Carrier {
+    Ptr,
+    I1,
+    I16,
+    I32,
+    I64,
+    F32,
+}
+
+impl Tcgen05Carrier {
+    fn matches(self, ctx: &Context, ty: TypeHandle) -> bool {
+        match self {
+            Self::Ptr => ty.deref(ctx).downcast_ref::<MirPtrType>().is_some(),
+            Self::I1 => is_integer_width(ctx, ty, 1),
+            Self::I16 => is_integer_width(ctx, ty, 16),
+            Self::I32 => is_integer_width(ctx, ty, 32),
+            Self::I64 => is_integer_width(ctx, ty, 64),
+            Self::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Ptr => "MIR pointer",
+            Self::I1 => "i1",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::F32 => "f32",
+        }
+    }
+}
+
+fn is_integer_width(ctx: &Context, ty: TypeHandle, width: u32) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == width)
+}
+
+fn expected_carrier_count(runs: &[(Tcgen05Carrier, usize)]) -> usize {
+    runs.iter().map(|(_, count)| *count).sum()
+}
+
+fn verify_tcgen05_signature(
+    ctx: &Context,
+    operation: Ptr<Operation>,
+    name: &str,
+    operand_runs: &[(Tcgen05Carrier, usize)],
+    result_runs: &[(Tcgen05Carrier, usize)],
+    constant_operand: Option<usize>,
+) -> Result<(), Error> {
+    let op = operation.deref(ctx);
+    let expected_operands = expected_carrier_count(operand_runs);
+    let expected_results = expected_carrier_count(result_runs);
+    if op.get_num_operands() != expected_operands || op.get_num_results() != expected_results {
+        return verify_err!(
+            op.loc(),
+            "{name} requires {expected_operands} operands and {expected_results} results"
+        );
+    }
+
+    let mut index = 0;
+    for (carrier, count) in operand_runs {
+        for _ in 0..*count {
+            if !carrier.matches(ctx, op.get_operand(index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "{name} operand {index} must be {}",
+                    carrier.name()
+                );
+            }
+            index += 1;
+        }
+    }
+
+    index = 0;
+    for (carrier, count) in result_runs {
+        for _ in 0..*count {
+            if !carrier.matches(ctx, op.get_result(index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "{name} result {index} must be {}",
+                    carrier.name()
+                );
+            }
+            index += 1;
+        }
+    }
+
+    if let Some(index) = constant_operand {
+        let value = op.get_operand(index);
+        let is_constant = value.defining_op().is_some_and(|defining_op| {
+            Operation::get_op::<MirConstantOp>(defining_op, ctx).is_some()
+                || Operation::get_op::<ConstantOp>(defining_op, ctx).is_some()
+        });
+        if !is_constant {
+            return verify_err!(
+                op.loc(),
+                "{name} operand {index} must be a compile-time constant"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+"#,
     );
     for record in tcgen05_intrinsics(catalog) {
         let operand_count = record.dialect.operands.len();
         let result_count = record.dialect.results.len();
+        let operand_runs = render_tcgen05_carrier_runs(&record.dialect.operands);
+        let result_runs = render_tcgen05_carrier_runs(&record.dialect.results);
+        let constant_operand = record
+            .tcgen05
+            .as_ref()
+            .is_some_and(|tcgen05| {
+                matches!(
+                    tcgen05.adapter,
+                    Tcgen05Adapter::TmemHalfSplitOffsetInjectPack16ToU32Registers
+                        | Tcgen05Adapter::TmemHalfSplitOffsetU32RegistersInjectUnpack16ToVoid
+                )
+            })
+            .then_some(1);
         writeln!(output, "/// {}", record.summary).unwrap();
         writeln!(
             output,
-            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]",
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]",
             record.dialect.op_name
         )
         .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    fn verify(&self, ctx: &Context) -> Result<(), Error> {\n");
+        output.push_str("        verify_tcgen05_signature(\n");
+        output.push_str("            ctx,\n");
+        output.push_str("            self.get_operation(),\n");
+        writeln!(output, "            {:?},", record.dialect.op_name).unwrap();
+        writeln!(output, "            {operand_runs},").unwrap();
+        writeln!(output, "            {result_runs},").unwrap();
+        writeln!(output, "            {constant_operand:?},").unwrap();
+        output.push_str("        )\n");
+        output.push_str("    }\n");
+        output.push_str("}\n\n");
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in tcgen05_intrinsics(catalog) {
@@ -10852,7 +11227,14 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("        }\n");
     }
     for record in tcgen05_intrinsics(catalog) {
-        let operation = record.tcgen05.as_ref().unwrap().operation;
+        let tcgen05 = record.tcgen05.as_ref().unwrap();
+        let operation = tcgen05.operation;
+        let has_half_split_offset = tcgen05
+            .ld
+            .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2)
+            || tcgen05
+                .st
+                .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2);
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
         output.push_str("        ");
@@ -10860,10 +11242,20 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(" => {\n");
         if operation == Tcgen05Operation::St {
             let count = tcgen05_st_register_count(record);
-            output.push_str("            require_arity(name, args.len(), 2, &loc)?;\n");
             writeln!(
                 output,
-                "            let (operands, last_op) = import_generated_tcgen05_store_operands(\n                ctx, body, args, {count}, block_ptr, prev_op, value_map, loc.clone(),\n            )?;"
+                "            require_arity(name, args.len(), {}, &loc)?;",
+                if has_half_split_offset { 3 } else { 2 }
+            )
+            .unwrap();
+            if has_half_split_offset {
+                output.push_str(
+                    "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+                );
+            }
+            writeln!(
+                output,
+                "            let (operands, last_op) = import_generated_tcgen05_store_operands(\n                ctx, body, args, {count}, {has_half_split_offset}, block_ptr, prev_op, value_map, loc.clone(),\n            )?;"
             )
             .unwrap();
             writeln!(
@@ -10897,9 +11289,19 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            require_arity(name, args.len(), {arity}, &loc)?;"
         )
         .unwrap();
+        if has_half_split_offset {
+            output.push_str(
+                "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+            );
+        }
         output.push_str(
             "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
         );
+        if has_half_split_offset {
+            output.push_str(
+                "            if operands.get(1).and_then(|value| value.defining_op()).and_then(|op| Operation::get_op::<MirConstantOp>(op, ctx)).is_none() {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must lower to a constant\".to_owned()\n                    )\n                );\n            }\n",
+            );
+        }
         let load = match operation {
             Tcgen05Operation::Ld16x256bX8Pure => Some((32, "FP32Type::get(ctx).into()")),
             Tcgen05Operation::Ld16x256bPure => Some((4, "FP32Type::get(ctx).into()")),
@@ -11003,16 +11405,18 @@ fn import_generated_tcgen05_store_operands(
     body: &mir::Body,
     args: &[mir::Operand],
     expected_len: usize,
+    has_half_split_offset: bool,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     value_map: &mut ValueMap,
     loc: Location,
 ) -> TranslationResult<(Vec<Value>, Option<Ptr<Operation>>)> {
-    if args.len() != 2 || !(1..=128).contains(&expected_len) {
+    let expected_arity = if has_half_split_offset { 3 } else { 2 };
+    if args.len() != expected_arity || !(1..=128).contains(&expected_len) {
         return input_err!(
             loc,
             TranslationErr::unsupported(
-                "generated tcgen05 store expects an address and 1..=128 registers".to_owned()
+                "generated tcgen05 store has an invalid address, offset, or register count".to_owned()
             )
         );
     }
@@ -11020,8 +11424,29 @@ fn import_generated_tcgen05_store_operands(
     let (address, last_op) = rvalue::translate_operand(
         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
     )?;
+    let (half_split_offset, last_op) = if has_half_split_offset {
+        let (offset, translated) = rvalue::translate_operand(
+            ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),
+        )?;
+        if offset
+            .defining_op()
+            .and_then(|op| Operation::get_op::<MirConstantOp>(op, ctx))
+            .is_none()
+        {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "tcgen05 16x32bx2 half-split offset must lower to a constant".to_owned()
+                )
+            );
+        }
+        (Some(offset), translated)
+    } else {
+        (None, last_op)
+    };
+    let data_index = if has_half_split_offset { 2 } else { 1 };
     let (data, mut last_op) = rvalue::translate_operand(
-        ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),
+        ctx, body, &args[data_index], value_map, block_ptr, last_op, loc.clone(),
     )?;
     if expected_len == 1 {
         if data.get_type(ctx) != u32_ty {
@@ -11032,7 +11457,10 @@ fn import_generated_tcgen05_store_operands(
                 )
             );
         }
-        return Ok((vec![address, data], last_op));
+        let mut operands = vec![address];
+        operands.extend(half_split_offset);
+        operands.push(data);
+        return Ok((operands, last_op));
     }
 
     let data_ty = data.get_type(ctx);
@@ -11083,8 +11511,9 @@ fn import_generated_tcgen05_store_operands(
         extract.get_operation().deref(ctx).get_result(0)
     };
 
-    let mut operands = Vec::with_capacity(expected_len + 1);
+    let mut operands = Vec::with_capacity(expected_len + 1 + usize::from(has_half_split_offset));
     operands.push(address);
+    operands.extend(half_split_offset);
     for index in 0..expected_len {
         let extract = Operation::new(
             ctx,
@@ -11517,19 +11946,33 @@ fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usiz
         }
         Tcgen05Operation::Ld => {
             let count = tcgen05_ld_register_count(record);
+            let has_half_split_offset = record
+                .tcgen05
+                .as_ref()
+                .and_then(|tcgen05| tcgen05.ld)
+                .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2);
             let registers = (0..count)
                 .map(|index| format!("${index}"))
                 .collect::<Vec<_>>()
                 .join(",");
             let constraints = std::iter::repeat_n("=r", count)
-                .chain(["r", "~{memory}"])
+                .chain(if has_half_split_offset {
+                    vec!["r", "n", "~{memory}"]
+                } else {
+                    vec!["r", "~{memory}"]
+                })
                 .collect::<Vec<_>>()
                 .join(",");
             (
                 format!(
-                    "{}.{} {{{registers}}}, [${count}];",
+                    "{}.{} {{{registers}}}, [${count}]{};",
                     record.expected_ptx.mnemonic,
-                    record.expected_ptx.modifiers.join(".")
+                    record.expected_ptx.modifiers.join("."),
+                    if has_half_split_offset {
+                        format!(", ${}", count + 1)
+                    } else {
+                        String::new()
+                    }
                 ),
                 constraints,
                 Some(count),
@@ -11537,19 +11980,32 @@ fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usiz
         }
         Tcgen05Operation::St => {
             let count = tcgen05_st_register_count(record);
-            let registers = (1..=count)
+            let has_half_split_offset = record
+                .tcgen05
+                .as_ref()
+                .and_then(|tcgen05| tcgen05.st)
+                .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2);
+            let first_data = if has_half_split_offset { 2 } else { 1 };
+            let registers = (first_data..first_data + count)
                 .map(|index| format!("${index}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            let constraints = std::iter::repeat_n("r", count + 1)
+            let constraints = std::iter::once("r")
+                .chain(has_half_split_offset.then_some("n"))
+                .chain(std::iter::repeat_n("r", count))
                 .chain(std::iter::once("~{memory}"))
                 .collect::<Vec<_>>()
                 .join(",");
             (
                 format!(
-                    "{}.{} [$0], {{{registers}}};",
+                    "{}.{} [$0], {}{{{registers}}};",
                     record.expected_ptx.mnemonic,
-                    record.expected_ptx.modifiers.join(".")
+                    record.expected_ptx.modifiers.join("."),
+                    if has_half_split_offset {
+                        "$1, "
+                    } else {
+                        ""
+                    }
                 ),
                 constraints,
                 None,
@@ -11952,15 +12408,16 @@ fn convert_generated_tcgen05_load(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
+    arity: usize,
     count: usize,
     integer_results: bool,
     template: &str,
     constraints: &str,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 1 || !(1..=128).contains(&count) || op.deref(ctx).get_num_results() != count {
+    if operands.len() != arity || !(1..=2).contains(&arity) || !(1..=128).contains(&count) || op.deref(ctx).get_num_results() != count {
         return pliron::input_err_noloc!(
-            "generated tcgen05 load requires one operand and 1..=128 results"
+            "generated tcgen05 load requires 1..=2 operands and 1..=128 results"
         );
     }
     let scalar_ty: pliron::r#type::TypeHandle = if integer_results {
@@ -13121,7 +13578,8 @@ fn convert_generated_tcgen05_load(
             let integer_results = operation == Tcgen05Operation::Ld;
             writeln!(
                 output,
-                "        convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), {count}, {integer_results}, {template:?}, {constraints:?})"
+                "        convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), {}, {count}, {integer_results}, {template:?}, {constraints:?})",
+                record.dialect.operands.len()
             )
             .unwrap();
         } else {
@@ -14287,21 +14745,36 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
         }
         Tcgen05Operation::St => {
             let count = tcgen05_st_register_count(record);
+            let has_half_split_offset = record
+                .tcgen05
+                .as_ref()
+                .and_then(|tcgen05| tcgen05.st)
+                .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2);
             let parameters = std::iter::once("i32 %tmem".into())
+                .chain((0..count).map(|index| format!("i32 %d{index}")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let arguments = std::iter::once("i32 %tmem".into())
+                .chain(has_half_split_offset.then(|| "i64 16".into()))
                 .chain((0..count).map(|index| format!("i32 %d{index}")))
                 .collect::<Vec<_>>()
                 .join(", ");
             let (template, constraints, _) = tcgen05_inline_asm(record);
             (
-                parameters.clone(),
+                parameters,
                 "void".into(),
                 template,
                 constraints,
-                parameters,
+                arguments,
             )
         }
         Tcgen05Operation::Ld => {
             let count = tcgen05_ld_register_count(record);
+            let has_half_split_offset = record
+                .tcgen05
+                .as_ref()
+                .and_then(|tcgen05| tcgen05.ld)
+                .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2);
             let fields = std::iter::repeat_n("i32", count)
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -14315,7 +14788,11 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
                 },
                 template,
                 constraints,
-                "i32 %tmem".into(),
+                if has_half_split_offset {
+                    "i32 %tmem, i64 16".into()
+                } else {
+                    "i32 %tmem".into()
+                },
             )
         }
         Tcgen05Operation::LoadWait | Tcgen05Operation::StoreWait => {
@@ -16483,7 +16960,7 @@ mod tests {
     fn catalog_with_tcgen05() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
-        assert_eq!(tcgen05_intrinsics(&catalog).count(), 174);
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 206);
         catalog
     }
 
@@ -18163,7 +18640,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 727);
+        assert_eq!(catalog.intrinsics.len(), 759);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -19358,6 +19835,14 @@ mod tests {
                 .contains("pub unsafe fn tcgen05_ld_16x256b_x8_pure(tmem_addr: u32) -> TmemF32x32")
         );
         assert!(compatibility.contains("pub fn tcgen05_load_wait() -> ()"));
+        assert!(compatibility.contains("pub fn tcgen05_relinquish_alloc_permit() -> ()"));
+        assert!(compatibility.contains("pub fn tcgen05_relinquish_alloc_permit_cg2() -> ()"));
+        assert!(compatibility.contains(
+            "One full warp must execute this instruction uniformly with the same operands."
+        ));
+        assert!(compatibility.contains(
+            "One full warp in each peer CTA must execute this instruction; lanes within each warp must execute uniformly with the same operands."
+        ));
         assert!(compatibility.contains(
             "pub unsafe fn tcgen05_commit_multicast_cg2(mbar: *mut u64, cta_mask: u16) -> ()"
         ));
@@ -19389,6 +19874,21 @@ mod tests {
         assert!(compatibility.contains(
             "pub unsafe fn tcgen05_st_32x32b_x128_unpack16(tmem_addr: u32, data: CuSimd<u32, 128>) -> ()"
         ));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_ld_16x32bx2_x1_raw<const HALF_SPLIT_OFFSET: i32>(tmem_addr: u32) -> u32"
+        ));
+        assert!(compatibility.contains(
+            "pub(crate) unsafe fn __tcgen05_ld_16x32bx2_x1_raw(_tmem_addr: u32, _half_split_offset: i64) -> u32"
+        ));
+        assert!(compatibility.contains(
+            "unsafe { __tcgen05_ld_16x32bx2_x1_raw(tmem_addr, HALF_SPLIT_OFFSET as i64) }"
+        ));
+        assert!(compatibility.contains(
+            "pub unsafe fn tcgen05_st_16x32bx2_x128_unpack16<const HALF_SPLIT_OFFSET: i32>(tmem_addr: u32, data: CuSimd<u32, 128>)"
+        ));
+        assert!(compatibility.contains(
+            "pub(crate) unsafe fn __tcgen05_st_16x32bx2_x128_unpack16(_tmem_addr: u32, _half_split_offset: i64, _data: CuSimd<u32, 128>)"
+        ));
         assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -19400,7 +19900,16 @@ mod tests {
         assert!(raw.contains("pub unsafe fn i0670(_arg0: u32, _arg1: u32) -> ()"));
         assert!(raw.contains("pub unsafe fn i0672(_arg0: u32, _arg1: [u32; 2]) -> ()"));
         assert!(raw.contains("pub unsafe fn i0727(_arg0: u32, _arg1: [u32; 128]) -> ()"));
+        assert!(raw.contains("pub unsafe fn i0728(_arg0: u32, _arg1: i64) -> u32"));
+        assert!(raw.contains("pub unsafe fn i0743(_arg0: u32, _arg1: i64) -> [u32; 128]"));
+        assert!(
+            raw.contains("pub unsafe fn i0759(_arg0: u32, _arg1: i64, _arg2: [u32; 128]) -> ()")
+        );
         assert!(raw.contains("`_arg0` must name a live tensor-memory allocation"));
+        assert!(raw.contains("pub fn i0345() -> ()"));
+        assert!(raw.contains("pub fn i0357() -> ()"));
+        assert!(raw.contains("pub fn i0358() -> ()"));
+        assert!(raw.contains("pub fn i0361() -> ()"));
         assert!(raw.contains("Complete the matching tensor-memory load wait"));
         assert!(raw.contains("Complete the matching tensor-memory store wait"));
         let raw_mod = render_raw_mod(&catalog, "test-hash");
@@ -19413,14 +19922,31 @@ mod tests {
         assert!(raw_mod.contains(
             "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0727 as tcgen05_st_32x32b_x128_unpack16;"
         ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0728 as tcgen05_ld_16x32bx2_x1_raw;"
+        ));
+        assert!(raw_mod.contains(
+            "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0759 as tcgen05_st_16x32bx2_x128_unpack16;"
+        ));
 
         let dialect = render_dialect_tcgen05(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 174);
-        assert_eq!(dialect.matches("::register(ctx)").count(), 174);
+        assert_eq!(dialect.matches("pub struct Tcgen05").count(), 206);
+        assert_eq!(dialect.matches("impl Verify for Tcgen05").count(), 206);
+        assert_eq!(dialect.matches("::register(ctx)").count(), 206);
+        assert_eq!(dialect.matches("            Some(1),").count(), 32);
+        assert!(!dialect.contains("verifier = \"succ\""));
+        assert!(dialect.contains("Operation::get_op::<MirConstantOp>"));
+        assert!(dialect.contains("Operation::get_op::<ConstantOp>"));
+        assert!(dialect.contains("&[(Tcgen05Carrier::I32, 1), (Tcgen05Carrier::I64, 1)],"));
+        assert!(dialect.contains(
+            "&[(Tcgen05Carrier::I32, 1), (Tcgen05Carrier::I64, 1), (Tcgen05Carrier::I32, 128)],"
+        ));
         assert!(dialect.contains("pub struct Tcgen05Ld16x64bX1RawOp"));
         assert!(dialect.contains("pub struct Tcgen05Ld32x32bX128Pack16Op"));
         assert!(dialect.contains("pub struct Tcgen05St16x64bX1RawOp"));
         assert!(dialect.contains("pub struct Tcgen05St32x32bX128Unpack16Op"));
+        assert!(dialect.contains("pub struct Tcgen05Ld16x32bx2X1RawOp"));
+        assert!(dialect.contains("pub struct Tcgen05St16x32bx2X128Unpack16Op"));
         assert!(dialect.contains("NResultsInterface<128>"));
         assert!(dialect.contains("NResultsInterface<32>"));
         assert!(dialect.contains("NResultsInterface<4>"));
@@ -19456,6 +19982,15 @@ mod tests {
         assert!(importer.contains("\"v1:i0611\""));
         assert!(importer.contains("\"v1:i0670\""));
         assert!(importer.contains("\"v1:i0727\""));
+        assert!(importer.contains("cuda_device::tcgen05::__tcgen05_ld_16x32bx2_x1_raw"));
+        assert!(importer.contains("cuda_device::tcgen05::__tcgen05_st_16x32bx2_x128_unpack16"));
+        assert!(
+            importer.contains("tcgen05 16x32bx2 half-split offset must be a compile-time constant")
+        );
+        assert!(importer.contains("half-split offset must lower to a constant"));
+        assert!(importer.contains("args, 128, true, block_ptr"));
+        assert!(importer.contains("\"v1:i0728\""));
+        assert!(importer.contains("\"v1:i0759\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(!lowering.contains("use crate::convert::intrinsics::tcgen05;"));
@@ -19471,7 +20006,7 @@ mod tests {
         assert!(lowering.contains("tcgen05.ld.sync.aligned.16x64b.x1.pack::16b.b32 {$0}, [$1];"));
         assert!(lowering.contains("\"=r,r,~{memory}\""));
         assert!(lowering.contains(
-            "convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), 1, true"
+            "convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), 1, 1, true"
         ));
         assert!(lowering.contains("convert_generated_tcgen05_void("));
         assert!(lowering.contains("tcgen05.st.sync.aligned.16x64b.x1.b32 [$0], {$1};"));
@@ -19479,6 +20014,13 @@ mod tests {
             lowering.contains("tcgen05.st.sync.aligned.32x32b.x128.unpack::16b.b32 [$0], {$1,$2")
         );
         assert!(lowering.contains("\"r,r,~{memory}\""));
+        assert!(lowering.contains("tcgen05.ld.sync.aligned.16x32bx2.x1.b32 {$0}, [$1], $2;"));
+        assert!(lowering.contains("tcgen05.st.sync.aligned.16x32bx2.x1.b32 [$0], $1, {$2};"));
+        assert!(lowering.contains("\"=r,r,n,~{memory}\""));
+        assert!(lowering.contains("\"r,n,r,~{memory}\""));
+        assert!(lowering.contains(
+            "convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), 2, 1, true"
+        ));
         assert!(lowering.contains("builtin::types::{FP32Type, IntegerType, Signedness}"));
         assert!(lowering.contains("ops as llvm_ops"));
         assert!(lowering.contains("inserter::Inserter"));
@@ -19573,11 +20115,29 @@ mod tests {
         );
         assert!(unpacked_store_probe.contains("i32 %d127"));
 
+        let offset_load = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_ld_16x32bx2_x1_pack16")
+            .unwrap();
+        let offset_load_probe = render_probe(&catalog, offset_load, "test-hash");
+        assert!(offset_load_probe.contains("i64 16"));
+        assert!(offset_load_probe.contains("[$1], $2;"));
+        assert!(offset_load_probe.contains("\"=r,r,n,~{memory}\""));
+
+        let offset_store = tcgen05_intrinsics(&catalog)
+            .find(|record| record.id == "tcgen05_st_16x32bx2_x1_unpack16")
+            .unwrap();
+        let offset_store_probe = render_probe(&catalog, offset_store, "test-hash");
+        assert!(offset_store_probe.contains("i64 16"));
+        assert!(offset_store_probe.contains("[$0], $1, {$2};"));
+        assert!(offset_store_probe.contains("\"r,n,r,~{memory}\""));
+
         let target = render_targets(&catalog, "test-hash");
         assert!(target.contains("\"v1:i0343\""));
         assert!(target.contains("\"v1:i0578\""));
         assert!(target.contains("\"v1:i0611\""));
         assert!(target.contains("\"v1:i0727\""));
+        assert!(target.contains("\"v1:i0728\""));
+        assert!(target.contains("\"v1:i0759\""));
         assert!(target.contains(
             "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
         ));
@@ -19648,6 +20208,16 @@ mod tests {
             .modifiers
             .remove(5);
         assert!(validate_renderable(&wrong_store_selector).is_err());
+
+        let mut wrong_offset_scope = catalog.clone();
+        wrong_offset_scope
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "tcgen05_ld_16x32bx2_x1_raw")
+            .unwrap()
+            .semantics
+            .execution_scope = "thread".into();
+        assert!(validate_renderable(&wrong_offset_scope).is_err());
 
         let mut wrong_copy_spelling = catalog;
         wrong_copy_spelling

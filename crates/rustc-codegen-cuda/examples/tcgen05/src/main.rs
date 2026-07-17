@@ -432,6 +432,52 @@ mod kernels {
         }
     }
 
+    /// Keeps every half-split-offset tcgen05 load form in device code.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_ld_offset(tmem_addr: u32) {
+        unsafe {
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x1_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x1_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x2_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x2_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x4_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x4_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x8_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x8_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x16_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x16_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x32_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x32_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x64_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x64_pack16::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x128_raw::<16>(tmem_addr);
+            let _ = tcgen05::tcgen05_ld_16x32bx2_x128_pack16::<16>(tmem_addr);
+        }
+    }
+
+    /// Keeps every half-split-offset tcgen05 store form in device code.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_st_offset(tmem_addr: u32) {
+        unsafe {
+            tcgen05::tcgen05_st_16x32bx2_x1_raw::<16>(tmem_addr, 0);
+            tcgen05::tcgen05_st_16x32bx2_x1_unpack16::<16>(tmem_addr, 0);
+            tcgen05::tcgen05_st_16x32bx2_x2_raw::<16>(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x32bx2_x2_unpack16::<16>(tmem_addr, CuSimd::new([0; 2]));
+            tcgen05::tcgen05_st_16x32bx2_x4_raw::<16>(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x32bx2_x4_unpack16::<16>(tmem_addr, CuSimd::new([0; 4]));
+            tcgen05::tcgen05_st_16x32bx2_x8_raw::<16>(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x32bx2_x8_unpack16::<16>(tmem_addr, CuSimd::new([0; 8]));
+            tcgen05::tcgen05_st_16x32bx2_x16_raw::<16>(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x32bx2_x16_unpack16::<16>(tmem_addr, CuSimd::new([0; 16]));
+            tcgen05::tcgen05_st_16x32bx2_x32_raw::<16>(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x32bx2_x32_unpack16::<16>(tmem_addr, CuSimd::new([0; 32]));
+            tcgen05::tcgen05_st_16x32bx2_x64_raw::<16>(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x32bx2_x64_unpack16::<16>(tmem_addr, CuSimd::new([0; 64]));
+            tcgen05::tcgen05_st_16x32bx2_x128_raw::<16>(tmem_addr, CuSimd::new([0; 128]));
+            tcgen05::tcgen05_st_16x32bx2_x128_unpack16::<16>(tmem_addr, CuSimd::new([0; 128]));
+        }
+    }
+
     // =============================================================================
     // CTA Pair (cta_group::2) Test Kernels
     // =============================================================================

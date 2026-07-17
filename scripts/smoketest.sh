@@ -665,6 +665,12 @@ run_cargo() {
         local st_re='tcgen05\.st\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)(\.unpack::16b)?\.b32'
         local st_unpack16_re='tcgen05\.st\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.unpack::16b\.b32'
         local st_raw_re='tcgen05\.st\.sync\.aligned\.(16x64b|16x128b|16x256b|32x32b)\.x(1|2|4|8|16|32|64|128)\.b32'
+        local ld_offset_re='tcgen05\.ld\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)(\.pack::16b)?\.b32'
+        local ld_offset_pack16_re='tcgen05\.ld\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)\.pack::16b\.b32'
+        local ld_offset_raw_re='tcgen05\.ld\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)\.b32'
+        local st_offset_re='tcgen05\.st\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)(\.unpack::16b)?\.b32'
+        local st_offset_unpack16_re='tcgen05\.st\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)\.unpack::16b\.b32'
+        local st_offset_raw_re='tcgen05\.st\.sync\.aligned\.16x32bx2\.x(1|2|4|8|16|32|64|128)\.b32'
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local -a llvm_args=("build" "${ex}" "--arch=sm_100a")
         local llvm_ec
@@ -730,6 +736,38 @@ run_cargo() {
             return
         fi
 
+        local llvm_ld_offset llvm_ld_offset_count llvm_ld_offset_unique llvm_ld_offset_pack16 llvm_ld_offset_raw
+        llvm_ld_offset="$(awk '/^\.visible \.entry compile_tcgen05_ld_offset\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_ld_offset_count="$(grep -oE "${ld_offset_re}" <<<"${llvm_ld_offset}" | wc -l)"
+        llvm_ld_offset_unique="$(grep -oE "${ld_offset_re}" <<<"${llvm_ld_offset}" | sort -u | wc -l)"
+        llvm_ld_offset_pack16="$(grep -oE "${ld_offset_pack16_re}" <<<"${llvm_ld_offset}" | wc -l)"
+        llvm_ld_offset_raw="$(grep -oE "${ld_offset_raw_re}" <<<"${llvm_ld_offset}" | wc -l)"
+        if [[ -z "${llvm_ld_offset}" ]] \
+            || [[ ${llvm_ld_offset_count} -ne 16 || ${llvm_ld_offset_unique} -ne 16 ]] \
+            || [[ ${llvm_ld_offset_pack16} -ne 8 || ${llvm_ld_offset_raw} -ne 8 ]] \
+            || [[ $(grep -c ', 16;' <<<"${llvm_ld_offset}") -ne 16 ]]; then
+            printf 'tcgen05 LLVM route expected 16 unique offset loads with immediate 16; got %s/%s total/unique and %s/%s raw/pack16\n' \
+                "${llvm_ld_offset_count}" "${llvm_ld_offset_unique}" "${llvm_ld_offset_raw}" "${llvm_ld_offset_pack16}" >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
+        local llvm_st_offset llvm_st_offset_count llvm_st_offset_unique llvm_st_offset_unpack16 llvm_st_offset_raw
+        llvm_st_offset="$(awk '/^\.visible \.entry compile_tcgen05_st_offset\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_st_offset_count="$(grep -oE "${st_offset_re}" <<<"${llvm_st_offset}" | wc -l)"
+        llvm_st_offset_unique="$(grep -oE "${st_offset_re}" <<<"${llvm_st_offset}" | sort -u | wc -l)"
+        llvm_st_offset_unpack16="$(grep -oE "${st_offset_unpack16_re}" <<<"${llvm_st_offset}" | wc -l)"
+        llvm_st_offset_raw="$(grep -oE "${st_offset_raw_re}" <<<"${llvm_st_offset}" | wc -l)"
+        if [[ -z "${llvm_st_offset}" ]] \
+            || [[ ${llvm_st_offset_count} -ne 16 || ${llvm_st_offset_unique} -ne 16 ]] \
+            || [[ ${llvm_st_offset_unpack16} -ne 8 || ${llvm_st_offset_raw} -ne 8 ]] \
+            || [[ $(grep -c ', 16,' <<<"${llvm_st_offset}") -ne 16 ]]; then
+            printf 'tcgen05 LLVM route expected 16 unique offset stores with immediate 16; got %s/%s total/unique and %s/%s raw/unpack16\n' \
+                "${llvm_st_offset_count}" "${llvm_st_offset_unique}" "${llvm_st_offset_raw}" "${llvm_st_offset_unpack16}" >>"${log}"
+            CARGO_EC=1
+            return
+        fi
+
         local -a nvvm_args=("emit-ltoir" "${ex}" "--arch=sm_100a")
         if [[ ${VERBOSE} -eq 1 ]]; then
             cargo oxide "${nvvm_args[@]}" 2>&1 | tee -a "${log}"
@@ -789,6 +827,38 @@ run_cargo() {
             || grep -q 'llvm\.nvvm\.tcgen05\.st' "${nvvm_ll}"; then
             printf 'tcgen05 libNVVM route expected 58 unique inline stores (29 raw and 29 unpack16); got %s/%s total/unique and %s/%s raw/unpack16\n' \
                 "${nvvm_st_count}" "${nvvm_st_unique}" "${nvvm_st_raw}" "${nvvm_st_unpack16}" >>"${log}"
+            CARGO_EC=1
+        fi
+
+        local nvvm_ld_offset nvvm_ld_offset_count nvvm_ld_offset_unique nvvm_ld_offset_pack16 nvvm_ld_offset_raw
+        nvvm_ld_offset="$(awk '/^define .*@compile_tcgen05_ld_offset\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_ld_offset_count="$(grep -oE "${ld_offset_re}" <<<"${nvvm_ld_offset}" | wc -l)"
+        nvvm_ld_offset_unique="$(grep -oE "${ld_offset_re}" <<<"${nvvm_ld_offset}" | sort -u | wc -l)"
+        nvvm_ld_offset_pack16="$(grep -oE "${ld_offset_pack16_re}" <<<"${nvvm_ld_offset}" | wc -l)"
+        nvvm_ld_offset_raw="$(grep -oE "${ld_offset_raw_re}" <<<"${nvvm_ld_offset}" | wc -l)"
+        if [[ -z "${nvvm_ld_offset}" ]] \
+            || [[ ${nvvm_ld_offset_count} -ne 16 || ${nvvm_ld_offset_unique} -ne 16 ]] \
+            || [[ ${nvvm_ld_offset_pack16} -ne 8 || ${nvvm_ld_offset_raw} -ne 8 ]] \
+            || [[ $(grep 'asm sideeffect' <<<"${nvvm_ld_offset}" | grep -o 'i64 16' | wc -l) -ne 16 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.ld' <<<"${nvvm_ld_offset}"; then
+            printf 'tcgen05 libNVVM route expected 16 unique inline offset loads with immediate 16; got %s/%s total/unique and %s/%s raw/pack16\n' \
+                "${nvvm_ld_offset_count}" "${nvvm_ld_offset_unique}" "${nvvm_ld_offset_raw}" "${nvvm_ld_offset_pack16}" >>"${log}"
+            CARGO_EC=1
+        fi
+
+        local nvvm_st_offset nvvm_st_offset_count nvvm_st_offset_unique nvvm_st_offset_unpack16 nvvm_st_offset_raw
+        nvvm_st_offset="$(awk '/^define .*@compile_tcgen05_st_offset\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_st_offset_count="$(grep -oE "${st_offset_re}" <<<"${nvvm_st_offset}" | wc -l)"
+        nvvm_st_offset_unique="$(grep -oE "${st_offset_re}" <<<"${nvvm_st_offset}" | sort -u | wc -l)"
+        nvvm_st_offset_unpack16="$(grep -oE "${st_offset_unpack16_re}" <<<"${nvvm_st_offset}" | wc -l)"
+        nvvm_st_offset_raw="$(grep -oE "${st_offset_raw_re}" <<<"${nvvm_st_offset}" | wc -l)"
+        if [[ -z "${nvvm_st_offset}" ]] \
+            || [[ ${nvvm_st_offset_count} -ne 16 || ${nvvm_st_offset_unique} -ne 16 ]] \
+            || [[ ${nvvm_st_offset_unpack16} -ne 8 || ${nvvm_st_offset_raw} -ne 8 ]] \
+            || [[ $(grep 'asm sideeffect' <<<"${nvvm_st_offset}" | grep -o 'i64 16' | wc -l) -ne 16 ]] \
+            || grep -q 'llvm\.nvvm\.tcgen05\.st' <<<"${nvvm_st_offset}"; then
+            printf 'tcgen05 libNVVM route expected 16 unique inline offset stores with immediate 16; got %s/%s total/unique and %s/%s raw/unpack16\n' \
+                "${nvvm_st_offset_count}" "${nvvm_st_offset_unique}" "${nvvm_st_offset_raw}" "${nvvm_st_offset_unpack16}" >>"${log}"
             CARGO_EC=1
         fi
         return
