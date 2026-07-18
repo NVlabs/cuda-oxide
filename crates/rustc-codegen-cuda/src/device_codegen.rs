@@ -98,7 +98,7 @@ use llvm_export::ops::{
     DebugInlinedScope, DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation,
     DebugSourceScopeMap,
 };
-use rustc_middle::ty::{EarlyBinder, TypingEnv};
+use rustc_middle::ty::{EarlyBinder, InstanceKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
 use rustc_span::{Span, hygiene};
@@ -638,25 +638,41 @@ pub fn generate_device_code<'tcx>(
         .collect();
 
     let result = rustc_internal::run(tcx, || {
-        // Convert internal Instance<'tcx> to stable_mir Instance
+        // Convert internal Instance<'tcx> to stable_mir Instance.
+        // Drop glue instances whose bodies are provably no-ops are filtered
+        // out: the mir-importer's translate_drop fast-path emits a plain
+        // branch for them and never references the function, so translating
+        // their (potentially complex) shim bodies is both unnecessary and
+        // can fail on constructs the device pipeline does not support.
         let stable_functions: Vec<mir_importer::CollectedFunction> = functions
             .iter()
             .zip(export_names.iter())
             .zip(debug_scope_maps.iter())
             .zip(inline_always_flags.iter())
-            .map(
+            .filter_map(
                 |(((func, (export_name, is_kernel)), debug_source_scopes), is_inline_always)| {
                     // Use rustc_internal::stable() to convert the Instance.
                     // This is the key bridge between rustc_middle and rustc_public types.
                     let stable_instance = rustc_internal::stable(func.instance);
 
-                    mir_importer::CollectedFunction {
+                    // Skip no-op drop glue: the mir-importer lowers these as
+                    // plain branches (via drop_glue_is_noop) and never emits a
+                    // call, so the function body is dead. Translating it would
+                    // fail on IntoIter and similar stdlib shims whose MIR
+                    // contains constructs the device pipeline does not support.
+                    if matches!(func.instance.def, InstanceKind::DropGlue(..))
+                        && mir_importer::drop_instance_is_noop(&stable_instance)
+                    {
+                        return None;
+                    }
+
+                    Some(mir_importer::CollectedFunction {
                         instance: stable_instance,
                         is_kernel: *is_kernel,
                         export_name: export_name.clone(),
                         debug_source_scopes: Some(debug_source_scopes.clone()),
                         is_inline_always: *is_inline_always,
-                    }
+                    })
                 },
             )
             .collect();

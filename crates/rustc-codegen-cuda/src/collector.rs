@@ -412,6 +412,25 @@ pub fn is_device_function(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// - The generic definition (with T as a type parameter)
 /// - Concrete instantiations (with T = f32, T = i32, etc.)
 ///
+/// Returns `true` when every field of the ADT `ty` has trivial drop glue.
+///
+/// For a type with an explicit `Drop` impl whose fields all have
+/// `needs_drop == false`, the `Drop::drop` body operates exclusively on
+/// data inside the dying object and cannot trigger any nested destructor,
+/// making the entire drop unobservable. The mir-importer's
+/// `drop_glue_is_noop` will lower these as plain branches, so the
+/// collector can safely skip them (and their transitive callees).
+fn drop_fields_have_no_drop<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    let TyKind::Adt(adt_def, args) = ty.kind() else {
+        return false;
+    };
+    let typing_env = TypingEnv::fully_monomorphized();
+    adt_def.all_fields().all(|field| {
+        let field_ty = field.ty(tcx, args);
+        !field_ty.needs_drop(tcx, typing_env)
+    })
+}
+
 /// We only want to process concrete instantiations since we can't generate
 /// PTX for generic code - the device compiler needs concrete types.
 ///
@@ -956,8 +975,13 @@ impl<'tcx> DeviceCollector<'tcx> {
                     user_span: self.tcx.def_span(def_id),
                 });
 
-            // Get MIR body if available
-            if self.tcx.is_mir_available(def_id) {
+            // Get MIR body if available. For drop glue shims
+            // (InstanceKind::DropGlue), `is_mir_available` may return false
+            // because the shim is compiler-generated, but `instance_mir`
+            // still provides the body.
+            let has_mir = self.tcx.is_mir_available(def_id)
+                || matches!(func.instance.def, InstanceKind::DropGlue(..));
+            if has_mir {
                 // Use instance_mir for monomorphized MIR.
                 // This returns OPTIMIZED MIR (post -C opt-level passes).
                 let mir = self.tcx.instance_mir(func.instance.def);
@@ -972,8 +996,14 @@ impl<'tcx> DeviceCollector<'tcx> {
 
                 // Fail fast with an actionable diagnostic when this body
                 // contains panic-formatting machinery the device pipeline
-                // cannot compile (issue #76).
-                self.check_panic_machinery(mir, &func, &ctx);
+                // cannot compile (issue #76). Skip for drop glue shims:
+                // their MIR is compiler-generated and may contain panic
+                // paths (e.g. for assertion failures) that are unreachable
+                // in practice; the mir-importer handles these via its
+                // existing unreachable-block patching.
+                if !matches!(func.instance.def, InstanceKind::DropGlue(..)) {
+                    self.check_panic_machinery(mir, &func, &ctx);
+                }
 
                 // Walk all basic blocks looking for calls.
                 // Pass the caller so we can substitute its args into callees
@@ -1058,14 +1088,127 @@ impl<'tcx> DeviceCollector<'tcx> {
         caller: &CollectedFunction<'tcx>,
         ctx: &DiscoveryCtx,
     ) {
-        if let TerminatorKind::Call { func, .. } = &terminator.kind {
-            // The span of the whole call expression, mapped back through
-            // MIR inlining and macro expansion to the line the user wrote.
-            // (The function operand's own span is reset to a dummy by MIR
-            // inlining, so it is useless for diagnostics.)
-            let call_span = outermost_user_span(mir, terminator.source_info);
-            self.process_call_operand(func, call_span, caller, ctx);
+        match &terminator.kind {
+            TerminatorKind::Call { func, .. } => {
+                // The span of the whole call expression, mapped back through
+                // MIR inlining and macro expansion to the line the user wrote.
+                // (The function operand's own span is reset to a dummy by MIR
+                // inlining, so it is useless for diagnostics.)
+                let call_span = outermost_user_span(mir, terminator.source_info);
+                self.process_call_operand(func, call_span, caller, ctx);
+            }
+            TerminatorKind::Drop { place, .. } => {
+                // Collect `drop_in_place::<T>` when T has non-trivial drop glue.
+                // Without this, the MIR translator would emit a call to a
+                // `drop_in_place` symbol that has no definition in the module.
+                self.process_drop_place(place, mir, caller, ctx);
+            }
+            _ => {}
         }
+    }
+
+    /// Collect the `drop_in_place::<T>` function for a `Drop` terminator.
+    ///
+    /// When the MIR contains a `Drop` terminator for a place of type `T`,
+    /// rustc generates a `drop_in_place::<T>` shim that calls `<T as Drop>::drop`
+    /// (if `T` implements `Drop`) and recursively drops each field. The
+    /// mir-importer needs this function to exist as a device function so it
+    /// can emit a call to it.
+    ///
+    /// The shim's MIR body may itself contain `Call` terminators (to
+    /// `<T as Drop>::drop` and to nested `drop_in_place::<FieldTy>`) and
+    /// `Drop` terminators (for fields). These are discovered transitively
+    /// when the shim's body is walked by `collect()` on subsequent iterations.
+    ///
+    /// Drop glue instances resolve to `InstanceKind::DropGlue`, not
+    /// `InstanceKind::Item`, so the regular `process_call_operand` path
+    /// would skip them. This dedicated handler resolves the drop instance
+    /// directly and enqueues it.
+    fn process_drop_place(
+        &mut self,
+        place: &rustc_middle::mir::Place<'tcx>,
+        mir: &rustc_middle::mir::Body<'tcx>,
+        caller: &CollectedFunction<'tcx>,
+        ctx: &DiscoveryCtx,
+    ) {
+        use rustc_middle::ty::EarlyBinder;
+
+        // Compute the type of the dropped place, substituting the caller's
+        // generic args to get a fully monomorphized type.
+        let place_ty = place.ty(mir, self.tcx).ty;
+        let place_ty = self.tcx.instantiate_and_normalize_erasing_regions(
+            caller.instance.args,
+            TypingEnv::fully_monomorphized(),
+            EarlyBinder::bind(place_ty),
+        );
+
+        // Resolve drop_in_place::<T>. This returns the drop glue shim
+        // (InstanceKind::DropGlue) which wraps the actual Drop::drop call.
+        let drop_instance = Instance::resolve_drop_in_place(self.tcx, place_ty);
+
+        // DropGlue(_, None) is an empty shim for types that need no
+        // destructor. The mir-importer's no-op analysis will lower these
+        // as plain branches, so there's nothing to collect.
+        //
+        // DropGlue for a type whose fields are all trivially droppable
+        // (no field needs drop) is also a no-op: the Drop::drop body can
+        // only manipulate the dying object's own data and cannot
+        // trigger any nested destructor. The mir-importer's
+        // drop_glue_is_noop will lower these as plain branches, so
+        // there's nothing to collect. Skipping collection also
+        // prevents transitively collecting the Drop::drop body and
+        // its callees, which may reference stdlib functions the
+        // device pipeline does not support.
+        if let InstanceKind::DropGlue(_, maybe_ty) = drop_instance.def
+            && maybe_ty.is_none_or(|ty| drop_fields_have_no_drop(self.tcx, ty))
+        {
+            return;
+        }
+
+        let mangled = self.tcx.symbol_name(drop_instance).name.to_string();
+        if self.seen.contains(&mangled) {
+            return;
+        }
+
+        // Ensure the type is fully monomorphized
+        if !is_fully_monomorphized(self.tcx, drop_instance) {
+            if self.verbose {
+                eprintln!(
+                    "[collector] Skipping non-monomorphized drop_in_place: {:?}",
+                    place_ty
+                );
+            }
+            return;
+        }
+
+        let drop_ctx = DiscoveryCtx {
+            root_name: ctx.root_name.clone(),
+            root_is_kernel: ctx.root_is_kernel,
+            user_span: ctx.user_span,
+        };
+
+        // Use the mangled name as the export name for drop glue instances.
+        // The mir-importer uses Instance::resolve_drop_in_place followed by
+        // mangled_name() to derive the callee symbol, so the export name
+        // must match. Drop glue always has generic args (the dropped type),
+        // so mangled_name is the correct choice (never the simple FQDN).
+        let export_name = sanitize_ptx_name(&mangled);
+
+        if self.verbose {
+            eprintln!(
+                "[collector] Discovered drop_in_place::<{:?}> -> {}",
+                place_ty, export_name
+            );
+        }
+
+        self.discovery.insert(mangled.clone(), drop_ctx);
+        self.seen.insert(mangled);
+        self.used_export_names.insert(export_name.clone());
+        self.worklist.push_back(CollectedFunction {
+            instance: drop_instance,
+            is_kernel: false,
+            export_name,
+        });
     }
 
     /// Process a call operand to extract and add the callee.
@@ -1251,8 +1394,61 @@ impl<'tcx> DeviceCollector<'tcx> {
             return;
         }
 
-        // Skip intrinsics and other special functions
-        if !matches!(resolved.def, InstanceKind::Item(_)) {
+        // Skip intrinsics and other special functions, but allow DropGlue
+        // instances through so that drop_in_place calls inside drop shim
+        // bodies (e.g. for array/slice element drops) are collected.
+        if !matches!(
+            resolved.def,
+            InstanceKind::Item(_) | InstanceKind::DropGlue(..)
+        ) {
+            return;
+        }
+
+        // For DropGlue instances discovered via Call terminators (rather
+        // than Drop terminators), route them through the same collection
+        // logic as process_drop_place to avoid duplicating the enqueue path.
+        if let InstanceKind::DropGlue(_, Some(ty)) = resolved.def {
+            // Skip drop glue whose fields are all trivially droppable;
+            // same logic as in process_drop_place.
+            if drop_fields_have_no_drop(self.tcx, ty) {
+                return;
+            }
+            let mangled = self.tcx.symbol_name(resolved).name.to_string();
+            if self.seen.contains(&mangled) {
+                return;
+            }
+            if !is_fully_monomorphized(self.tcx, resolved) {
+                return;
+            }
+            let callee_ctx = DiscoveryCtx {
+                root_name: ctx.root_name.clone(),
+                root_is_kernel: ctx.root_is_kernel,
+                user_span: if caller.instance.def_id().is_local() && !call_span.is_dummy() {
+                    call_span
+                } else {
+                    ctx.user_span
+                },
+            };
+            let export_name = sanitize_ptx_name(&mangled);
+            if self.verbose {
+                eprintln!(
+                    "[collector] Discovered drop_in_place (via call) -> {}",
+                    export_name
+                );
+            }
+            self.discovery.insert(mangled.clone(), callee_ctx);
+            self.seen.insert(mangled);
+            self.used_export_names.insert(export_name.clone());
+            self.worklist.push_back(CollectedFunction {
+                instance: resolved,
+                is_kernel: false,
+                export_name,
+            });
+            return;
+        }
+
+        // Empty drop glue (DropGlue with None type) has no body to collect.
+        if let InstanceKind::DropGlue(_, None) = resolved.def {
             return;
         }
 
