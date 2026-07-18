@@ -4,7 +4,7 @@
  */
 
 use crate::error::PipelineError;
-use crate::llvm_tools::{LlvmToolchain, OptTool, probe_runnable};
+use crate::llvm_tools::{LlvmToolchain, OptTool, probe_runnable, resolve_sibling_tool};
 use crate::options::BackendOptions;
 use crate::pipeline::{
     ModuleArtifactKind, ModulePipelineRequest, OutputFiles, compile_translated_module,
@@ -443,6 +443,12 @@ impl Toolchain {
             }
         }
 
+        let llvm_link = resolve_sibling_tool(
+            "llvm-link",
+            "CUDA_OXIDE_LLVM_LINK",
+            &llc_text,
+            llc_tool.major,
+        );
         let inner = LlvmToolchain {
             llc_path: llc_tool.path,
             llc_major: llc_tool.major,
@@ -451,6 +457,7 @@ impl Toolchain {
                 path: tool.path,
                 major: tool.major,
             }),
+            llvm_link,
             diagnostics: Vec::new(),
         };
         let selection = describe_selection("explicit toolchain", &inner);

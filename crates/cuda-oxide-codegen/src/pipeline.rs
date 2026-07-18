@@ -211,10 +211,17 @@ pub fn compile_translated_module(
         add_device_extern_declarations(ctx, module, request.device_externs)?;
     }
 
+    // Discover libdevice.10.bc early so the backend decision can account for
+    // IR-level linking. When available, `needs_libdevice` no longer forces the
+    // NVVM IR path — the PTX path links libdevice at the LLVM IR level instead.
+    let libdevice_path = libnvvm_sys::find_libdevice().ok();
+    let can_ir_link_libdevice = libdevice_path.is_some();
+
     // Choose the intrinsic ABI while calls are still typed MIR. Generated
     // intrinsics may have different LLVM signatures for `llc` and libNVVM, so
     // discovering NVVM mode only after lowering is too late.
-    let backend_selection = select_pre_lowering_backend(ctx, module, request.output_policy);
+    let backend_selection =
+        select_pre_lowering_backend(ctx, module, request.output_policy, can_ir_link_libdevice);
     let generated_requirements = collect_generated_intrinsic_requirements_for_backend(
         ctx,
         module,
@@ -252,11 +259,19 @@ pub fn compile_translated_module(
             request_nvvm_ir: true
         }
     );
-    if needs_libdevice && !requested_nvvm_ir && emit_nvvm_ir && request.trace.verbose {
-        request.trace.emit(
-            "\n=== Detected CUDA libdevice (`__nv_*`) calls; \
-             auto-emitting NVVM IR (skip llc) ===",
-        );
+    if needs_libdevice && request.trace.verbose {
+        if !emit_nvvm_ir && can_ir_link_libdevice {
+            request.trace.emit(format!(
+                "\n=== Detected CUDA libdevice (`__nv_*`) calls; \
+                 linking libdevice.10.bc at IR level ({}) ===",
+                libdevice_path.as_ref().unwrap().display()
+            ));
+        } else if !requested_nvvm_ir && emit_nvvm_ir {
+            request.trace.emit(
+                "\n=== Detected CUDA libdevice (`__nv_*`) calls; \
+                 auto-emitting NVVM IR (skip llc) ===",
+            );
+        }
     }
 
     // NVVM pointer syntax depends on the target. Detect the feature floor from
@@ -383,6 +398,11 @@ pub fn compile_translated_module(
     if request.trace.verbose {
         request.trace.emit("\n=== Generating PTX ===");
     }
+    let ptx_libdevice = if needs_libdevice {
+        libdevice_path.as_deref()
+    } else {
+        None
+    };
     let generated = match request.toolchain {
         ToolchainPolicy::Discover => generate_ptx(
             request.files.llvm_ir,
@@ -391,6 +411,7 @@ pub fn compile_translated_module(
             request.backend,
             request.trace.sink,
             &generated_requirements,
+            ptx_libdevice,
         )?,
         ToolchainPolicy::Explicit(toolchain) => generate_ptx_with_toolchain(
             request.files.llvm_ir,
@@ -399,6 +420,7 @@ pub fn compile_translated_module(
             request.backend,
             toolchain,
             &generated_requirements,
+            ptx_libdevice,
         )?,
     };
     if request.trace.verbose {
@@ -430,13 +452,14 @@ fn select_pre_lowering_backend(
     ctx: &Context,
     module: Ptr<Operation>,
     output_policy: OutputPolicy,
+    can_ir_link_libdevice: bool,
 ) -> PreLoweringBackendSelection {
     // The rustc frontend supplies typed MIR, while the standalone frontend may
     // also supply an already-lowered LLVM declaration in the same module.
     // Inspect both representations before choosing an intrinsic ABI.
     let needs_libdevice =
         typed_mir_uses_libdevice(ctx, module) || module_uses_libdevice(ctx, module);
-    let emit_nvvm_ir = should_emit_nvvm_ir(output_policy, needs_libdevice);
+    let emit_nvvm_ir = should_emit_nvvm_ir(output_policy, needs_libdevice, can_ir_link_libdevice);
     let intrinsic_backend = if emit_nvvm_ir {
         mir_lower::IntrinsicBackend::LibNvvm
     } else {
@@ -481,10 +504,27 @@ fn typed_op_uses_libdevice(ctx: &Context, op: Ptr<Operation>) -> bool {
     false
 }
 
-fn should_emit_nvvm_ir(policy: OutputPolicy, needs_libdevice: bool) -> bool {
+/// Determines whether the pipeline should emit NVVM IR instead of PTX.
+///
+/// When `can_ir_link_libdevice` is true, `__nv_*` calls will be resolved by
+/// linking `libdevice.10.bc` at the LLVM IR level (via `llvm-link`), so
+/// `needs_libdevice` alone no longer forces the NVVM IR path. This avoids the
+/// legacy LLVM 7 dialect that cannot represent f16 on pre-Blackwell targets.
+fn should_emit_nvvm_ir(
+    policy: OutputPolicy,
+    needs_libdevice: bool,
+    can_ir_link_libdevice: bool,
+) -> bool {
     match policy {
         OutputPolicy::SelfContainedPtx => false,
-        OutputPolicy::ExternalLinkAllowed { request_nvvm_ir } => request_nvvm_ir || needs_libdevice,
+        OutputPolicy::ExternalLinkAllowed { request_nvvm_ir } => {
+            if request_nvvm_ir {
+                return true;
+            }
+            // Fall back to NVVM IR only when the kernel needs libdevice AND
+            // we cannot resolve the calls via IR-level linking.
+            needs_libdevice && !can_ir_link_libdevice
+        }
     }
 }
 
@@ -565,8 +605,16 @@ mod tests {
 
     #[test]
     fn standalone_never_silently_switches_to_a_linkable_artifact() {
-        assert!(!should_emit_nvvm_ir(OutputPolicy::SelfContainedPtx, false));
-        assert!(!should_emit_nvvm_ir(OutputPolicy::SelfContainedPtx, true));
+        assert!(!should_emit_nvvm_ir(
+            OutputPolicy::SelfContainedPtx,
+            false,
+            false
+        ));
+        assert!(!should_emit_nvvm_ir(
+            OutputPolicy::SelfContainedPtx,
+            true,
+            false
+        ));
     }
 
     #[test]
@@ -577,28 +625,71 @@ mod tests {
         let requested = OutputPolicy::ExternalLinkAllowed {
             request_nvvm_ir: true,
         };
-        assert!(!should_emit_nvvm_ir(automatic, false));
-        assert!(should_emit_nvvm_ir(automatic, true));
-        assert!(should_emit_nvvm_ir(requested, false));
+        // No libdevice, no IR linking available → PTX path.
+        assert!(!should_emit_nvvm_ir(automatic, false, false));
+        // Libdevice needed, no IR linking → falls back to NVVM IR.
+        assert!(should_emit_nvvm_ir(automatic, true, false));
+        // Explicit NVVM IR request always wins.
+        assert!(should_emit_nvvm_ir(requested, false, false));
     }
 
     #[test]
-    fn typed_libdevice_selection_happens_before_lowering() {
+    fn ir_linking_avoids_nvvm_ir_for_libdevice() {
+        let automatic = OutputPolicy::ExternalLinkAllowed {
+            request_nvvm_ir: false,
+        };
+        // Libdevice needed, IR linking available → PTX path (not NVVM IR).
+        assert!(!should_emit_nvvm_ir(automatic, true, true));
+        // No libdevice needed, IR linking available → PTX path (unchanged).
+        assert!(!should_emit_nvvm_ir(automatic, false, true));
+        // Explicit NVVM IR request still forces NVVM IR even with IR linking.
+        let requested = OutputPolicy::ExternalLinkAllowed {
+            request_nvvm_ir: true,
+        };
+        assert!(should_emit_nvvm_ir(requested, false, true));
+    }
+
+    #[test]
+    fn typed_libdevice_without_ir_linking_falls_back_to_nvvm() {
         let mut ctx = Context::new();
         let module =
             typed_mir_test_module(&mut ctx, &[dialect_mir::rust_intrinsics::CALLEE_SIN_F32]);
+        // No IR-level linking: libdevice forces NVVM IR (legacy behavior).
         let selection = select_pre_lowering_backend(
             &ctx,
             module,
             OutputPolicy::ExternalLinkAllowed {
                 request_nvvm_ir: false,
             },
+            false,
         );
         assert!(selection.needs_libdevice);
         assert!(selection.emit_nvvm_ir);
         assert_eq!(
             selection.intrinsic_backend,
             mir_lower::IntrinsicBackend::LibNvvm
+        );
+    }
+
+    #[test]
+    fn typed_libdevice_with_ir_linking_stays_on_ptx_path() {
+        let mut ctx = Context::new();
+        let module =
+            typed_mir_test_module(&mut ctx, &[dialect_mir::rust_intrinsics::CALLEE_SIN_F32]);
+        // IR-level linking available: libdevice does NOT force NVVM IR.
+        let selection = select_pre_lowering_backend(
+            &ctx,
+            module,
+            OutputPolicy::ExternalLinkAllowed {
+                request_nvvm_ir: false,
+            },
+            true,
+        );
+        assert!(selection.needs_libdevice);
+        assert!(!selection.emit_nvvm_ir);
+        assert_eq!(
+            selection.intrinsic_backend,
+            mir_lower::IntrinsicBackend::LlvmNvptx
         );
     }
 
@@ -613,13 +704,14 @@ mod tests {
             OutputPolicy::ExternalLinkAllowed {
                 request_nvvm_ir: true,
             },
+            false,
         );
         assert!(!nvvm.needs_libdevice);
         assert!(nvvm.emit_nvvm_ir);
         assert_eq!(nvvm.intrinsic_backend, mir_lower::IntrinsicBackend::LibNvvm);
 
         let standalone =
-            select_pre_lowering_backend(&ctx, ordinary, OutputPolicy::SelfContainedPtx);
+            select_pre_lowering_backend(&ctx, ordinary, OutputPolicy::SelfContainedPtx, false);
         assert!(!standalone.emit_nvvm_ir);
         assert_eq!(
             standalone.intrinsic_backend,

@@ -16,6 +16,78 @@ use crate::target::{
 use llvm_export::export::DebugKind;
 use std::path::{Path, PathBuf};
 
+/// Links `libdevice.10.bc` into the emitted IR using `llvm-link`.
+///
+/// Resolves `__nv_*` calls (CUDA math library) at the IR level so they are
+/// inlined and optimized by `opt -O2` before `llc` lowers to PTX. This
+/// avoids the legacy NVVM IR path (which uses the LLVM 7 dialect and cannot
+/// represent f16 types on pre-Blackwell targets).
+///
+/// Returns the linked `.ll` path on success, `None` on failure (with a
+/// diagnostic). The caller falls through to the unlinked IR when linking is
+/// unavailable.
+fn link_libdevice(
+    ll_path: &Path,
+    libdevice_path: &Path,
+    toolchain: &LlvmToolchain,
+    diagnostic_sink: Option<fn(&str)>,
+    diagnostics: &mut Vec<String>,
+    verbose: bool,
+) -> Option<PathBuf> {
+    let llvm_link = toolchain.llvm_link.as_ref()?;
+
+    let linked_path = ll_path.with_extension("linked.ll");
+    match std::process::Command::new(&llvm_link.path)
+        .arg("-S")
+        .arg(ll_path)
+        .arg(libdevice_path)
+        .arg("-o")
+        .arg(&linked_path)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            if verbose {
+                record_diagnostic(
+                    diagnostics,
+                    diagnostic_sink,
+                    format!(
+                        "llvm-link: linked libdevice ({}) → {}",
+                        libdevice_path.display(),
+                        linked_path.display()
+                    ),
+                );
+            }
+            Some(linked_path)
+        }
+        Ok(output) => {
+            record_diagnostic(
+                diagnostics,
+                diagnostic_sink,
+                format!(
+                    "warning: llvm-link ({}) failed with status {}:\n{}\n\
+                     warning: continuing without libdevice; `__nv_*` calls may be unresolved",
+                    llvm_link.path,
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            );
+            None
+        }
+        Err(error) => {
+            record_diagnostic(
+                diagnostics,
+                diagnostic_sink,
+                format!(
+                    "warning: failed to run llvm-link ({}): {error}\n\
+                     warning: continuing without libdevice; `__nv_*` calls may be unresolved",
+                    llvm_link.path
+                ),
+            );
+            None
+        }
+    }
+}
+
 /// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
 ///
 /// This is what consumes the per-op ABI alignment we emit: the
@@ -143,6 +215,7 @@ pub fn generate_ptx(
     opts: &BackendOptions,
     diagnostic_sink: Option<fn(&str)>,
     generated: &GeneratedModuleRequirements,
+    libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     let Some(toolchain) = LlvmToolchain::resolve(opts) else {
         return Err(PipelineError::PtxGeneration(
@@ -165,11 +238,15 @@ pub fn generate_ptx(
     }
     if opts.verbose {
         diagnostics.push(format!(
-            "LLVM toolchain: llc = {}, opt = {}",
+            "LLVM toolchain: llc = {}, opt = {}, llvm-link = {}",
             crate::llvm_tools::describe_tool(&toolchain.llc_path, toolchain.llc_major),
             match &toolchain.opt {
                 Some(tool) => crate::llvm_tools::describe_tool(&tool.path, tool.major),
                 None => "(skipped)".to_string(),
+            },
+            match &toolchain.llvm_link {
+                Some(tool) => crate::llvm_tools::describe_tool(&tool.path, tool.major),
+                None => "(not found)".to_string(),
             }
         ));
     }
@@ -185,6 +262,7 @@ pub fn generate_ptx(
         },
         false,
         diagnostic_sink,
+        libdevice_path,
     )?;
     diagnostics.append(&mut generated.diagnostics);
     generated.diagnostics = diagnostics;
@@ -202,6 +280,7 @@ pub(crate) fn generate_ptx_with_toolchain(
     opts: &BackendOptions,
     toolchain: &LlvmToolchain,
     generated: &GeneratedModuleRequirements,
+    libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     generate_ptx_impl(
         ll_path,
@@ -214,6 +293,7 @@ pub(crate) fn generate_ptx_with_toolchain(
         },
         true,
         None,
+        libdevice_path,
     )
 }
 
@@ -224,6 +304,7 @@ fn generate_ptx_impl(
     backend: PtxBackend<'_>,
     strict_optimization: bool,
     diagnostic_sink: Option<fn(&str)>,
+    libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     let PtxBackend {
         options: opts,
@@ -275,6 +356,21 @@ fn generate_ptx_impl(
     validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
         .map_err(PipelineError::PtxGeneration)?;
 
+    // Link libdevice at the IR level when the kernel uses `__nv_*` calls.
+    // This resolves (and later inlines) CUDA math functions without forcing
+    // the legacy NVVM IR path, which cannot represent f16 on pre-Blackwell.
+    let linked = libdevice_path.and_then(|lp| {
+        link_libdevice(
+            ll_path,
+            lp,
+            toolchain,
+            diagnostic_sink,
+            &mut diagnostics,
+            opts.verbose,
+        )
+    });
+    let post_link_input: &Path = linked.as_deref().unwrap_or(ll_path);
+
     // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
     // intentionally reads the original (pre-opt) IR so the target is determined
     // by what the source actually needs, not what opt elides.
@@ -296,13 +392,13 @@ fn generate_ptx_impl(
         None
     } else {
         let (optimized, mut opt_diagnostics) =
-            optimize_ll(ll_path, toolchain, opts, strict_optimization)?;
+            optimize_ll(post_link_input, toolchain, opts, strict_optimization)?;
         for diagnostic in opt_diagnostics.drain(..) {
             record_diagnostic(&mut diagnostics, diagnostic_sink, diagnostic);
         }
         optimized
     };
-    let llc_input: &Path = optimized.as_deref().unwrap_or(ll_path);
+    let llc_input: &Path = optimized.as_deref().unwrap_or(post_link_input);
 
     let llc_desc = if toolchain.llc_from_env {
         format!("llc_override ({})", toolchain.llc_path)
@@ -480,6 +576,7 @@ mod tests {
                 path: "/bin/false".to_string(),
                 major: Some(21),
             }),
+            llvm_link: None,
             diagnostics: Vec::new(),
         };
         let opts = BackendOptions::default();
@@ -533,6 +630,7 @@ mod tests {
             &opts,
             Some(collect_legacy_diagnostic),
             &GeneratedModuleRequirements::default(),
+            None,
         )
         .unwrap_err();
         assert!(matches!(error, PipelineError::PtxGeneration(_)));
