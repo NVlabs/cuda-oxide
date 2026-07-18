@@ -1,0 +1,5 @@
+error: ptx_asm! supports at most 8 output operands
+  --> tests/compile_fail/ptx_asm_output_limit.rs:18:18
+   |
+18 | ...   ptx_asm!("nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("...
+   |                ^^^^^^

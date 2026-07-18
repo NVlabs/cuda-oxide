@@ -10,11 +10,17 @@ fn ptx_asm_accepts_cuda_doc_shape() {
 }
 
 #[test]
+fn ptx_asm_accepts_multi_output() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/pass/ptx_asm_multi_output.rs");
+}
+
+#[test]
 fn ptx_asm_compile_failures() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/ptx_asm_requires_unsafe.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_unescaped_register.rs");
-    t.compile_fail("tests/compile_fail/ptx_asm_multiple_outputs.rs");
+    t.compile_fail("tests/compile_fail/ptx_asm_output_limit.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_input_limit.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_constraint_comma.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_unsupported_constraint.rs");
