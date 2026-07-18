@@ -17,7 +17,7 @@ use llvm_export::{
         DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
         GetElementPtrOp, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
     },
-    types::{ArrayType, FuncType, PointerType, VoidType},
+    types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -2681,5 +2681,209 @@ fn export_emits_fast_math_flags_only_on_flagged_float_ops() {
     assert!(
         !fmul_line.contains("fast"),
         "a float binop with no fast-math flags must not gain them:\n{ir}"
+    );
+}
+
+#[test]
+fn modern_device_extern_emits_signext_zeroext_for_small_integer_params() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "small_types_extern".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    // The extern takes (i32 signext, i32 zeroext, half) and returns void.
+    // In the pliron module, these are all plain i32/half types -- the ABI
+    // extension attributes are only in the DeviceExternType metadata.
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let half_ty = HalfType::get(&ctx);
+    let void_ty = VoidType::get(&ctx);
+
+    let external_ty = FuncType::get(
+        &ctx,
+        void_ty.into(),
+        vec![i32_ty.into(), i32_ty.into(), half_ty.into()],
+        false,
+    );
+    FuncOp::new(&mut ctx, "small_types_fn".try_into().unwrap(), external_ty)
+        .get_operation()
+        .insert_at_back(module_block, &ctx);
+
+    // Caller that forwards its own parameters to the extern.
+    let caller_ty = FuncType::get(
+        &ctx,
+        void_ty.into(),
+        vec![i32_ty.into(), i32_ty.into(), half_ty.into()],
+        false,
+    );
+    let caller = FuncOp::new(&mut ctx, "caller".try_into().unwrap(), caller_ty);
+    let entry = caller.get_or_create_entry_block(&mut ctx);
+    let arg0 = entry.deref(&ctx).get_argument(0);
+    let arg1 = entry.deref(&ctx).get_argument(1);
+    let arg2 = entry.deref(&ctx).get_argument(2);
+    CallOp::new(
+        &mut ctx,
+        CallOpCallable::Direct("small_types_fn".try_into().unwrap()),
+        external_ty,
+        vec![arg0, arg1, arg2],
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    let externs = [DeviceExternDecl {
+        export_name: "small_types_fn".to_string(),
+        param_types: vec![
+            DeviceExternType::SignExtInteger(32), // i8 sign-extended to i32
+            DeviceExternType::ZeroExtInteger(32), // u8 zero-extended to i32
+            DeviceExternType::Float16,            // f16 as native half
+        ],
+        return_type: DeviceExternType::Void,
+        attrs: DeviceExternAttrs::default(),
+    }];
+
+    let ir = export_module_with_externs(
+        &ctx,
+        &module,
+        &externs,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("modern extern with small types export succeeds");
+
+    // Check declaration has correct attributes.
+    assert!(
+        ir.contains("declare void @small_types_fn(i32 signext, i32 zeroext, half)"),
+        "declaration should have signext/zeroext attributes:\n{ir}"
+    );
+
+    // Check call site also uses attributes.
+    assert!(
+        ir.contains("i32 signext %v0"),
+        "call should use signext on first arg:\n{ir}"
+    );
+    assert!(
+        ir.contains("i32 zeroext %v1"),
+        "call should use zeroext on second arg:\n{ir}"
+    );
+    assert!(
+        ir.contains("half %v2"),
+        "call should use half for third arg:\n{ir}"
+    );
+}
+
+#[test]
+fn modern_device_extern_signext_return_type() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "signext_return".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+
+    // Extern returns i32 signext (representing an i8 return value promoted to i32).
+    let external_ty = FuncType::get(&ctx, i32_ty.into(), vec![], false);
+    FuncOp::new(&mut ctx, "get_small_val".try_into().unwrap(), external_ty)
+        .get_operation()
+        .insert_at_back(module_block, &ctx);
+
+    // Caller that calls the extern and discards the result.
+    let caller_ty = FuncType::get(&ctx, void_ty.into(), vec![], false);
+    let caller = FuncOp::new(&mut ctx, "caller".try_into().unwrap(), caller_ty);
+    let entry = caller.get_or_create_entry_block(&mut ctx);
+    CallOp::new(
+        &mut ctx,
+        CallOpCallable::Direct("get_small_val".try_into().unwrap()),
+        external_ty,
+        vec![],
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    let externs = [DeviceExternDecl {
+        export_name: "get_small_val".to_string(),
+        param_types: vec![],
+        return_type: DeviceExternType::SignExtInteger(32),
+        attrs: DeviceExternAttrs::default(),
+    }];
+
+    let ir = export_module_with_externs(
+        &ctx,
+        &module,
+        &externs,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("modern extern with signext return export succeeds");
+
+    // Check declaration has signext on return type.
+    assert!(
+        ir.contains("declare i32 signext @get_small_val()"),
+        "declaration should have signext on return type:\n{ir}"
+    );
+
+    // Check call site also uses signext.
+    assert!(
+        ir.contains("call i32 signext @get_small_val()"),
+        "call should use signext on return type:\n{ir}"
+    );
+}
+
+#[test]
+fn plain_integer_device_extern_has_no_extension_attributes() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "plain_int".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+
+    let external_ty = FuncType::get(&ctx, void_ty.into(), vec![i32_ty.into()], false);
+    FuncOp::new(&mut ctx, "plain_int_fn".try_into().unwrap(), external_ty)
+        .get_operation()
+        .insert_at_back(module_block, &ctx);
+
+    let caller = FuncOp::new(&mut ctx, "caller".try_into().unwrap(), external_ty);
+    let entry = caller.get_or_create_entry_block(&mut ctx);
+    let arg0 = entry.deref(&ctx).get_argument(0);
+    CallOp::new(
+        &mut ctx,
+        CallOpCallable::Direct("plain_int_fn".try_into().unwrap()),
+        external_ty,
+        vec![arg0],
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    let externs = [DeviceExternDecl {
+        export_name: "plain_int_fn".to_string(),
+        param_types: vec![DeviceExternType::Integer(32)],
+        return_type: DeviceExternType::Void,
+        attrs: DeviceExternAttrs::default(),
+    }];
+
+    let ir = export_module_with_externs(
+        &ctx,
+        &module,
+        &externs,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("plain int extern export succeeds");
+
+    // Plain i32 should have no signext/zeroext.
+    assert!(
+        ir.contains("declare void @plain_int_fn(i32)"),
+        "declaration should have plain i32 without attributes:\n{ir}"
+    );
+    assert!(
+        !ir.contains("signext") && !ir.contains("zeroext"),
+        "plain i32 should have no extension attributes:\n{ir}"
     );
 }

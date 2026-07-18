@@ -462,7 +462,9 @@ impl<'a> ModuleExportState<'a> {
         let actual_ref = actual.deref(self.ctx);
         let matches = match expected {
             DeviceExternType::Void => actual_ref.is::<VoidType>(),
-            DeviceExternType::Integer(bits) => actual_ref
+            DeviceExternType::Integer(bits)
+            | DeviceExternType::SignExtInteger(bits)
+            | DeviceExternType::ZeroExtInteger(bits) => actual_ref
                 .downcast_ref::<IntegerType>()
                 .is_some_and(|ty| ty.width() == *bits),
             DeviceExternType::Float16 => actual_ref.is::<HalfType>(),
@@ -1313,7 +1315,7 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "  {} = call ", call_result_name.as_deref().unwrap()).unwrap();
             if let Some(decl) = &device_extern {
                 decl.return_type
-                    .write_llvm(output, self.legacy_typed_pointers())?;
+                    .write_llvm_with_attr(output, self.legacy_typed_pointers())?;
             } else {
                 self.export_type(ret_ty, output)?;
             }
@@ -1346,7 +1348,7 @@ impl<'a> ModuleExportState<'a> {
                 write!(output, ", ").unwrap();
             }
             if let Some(decl) = &device_extern {
-                decl.param_types[i].write_llvm(output, self.legacy_typed_pointers())?;
+                decl.param_types[i].write_llvm_with_attr(output, self.legacy_typed_pointers())?;
             } else {
                 self.export_type(arg.get_type(self.ctx), output)?;
             }

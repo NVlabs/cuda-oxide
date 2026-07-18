@@ -18,6 +18,18 @@ pub enum DeviceExternType {
     Void,
     /// A signless LLVM integer. Signedness is not part of an LLVM integer type.
     Integer(u32),
+    /// An integer parameter that must be sign-extended to the given width.
+    ///
+    /// On NVPTX, i8/i16 signed values are promoted to i32 with `signext`.
+    /// The width stored here is the promoted width (e.g., 32), not the
+    /// original source width.
+    SignExtInteger(u32),
+    /// An integer parameter that must be zero-extended to the given width.
+    ///
+    /// On NVPTX, u8/u16/bool values are promoted to i32 with `zeroext`.
+    /// The width stored here is the promoted width (e.g., 32), not the
+    /// original source width.
+    ZeroExtInteger(u32),
     Float16,
     Float32,
     Float64,
@@ -52,6 +64,16 @@ impl DeviceExternType {
         }
     }
 
+    /// Return the integer width for any integer variant (plain, signext, zeroext).
+    pub fn integer_width(&self) -> Option<u32> {
+        match self {
+            Self::Integer(bits) | Self::SignExtInteger(bits) | Self::ZeroExtInteger(bits) => {
+                Some(*bits)
+            }
+            _ => None,
+        }
+    }
+
     /// True when this legacy pointer is already the internal byte-pointer type.
     pub(crate) fn is_canonical_byte_pointer(&self) -> bool {
         matches!(
@@ -70,7 +92,11 @@ impl DeviceExternType {
         }
     }
 
-    /// Render this type for the selected LLVM dialect.
+    /// Write the LLVM IR type string for this type (without ABI attributes).
+    ///
+    /// For `SignExtInteger` and `ZeroExtInteger`, this writes just the `iN`
+    /// type. The `signext`/`zeroext` attributes are emitted separately by the
+    /// declaration emitter.
     ///
     /// With modern LLVM syntax, pointer pointees are omitted while address
     /// spaces are retained.
@@ -81,8 +107,12 @@ impl DeviceExternType {
     ) -> Result<(), String> {
         match self {
             Self::Void => write!(output, "void").unwrap(),
-            Self::Integer(bits) if *bits > 0 => write!(output, "i{bits}").unwrap(),
-            Self::Integer(_) => {
+            Self::Integer(bits) | Self::SignExtInteger(bits) | Self::ZeroExtInteger(bits)
+                if *bits > 0 =>
+            {
+                write!(output, "i{bits}").unwrap()
+            }
+            Self::Integer(_) | Self::SignExtInteger(_) | Self::ZeroExtInteger(_) => {
                 return Err("device-extern integer width must be non-zero".to_string());
             }
             Self::Float16 => write!(output, "half").unwrap(),
@@ -118,6 +148,32 @@ impl DeviceExternType {
                 element.write_llvm(output, legacy_typed_pointers)?;
                 write!(output, "]").unwrap();
             }
+        }
+        Ok(())
+    }
+
+    /// Write the LLVM IR type string with any required ABI attribute prefix.
+    ///
+    /// For `SignExtInteger(32)` this writes `i32 signext`, for
+    /// `ZeroExtInteger(32)` this writes `i32 zeroext`. Plain types write
+    /// just the type.
+    ///
+    /// The attribute is written *after* the type for parameter and return
+    /// positions in LLVM IR declarations:
+    ///   `declare void @f(i32 signext %a)`
+    pub(crate) fn write_llvm_with_attr(
+        &self,
+        output: &mut String,
+        legacy_typed_pointers: bool,
+    ) -> Result<(), String> {
+        match self {
+            Self::SignExtInteger(bits) if *bits > 0 => {
+                write!(output, "i{bits} signext").unwrap();
+            }
+            Self::ZeroExtInteger(bits) if *bits > 0 => {
+                write!(output, "i{bits} zeroext").unwrap();
+            }
+            _ => self.write_llvm(output, legacy_typed_pointers)?,
         }
         Ok(())
     }
@@ -180,5 +236,70 @@ pub trait AsDeviceExtern {
 impl AsDeviceExtern for DeviceExternDecl {
     fn as_device_extern(&self) -> DeviceExternDecl {
         self.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signext_integer_write_llvm() {
+        let ty = DeviceExternType::SignExtInteger(32);
+        assert_eq!(ty.llvm_string(false).unwrap(), "i32");
+
+        let mut out = String::new();
+        ty.write_llvm_with_attr(&mut out, false).unwrap();
+        assert_eq!(out, "i32 signext");
+    }
+
+    #[test]
+    fn zeroext_integer_write_llvm() {
+        let ty = DeviceExternType::ZeroExtInteger(32);
+        assert_eq!(ty.llvm_string(false).unwrap(), "i32");
+
+        let mut out = String::new();
+        ty.write_llvm_with_attr(&mut out, false).unwrap();
+        assert_eq!(out, "i32 zeroext");
+    }
+
+    #[test]
+    fn plain_integer_write_llvm_with_attr_has_no_attr() {
+        let ty = DeviceExternType::Integer(32);
+        let mut out = String::new();
+        ty.write_llvm_with_attr(&mut out, false).unwrap();
+        assert_eq!(out, "i32");
+    }
+
+    #[test]
+    fn float16_write_llvm_with_attr() {
+        let ty = DeviceExternType::Float16;
+        let mut out = String::new();
+        ty.write_llvm_with_attr(&mut out, false).unwrap();
+        assert_eq!(out, "half");
+    }
+
+    #[test]
+    fn integer_width_returns_bits_for_all_integer_variants() {
+        assert_eq!(DeviceExternType::Integer(64).integer_width(), Some(64));
+        assert_eq!(
+            DeviceExternType::SignExtInteger(32).integer_width(),
+            Some(32)
+        );
+        assert_eq!(
+            DeviceExternType::ZeroExtInteger(32).integer_width(),
+            Some(32)
+        );
+        assert_eq!(DeviceExternType::Float32.integer_width(), None);
+    }
+
+    #[test]
+    fn signext_and_zeroext_are_distinct() {
+        let s = DeviceExternType::SignExtInteger(32);
+        let z = DeviceExternType::ZeroExtInteger(32);
+        let p = DeviceExternType::Integer(32);
+        assert_ne!(s, z);
+        assert_ne!(s, p);
+        assert_ne!(z, p);
     }
 }

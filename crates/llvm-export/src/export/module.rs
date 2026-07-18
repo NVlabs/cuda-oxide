@@ -97,7 +97,9 @@ fn device_extern_type_matches_erased(
     let actual = actual.deref(ctx);
     match expected {
         DeviceExternType::Void => actual.is::<VoidType>(),
-        DeviceExternType::Integer(bits) => actual
+        DeviceExternType::Integer(bits)
+        | DeviceExternType::SignExtInteger(bits)
+        | DeviceExternType::ZeroExtInteger(bits) => actual
             .downcast_ref::<IntegerType>()
             .is_some_and(|ty| ty.width() == *bits),
         DeviceExternType::Float16 => actual.is::<HalfType>(),
@@ -420,13 +422,13 @@ pub(super) fn export_module_with_externs_impl(
             }
             write!(&mut output, "declare ").unwrap();
             decl.return_type
-                .write_llvm(&mut output, state.legacy_typed_pointers())?;
+                .write_llvm_with_attr(&mut output, state.legacy_typed_pointers())?;
             write!(&mut output, " @{}(", decl.export_name).unwrap();
             for (index, param) in decl.param_types.iter().enumerate() {
                 if index != 0 {
                     write!(&mut output, ", ").unwrap();
                 }
-                param.write_llvm(&mut output, state.legacy_typed_pointers())?;
+                param.write_llvm_with_attr(&mut output, state.legacy_typed_pointers())?;
             }
             writeln!(&mut output, ")").unwrap();
         }

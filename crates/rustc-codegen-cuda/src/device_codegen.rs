@@ -115,9 +115,12 @@ enum DeviceExternTypePosition {
 /// external function boundary.
 ///
 /// Raw-pointer pointees are preserved recursively. Unsupported C ABI types
-/// return an error instead of being treated as an arbitrary pointer. Small
-/// integer parameters are rejected until their `signext` or `zeroext`
-/// attributes can be emitted.
+/// return an error instead of being treated as an arbitrary pointer.
+///
+/// The NVPTX calling convention promotes integer types smaller than 32 bits
+/// to `i32` with `signext` (for signed types) or `zeroext` (for unsigned
+/// types and `bool`). `f16` is passed as `half` directly since NVPTX has
+/// native f16 support.
 fn rustc_ty_to_device_extern_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
@@ -134,40 +137,55 @@ fn rustc_ty_to_device_extern_type<'tcx>(
         };
     }
 
-    let integer = |bits| {
+    // For pointer pointees, all integer widths are valid without extension.
+    // For by-value parameters/returns, the NVPTX ABI promotes sub-32-bit
+    // integers to i32 with the appropriate sign/zero extension attribute.
+    let signed_integer = |bits: u32| {
         if position == DeviceExternTypePosition::Pointee || matches!(bits, 32 | 64) {
             Ok(E::Integer(bits))
+        } else if matches!(bits, 8 | 16) {
+            // NVPTX ABI: promote to i32 with signext
+            Ok(E::SignExtInteger(32))
         } else {
             Err(format!(
-                "`i{bits}` is not yet supported by value in a device extern; use i32/i64 or pass a pointer"
+                "`i{bits}` is not supported by value in a device extern; use i32/i64 or pass a pointer"
+            ))
+        }
+    };
+
+    let unsigned_integer = |bits: u32| {
+        if position == DeviceExternTypePosition::Pointee || matches!(bits, 32 | 64) {
+            Ok(E::Integer(bits))
+        } else if matches!(bits, 8 | 16) {
+            // NVPTX ABI: promote to i32 with zeroext
+            Ok(E::ZeroExtInteger(32))
+        } else {
+            Err(format!(
+                "`u{bits}` is not supported by value in a device extern; use u32/u64 or pass a pointer"
             ))
         }
     };
 
     match ty.kind() {
         TyKind::Int(int_ty) => match int_ty {
-            rustc_middle::ty::IntTy::I8 => integer(8),
-            rustc_middle::ty::IntTy::I16 => integer(16),
-            rustc_middle::ty::IntTy::I32 => integer(32),
-            rustc_middle::ty::IntTy::I64 => integer(64),
-            rustc_middle::ty::IntTy::I128 => integer(128),
-            rustc_middle::ty::IntTy::Isize => integer(64), // nvptx64
+            rustc_middle::ty::IntTy::I8 => signed_integer(8),
+            rustc_middle::ty::IntTy::I16 => signed_integer(16),
+            rustc_middle::ty::IntTy::I32 => signed_integer(32),
+            rustc_middle::ty::IntTy::I64 => signed_integer(64),
+            rustc_middle::ty::IntTy::I128 => signed_integer(128),
+            rustc_middle::ty::IntTy::Isize => signed_integer(64), // nvptx64
         },
         TyKind::Uint(uint_ty) => match uint_ty {
-            rustc_middle::ty::UintTy::U8 => integer(8),
-            rustc_middle::ty::UintTy::U16 => integer(16),
-            rustc_middle::ty::UintTy::U32 => integer(32),
-            rustc_middle::ty::UintTy::U64 => integer(64),
-            rustc_middle::ty::UintTy::U128 => integer(128),
-            rustc_middle::ty::UintTy::Usize => integer(64), // nvptx64
+            rustc_middle::ty::UintTy::U8 => unsigned_integer(8),
+            rustc_middle::ty::UintTy::U16 => unsigned_integer(16),
+            rustc_middle::ty::UintTy::U32 => unsigned_integer(32),
+            rustc_middle::ty::UintTy::U64 => unsigned_integer(64),
+            rustc_middle::ty::UintTy::U128 => unsigned_integer(128),
+            rustc_middle::ty::UintTy::Usize => unsigned_integer(64), // nvptx64
         },
         TyKind::Float(float_ty) => match float_ty {
-            rustc_middle::ty::FloatTy::F16 if position == DeviceExternTypePosition::Pointee => {
-                Ok(E::Float16)
-            }
-            rustc_middle::ty::FloatTy::F16 => Err(
-                "`f16` is not yet supported by value in a device extern; pass a pointer or use a CUDA C wrapper".to_string(),
-            ),
+            // NVPTX supports native f16 (LLVM `half`) in all positions.
+            rustc_middle::ty::FloatTy::F16 => Ok(E::Float16),
             rustc_middle::ty::FloatTy::F32 => Ok(E::Float32),
             rustc_middle::ty::FloatTy::F64 => Ok(E::Float64),
             rustc_middle::ty::FloatTy::F128 => {
@@ -206,10 +224,15 @@ fn rustc_ty_to_device_extern_type<'tcx>(
         {
             Ok(E::Void)
         }
-        TyKind::Bool => Err(
-            "`bool` is not yet supported in device extern signatures; use `u32` in a C-compatible wrapper"
-                .to_string(),
-        ),
+        TyKind::Bool => {
+            if position == DeviceExternTypePosition::Pointee {
+                // Behind a pointer, bool is just i8 (Rust's bool is 1 byte).
+                Ok(E::Integer(8))
+            } else {
+                // NVPTX ABI: bool (i1) is promoted to i32 with zeroext.
+                Ok(E::ZeroExtInteger(32))
+            }
+        }
         TyKind::Char => Err(
             "Rust `char` is not supported in device extern signatures; use `u32` in a C-compatible wrapper".to_string(),
         ),
