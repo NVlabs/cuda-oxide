@@ -1335,7 +1335,7 @@ mod tests {
     #[test]
     fn shared_array_unsize_coerces_data_pointer_to_slice_addrspace() {
         let mut ctx = make_ctx();
-        let f32_ty: TypeHandle = FP32Type::get(&mut ctx).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
         let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
         let src_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, arr_ty, true).into();
         let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
@@ -1370,7 +1370,7 @@ mod tests {
     #[test]
     fn generic_array_unsize_needs_no_addrspace_coercion() {
         let mut ctx = make_ctx();
-        let f32_ty: TypeHandle = FP32Type::get(&mut ctx).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
         let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
         let src_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, arr_ty, true).into();
         let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
