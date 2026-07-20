@@ -112,6 +112,7 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 |:--------|:-------|:------------|
 | `DisjointSlice<T, IndexSpace>` | **Full** | Bounds-checked parallel write output slice. `IndexSpace` rejects mismatched layouts; uniqueness also requires matching prepared launch geometry (or a raw unsafe proof). |
 | `ThreadIndex<'kernel, IndexSpace>` | **Full** | Opaque, non-transferable witness. `index_1d` uniqueness requires inactive Y/Z dimensions, proven by a `domain = 1` prepared launch or by the caller of a raw unsafe launch. |
+| Proof-carrying static views | **Full** | A checked `u32` thread index proves one complete element or tile, then `at_const` accesses compile-time positions without another runtime bounds check. |
 | `PreparedLaunch<K>` | **Full** | Checked, reusable launch geometry branded for the exact kernel. Raw `LaunchConfig` generated methods are unsafe. |
 | `ManagedBarrier` Typestate | **Full** | Compile-time barrier lifecycle: `Uninit → Ready → Invalidated`. Invalid transitions are compile errors. |
 

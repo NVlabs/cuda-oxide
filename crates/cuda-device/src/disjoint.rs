@@ -36,8 +36,10 @@
 //! raw launch is unsafe and leaves that proof to the caller. Constructing a
 //! `DisjointSlice` from raw memory is also unsafe.
 
-use crate::thread::{Index1D, IndexFormula, KernelScope, ThreadIndex};
+use crate::thread::{Index1D, IndexFormula, LaunchContext, ThreadIndex};
+use crate::view::{LinearTiles, RowMajorTiles};
 use core::marker::PhantomData;
+use core::mem::size_of;
 
 /// A slice-like type that can only be accessed with thread-local indices.
 ///
@@ -120,6 +122,17 @@ pub trait __LaunchContractDisjointSlice<Element, const DOMAIN: u8>:
 }
 
 impl<'a, T> __LaunchContractDisjointSlice<T, 1> for DisjointSlice<'a, T, Index1D> {}
+
+impl<'a, T, const N: usize> __LaunchContractDisjointSlice<T, 1>
+    for DisjointSlice<'a, T, LinearTiles<N>>
+{
+}
+
+impl<'a, T, const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize>
+    __LaunchContractDisjointSlice<T, 2>
+    for DisjointSlice<'a, T, RowMajorTiles<ROWS, COLS, ROW_STRIDE>>
+{
+}
 
 impl<'a, T, const ROW_STRIDE: usize> __LaunchContractDisjointSlice<T, 1>
     for DisjointSlice<'a, T, crate::thread::Index2D<ROW_STRIDE>>
@@ -226,7 +239,7 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     #[inline]
     pub fn get_mut<'kernel>(&mut self, idx: ThreadIndex<'kernel, IndexSpace>) -> Option<&mut T> {
         let i = idx.get();
-        if i < self.len {
+        if size_of::<T>() != 0 && idx.is_valid() && i < self.len {
             // SAFETY:
             // - Bounds check passed above.
             // - `idx` is a ThreadIndex derived from hardware built-in variables.
@@ -332,13 +345,16 @@ impl<'a, T, IS: IndexFormula> DisjointSlice<'a, T, IS> {
     /// path, the bounds check is explicit, and the borrow of `&mut self`
     /// keeps the returned reference exclusive for its lifetime.
     #[inline]
-    pub fn get_mut_indexed<'kernel>(
+    pub fn get_mut_indexed<'kernel, Domain, Coordinates>(
         &mut self,
-        scope: &'kernel KernelScope<'kernel>,
-    ) -> Option<(&mut T, ThreadIndex<'kernel, IS>)> {
+        scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
+    ) -> Option<(&mut T, ThreadIndex<'kernel, IS>)>
+    where
+        Domain: crate::thread::__internal::LaunchDomain,
+    {
         let idx = IS::from_scope(scope)?;
         let i = idx.get();
-        if i < self.len {
+        if size_of::<T>() != 0 && i < self.len {
             // SAFETY:
             // - bounds check passed above
             // - idx is freshly minted from hardware special registers (no

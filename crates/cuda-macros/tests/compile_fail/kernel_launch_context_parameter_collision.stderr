@@ -1,0 +1,5 @@
+error: kernel launch-context binding `launch_context` conflicts with a function parameter; choose a distinct name in `#[kernel(launch_context = ...)]`
+ --> tests/compile_fail/kernel_launch_context_parameter_collision.rs:7:18
+  |
+7 | pub fn collision(launch_context: u32) {
+  |                  ^^^^^^^^^^^^^^

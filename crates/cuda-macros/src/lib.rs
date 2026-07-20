@@ -232,26 +232,90 @@ fn impl_trait_parameter_error(input: &ItemFn, item_kind: &str) -> Option<syn::Er
     })
 }
 
-/// Attribute arguments for #[kernel(...)]
-/// Supports: #[kernel] or #[kernel(Type1, Type2, Type3)]
+/// Attribute arguments for `#[kernel(...)]`.
+///
+/// Legacy explicit-instantiation types and the optional launch-context
+/// binding may appear in either order:
+///
+/// ```ignore
+/// #[kernel(launch_context = launch_context)]
+/// #[kernel(f32, f64, launch_context = launch_context)]
+/// ```
 struct KernelArgs {
     /// Types to instantiate generic kernels for
     instantiate_types: Vec<Type>,
+    /// User-selected name for the entry's typed launch context.
+    launch_context: Option<Ident>,
 }
 
 impl Parse for KernelArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.is_empty() {
-            return Ok(KernelArgs {
-                instantiate_types: vec![],
-            });
+        let mut instantiate_types = Vec::new();
+        let mut launch_context = None;
+
+        while !input.is_empty() {
+            if input.peek(Ident) && input.peek2(Token![=]) {
+                let name: Ident = input.parse()?;
+                input.parse::<Token![=]>()?;
+                if name != "launch_context" {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!(
+                            "unknown #[kernel] named argument `{name}`; expected `launch_context = IDENT`"
+                        ),
+                    ));
+                }
+                let value: Ident = input.parse().map_err(|_| {
+                    syn::Error::new(
+                        input.span(),
+                        "`launch_context` must be a single Rust identifier",
+                    )
+                })?;
+                if launch_context.replace(value).is_some() {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "duplicate `launch_context` argument in #[kernel]",
+                    ));
+                }
+            } else {
+                instantiate_types.push(input.parse::<Type>()?);
+            }
+
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
         }
 
-        let types: Punctuated<Type, Token![,]> = Punctuated::parse_terminated(input)?;
         Ok(KernelArgs {
-            instantiate_types: types.into_iter().collect(),
+            instantiate_types,
+            launch_context,
         })
     }
+}
+
+fn scope_parameter_collision(input: &ItemFn, scope: &Ident) -> Option<Ident> {
+    struct Finder<'a> {
+        scope: &'a Ident,
+        found: Option<Ident>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Finder<'_> {
+        fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+            if self.found.is_none() && pattern.ident == *self.scope {
+                self.found = Some(pattern.ident.clone());
+            }
+            syn::visit::visit_pat_ident(self, pattern);
+        }
+    }
+
+    let mut finder = Finder { scope, found: None };
+    for argument in &input.sig.inputs {
+        if let FnArg::Typed(argument) = argument {
+            syn::visit::Visit::visit_pat(&mut finder, &argument.pat);
+        }
+    }
+    finder.found
 }
 
 /// Generates a typed host-side loader and launch surface for the kernels in an
@@ -389,6 +453,7 @@ enum DynamicSharedContract {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CudaModuleLaunchContract {
     domain: u8,
+    u32_coordinates: bool,
     exact_block: Option<(u32, u32, u32)>,
     max_block_threads: Option<u32>,
     dynamic_shared: DynamicSharedContract,
@@ -405,6 +470,7 @@ struct CudaModuleLaunchContract {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LaunchContractArgs {
     domain: u8,
+    u32_coordinates: bool,
     exact_block: Option<(u32, u32, u32)>,
     dynamic_shared: DynamicSharedContract,
     dynamic_shared_alignment: u32,
@@ -415,6 +481,7 @@ impl Parse for LaunchContractArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut domain = None;
         let mut exact_block = None;
+        let mut coordinates = None;
         let mut dynamic_shared = None;
         let mut dynamic_shared_range = None;
         let mut dynamic_shared_alignment = None;
@@ -432,6 +499,17 @@ impl Parse for LaunchContractArgs {
                 "block" => {
                     reject_duplicate(&key, exact_block.is_some())?;
                     exact_block = Some(parse_u32_triplet(input, "block")?);
+                }
+                "coordinates" => {
+                    reject_duplicate(&key, coordinates.is_some())?;
+                    let width: Ident = input.parse()?;
+                    if width != "u32" {
+                        return Err(syn::Error::new(
+                            width.span(),
+                            "launch_contract coordinates currently supports only `u32`",
+                        ));
+                    }
+                    coordinates = Some(true);
                 }
                 "dynamic_shared" => {
                     reject_duplicate(&key, dynamic_shared.is_some())?;
@@ -455,7 +533,7 @@ impl Parse for LaunchContractArgs {
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "unknown launch_contract field; expected domain, block, dynamic_shared, dynamic_shared_range, dynamic_shared_alignment, or min_compute_capability",
+                        "unknown launch_contract field; expected domain, coordinates, block, dynamic_shared, dynamic_shared_range, dynamic_shared_alignment, or min_compute_capability",
                     ));
                 }
             }
@@ -523,6 +601,7 @@ impl Parse for LaunchContractArgs {
         let min_compute_capability = min_compute_capability.unwrap_or((0, 0));
         Ok(Self {
             domain,
+            u32_coordinates: coordinates.unwrap_or(false),
             exact_block,
             dynamic_shared,
             dynamic_shared_alignment,
@@ -1796,6 +1875,7 @@ fn cuda_module_launch_contract(
 
     Ok(Some(CudaModuleLaunchContract {
         domain: args.domain,
+        u32_coordinates: args.u32_coordinates,
         exact_block: args.exact_block,
         max_block_threads,
         dynamic_shared: args.dynamic_shared,
@@ -2095,6 +2175,9 @@ fn generate_cuda_module_launch_contract_impl(kernel: &CudaModuleKernel) -> Optio
     let compute_capability = ((major, minor) != (0, 0)).then(|| {
         quote! { .with_min_compute_capability(#major, #minor) }
     });
+    let coordinates = contract
+        .u32_coordinates
+        .then(|| quote! { .with_u32_coordinates() });
 
     Some(quote! {
         #(#cfg_attrs)*
@@ -2106,7 +2189,8 @@ fn generate_cuda_module_launch_contract_impl(kernel: &CudaModuleKernel) -> Optio
                 ::cuda_core::LaunchContractSpec::new(#kernel_name, #block, #dynamic_shared)
                     #cluster
                     #cooperative
-                    #compute_capability;
+                    #compute_capability
+                    #coordinates;
         }
     })
 }
@@ -3133,6 +3217,19 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// }
 /// ```
 ///
+/// Kernels that use contract-backed fast coordinates name their launch
+/// capability explicitly. It is a local device-only binding, not an ABI
+/// parameter:
+///
+/// ```ignore
+/// #[kernel(launch_context = launch_context)]
+/// #[launch_contract(domain = 1, coordinates = u32, block = (256, 1, 1))]
+/// pub fn map(mut output: DisjointSlice<u32>) {
+///     let index = thread::index_1d_u32(launch_context);
+///     // ...
+/// }
+/// ```
+///
 /// # Loop unrolling
 ///
 /// Put `#[unroll]` on a loop with a compile-time-known trip count to request full
@@ -3173,11 +3270,28 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as KernelArgs);
     let mut input = parse_macro_input!(item as ItemFn);
 
+    let KernelArgs {
+        instantiate_types,
+        launch_context,
+    } = args;
+
     if let Some(err) = reject_reserved_name(&input.sig.ident) {
         return err;
     }
     if let Some(err) = impl_trait_parameter_error(&input, "kernel") {
         return err.to_compile_error().into();
+    }
+    if let Some(launch_context) = &launch_context
+        && let Some(parameter) = scope_parameter_collision(&input, launch_context)
+    {
+        return syn::Error::new_spanned(
+            parameter,
+            format!(
+                "kernel launch-context binding `{launch_context}` conflicts with a function parameter; choose a distinct name in `#[kernel(launch_context = ...)]`"
+            ),
+        )
+        .to_compile_error()
+        .into();
     }
 
     // Consume any `#[unroll]` / `#[unroll(N)]` attributes written directly on
@@ -3195,7 +3309,7 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Lifetimes are erased before monomorphization.
     let has_generics = has_codegen_generics(&input.sig.generics);
 
-    if has_generics && !args.instantiate_types.is_empty() {
+    if has_generics && !instantiate_types.is_empty() {
         let type_param_count = input
             .sig
             .generics
@@ -3225,13 +3339,13 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    if has_generics && args.instantiate_types.is_empty() {
+    if has_generics && instantiate_types.is_empty() {
         // Generic kernel without explicit types - allow it!
         // Instantiation will happen from call sites (nvcc-style)
-        return generate_generic_kernel_no_instantiation(input);
+        return generate_generic_kernel_no_instantiation(input, launch_context);
     }
 
-    if !has_generics && !args.instantiate_types.is_empty() {
+    if !has_generics && !instantiate_types.is_empty() {
         // Non-generic kernel with instantiation types - error
         return syn::Error::new_spanned(
             &input.sig.ident,
@@ -3243,10 +3357,10 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     if has_generics {
         // Generate wrapper kernels for each instantiation type
-        generate_generic_kernel(input, args.instantiate_types)
+        generate_generic_kernel(input, instantiate_types, launch_context)
     } else {
         // Simple non-generic kernel
-        generate_simple_kernel(input)
+        generate_simple_kernel(input, launch_context)
     }
 }
 
@@ -3598,6 +3712,7 @@ fn is_scoped_method(method: &Ident) -> bool {
 
 struct ThreadIndexCallRewriter {
     scope_ident: Ident,
+    borrow_scope: bool,
     rewrote_index_call: bool,
 }
 
@@ -3629,11 +3744,16 @@ impl VisitMut for ThreadIndexCallRewriter {
                 };
                 let internal_path = internal_thread_path(path, intrinsic.name, path_args);
                 let scope_ident = &self.scope_ident;
+                let scope_arg = if self.borrow_scope {
+                    quote! { &#scope_ident }
+                } else {
+                    quote! { #scope_ident }
+                };
 
                 *expr = if intrinsic.forward_args {
-                    parse_quote! { #internal_path(&#scope_ident, #args) }
+                    parse_quote! { #internal_path(#scope_arg, #args) }
                 } else {
-                    parse_quote! { #internal_path(&#scope_ident) }
+                    parse_quote! { #internal_path(#scope_arg) }
                 };
                 self.rewrote_index_call = true;
             }
@@ -3642,7 +3762,11 @@ impl VisitMut for ThreadIndexCallRewriter {
                     return;
                 }
                 let scope_ident = &self.scope_ident;
-                args.push(parse_quote! { &#scope_ident });
+                if self.borrow_scope {
+                    args.push(parse_quote! { &#scope_ident });
+                } else {
+                    args.push(parse_quote! { #scope_ident });
+                }
                 self.rewrote_index_call = true;
             }
             _ => {}
@@ -3650,31 +3774,223 @@ impl VisitMut for ThreadIndexCallRewriter {
     }
 }
 
-fn inject_thread_index_scope(input: &mut ItemFn) {
+#[derive(Clone)]
+struct RewrittenKernelScope {
+    ident: Ident,
+    domain: TokenStream2,
+    coordinates: TokenStream2,
+}
+
+fn rewrite_thread_index_calls(
+    input: &mut ItemFn,
+    borrow_scope: bool,
+) -> Option<RewrittenKernelScope> {
     // Keep the ordinary call-site span so borrow-checker diagnostics continue
     // to point at the user's `#[kernel]` / `#[device]` item. Only rename the
     // binding when a generic parameter has deliberately taken the usual name.
     let scope_ident = call_site_ident_avoiding_item(KERNEL_SCOPE_LOCAL, input);
+    if !rewrite_thread_index_calls_with_scope(input, &scope_ident, borrow_scope) {
+        return None;
+    }
+
+    Some(kernel_scope_spec(input, scope_ident))
+}
+
+fn rewrite_thread_index_calls_with_scope(
+    input: &mut ItemFn,
+    scope_ident: &Ident,
+    borrow_scope: bool,
+) -> bool {
     let mut rewriter = ThreadIndexCallRewriter {
         scope_ident: scope_ident.clone(),
+        borrow_scope,
         rewrote_index_call: false,
     };
     rewriter.visit_block_mut(&mut input.block);
+    rewriter.rewrote_index_call
+}
 
-    if rewriter.rewrote_index_call {
-        let scope_stmt: Stmt = parse_quote! {
-            let #scope_ident = unsafe { ::cuda_device::thread::__internal::make_kernel_scope() };
+fn kernel_scope_spec(input: &ItemFn, ident: Ident) -> RewrittenKernelScope {
+    let (domain, coordinates) = kernel_scope_marker_types(input);
+    RewrittenKernelScope {
+        ident,
+        domain,
+        coordinates,
+    }
+}
+
+fn explicit_kernel_scope(input: &mut ItemFn, ident: Ident) -> RewrittenKernelScope {
+    // Legacy helpers still receive the same capability, but only their
+    // established names are rewritten. The new fast functions are ordinary
+    // Rust calls that take this reference explicitly.
+    rewrite_thread_index_calls_with_scope(input, &ident, false);
+    kernel_scope_spec(input, ident)
+}
+
+fn kernel_scope_binding(scope: &RewrittenKernelScope) -> Stmt {
+    let RewrittenKernelScope {
+        ident,
+        domain,
+        coordinates,
+    } = scope;
+    parse_quote! {
+        let #ident = unsafe {
+            ::cuda_device::thread::__internal::make_kernel_scope::<#domain, #coordinates>()
         };
-        input.block.stmts.insert(0, scope_stmt);
+    }
+}
+
+fn explicit_kernel_scope_bindings(scope: &RewrittenKernelScope) -> Vec<Stmt> {
+    let RewrittenKernelScope {
+        ident,
+        domain,
+        coordinates,
+    } = scope;
+    // Def-site-like hygiene keeps this generated storage binding distinct
+    // from any source binding with the same text. Both its declaration and
+    // reference are emitted by this one proc-macro expansion.
+    let storage = Ident::new(
+        &format!("{KERNEL_SCOPE_LOCAL}_storage"),
+        proc_macro2::Span::mixed_site(),
+    );
+    vec![
+        parse_quote! {
+            let #storage = unsafe {
+                ::cuda_device::thread::__internal::make_kernel_scope::<#domain, #coordinates>()
+            };
+        },
+        parse_quote! {
+            let #ident: ::cuda_device::thread::LaunchContextRef<'_, #domain, #coordinates> =
+                &#storage;
+        },
+    ]
+}
+
+fn append_kernel_scope_parameter(input: &mut ItemFn, scope: &RewrittenKernelScope) {
+    let RewrittenKernelScope {
+        ident,
+        domain,
+        coordinates,
+    } = scope;
+    input.sig.inputs.push(parse_quote! {
+        #ident: ::cuda_device::thread::LaunchContextRef<'_, #domain, #coordinates>
+    });
+}
+
+fn inject_thread_index_scope(input: &mut ItemFn) {
+    if let Some(scope) = rewrite_thread_index_calls(input, true) {
+        input.block.stmts.insert(0, kernel_scope_binding(&scope));
+    }
+}
+
+fn inject_device_thread_index_scope(input: &mut ItemFn) {
+    let Some(mut scope) = rewrite_thread_index_calls(input, true) else {
+        return;
+    };
+    // A device helper has no host preparation boundary of its own. It may use
+    // checked legacy witnesses, but it cannot mint a contract-backed fast
+    // witness; callers must pass that witness or a checked view explicitly.
+    scope.domain = quote! { ::cuda_device::thread::__internal::UnknownDomain };
+    scope.coordinates = quote! { ::cuda_device::thread::__internal::NativeCoordinates };
+    input.block.stmts.insert(0, kernel_scope_binding(&scope));
+}
+
+fn kernel_scope_marker_types(input: &ItemFn) -> (TokenStream2, TokenStream2) {
+    let contract = input
+        .attrs
+        .iter()
+        .find(|attr| attr_path_ends_with(attr, "launch_contract"))
+        .and_then(|attr| attr.parse_args::<LaunchContractArgs>().ok())
+        .map(|args| (args.domain, args.u32_coordinates))
+        .or_else(|| {
+            input
+                .block
+                .stmts
+                .iter()
+                .find_map(launch_contract_marker_values)
+        });
+
+    let (domain, u32_coordinates) = contract.unwrap_or((0, false));
+    let domain = match domain {
+        1 => quote! { ::cuda_device::thread::__internal::Domain1 },
+        2 => quote! { ::cuda_device::thread::__internal::Domain2 },
+        3 => quote! { ::cuda_device::thread::__internal::Domain3 },
+        _ => quote! { ::cuda_device::thread::__internal::UnknownDomain },
+    };
+    let coordinates = if u32_coordinates {
+        quote! { ::cuda_device::thread::__internal::U32Coordinates }
+    } else {
+        quote! { ::cuda_device::thread::__internal::NativeCoordinates }
+    };
+    (domain, coordinates)
+}
+
+fn launch_contract_marker_values(statement: &Stmt) -> Option<(u8, bool)> {
+    let (call, unsafe_wrapped) = configuration_marker_call(statement)?;
+    if !unsafe_wrapped {
+        return None;
+    }
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Expr::Path(ExprPath {
+        qself: None, path, ..
+    }) = &*call.func
+    else {
+        return None;
+    };
+    let segments: Vec<_> = path.segments.iter().collect();
+    if path.leading_colon.is_none()
+        || segments.len() != 3
+        || segments[0].ident != "cuda_device"
+        || segments[1].ident != "thread"
+        || segments[2].ident != "__launch_contract_config"
+    {
+        return None;
+    }
+    let PathArguments::AngleBracketed(arguments) = &segments[2].arguments else {
+        return None;
+    };
+    let mut arguments = arguments.args.iter();
+    let GenericArgument::Const(Expr::Lit(domain)) = arguments.next()? else {
+        return None;
+    };
+    let syn::Lit::Int(domain) = &domain.lit else {
+        return None;
+    };
+    let GenericArgument::Const(Expr::Lit(coordinates)) = arguments.next()? else {
+        return None;
+    };
+    let syn::Lit::Bool(coordinates) = &coordinates.lit else {
+        return None;
+    };
+    if arguments.next().is_some() {
+        return None;
+    }
+    Some((domain.base10_parse().ok()?, coordinates.value))
+}
+
+fn configuration_marker_call(statement: &Stmt) -> Option<(&ExprCall, bool)> {
+    match statement {
+        Stmt::Expr(Expr::Call(call), Some(_semicolon)) => Some((call, false)),
+        Stmt::Expr(Expr::Unsafe(unsafe_block), _) if unsafe_block.block.stmts.len() == 1 => {
+            let Stmt::Expr(Expr::Call(call), Some(_semicolon)) = &unsafe_block.block.stmts[0]
+            else {
+                return None;
+            };
+            Some((call, true))
+        }
+        _ => None,
     }
 }
 
 /// Return compiler configuration markers already materialized in a generic
 /// kernel body by attributes that expanded before `#[kernel]`.
 ///
-/// Only exact, zero-argument calls to cuda-oxide's three internal marker paths
-/// are forwarded. Nested calls and unrelated top-level calls remain solely in
-/// the helper body.
+/// Only exact, zero-argument calls to cuda-oxide's internal marker paths are
+/// forwarded. The launch-contract marker additionally retains its generated
+/// `unsafe` boundary. Nested calls and unrelated top-level calls remain solely
+/// in the helper body.
 fn top_level_kernel_configuration_markers(input: &ItemFn) -> Vec<Stmt> {
     input
         .block
@@ -3686,7 +4002,7 @@ fn top_level_kernel_configuration_markers(input: &ItemFn) -> Vec<Stmt> {
 }
 
 fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
-    let Stmt::Expr(Expr::Call(call), Some(_semicolon)) = statement else {
+    let Some((call, unsafe_wrapped)) = configuration_marker_call(statement) else {
         return false;
     };
     if !call.args.is_empty() {
@@ -3711,14 +4027,30 @@ fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
 
     let module = &segments[1].ident;
     let marker = &segments[2].ident;
-    (module == "thread" && marker == "__launch_bounds_config")
-        || (module == "cluster" && marker == "__cluster_config")
-        || (module == "shared" && marker == "__dynamic_shared_alignment")
+    if unsafe_wrapped {
+        module == "thread" && marker == "__launch_contract_config"
+    } else {
+        (module == "thread" && marker == "__launch_bounds_config")
+            || (module == "cluster" && marker == "__cluster_config")
+            || (module == "shared" && marker == "__dynamic_shared_alignment")
+    }
 }
 
 /// Generate a generic kernel that will be instantiated from call sites (nvcc-style)
-fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
-    inject_thread_index_scope(&mut input);
+fn generate_generic_kernel_no_instantiation(
+    mut input: ItemFn,
+    explicit_scope: Option<Ident>,
+) -> TokenStream {
+    let entry_inputs = input.sig.inputs.clone();
+    let has_explicit_scope = explicit_scope.is_some();
+    let rewritten_scope = if let Some(ident) = explicit_scope {
+        Some(explicit_kernel_scope(&mut input, ident))
+    } else {
+        rewrite_thread_index_calls(&mut input, false)
+    };
+    if let Some(scope) = &rewritten_scope {
+        append_kernel_scope_parameter(&mut input, scope);
+    }
 
     // Attributes written below `#[kernel]` still belong to the source item
     // when this macro runs. Route CUDA entry directives to the generated entry
@@ -3740,13 +4072,13 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
     let kernel_name = format_ident!("{}{}", KERNEL_PREFIX, fn_name);
     let instantiate_name = format_ident!("{}{}", INSTANTIATE_PREFIX, fn_name);
 
-    let (wrapper_inputs, arg_names) = match forwarding_inputs(inputs) {
+    let (wrapper_inputs, arg_names) = match forwarding_inputs(&entry_inputs) {
         Ok(forwarding) => forwarding,
         Err(err) => return err.to_compile_error().into(),
     };
     let args_info: Vec<_> = arg_names
         .iter()
-        .zip(inputs.iter())
+        .zip(entry_inputs.iter())
         .filter_map(|(name, arg)| {
             let FnArg::Typed(pat_type) = arg else {
                 return None;
@@ -3808,7 +4140,27 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
     // Generate the GenericCudaKernel trait implementation for unified compilation
     let generic_cuda_kernel_impl =
         generate_generic_cuda_kernel_impl(fn_name, vis, generics, where_clause, &cfg_attrs);
-    let implementation_call = quote! { #fn_name #kernel_turbofish (#(#arg_names),*) };
+    let mut implementation_args: Vec<TokenStream2> =
+        arg_names.iter().map(|name| quote! { #name }).collect();
+    if let Some(scope) = &rewritten_scope {
+        let scope_ident = &scope.ident;
+        if has_explicit_scope {
+            implementation_args.push(quote! { #scope_ident });
+        } else {
+            implementation_args.push(quote! { &#scope_ident });
+        }
+    }
+    let scope_bindings = rewritten_scope
+        .as_ref()
+        .map(|scope| {
+            if has_explicit_scope {
+                explicit_kernel_scope_bindings(scope)
+            } else {
+                vec![kernel_scope_binding(scope)]
+            }
+        })
+        .unwrap_or_default();
+    let implementation_call = quote! { #fn_name #kernel_turbofish (#(#implementation_args),*) };
     let implementation_call = if unsafety.is_some() {
         quote! { unsafe { #implementation_call } }
     } else {
@@ -3830,6 +4182,7 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
         #[inline(never)]
         #vis #constness #unsafety #abi fn #kernel_name #generics (#(#wrapper_inputs),*) #output #where_clause {
             #(#entry_config_markers)*
+            #(#scope_bindings)*
             #implementation_call
         }
 
@@ -3912,8 +4265,14 @@ fn _generate_dummy_binding(name: &Ident, ty: &Type) -> TokenStream2 {
 }
 
 /// Generate a simple non-generic kernel
-fn generate_simple_kernel(mut input: ItemFn) -> TokenStream {
-    inject_thread_index_scope(&mut input);
+fn generate_simple_kernel(mut input: ItemFn, explicit_scope: Option<Ident>) -> TokenStream {
+    if let Some(ident) = explicit_scope {
+        let scope = explicit_kernel_scope(&mut input, ident);
+        let bindings = explicit_kernel_scope_bindings(&scope);
+        input.block.stmts.splice(0..0, bindings);
+    } else {
+        inject_thread_index_scope(&mut input);
+    }
 
     let fn_name = input.sig.ident.clone();
     let new_name = format_ident!("{}{}", KERNEL_PREFIX, fn_name);
@@ -4061,8 +4420,21 @@ fn generate_cuda_kernel_impl(fn_name: &Ident, ptx_name: &str, _func: &ItemFn) ->
 }
 
 /// Generate wrapper kernels for a generic kernel
-fn generate_generic_kernel(mut input: ItemFn, instantiate_types: Vec<Type>) -> TokenStream {
-    inject_thread_index_scope(&mut input);
+fn generate_generic_kernel(
+    mut input: ItemFn,
+    instantiate_types: Vec<Type>,
+    explicit_scope: Option<Ident>,
+) -> TokenStream {
+    let entry_inputs = input.sig.inputs.clone();
+    let has_explicit_scope = explicit_scope.is_some();
+    let rewritten_scope = if let Some(ident) = explicit_scope {
+        Some(explicit_kernel_scope(&mut input, ident))
+    } else {
+        rewrite_thread_index_calls(&mut input, false)
+    };
+    if let Some(scope) = &rewritten_scope {
+        append_kernel_scope_parameter(&mut input, scope);
+    }
 
     let (implementation_attrs, entry_attrs, _cfg_attrs) = route_generic_kernel_attrs(&input.attrs);
     let entry_config_markers = top_level_kernel_configuration_markers(&input);
@@ -4085,7 +4457,7 @@ fn generate_generic_kernel(mut input: ItemFn, instantiate_types: Vec<Type>) -> T
         .expect("Expected type parameter");
 
     // Extract function arguments (excluding self)
-    let args: Vec<_> = input.sig.inputs.iter().collect();
+    let args: Vec<_> = entry_inputs.iter().collect();
 
     // Build the argument pattern and types for wrappers
     let arg_names: Vec<TokenStream2> = args
@@ -4112,6 +4484,25 @@ fn generate_generic_kernel(mut input: ItemFn, instantiate_types: Vec<Type>) -> T
 
             // Export name (what appears in PTX)
             let export_name_str = format!("{}_{}", fn_name, type_name);
+            let scope_bindings = rewritten_scope
+                .as_ref()
+                .map(|scope| {
+                    if has_explicit_scope {
+                        explicit_kernel_scope_bindings(scope)
+                    } else {
+                        vec![kernel_scope_binding(scope)]
+                    }
+                })
+                .unwrap_or_default();
+            let mut implementation_args = arg_names.clone();
+            if let Some(scope) = &rewritten_scope {
+                let scope_ident = &scope.ident;
+                if has_explicit_scope {
+                    implementation_args.push(quote! { #scope_ident });
+                } else {
+                    implementation_args.push(quote! { &#scope_ident });
+                }
+            }
 
             // Generate wrapper function args with substituted types
             let wrapper_args: Vec<TokenStream2> = args
@@ -4135,7 +4526,8 @@ fn generate_generic_kernel(mut input: ItemFn, instantiate_types: Vec<Type>) -> T
                 #[unsafe(export_name = #export_name_str)]
                 #vis fn #wrapper_name(#(#wrapper_args),*) {
                     #(#entry_config_markers)*
-                    #fn_name::<#inst_type>(#(#arg_names),*);
+                    #(#scope_bindings)*
+                    #fn_name::<#inst_type>(#(#implementation_args),*);
                 }
             }
         })
@@ -4266,16 +4658,18 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// use cuda_device::{kernel, launch_bounds, launch_contract, DisjointSlice};
 ///
-/// #[kernel]
+/// #[kernel(launch_context = launch_context)]
 /// #[launch_bounds(256)]
 /// #[launch_contract(
 ///     domain = 1,
+///     coordinates = u32,
 ///     block = (256, 1, 1),
 ///     dynamic_shared = 0,
 ///     min_compute_capability = (8, 0),
 /// )]
 /// pub fn map(mut output: DisjointSlice<f32>) {
-///     // ...
+///     let index = thread::index_1d_u32(launch_context);
+///     // use `index` with a proof-carrying view...
 /// }
 /// ```
 ///
@@ -4283,6 +4677,18 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// hide which hardware indices a kernel reads. For obvious mismatches,
 /// `#[cuda_module]` cross-checks the declaration against `DisjointSlice` index
 /// spaces and the fixed cluster shape.
+///
+/// `coordinates = u32` opts into narrow, proof-carrying coordinate APIs such
+/// as `thread::index_1d_u32(launch_context)`. The generated prepared launch checks each
+/// axis:
+///
+/// ```text
+/// grid_axis * block_axis <= 2^32
+/// ```
+///
+/// This keeps zero-based global coordinates representable by `u32`. Generated
+/// raw launch methods remain unsafe because their caller must uphold this and
+/// the rest of the declared contract without preparation.
 ///
 /// Dynamic shared memory may be fixed with `dynamic_shared = BYTES` or bounded
 /// with `dynamic_shared_range = (MIN, MAX)`. The byte extent remains an author
@@ -4296,18 +4702,27 @@ pub fn launch_contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as LaunchContractArgs);
     let mut input = parse_macro_input!(item as ItemFn);
 
-    inject_launch_contract_alignment_marker(&args, &mut input);
+    inject_launch_contract_markers(&args, &mut input);
 
     quote! { #input }.into()
 }
 
-fn inject_launch_contract_alignment_marker(args: &LaunchContractArgs, input: &mut ItemFn) {
+fn inject_launch_contract_markers(args: &LaunchContractArgs, input: &mut ItemFn) {
+    let domain = args.domain;
+    let u32_coordinates = args.u32_coordinates;
+    let contract_marker: syn::Stmt = parse_quote! {
+        unsafe {
+            ::cuda_device::thread::__launch_contract_config::<#domain, #u32_coordinates>();
+        }
+    };
+    input.block.stmts.insert(0, contract_marker);
+
     if dynamic_shared_max(args.dynamic_shared) != 0 {
         let alignment = args.dynamic_shared_alignment as usize;
         let alignment_marker: syn::Stmt = parse_quote! {
             ::cuda_device::shared::__dynamic_shared_alignment::<#alignment>();
         };
-        input.block.stmts.insert(0, alignment_marker);
+        input.block.stmts.insert(1, alignment_marker);
     }
 }
 
@@ -4790,7 +5205,7 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
     if let Err(err) = rewrite_loop_unroll_attrs(&mut input) {
         return err.to_compile_error().into();
     }
-    inject_thread_index_scope(&mut input);
+    inject_device_thread_index_scope(&mut input);
 
     let fn_name = input.sig.ident.clone();
     let vis = input.vis.clone();
@@ -6337,6 +6752,7 @@ mod tests {
                 #[launch_bounds(256)]
                 #[launch_contract(
                     domain = 1,
+                    coordinates = u32,
                     block = (256, 1, 1),
                     dynamic_shared = 1024,
                     dynamic_shared_alignment = 128,
@@ -6364,6 +6780,96 @@ mod tests {
         assert!(expanded.contains("__cuda_oxide_config:::cuda_core::LaunchConfig"));
         assert!(expanded.contains("min_alignment:128u32"));
         assert!(expanded.contains("with_min_compute_capability(8u32,0u32)"));
+        assert!(expanded.contains("with_u32_coordinates()"));
+    }
+
+    #[test]
+    fn kernel_launch_context_uses_the_contract_domain_and_coordinate_width_in_either_order() {
+        let mut attributed: ItemFn = parse_quote! {
+            #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
+            fn attributed() {
+                let _ = thread::index_1d_u32(launch_context);
+            }
+        };
+        let scope = explicit_kernel_scope(&mut attributed, format_ident!("launch_context"));
+        attributed
+            .block
+            .stmts
+            .splice(0..0, explicit_kernel_scope_bindings(&scope));
+        let attributed = quote!(#attributed).to_string().replace(' ', "");
+        assert!(attributed.contains("make_kernel_scope::<::cuda_device::thread::__internal::Domain1,::cuda_device::thread::__internal::U32Coordinates>"));
+        assert!(attributed.contains("letlaunch_context:::cuda_device::thread::LaunchContextRef"));
+
+        let mut expanded_first: ItemFn = parse_quote! {
+            fn expanded_first() {
+                unsafe {
+                    ::cuda_device::thread::__launch_contract_config::<1, true>();
+                }
+                let _ = thread::index_1d_u32(launch_context);
+            }
+        };
+        let scope = explicit_kernel_scope(&mut expanded_first, format_ident!("launch_context"));
+        expanded_first
+            .block
+            .stmts
+            .splice(0..0, explicit_kernel_scope_bindings(&scope));
+        let expanded_first = quote!(#expanded_first).to_string().replace(' ', "");
+        assert!(expanded_first.contains("make_kernel_scope::<::cuda_device::thread::__internal::Domain1,::cuda_device::thread::__internal::U32Coordinates>"));
+
+        let mut two_dimensional: ItemFn = parse_quote! {
+            #[launch_contract(domain = 2, coordinates = u32, block = (8, 8, 1))]
+            fn two_dimensional() {
+                let _ = thread::coord_2d_u32(launch_context);
+            }
+        };
+        let scope = explicit_kernel_scope(&mut two_dimensional, format_ident!("launch_context"));
+        two_dimensional
+            .block
+            .stmts
+            .splice(0..0, explicit_kernel_scope_bindings(&scope));
+        let two_dimensional = quote!(#two_dimensional).to_string().replace(' ', "");
+        assert!(two_dimensional.contains("make_kernel_scope::<::cuda_device::thread::__internal::Domain2,::cuda_device::thread::__internal::U32Coordinates>"));
+    }
+
+    #[test]
+    fn kernel_launch_context_argument_composes_with_legacy_instantiations() {
+        let args: KernelArgs = syn::parse_str("f32, launch_context = launch_context, f64").unwrap();
+        assert_eq!(args.instantiate_types.len(), 2);
+        assert_eq!(args.launch_context.unwrap(), "launch_context");
+
+        let duplicate =
+            syn::parse_str::<KernelArgs>("launch_context = first, launch_context = second")
+                .err()
+                .unwrap();
+        assert!(duplicate.to_string().contains("duplicate `launch_context`"));
+
+        let unknown = syn::parse_str::<KernelArgs>("context = launch_context")
+            .err()
+            .unwrap();
+        assert!(
+            unknown
+                .to_string()
+                .contains("unknown #[kernel] named argument")
+        );
+    }
+
+    #[test]
+    fn explicit_fast_functions_are_not_syntax_rewritten() {
+        let mut function: ItemFn = parse_quote! {
+            #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
+            fn ordinary_names() {
+                let local = index_1d_u32();
+                let proof = alias(launch_context);
+                consume(local, proof);
+            }
+        };
+        let scope = explicit_kernel_scope(&mut function, format_ident!("launch_context"));
+        let expanded = quote!(#function).to_string().replace(' ', "");
+
+        assert!(expanded.contains("index_1d_u32()"));
+        assert!(expanded.contains("alias(launch_context)"));
+        assert!(!expanded.contains("__internal::index_1d_u32"));
+        assert_eq!(scope.ident, "launch_context");
     }
 
     #[test]
@@ -6502,6 +7008,9 @@ mod tests {
         let kernel: ItemFn = parse_quote! {
             fn map<T>() {
                 ::cuda_device::thread::__launch_bounds_config::<64, 2>();
+                unsafe {
+                    ::cuda_device::thread::__launch_contract_config::<1, true>();
+                }
                 ::cuda_device::cluster::__cluster_config::<2, 1, 1>();
                 ::cuda_device::shared::__dynamic_shared_alignment::<128>();
                 cuda_device::thread::__launch_bounds_config::<4, 1>();
@@ -6517,8 +7026,9 @@ mod tests {
         let markers = top_level_kernel_configuration_markers(&kernel);
         let forwarded = quote!(#(#markers)*).to_string().replace(' ', "");
 
-        assert_eq!(markers.len(), 3);
+        assert_eq!(markers.len(), 4);
         assert!(forwarded.contains("__launch_bounds_config::<64,2>()"));
+        assert!(forwarded.contains("__launch_contract_config::<1,true>()"));
         assert!(forwarded.contains("__cluster_config::<2,1,1>()"));
         assert!(forwarded.contains("__dynamic_shared_alignment::<128>()"));
         assert!(!forwarded.contains("unrelated"));
@@ -6534,19 +7044,27 @@ mod tests {
             syn::parse_str("domain = 1, dynamic_shared = 256, dynamic_shared_alignment = 64")
                 .unwrap();
         let mut helper: ItemFn = parse_quote! { fn helper<T>() {} };
-        inject_launch_contract_alignment_marker(&args, &mut helper);
+        inject_launch_contract_markers(&args, &mut helper);
         let expanded = quote!(#helper).to_string();
+        assert_eq!(expanded.matches("__launch_contract_config").count(), 1);
         assert_eq!(expanded.matches("__dynamic_shared_alignment").count(), 1);
         assert!(expanded.contains("64usize"));
 
         let zero_args: LaunchContractArgs =
             syn::parse_str("domain = 1, dynamic_shared = 0").unwrap();
         let mut zero_helper: ItemFn = parse_quote! { fn zero_helper<T>() {} };
-        inject_launch_contract_alignment_marker(&zero_args, &mut zero_helper);
+        inject_launch_contract_markers(&zero_args, &mut zero_helper);
         assert!(
             !quote!(#zero_helper)
                 .to_string()
                 .contains("__dynamic_shared_alignment")
+        );
+        assert_eq!(
+            quote!(#zero_helper)
+                .to_string()
+                .matches("__launch_contract_config")
+                .count(),
+            1
         );
     }
 

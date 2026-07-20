@@ -479,6 +479,27 @@ fn is_unroll_marker_path(fn_path: &str) -> bool {
     fn_path.contains("::__unroll_config")
 }
 
+/// Returns true for zero-cost launch metadata markers planted by proc macros.
+///
+/// The MIR importer consumes these calls while translating their containing
+/// function. Their own empty bodies are not device functions and must not be
+/// collected into the output module. Match both the defining `thread` path and
+/// cuda-device's root re-export spelling used by rustc's path printer.
+fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
+    matches!(
+        fn_path,
+        "cuda_device::__launch_bounds_config"
+            | "cuda_device::thread::__launch_bounds_config"
+            | "cuda_device::__launch_contract_config"
+            | "cuda_device::thread::__launch_contract_config"
+    ) || fn_path.strip_prefix("cuda_device::").is_some_and(|path| {
+        path.starts_with("__launch_bounds_config::<")
+            || path.starts_with("thread::__launch_bounds_config::<")
+            || path.starts_with("__launch_contract_config::<")
+            || path.starts_with("thread::__launch_contract_config::<")
+    })
+}
+
 /// Marker substring of the panic message used by the public
 /// `cuda_device::thread::index_*` stubs (see `cuda-device/src/thread.rs`).
 ///
@@ -1228,6 +1249,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         if is_unroll_marker_path(&raw_name) {
             if self.verbose {
                 eprintln!("[collector] Skipping unroll marker: {raw_name}");
+            }
+            return;
+        }
+
+        if is_launch_metadata_marker_path(&raw_name) {
+            if self.verbose {
+                eprintln!("[collector] Skipping launch metadata marker: {raw_name}");
             }
             return;
         }

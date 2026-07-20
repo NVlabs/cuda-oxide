@@ -92,7 +92,8 @@ Safety follows from five facts:
 
 1. `index_1d()` uses only X coordinates. Its value is unique when block and
    grid Y/Z dimensions are all 1. A `domain = 1` prepared launch proves that;
-   a raw launch must prove it in its `unsafe` block.
+   without that typed proof, the device checks Y/Z and marks the witness
+   invalid when either axis is active. Safe slice access then returns `None`.
 2. `get_mut()` is bounds-checked -- out-of-range threads get `None`.
 3. The `IndexSpace` parameter ties each witness to its layout: a
    `DisjointSlice<T, Index2D<128>>` will not accept a
@@ -107,8 +108,11 @@ The type system ties the device and host proofs together.
 
 ```text
 1D prepared launch: Y=Z=1 -> index_1d values are unique -> safe get_mut
-raw 2D launch:       grid/block Y > 1 repeats X indices -> caller-unsafe
+raw 2D launch:       active Y/Z -> invalid witness -> safe get_mut returns None
 ```
+
+A raw launch is still `unsafe`: the host must uphold its other memory and
+launch obligations even though this rank check fails closed on the device.
 
 ### Trusted index functions
 
@@ -117,7 +121,7 @@ are the constructors cuda-oxide provides:
 
 | Function                      | Formula                                 | Return Type                                            | Notes                                            |
 |:------------------------------|:----------------------------------------|:-------------------------------------------------------|:-------------------------------------------------|
-| `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`                        | Unique only for a 1D launch (Y/Z inactive)        |
+| `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`                        | Invalid when an untyped launch has active Y/Z     |
 | `index_2d::<S>()`             | `row * S + col`                         | `Option<ThreadIndex<'kernel, Index2D<S>>>`             | Const stride; mixing strides is a compile error  |
 | `unsafe index_2d_runtime(s)`  | `row * s + col`                         | `Option<ThreadIndex<'kernel, Runtime2DIndex>>`         | Caller asserts every thread used the same `s`    |
 | `index_2d_row()`              | `blockIdx.y * blockDim.y + threadIdx.y` | `usize`                                                | Component accessor, not a witness constructor    |
@@ -127,7 +131,62 @@ are the constructors cuda-oxide provides:
 you the components for arithmetic, but cannot be used to index into a
 `DisjointSlice`. Only the linearized result earns a `ThreadIndex`.
 Likewise, 2D uniqueness assumes the launch has no active Z dimension. A
-`domain = 2` prepared launch proves that; a raw launch must assert it.
+`domain = 2` prepared launch proves that. Without a typed proof, the device
+checks Z and returns `None` when it is active.
+
+(check-a-tile-once)=
+### Check a tile once
+
+For a small fixed tile, one bounds check can cover every element in that tile:
+
+```rust
+use cuda_device::{
+    DisjointSlice, LinearTiles, kernel, launch_contract, thread,
+};
+
+#[kernel(launch_context = launch_context)]
+#[launch_contract(
+    domain = 1,
+    coordinates = u32,
+    block = (64, 1, 1),
+)]
+pub fn add_one(mut values: DisjointSlice<u32, LinearTiles<4>>) {
+    let thread_index = thread::index_1d_u32(launch_context);
+
+    if let Some(mut tile) = values.tile_thread32(thread_index) {
+        let first = tile.at_const::<0>().read();
+        tile.at_const::<0>().write(first + 1);
+
+        let second = tile.at_const::<1>().read();
+        tile.at_const::<1>().write(second + 1);
+    }
+}
+```
+
+`LinearTiles<4>` gives thread 0 elements 0--3, thread 1 elements 4--7,
+and so on. `tile_thread32` checks the complete four-element tile once. If only
+part of a tile fits, it returns `None`. Constant positions such as
+`at_const::<0>()` need no further runtime bounds check; an invalid constant
+fails compilation.
+
+The two annotations provide the checked facts:
+
+- `#[kernel(launch_context = launch_context)]` creates a local device value
+  carrying facts about this launch. It is not a kernel argument.
+- `domain = 1` says only the X axis is active.
+- `coordinates = u32` allows `thread::index_1d_u32(launch_context)`, which
+  returns this thread's unique index across the full 1-D launch as a `u32`.
+- `block = (64, 1, 1)` requires exactly 64 threads in each block. The launch
+  may still contain many blocks.
+
+For 2-D tiles, use `thread::coord_2d_u32(launch_context)` with
+`RowMajorTiles<ROWS, COLS, ROW_STRIDE>`. `ROW_STRIDE` is the logical row pitch
+in elements and must match the buffer's layout. The buffer length does not
+have to be a multiple of the pitch; only complete tiles are returned.
+
+See the runnable
+[`proof_carrying_views`](https://github.com/NVlabs/cuda-oxide/tree/main/crates/rustc-codegen-cuda/examples/proof_carrying_views)
+example for 1-D and 2-D versions.
 
 ### How `index_2d` is type-safe
 
