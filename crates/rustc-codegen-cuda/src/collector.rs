@@ -492,14 +492,12 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
             | "cuda_device::thread::__launch_bounds_config"
             | "cuda_device::__launch_contract_config"
             | "cuda_device::thread::__launch_contract_config"
-    ) || fn_path
-        .strip_prefix("cuda_device::")
-        .is_some_and(|path| {
-            path.starts_with("__launch_bounds_config::<")
-                || path.starts_with("thread::__launch_bounds_config::<")
-                || path.starts_with("__launch_contract_config::<")
-                || path.starts_with("thread::__launch_contract_config::<")
-        })
+    ) || fn_path.strip_prefix("cuda_device::").is_some_and(|path| {
+        path.starts_with("__launch_bounds_config::<")
+            || path.starts_with("thread::__launch_bounds_config::<")
+            || path.starts_with("__launch_contract_config::<")
+            || path.starts_with("thread::__launch_contract_config::<")
+    })
 }
 
 /// Marker substring of the panic message used by the public
