@@ -149,6 +149,14 @@ pub struct PipelineConfig {
     ///
     /// Normally set by `cargo oxide --arch` or `CUDA_OXIDE_TARGET`.
     pub target_arch: Option<String>,
+    /// Human-readable name for whatever set `target_arch`, used when a target
+    /// error has to say where the target came from.
+    ///
+    /// Defaults to `"PipelineConfig::target_arch"`. A caller that read the
+    /// target from somewhere the user would recognise sets its own label:
+    /// `rustc-codegen-cuda` reads `CUDA_OXIDE_TARGET` itself and says so.
+    /// Only meaningful when `target_arch` is `Some`.
+    pub target_arch_source: &'static str,
     /// Detected architecture of the local GPU (`CUDA_OXIDE_DEVICE_ARCH`).
     ///
     /// Used only when no explicit target is provided.
@@ -172,11 +180,33 @@ impl Default for PipelineConfig {
             show_llvm_dialect: false,
             emit_nvvm_ir: false,
             target_arch: None,
+            target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
             allow_fma_contraction: true,
         }
     }
+}
+
+/// Merges `config` over the environment-derived backend defaults.
+///
+/// Environment-derived compatibility options are read once at the rustc
+/// frontend boundary. Explicit pipeline configuration retains precedence.
+fn backend_options_for(config: &PipelineConfig) -> BackendOptions {
+    let mut backend_options = BackendOptions::from_env();
+    if config.target_arch.is_some() {
+        backend_options.target_arch = config.target_arch.clone();
+        // The label travels with the value it describes. Overriding the
+        // target and leaving `from_env`'s "CUDA_OXIDE_TARGET" in place made
+        // every target error blame an env var the caller may never have set.
+        backend_options.target_arch_source = config.target_arch_source;
+    }
+    if config.device_arch_hint.is_some() {
+        backend_options.device_arch_hint = config.device_arch_hint.clone();
+    }
+    backend_options.verbose = backend_options.verbose || config.verbose;
+    backend_options.no_fma = !config.allow_fma_contraction;
+    backend_options
 }
 
 /// Runs the full compilation pipeline on collected functions.
@@ -290,17 +320,7 @@ pub fn run_pipeline(
         .join(format!("{}.ptx", config.output_name));
     let stale_artifacts = stale_compilation_artifact_paths(&config.output_dir, &config.output_name);
 
-    // Environment-derived compatibility options are read once at the rustc
-    // frontend boundary. Explicit pipeline configuration retains precedence.
-    let mut backend_options = BackendOptions::from_env();
-    if config.target_arch.is_some() {
-        backend_options.target_arch = config.target_arch.clone();
-    }
-    if config.device_arch_hint.is_some() {
-        backend_options.device_arch_hint = config.device_arch_hint.clone();
-    }
-    backend_options.verbose = backend_options.verbose || config.verbose;
-    backend_options.no_fma = !config.allow_fma_contraction;
+    let backend_options = backend_options_for(config);
 
     let request = ModulePipelineRequest::for_rust_pipeline(
         device_externs,
@@ -484,6 +504,7 @@ mod tests {
             show_llvm_dialect: false,
             emit_nvvm_ir: true,
             target_arch: Some("sm_86".to_string()),
+            target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
             allow_fma_contraction: true,
@@ -528,6 +549,7 @@ mod tests {
             show_llvm_dialect: false,
             emit_nvvm_ir: true,
             target_arch: Some("sm_86".to_string()),
+            target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
             allow_fma_contraction: true,
@@ -576,6 +598,7 @@ mod tests {
             show_llvm_dialect: false,
             emit_nvvm_ir: true,
             target_arch: Some("sm_86".to_string()),
+            target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
             allow_fma_contraction: true,
@@ -600,5 +623,39 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).expect("clean up temp output dir");
+    }
+
+    #[test]
+    fn an_explicit_config_target_is_labelled_as_its_own_source() {
+        let config = PipelineConfig {
+            target_arch: Some("sm_86".to_string()),
+            ..PipelineConfig::default()
+        };
+        let options = backend_options_for(&config);
+        assert_eq!(options.target_arch.as_deref(), Some("sm_86"));
+        assert_eq!(options.target_arch_source, "PipelineConfig::target_arch");
+    }
+
+    #[test]
+    fn a_caller_supplied_label_survives_the_override() {
+        let config = PipelineConfig {
+            target_arch: Some("sm_86".to_string()),
+            target_arch_source: "cargo oxide --arch",
+            ..PipelineConfig::default()
+        };
+        assert_eq!(
+            backend_options_for(&config).target_arch_source,
+            "cargo oxide --arch"
+        );
+    }
+
+    #[test]
+    fn the_env_label_stands_when_the_config_sets_no_target() {
+        let config = PipelineConfig::default();
+        assert_eq!(config.target_arch, None);
+        assert_eq!(
+            backend_options_for(&config).target_arch_source,
+            "CUDA_OXIDE_TARGET"
+        );
     }
 }

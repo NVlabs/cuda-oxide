@@ -532,6 +532,7 @@ impl Compiler {
         let ptx_path = scratch.path().join("module.ptx");
         let backend_options = BackendOptions {
             target_arch: Some(options.target.sm()),
+            target_arch_source: "the requested Target",
             device_arch_hint: None,
             no_opt: options.optimization == Optimization::None,
             no_fma: !options.fma_contraction,
@@ -672,12 +673,30 @@ pub enum CompileError {
         /// Rejected module name.
         name: String,
     },
-    /// CUDA target text could not be parsed.
+    /// CUDA target text could not be parsed by [`Target::parse`].
+    ///
+    /// A target that parses but cannot lower the module's detected features
+    /// is reported as [`CompileError::TargetSelection`] instead.
     #[error("invalid CUDA target `{target}`: {reason}")]
     InvalidTarget {
         /// Rejected target text.
         target: String,
         /// Parser explanation.
+        reason: String,
+    },
+    /// The pipeline rejected the requested target: unparsable, unable to lower
+    /// a feature the module uses, or below a floor an intrinsic imposes.
+    ///
+    /// `reason` arrives already phrased for a user and names the target where
+    /// that helps, so it is the whole message. Formatting it under a fixed
+    /// "invalid CUDA target `{target}`" prefix would call a valid
+    /// architecture invalid and name it twice.
+    #[error("{reason}")]
+    TargetSelection {
+        /// Target that was rejected, in canonical `sm_XX` spelling once it
+        /// parsed at all.
+        target: String,
+        /// Full explanation, suitable for display on its own.
         reason: String,
     },
     /// The owned top-level module was erased or replaced through an edit.
@@ -769,6 +788,7 @@ impl CompileError {
         match self {
             Self::InvalidModuleName { .. }
             | Self::InvalidTarget { .. }
+            | Self::TargetSelection { .. }
             | Self::InvalidModule { .. }
             | Self::InvalidOptions { .. } => CompilationStage::Input,
             Self::Toolchain { .. } => CompilationStage::Toolchain,
@@ -805,6 +825,9 @@ impl From<PipelineError> for CompileError {
             }
             PipelineError::UnsupportedLinking { symbols } => Self::UnsupportedLinking { symbols },
             PipelineError::Export(message) => Self::Export { message },
+            PipelineError::TargetSelection { target, reason } => {
+                Self::TargetSelection { target, reason }
+            }
             PipelineError::PtxGeneration(message) => Self::Codegen { message },
             PipelineError::Optimization(message) => Self::OptimizationFailed { message },
             PipelineError::NoBody(message) | PipelineError::Translation(message) => {

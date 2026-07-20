@@ -254,6 +254,7 @@ fn generate_ptx_impl(
     //   3. neither set -- the feature floor.
     let (target, target_source) = resolve_ptx_target_with_generated(
         explicit_override.as_deref(),
+        opts.target_arch_source,
         device_hint.as_deref(),
         detected,
         generated,
