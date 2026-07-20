@@ -202,7 +202,7 @@ pub(crate) fn generate_ptx_with_toolchain(
     opts: &BackendOptions,
     toolchain: &LlvmToolchain,
     generated: &GeneratedModuleRequirements,
-) -> Result<String, PipelineError> {
+) -> Result<GeneratedPtx, PipelineError> {
     generate_ptx_impl(
         ll_path,
         ptx_path,
@@ -215,7 +215,6 @@ pub(crate) fn generate_ptx_with_toolchain(
         true,
         None,
     )
-    .map(|generated| generated.target)
 }
 
 fn generate_ptx_impl(
