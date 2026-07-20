@@ -26,20 +26,22 @@ After:  non-unit Y/Z dimensions -> invalid witness -> no mutable access
 ```
 
 The launch contract proves that every active coordinate axis fits in `u32`.
-`index_1d32(scope)` and `coord_2d32(scope)` may therefore use 32-bit arithmetic
+`thread::index_1d_u32(launch_context)` and
+`thread::coord_2d_u32(launch_context)` may therefore use 32-bit arithmetic
 without truncation. The host validates this once while preparing the launch.
 
 ```text
-#[kernel(scope = scope)] -> entry creates typed proof -> fast function consumes it
-ordinary device helper   -> no proof                    -> cannot call fast function
+#[kernel(launch_context = launch_context)] -> entry creates checked context
+thread::index_1d_u32(launch_context)       -> returns this thread's 1-D index
 ```
 
-The scope is explicit on purpose: function aliases work normally, and a local
-function with the same name is never rewritten by the kernel macro.
+The launch context is explicit so the call shows where its checked launch facts
+come from. It is a local device value, not a kernel argument.
 
-The 2-D epilogue encodes its row stride in `RowMajorTiles<1, 2, 64>`. One check
-proves the full rectangle stays within its row and parent allocation; both
-interior accesses are then check-free.
+The 2-D epilogue encodes its logical row pitch in
+`RowMajorTiles<1, 2, 64>`. The caller must choose `64` to match the buffer's
+actual layout. One check proves the full rectangle stays within its row and
+parent allocation; both interior accesses are then check-free.
 
 This first view layer deliberately exposes a checked boundary and natural `T`
 alignment only. It does not label an edge tile as exact, padded, or masked, and

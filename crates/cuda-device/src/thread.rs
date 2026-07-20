@@ -14,7 +14,7 @@
 //! - Index helpers: `index_1d`, `index_2d::<S>`, `unsafe index_2d_runtime`
 //!   that return typed `ThreadIndex` witnesses
 //! - `IndexFormula`: a marker trait for index spaces that can be derived
-//!   from the kernel scope alone (used by `DisjointSlice::get_mut_indexed`)
+//!   from the kernel launch context alone (used by `DisjointSlice::get_mut_indexed`)
 //!
 //! # Safety Model
 //!
@@ -54,7 +54,7 @@ pub enum Index1D {}
 /// Type-level index space for a 2D row-major index with a const row stride.
 pub enum Index2D<const ROW_STRIDE: usize> {}
 
-/// Index spaces whose `ThreadIndex` can be derived from the kernel scope alone.
+/// Index spaces whose `ThreadIndex` can be derived from the launch context alone.
 ///
 /// `Index1D` and `Index2D<S>` impl this — their formulas take no runtime
 /// inputs. [`Runtime2DIndex`] does **not** impl this, because the row stride
@@ -66,7 +66,7 @@ pub enum Index2D<const ROW_STRIDE: usize> {}
 pub trait IndexFormula: Sized {
     #[doc(hidden)]
     fn from_scope<'kernel, Domain, Coordinates>(
-        scope: &'kernel KernelScope<'kernel, Domain, Coordinates>,
+        scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
     ) -> Option<ThreadIndex<'kernel, Self>>
     where
         Domain: __internal::LaunchDomain;
@@ -75,7 +75,7 @@ pub trait IndexFormula: Sized {
 impl IndexFormula for Index1D {
     #[inline(always)]
     fn from_scope<'kernel, Domain, Coordinates>(
-        scope: &'kernel KernelScope<'kernel, Domain, Coordinates>,
+        scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
     ) -> Option<ThreadIndex<'kernel, Self>>
     where
         Domain: __internal::LaunchDomain,
@@ -88,7 +88,7 @@ impl IndexFormula for Index1D {
 impl<const ROW_STRIDE: usize> IndexFormula for Index2D<ROW_STRIDE> {
     #[inline(always)]
     fn from_scope<'kernel, Domain, Coordinates>(
-        scope: &'kernel KernelScope<'kernel, Domain, Coordinates>,
+        scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
     ) -> Option<ThreadIndex<'kernel, Self>>
     where
         Domain: __internal::LaunchDomain,
@@ -108,15 +108,15 @@ impl<const ROW_STRIDE: usize> IndexFormula for Index2D<ROW_STRIDE> {
 /// makes a stride mismatch a type error instead of a contract.
 pub enum Runtime2DIndex {}
 
-/// Stack-local witness produced by `make_kernel_scope` and consumed by
-/// `__internal::index_*`.
+/// Stack-local launch context produced by the kernel macro and consumed by
+/// trusted thread-index functions.
 ///
 /// `Domain` records which launch axes the host checked. `Coordinates` records
 /// whether the host proved that each active axis fits in 32 bits. The proc
 /// macros choose both markers from `#[launch_contract]`; safe user code cannot
 /// construct a scope because all fields and its constructor are private.
 #[doc(hidden)]
-pub struct KernelScope<
+pub struct LaunchContext<
     'kernel,
     Domain = __internal::UnknownDomain,
     Coordinates = __internal::NativeCoordinates,
@@ -130,13 +130,13 @@ pub struct KernelScope<
 /// Borrowed kernel-scope proof with one lifetime shared by the reference and
 /// the invariant scope value.
 #[doc(hidden)]
-pub type KernelScopeRef<'kernel, Domain, Coordinates> =
-    &'kernel KernelScope<'kernel, Domain, Coordinates>;
+pub type LaunchContextRef<'kernel, Domain, Coordinates> =
+    &'kernel LaunchContext<'kernel, Domain, Coordinates>;
 
-impl<'kernel, Domain, Coordinates> KernelScope<'kernel, Domain, Coordinates> {
+impl<'kernel, Domain, Coordinates> LaunchContext<'kernel, Domain, Coordinates> {
     #[inline(always)]
     unsafe fn new() -> Self {
-        KernelScope {
+        LaunchContext {
             _kernel: PhantomData,
             _domain: PhantomData,
             _coordinates: PhantomData,
@@ -159,7 +159,7 @@ impl<'kernel, Domain, Coordinates> KernelScope<'kernel, Domain, Coordinates> {
 ///
 /// `ThreadIndex` is intentionally `!Send`, `!Sync`, `!Copy`, and `!Clone`,
 /// so safe code can't duplicate a witness or smuggle one to a different
-/// thread. The `'kernel` lifetime is borrowed from a stack-local scope the
+/// thread. The `'kernel` lifetime is borrowed from a stack-local launch context the
 /// proc macros inject; it can't outlive the kernel body.
 ///
 /// # Construction
@@ -172,7 +172,7 @@ impl<'kernel, Domain, Coordinates> KernelScope<'kernel, Domain, Coordinates> {
 ///
 /// # Where you can call them
 ///
-/// The `'kernel` scope only exists inside `#[kernel]` and `#[device]`
+/// The `'kernel` launch context only exists inside `#[kernel]` and `#[device]`
 /// bodies, which has two practical consequences:
 ///
 /// - **Plain `fn` device helpers (no annotation)** can't acquire a
@@ -190,7 +190,7 @@ impl<'kernel, Domain, Coordinates> KernelScope<'kernel, Domain, Coordinates> {
 /// # Reserved names inside `#[kernel]` and `#[device]`
 ///
 /// The macros rewrite a small set of names inside annotated bodies so
-/// the user never has to thread the kernel scope through by hand:
+/// the user never has to pass the launch context through by hand:
 ///
 /// - free functions: `index_1d`, `index_2d`, `index_2d_runtime`
 /// - methods (zero-arg call sites): `get_mut_indexed`
@@ -206,8 +206,8 @@ impl<'kernel, Domain, Coordinates> KernelScope<'kernel, Domain, Coordinates> {
 /// ```
 ///
 /// Method calls are matched on the method name only — `slice.get_mut_indexed()`
-/// has the kernel scope spliced in as the (currently invisible)
-/// `&KernelScope` argument the method actually takes.
+/// has the launch context spliced in as the (currently invisible)
+/// `&LaunchContext` argument the method actually takes.
 ///
 /// The trade-off: if you define a local `fn index_1d` (or any of the
 /// other reserved names) and call it from inside `#[kernel]` or
@@ -215,10 +215,10 @@ impl<'kernel, Domain, Coordinates> KernelScope<'kernel, Domain, Coordinates> {
 /// different name (e.g. `compute_index_1d`, `pop_indexed`) for any
 /// helper you want to keep.
 ///
-/// The proof-carrying [`index_1d32`] and [`coord_2d32`] functions are not on
-/// this list. They take the capability named explicitly by
-/// `#[kernel(scope = ...)]`, so ordinary Rust aliases and same-named local
-/// functions behave normally.
+/// The proof-carrying [`index_1d_u32`] and [`coord_2d_u32`] functions are not
+/// on this list. They take the launch context named explicitly by
+/// `#[kernel(launch_context = ...)]`, so ordinary Rust aliases and same-named
+/// local functions behave normally.
 ///
 /// # Example
 ///
@@ -246,7 +246,7 @@ impl<'kernel, IndexSpace> ThreadIndex<'kernel, IndexSpace> {
     unsafe fn new<Domain, Coordinates>(
         raw: usize,
         valid: bool,
-        _scope: &'kernel KernelScope<'kernel, Domain, Coordinates>,
+        _scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
     ) -> Self {
         ThreadIndex {
             // Keep ThreadIndex a scalar/newtype for the device ABI. usize::MAX
@@ -318,7 +318,7 @@ impl<'kernel> ThreadIndex32<'kernel> {
     #[inline(always)]
     unsafe fn new(
         raw: u32,
-        _scope: &'kernel KernelScope<'kernel, __internal::Domain1, __internal::U32Coordinates>,
+        _scope: &'kernel LaunchContext<'kernel, __internal::Domain1, __internal::U32Coordinates>,
     ) -> Self {
         Self {
             raw,
@@ -359,7 +359,7 @@ impl<'kernel> ThreadCoord2D32<'kernel> {
     unsafe fn new(
         row: u32,
         col: u32,
-        _scope: &'kernel KernelScope<'kernel, __internal::Domain2, __internal::U32Coordinates>,
+        _scope: &'kernel LaunchContext<'kernel, __internal::Domain2, __internal::U32Coordinates>,
     ) -> Self {
         Self {
             packed: ((row as u64) << 32) | col as u64,
@@ -393,7 +393,8 @@ impl fmt::Debug for ThreadCoord2D32<'_> {
 #[doc(hidden)]
 pub mod __internal {
     use super::{
-        Index1D, Index2D, KernelScope, Runtime2DIndex, ThreadCoord2D32, ThreadIndex, ThreadIndex32,
+        Index1D, Index2D, LaunchContext, Runtime2DIndex, ThreadCoord2D32, ThreadIndex,
+        ThreadIndex32,
     };
 
     mod sealed {
@@ -445,7 +446,7 @@ pub mod __internal {
         const MAX_DIMENSIONS: u8 = 3;
     }
 
-    /// Mints a fresh `KernelScope` whose `'kernel` lifetime backs every
+    /// Mints a fresh `LaunchContext` whose `'kernel` lifetime backs every
     /// `ThreadIndex` produced inside this kernel/device body.
     ///
     /// # Safety
@@ -470,7 +471,7 @@ pub mod __internal {
     ///   `ThreadIndex<'kernel, _>` borrows from the helper's local scope —
     ///   you can use it inside the helper, you can't return it out.
     ///   `#[device]` is mainly for FFI exports via LTOIR, where this
-    ///   doesn't bite in practice. They cannot call `index_1d32`: only a
+    ///   doesn't bite in practice. They cannot call `index_1d_u32`: only a
     ///   prepared kernel entry owns its typed launch proof, so helpers receive
     ///   the index or a checked view as an argument instead.
     ///   Contract-backed [`ThreadIndex32`] is different: a device helper cannot
@@ -478,8 +479,8 @@ pub mod __internal {
     ///   view into the helper.
     #[inline(always)]
     pub unsafe fn make_kernel_scope<'kernel, Domain, Coordinates>()
-    -> KernelScope<'kernel, Domain, Coordinates> {
-        unsafe { KernelScope::new() }
+    -> LaunchContext<'kernel, Domain, Coordinates> {
+        unsafe { LaunchContext::new() }
     }
 
     #[inline(always)]
@@ -496,7 +497,7 @@ pub mod __internal {
 
     #[inline(always)]
     fn one_dimensional_launch<Domain: LaunchDomain, Coordinates>(
-        _scope: &KernelScope<'_, Domain, Coordinates>,
+        _scope: &LaunchContext<'_, Domain, Coordinates>,
     ) -> bool {
         let y_is_unit = if Domain::MAX_DIMENSIONS == 1 {
             true
@@ -513,7 +514,7 @@ pub mod __internal {
 
     #[inline(always)]
     fn at_most_two_dimensional_launch<Domain: LaunchDomain, Coordinates>(
-        _scope: &KernelScope<'_, Domain, Coordinates>,
+        _scope: &LaunchContext<'_, Domain, Coordinates>,
     ) -> bool {
         if Domain::MAX_DIMENSIONS == 1 || Domain::MAX_DIMENSIONS == 2 {
             true
@@ -531,7 +532,7 @@ pub mod __internal {
     /// Y/Z grid and block dimension and return an invalid sentinel on mismatch.
     #[inline(always)]
     pub fn index_1d<'kernel>(
-        scope: &'kernel KernelScope<'kernel, impl LaunchDomain, impl Sized>,
+        scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
     ) -> ThreadIndex<'kernel, Index1D> {
         let raw = checked_axis(
             super::blockIdx_x(),
@@ -548,7 +549,7 @@ pub mod __internal {
     /// (`blockDim.z == gridDim.z == 1`); the const stride is in the witness type.
     #[inline(always)]
     pub fn index_2d<'kernel, const ROW_STRIDE: usize>(
-        scope: &'kernel KernelScope<'kernel, impl LaunchDomain, impl Sized>,
+        scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
     ) -> Option<ThreadIndex<'kernel, Index2D<ROW_STRIDE>>> {
         if !at_most_two_dimensional_launch(scope) {
             return None;
@@ -581,7 +582,7 @@ pub mod __internal {
     /// obligation (every thread must pass the same `row_stride`).
     #[inline(always)]
     pub unsafe fn index_2d_runtime<'kernel>(
-        scope: &'kernel KernelScope<'kernel, impl LaunchDomain, impl Sized>,
+        scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
         row_stride: usize,
     ) -> Option<ThreadIndex<'kernel, Runtime2DIndex>> {
         if !at_most_two_dimensional_launch(scope) {
@@ -607,29 +608,29 @@ pub mod __internal {
         Some(unsafe { ThreadIndex::new(raw, true, scope) })
     }
 
-    /// 32-bit index intrinsic for an exactly typed 1D launch scope.
+    /// 32-bit index intrinsic for an exactly typed 1D launch context.
     ///
     /// Host preparation proved `grid.x * block.x <= 2^32`. Therefore the
     /// mathematical result fits in `u32`; wrapping operations state that proof
     /// directly and avoid target-width promotion.
     #[inline(always)]
-    pub fn index_1d32<'kernel>(
-        scope: &'kernel KernelScope<'kernel, Domain1, U32Coordinates>,
+    pub fn index_1d_u32<'kernel>(
+        launch_context: &'kernel LaunchContext<'kernel, Domain1, U32Coordinates>,
     ) -> ThreadIndex32<'kernel> {
         let raw = super::blockIdx_x()
             .wrapping_mul(super::blockDim_x())
             .wrapping_add(super::threadIdx_x());
-        unsafe { ThreadIndex32::new(raw, scope) }
+        unsafe { ThreadIndex32::new(raw, launch_context) }
     }
 
-    /// 32-bit row/column intrinsic for an exactly typed 2D launch scope.
+    /// 32-bit row/column intrinsic for an exactly typed 2D launch context.
     ///
     /// Host preparation proves that both active axis products are at most
     /// `2^32`. The wrapping operations therefore equal the mathematical
     /// results for every real thread while remaining narrow device arithmetic.
     #[inline(always)]
-    pub fn coord_2d32<'kernel>(
-        scope: &'kernel KernelScope<'kernel, Domain2, U32Coordinates>,
+    pub fn coord_2d_u32<'kernel>(
+        launch_context: &'kernel LaunchContext<'kernel, Domain2, U32Coordinates>,
     ) -> ThreadCoord2D32<'kernel> {
         let row = super::blockIdx_y()
             .wrapping_mul(super::blockDim_y())
@@ -637,7 +638,7 @@ pub mod __internal {
         let col = super::blockIdx_x()
             .wrapping_mul(super::blockDim_x())
             .wrapping_add(super::threadIdx_x());
-        unsafe { ThreadCoord2D32::new(row, col, scope) }
+        unsafe { ThreadCoord2D32::new(row, col, launch_context) }
     }
 }
 
@@ -691,42 +692,43 @@ pub fn index_1d<'kernel>() -> ThreadIndex<'kernel> {
 /// produced coordinate fits exactly in a `u32`.
 ///
 /// ```rust,ignore
-/// #[kernel(scope = scope)]
+/// #[kernel(launch_context = launch_context)]
 /// #[launch_contract(domain = 1, coordinates = u32)]
 /// fn vector(mut out: DisjointSlice<u32>) {
-///     let thread = thread::index_1d32(scope);
-///     if let Some(mut element) = out.element_thread32(thread) {
+///     let thread_index = thread::index_1d_u32(launch_context);
+///     if let Some(mut element) = out.element_thread32(thread_index) {
 ///         element.write(7);
 ///     }
 /// }
 /// ```
 #[inline(always)]
-pub fn index_1d32<'kernel>(
-    scope: KernelScopeRef<'kernel, __internal::Domain1, __internal::U32Coordinates>,
+pub fn index_1d_u32<'kernel>(
+    launch_context: LaunchContextRef<'kernel, __internal::Domain1, __internal::U32Coordinates>,
 ) -> ThreadIndex32<'kernel> {
-    __internal::index_1d32(scope)
+    __internal::index_1d_u32(launch_context)
 }
 
 /// Get global 2D row/column coordinates using 32-bit arithmetic.
 ///
 /// This is available only to kernels declared with
-/// `#[launch_contract(domain = 2, coordinates = u32)]`. The explicit scope
-/// argument is created only by a matching `#[kernel(scope = ...)]` entry.
+/// `#[launch_contract(domain = 2, coordinates = u32)]`. The explicit launch
+/// context is created only by a matching `#[kernel(launch_context = ...)]`
+/// entry.
 ///
 /// ```rust,ignore
-/// #[kernel(scope = scope)]
+/// #[kernel(launch_context = launch_context)]
 /// #[launch_contract(domain = 2, coordinates = u32, block = (16, 16, 1))]
 /// fn epilogue(mut out: DisjointSlice<f32, RowMajorTiles<2, 4, 4096>>) {
-///     if let Some(mut tile) = out.tile_2d32(thread::coord_2d32(scope)) {
+///     if let Some(mut tile) = out.tile_2d32(thread::coord_2d_u32(launch_context)) {
 ///         tile.at_const::<0, 0>().write(1.0);
 ///     }
 /// }
 /// ```
 #[inline(always)]
-pub fn coord_2d32<'kernel>(
-    scope: KernelScopeRef<'kernel, __internal::Domain2, __internal::U32Coordinates>,
+pub fn coord_2d_u32<'kernel>(
+    launch_context: LaunchContextRef<'kernel, __internal::Domain2, __internal::U32Coordinates>,
 ) -> ThreadCoord2D32<'kernel> {
-    __internal::coord_2d32(scope)
+    __internal::coord_2d_u32(launch_context)
 }
 
 // =============================================================================

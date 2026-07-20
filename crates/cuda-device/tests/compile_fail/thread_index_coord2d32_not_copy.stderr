@@ -1,9 +1,0 @@
-error[E0382]: borrow of moved value: `coord`
-  --> tests/compile_fail/thread_index_coord2d32_not_copy.rs:13:13
-   |
-11 |     let coord = __internal::coord_2d32(scope);
-   |         ----- move occurs because `coord` has type `ThreadCoord2D32<'_>`, which does not implement the `Copy` trait
-12 |     let _moved = coord;
-   |                  ----- value moved here
-13 |     let _ = coord.row();
-   |             ^^^^^ value borrowed here after move

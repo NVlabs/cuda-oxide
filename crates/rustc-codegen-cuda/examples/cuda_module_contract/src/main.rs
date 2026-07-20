@@ -140,9 +140,9 @@ mod explicit_instantiation {
         dynamic_shared = 128,
         dynamic_shared_alignment = 32,
     )]
-    #[kernel(u32, scope = scope)]
+    #[kernel(u32, launch_context = launch_context)]
     pub fn explicit_aligned<T: Copy>(value: T) {
-        let _index = thread::index_1d32(scope);
+        let _index = thread::index_1d_u32(launch_context);
         let shared = DynamicSharedArray::<T, 8>::get();
         unsafe {
             core::ptr::write_volatile(shared, value);

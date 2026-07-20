@@ -93,6 +93,8 @@ use cuda_device::thread;
 let idx     = thread::index_1d();                            // ThreadIndex<'_, Index1D>
 let idx2d   = thread::index_2d::<128>();                     // Option<ThreadIndex<'_, Index2D<128>>>
 let idx2d_r = unsafe { thread::index_2d_runtime(stride) };   // Option<ThreadIndex<'_, Runtime2DIndex>>
+let idx32   = thread::index_1d_u32(launch_context);          // ThreadIndex32<'_>
+let pos32   = thread::coord_2d_u32(launch_context);          // ThreadCoord2D32<'_>
 
 let tid_x  = thread::threadIdx_x();    // u32
 let bid_x  = thread::blockIdx_x();     // u32
@@ -104,6 +106,8 @@ let bdim_x = thread::blockDim_x();     // u32
 | `thread::index_1d()`                        | `ThreadIndex<'_, Index1D>`                       | Unique linear index (1D grids)                             |
 | `thread::index_2d::<S>()`                   | `Option<ThreadIndex<'_, Index2D<S>>>`            | Const-stride 2D index; mismatched strides are a type error |
 | `unsafe thread::index_2d_runtime(s)`        | `Option<ThreadIndex<'_, Runtime2DIndex>>`        | Runtime-stride 2D index; caller asserts `s` is uniform     |
+| `thread::index_1d_u32(launch_context)`      | `ThreadIndex32<'_>`                              | 1-D index as `u32`; requires checked `u32` coordinates     |
+| `thread::coord_2d_u32(launch_context)`      | `ThreadCoord2D32<'_>`                            | 2-D row/column as `u32`; requires checked `u32` coordinates|
 | `thread::index_2d_row()`                    | `usize`                                          | 2D row index                                               |
 | `thread::index_2d_col()`                    | `usize`                                          | 2D column index                                            |
 | `thread::threadIdx_{x,y,z}()`               | `u32`                                            | Thread index within block                                  |
@@ -116,10 +120,12 @@ right-edge tail in non-aligned 2D kernels.
 
 `index_2d::<S>` is the safe const-stride form; the const generic encodes the
 stride in the witness type so threads cannot use different strides.
-Dimensionality remains a host-side obligation: `index_1d` requires inactive
-Y/Z dimensions, and 2D indices require inactive Z. A matching
-`PreparedLaunch<K>` proves this; a raw launch is unsafe. `index_2d_runtime` is the escape hatch for
-launches whose stride is only known at runtime; the caller takes on the
+`index_1d` requires inactive Y/Z dimensions, and 2D indices require inactive
+Z. A matching `PreparedLaunch<K>` proves this without device checks. Otherwise,
+the device rejects the wrong rank: `index_1d` creates an invalid witness and
+2D helpers return `None`. A raw launch remains unsafe because its other memory
+and launch obligations are unchecked. `index_2d_runtime` is the escape hatch
+for launches whose stride is only known at runtime; the caller takes on the
 "every thread used the same stride" obligation by writing `unsafe`. Full
 discussion in [The Safety Model](../gpu-safety/the-safety-model.md).
 
@@ -149,6 +155,12 @@ pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
 `get_mut_indexed` is gated on `IndexSpace: IndexFormula` (impl'd by
 `Index1D` and `Index2D<S>`). For `Runtime2DIndex` slices, use the
 explicit `unsafe { thread::index_2d_runtime(s) }` + `get_mut(idx)` pair.
+
+For fixed-size tiles, use `DisjointSlice<T, LinearTiles<N>>::tile_thread32`
+or `DisjointSlice<T, RowMajorTiles<R, C, S>>::tile_2d32`. Each method checks a
+complete tile once, then `at_const` accesses known positions without another
+runtime bounds check. `S` is the caller-declared logical row pitch and must
+match the buffer layout. See {ref}`Check a tile once <check-a-tile-once>`.
 
 ---
 

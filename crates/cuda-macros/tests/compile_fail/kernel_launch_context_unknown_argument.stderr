@@ -1,0 +1,5 @@
+error: unknown #[kernel] named argument `context`; expected `launch_context = IDENT`
+ --> tests/compile_fail/kernel_launch_context_unknown_argument.rs:6:10
+  |
+6 | #[kernel(context = launch_context)]
+  |          ^^^^^^^

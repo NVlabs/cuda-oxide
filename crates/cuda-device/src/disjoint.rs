@@ -36,7 +36,7 @@
 //! raw launch is unsafe and leaves that proof to the caller. Constructing a
 //! `DisjointSlice` from raw memory is also unsafe.
 
-use crate::thread::{Index1D, IndexFormula, KernelScope, ThreadIndex};
+use crate::thread::{Index1D, IndexFormula, LaunchContext, ThreadIndex};
 use crate::view::{LinearTiles, RowMajorTiles};
 use core::marker::PhantomData;
 use core::mem::size_of;
@@ -347,7 +347,7 @@ impl<'a, T, IS: IndexFormula> DisjointSlice<'a, T, IS> {
     #[inline]
     pub fn get_mut_indexed<'kernel, Domain, Coordinates>(
         &mut self,
-        scope: &'kernel KernelScope<'kernel, Domain, Coordinates>,
+        scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
     ) -> Option<(&mut T, ThreadIndex<'kernel, IS>)>
     where
         Domain: crate::thread::__internal::LaunchDomain,

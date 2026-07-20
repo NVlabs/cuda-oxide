@@ -1,5 +1,0 @@
-error: kernel scope binding `launch` conflicts with a function parameter; choose a distinct name in `#[kernel(scope = ...)]`
- --> tests/compile_fail/kernel_scope_parameter_collision.rs:7:18
-  |
-7 | pub fn collision(launch: u32) {
-  |                  ^^^^^^

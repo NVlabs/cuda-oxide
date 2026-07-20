@@ -56,11 +56,11 @@ mod kernels {
     }
 
     /// One bounds proof gives this thread read/write access to one element.
-    #[kernel(scope = scope)]
+    #[kernel(launch_context = launch_context)]
     #[launch_bounds(64)]
     #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
     pub fn safe_element(mut values: DisjointSlice<u32>) {
-        let index = thread::index_1d32(scope);
+        let index = thread::index_1d_u32(launch_context);
         if let Some(mut element) = values.element_thread32(index) {
             let value = element.read();
             element.write(value.wrapping_mul(3).wrapping_add(1));
@@ -101,11 +101,11 @@ mod kernels {
     }
 
     /// One range proof gives this thread a four-element static view.
-    #[kernel(scope = scope)]
+    #[kernel(launch_context = launch_context)]
     #[launch_bounds(64)]
     #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
     pub fn safe_tile(mut values: DisjointSlice<u32, LinearTiles<4>>) {
-        let index = thread::index_1d32(scope);
+        let index = thread::index_1d_u32(launch_context);
         if let Some(mut tile) = values.tile_thread32(index) {
             let v0 = tile.at_const::<0>().read();
             let v1 = tile.at_const::<1>().read();
@@ -152,11 +152,11 @@ mod kernels {
     }
 
     /// A two-column GEMM-style epilogue tile with static row-major layout.
-    #[kernel(scope = scope)]
+    #[kernel(launch_context = launch_context)]
     #[launch_bounds(64)]
     #[launch_contract(domain = 2, coordinates = u32, block = (8, 8, 1))]
     pub fn safe_epilogue(mut values: DisjointSlice<f32, RowMajorTiles<1, 2, 64>>) {
-        let coord = thread::coord_2d32(scope);
+        let coord = thread::coord_2d_u32(launch_context);
         if let Some(mut tile) = values.tile_2d32(coord) {
             let left = tile.at_const::<0, 0>().read();
             let right = tile.at_const::<0, 1>().read();

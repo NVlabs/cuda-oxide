@@ -6,7 +6,7 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, launch_bounds, launch_cont
 
 type Tiled = Index2D<64>;
 use cuda_device::thread::Index2D as ImportedIndex2D;
-use cuda_device::thread::index_1d32 as fast_index;
+use cuda_device::thread::index_1d_u32 as fast_index;
 
 #[cuda_module]
 mod kernels {
@@ -45,24 +45,24 @@ mod kernels {
         let _ = input;
     }
 
-    #[kernel(scope = scope)]
+    #[kernel(launch_context = launch_context)]
     #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
     pub fn generic_fast<const ADD: u32>(mut out: DisjointSlice<u32>) {
-        let index = fast_index(scope);
+        let index = fast_index(launch_context);
         if let Some(mut value) = out.element_thread32(index) {
             value.write(ADD);
         }
     }
 
-    fn index_1d32() -> u32 {
+    fn index_1d_u32() -> u32 {
         7
     }
 
-    #[kernel(scope = launch)]
+    #[kernel(launch_context = launch_context)]
     #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
     pub fn same_named_local_is_ordinary(mut out: DisjointSlice<u32>) {
-        let local_value = index_1d32();
-        let index = cuda_device::thread::index_1d32(launch);
+        let local_value = index_1d_u32();
+        let index = cuda_device::thread::index_1d_u32(launch_context);
         if let Some(mut value) = out.element_thread32(index) {
             value.write(local_value);
         }

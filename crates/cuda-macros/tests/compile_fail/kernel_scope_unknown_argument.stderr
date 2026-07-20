@@ -1,5 +1,0 @@
-error: unknown #[kernel] named argument `context`; expected `scope = IDENT`
- --> tests/compile_fail/kernel_scope_unknown_argument.rs:6:10
-  |
-6 | #[kernel(context = launch)]
-  |          ^^^^^^^

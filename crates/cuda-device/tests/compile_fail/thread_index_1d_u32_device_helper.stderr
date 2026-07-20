@@ -1,0 +1,15 @@
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+  --> tests/compile_fail/thread_index_1d_u32_device_helper.rs:10:13
+   |
+10 |     let _ = cuda_device::thread::index_1d_u32();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `&cuda_device::LaunchContext<'_, cuda_device::__internal::Domain1, cuda_device::__internal::U32Coordinates>` is missing
+   |
+note: function defined here
+  --> src/thread.rs
+   |
+   | pub fn index_1d_u32<'kernel>(
+   |        ^^^^^^^^^^^^
+help: provide the argument
+   |
+10 |     let _ = cuda_device::thread::index_1d_u32(/* &cuda_device::LaunchContext<'_, cuda_device::__internal::Domain1, cuda_device::__internal::U32Coordinates> */);
+   |                                               ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

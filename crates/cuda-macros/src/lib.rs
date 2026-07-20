@@ -234,44 +234,47 @@ fn impl_trait_parameter_error(input: &ItemFn, item_kind: &str) -> Option<syn::Er
 
 /// Attribute arguments for `#[kernel(...)]`.
 ///
-/// Legacy explicit-instantiation types and the optional launch-capability
+/// Legacy explicit-instantiation types and the optional launch-context
 /// binding may appear in either order:
 ///
 /// ```ignore
-/// #[kernel(scope = ctx)]
-/// #[kernel(f32, f64, scope = ctx)]
+/// #[kernel(launch_context = launch_context)]
+/// #[kernel(f32, f64, launch_context = launch_context)]
 /// ```
 struct KernelArgs {
     /// Types to instantiate generic kernels for
     instantiate_types: Vec<Type>,
-    /// User-selected name for the entry's typed launch capability.
-    scope: Option<Ident>,
+    /// User-selected name for the entry's typed launch context.
+    launch_context: Option<Ident>,
 }
 
 impl Parse for KernelArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut instantiate_types = Vec::new();
-        let mut scope = None;
+        let mut launch_context = None;
 
         while !input.is_empty() {
             if input.peek(Ident) && input.peek2(Token![=]) {
                 let name: Ident = input.parse()?;
                 input.parse::<Token![=]>()?;
-                if name != "scope" {
+                if name != "launch_context" {
                     return Err(syn::Error::new(
                         name.span(),
                         format!(
-                            "unknown #[kernel] named argument `{name}`; expected `scope = IDENT`"
+                            "unknown #[kernel] named argument `{name}`; expected `launch_context = IDENT`"
                         ),
                     ));
                 }
                 let value: Ident = input.parse().map_err(|_| {
-                    syn::Error::new(input.span(), "`scope` must be a single Rust identifier")
+                    syn::Error::new(
+                        input.span(),
+                        "`launch_context` must be a single Rust identifier",
+                    )
                 })?;
-                if scope.replace(value).is_some() {
+                if launch_context.replace(value).is_some() {
                     return Err(syn::Error::new(
                         name.span(),
-                        "duplicate `scope` argument in #[kernel]",
+                        "duplicate `launch_context` argument in #[kernel]",
                     ));
                 }
             } else {
@@ -286,7 +289,7 @@ impl Parse for KernelArgs {
 
         Ok(KernelArgs {
             instantiate_types,
-            scope,
+            launch_context,
         })
     }
 }
@@ -3219,10 +3222,10 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// parameter:
 ///
 /// ```ignore
-/// #[kernel(scope = scope)]
+/// #[kernel(launch_context = launch_context)]
 /// #[launch_contract(domain = 1, coordinates = u32, block = (256, 1, 1))]
 /// pub fn map(mut output: DisjointSlice<u32>) {
-///     let index = thread::index_1d32(scope);
+///     let index = thread::index_1d_u32(launch_context);
 ///     // ...
 /// }
 /// ```
@@ -3269,7 +3272,7 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let KernelArgs {
         instantiate_types,
-        scope,
+        launch_context,
     } = args;
 
     if let Some(err) = reject_reserved_name(&input.sig.ident) {
@@ -3278,13 +3281,13 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     if let Some(err) = impl_trait_parameter_error(&input, "kernel") {
         return err.to_compile_error().into();
     }
-    if let Some(scope) = &scope
-        && let Some(parameter) = scope_parameter_collision(&input, scope)
+    if let Some(launch_context) = &launch_context
+        && let Some(parameter) = scope_parameter_collision(&input, launch_context)
     {
         return syn::Error::new_spanned(
             parameter,
             format!(
-                "kernel scope binding `{scope}` conflicts with a function parameter; choose a distinct name in `#[kernel(scope = ...)]`"
+                "kernel launch-context binding `{launch_context}` conflicts with a function parameter; choose a distinct name in `#[kernel(launch_context = ...)]`"
             ),
         )
         .to_compile_error()
@@ -3339,7 +3342,7 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     if has_generics && instantiate_types.is_empty() {
         // Generic kernel without explicit types - allow it!
         // Instantiation will happen from call sites (nvcc-style)
-        return generate_generic_kernel_no_instantiation(input, scope);
+        return generate_generic_kernel_no_instantiation(input, launch_context);
     }
 
     if !has_generics && !instantiate_types.is_empty() {
@@ -3354,10 +3357,10 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     if has_generics {
         // Generate wrapper kernels for each instantiation type
-        generate_generic_kernel(input, instantiate_types, scope)
+        generate_generic_kernel(input, instantiate_types, launch_context)
     } else {
         // Simple non-generic kernel
-        generate_simple_kernel(input, scope)
+        generate_simple_kernel(input, launch_context)
     }
 }
 
@@ -3857,7 +3860,7 @@ fn explicit_kernel_scope_bindings(scope: &RewrittenKernelScope) -> Vec<Stmt> {
             };
         },
         parse_quote! {
-            let #ident: ::cuda_device::thread::KernelScopeRef<'_, #domain, #coordinates> =
+            let #ident: ::cuda_device::thread::LaunchContextRef<'_, #domain, #coordinates> =
                 &#storage;
         },
     ]
@@ -3870,7 +3873,7 @@ fn append_kernel_scope_parameter(input: &mut ItemFn, scope: &RewrittenKernelScop
         coordinates,
     } = scope;
     input.sig.inputs.push(parse_quote! {
-        #ident: ::cuda_device::thread::KernelScopeRef<'_, #domain, #coordinates>
+        #ident: ::cuda_device::thread::LaunchContextRef<'_, #domain, #coordinates>
     });
 }
 
@@ -4655,7 +4658,7 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// use cuda_device::{kernel, launch_bounds, launch_contract, DisjointSlice};
 ///
-/// #[kernel(scope = scope)]
+/// #[kernel(launch_context = launch_context)]
 /// #[launch_bounds(256)]
 /// #[launch_contract(
 ///     domain = 1,
@@ -4665,7 +4668,7 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     min_compute_capability = (8, 0),
 /// )]
 /// pub fn map(mut output: DisjointSlice<f32>) {
-///     let index = thread::index_1d32(scope);
+///     let index = thread::index_1d_u32(launch_context);
 ///     // use `index` with a proof-carrying view...
 /// }
 /// ```
@@ -4676,7 +4679,7 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// spaces and the fixed cluster shape.
 ///
 /// `coordinates = u32` opts into narrow, proof-carrying coordinate APIs such
-/// as `thread::index_1d32(scope)`. The generated prepared launch checks each
+/// as `thread::index_1d_u32(launch_context)`. The generated prepared launch checks each
 /// axis:
 ///
 /// ```text
@@ -6781,31 +6784,31 @@ mod tests {
     }
 
     #[test]
-    fn kernel_scope_uses_the_contract_domain_and_coordinate_width_in_either_order() {
+    fn kernel_launch_context_uses_the_contract_domain_and_coordinate_width_in_either_order() {
         let mut attributed: ItemFn = parse_quote! {
             #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
             fn attributed() {
-                let _ = thread::index_1d32(scope);
+                let _ = thread::index_1d_u32(launch_context);
             }
         };
-        let scope = explicit_kernel_scope(&mut attributed, format_ident!("scope"));
+        let scope = explicit_kernel_scope(&mut attributed, format_ident!("launch_context"));
         attributed
             .block
             .stmts
             .splice(0..0, explicit_kernel_scope_bindings(&scope));
         let attributed = quote!(#attributed).to_string().replace(' ', "");
         assert!(attributed.contains("make_kernel_scope::<::cuda_device::thread::__internal::Domain1,::cuda_device::thread::__internal::U32Coordinates>"));
-        assert!(attributed.contains("letscope:::cuda_device::thread::KernelScopeRef"));
+        assert!(attributed.contains("letlaunch_context:::cuda_device::thread::LaunchContextRef"));
 
         let mut expanded_first: ItemFn = parse_quote! {
             fn expanded_first() {
                 unsafe {
                     ::cuda_device::thread::__launch_contract_config::<1, true>();
                 }
-                let _ = thread::index_1d32(context);
+                let _ = thread::index_1d_u32(launch_context);
             }
         };
-        let scope = explicit_kernel_scope(&mut expanded_first, format_ident!("context"));
+        let scope = explicit_kernel_scope(&mut expanded_first, format_ident!("launch_context"));
         expanded_first
             .block
             .stmts
@@ -6816,10 +6819,10 @@ mod tests {
         let mut two_dimensional: ItemFn = parse_quote! {
             #[launch_contract(domain = 2, coordinates = u32, block = (8, 8, 1))]
             fn two_dimensional() {
-                let _ = thread::coord_2d32(launch);
+                let _ = thread::coord_2d_u32(launch_context);
             }
         };
-        let scope = explicit_kernel_scope(&mut two_dimensional, format_ident!("launch"));
+        let scope = explicit_kernel_scope(&mut two_dimensional, format_ident!("launch_context"));
         two_dimensional
             .block
             .stmts
@@ -6829,17 +6832,18 @@ mod tests {
     }
 
     #[test]
-    fn kernel_scope_argument_composes_with_legacy_instantiations() {
-        let args: KernelArgs = syn::parse_str("f32, scope = launch, f64").unwrap();
+    fn kernel_launch_context_argument_composes_with_legacy_instantiations() {
+        let args: KernelArgs = syn::parse_str("f32, launch_context = launch_context, f64").unwrap();
         assert_eq!(args.instantiate_types.len(), 2);
-        assert_eq!(args.scope.unwrap(), "launch");
+        assert_eq!(args.launch_context.unwrap(), "launch_context");
 
-        let duplicate = syn::parse_str::<KernelArgs>("scope = a, scope = b")
-            .err()
-            .unwrap();
-        assert!(duplicate.to_string().contains("duplicate `scope`"));
+        let duplicate =
+            syn::parse_str::<KernelArgs>("launch_context = first, launch_context = second")
+                .err()
+                .unwrap();
+        assert!(duplicate.to_string().contains("duplicate `launch_context`"));
 
-        let unknown = syn::parse_str::<KernelArgs>("context = launch")
+        let unknown = syn::parse_str::<KernelArgs>("context = launch_context")
             .err()
             .unwrap();
         assert!(
@@ -6854,18 +6858,18 @@ mod tests {
         let mut function: ItemFn = parse_quote! {
             #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
             fn ordinary_names() {
-                let local = index_1d32();
-                let proof = alias(scope);
+                let local = index_1d_u32();
+                let proof = alias(launch_context);
                 consume(local, proof);
             }
         };
-        let scope = explicit_kernel_scope(&mut function, format_ident!("scope"));
+        let scope = explicit_kernel_scope(&mut function, format_ident!("launch_context"));
         let expanded = quote!(#function).to_string().replace(' ', "");
 
-        assert!(expanded.contains("index_1d32()"));
-        assert!(expanded.contains("alias(scope)"));
-        assert!(!expanded.contains("__internal::index_1d32"));
-        assert_eq!(scope.ident, "scope");
+        assert!(expanded.contains("index_1d_u32()"));
+        assert!(expanded.contains("alias(launch_context)"));
+        assert!(!expanded.contains("__internal::index_1d_u32"));
+        assert_eq!(scope.ident, "launch_context");
     }
 
     #[test]

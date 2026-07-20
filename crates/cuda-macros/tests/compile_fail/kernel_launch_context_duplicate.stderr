@@ -1,0 +1,5 @@
+error: duplicate `launch_context` argument in #[kernel]
+ --> tests/compile_fail/kernel_launch_context_duplicate.rs:6:34
+  |
+6 | #[kernel(launch_context = first, launch_context = second)]
+  |                                  ^^^^^^^^^^^^^^

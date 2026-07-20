@@ -1,0 +1,9 @@
+error[E0382]: borrow of moved value: `index`
+  --> tests/compile_fail/thread_index_1d_u32_not_copy.rs:13:13
+   |
+11 |     let index = __internal::index_1d_u32(launch_context);
+   |         ----- move occurs because `index` has type `ThreadIndex32<'_>`, which does not implement the `Copy` trait
+12 |     let _moved = index;
+   |                  ----- value moved here
+13 |     let _ = index.get();
+   |             ^^^^^ value borrowed here after move

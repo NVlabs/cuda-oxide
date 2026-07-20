@@ -1,5 +1,0 @@
-error: duplicate `scope` argument in #[kernel]
- --> tests/compile_fail/kernel_scope_duplicate.rs:6:25
-  |
-6 | #[kernel(scope = first, scope = second)]
-  |                         ^^^^^

@@ -35,8 +35,13 @@ pub enum LinearTiles<const N: usize> {}
 /// Index-space marker for a per-thread `ROWS × COLS` row-major tile.
 ///
 /// Thread coordinate `(y, x)` owns rows `y * ROWS..(y + 1) * ROWS` and
-/// columns `x * COLS..(x + 1) * COLS`. `ROW_STRIDE` is encoded in the type, so
-/// two layouts with different pitches cannot exchange tile proofs.
+/// columns `x * COLS..(x + 1) * COLS`.
+///
+/// `ROW_STRIDE` is the caller-declared logical pitch: the number of elements
+/// from the start of one row to the start of the next. It must match the
+/// buffer's layout. It is encoded in the type, so two layouts with different
+/// pitches cannot exchange tile proofs. The final row may be partial; each
+/// requested tile is checked against the slice length.
 pub enum RowMajorTiles<const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize> {}
 
 /// A checked local index into a static `N`-element view.
@@ -62,12 +67,9 @@ impl<const N: usize> LocalIndex32<N> {
 
     /// Construct a compile-time local index.
     ///
-    /// In a constant context, an invalid `I` is rejected during constant
-    /// evaluation. A valid monomorphized call folds to the immediate index.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `N` is zero, `N` does not fit in `u32`, or `I >= N`.
+    /// An invalid constant fails compilation: `N` must be non-zero, `N` must
+    /// fit in `u32`, and `I` must be less than `N`. A valid monomorphized call
+    /// folds to the immediate index.
     #[inline(always)]
     pub const fn constant<const I: u32>() -> Self {
         const {
@@ -235,7 +237,9 @@ pub struct StaticViewMut32<'a, T, const N: usize> {
 /// A checked `ROWS × COLS` mutable tile in a row-major parent allocation.
 ///
 /// The runtime representation is one pointer. Dimensions and row stride live
-/// in the type, and construction checks the whole rectangle once:
+/// in the type, and construction checks the whole rectangle once.
+/// `ROW_STRIDE` is the caller-declared logical pitch and must match the parent
+/// buffer's layout:
 ///
 /// ```text
 /// base ── row 0: [ COLS elements ] ... stride gap
@@ -446,6 +450,10 @@ impl<'a, T, const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize>
     DisjointSlice<'a, T, RowMajorTiles<ROWS, COLS, ROW_STRIDE>>
 {
     /// Check one complete rectangular tile and return a check-free static view.
+    ///
+    /// `ROW_STRIDE` is the caller-declared logical row pitch and must match the
+    /// buffer's layout. The slice length does not have to be a multiple of the
+    /// pitch; a tile is returned only when its complete rectangle fits.
     ///
     /// Construction proves the following before creating a pointer:
     ///
