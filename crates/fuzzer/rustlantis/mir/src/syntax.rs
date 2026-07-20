@@ -422,7 +422,7 @@ impl TyId {
         }
     }
 
-    // If doesn't contain printer
+    // If it doesn't contain printer
     pub fn determ_printable(self, tcx: &TyCtxt) -> bool {
         !self.contains(tcx, |tcx, ty| ty.is_any_ptr(tcx))
     }
@@ -602,7 +602,6 @@ pub enum UnOp {
 }
 
 impl Literal {
-    // TODO: this doesn't need tcx
     pub fn ty(&self) -> TyId {
         match self {
             Literal::Int(_, IntTy::I8) => TyCtxt::I8,
