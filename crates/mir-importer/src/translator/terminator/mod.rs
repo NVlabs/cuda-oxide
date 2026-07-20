@@ -1403,9 +1403,12 @@ fn translate_function_item_call(
 ///
 /// ## Important: Closure Body Resolution
 ///
-/// In unified compilation with `std`, `Instance::resolve` for `<Closure as FnOnce>::call_once`
-/// returns a trait method **shim**, not the closure body directly. We must extract the closure's
-/// DefId from `args[0]`'s type and resolve that to get the actual closure body's mangled name.
+/// When an `Fn` or `FnMut` closure is requested through `FnOnce`,
+/// `Instance::resolve` returns a `ClosureOnce` adapter shim rather than the
+/// closure body. Other closure calls may resolve directly to the body. In
+/// either case, extract the closure DefId from `args[0]` so the emitted device
+/// call targets the body; `resolved_is_shim` separately controls receiver
+/// adaptation.
 ///
 /// See `device_closures/README.md` for detailed documentation.
 #[allow(clippy::too_many_arguments)]
@@ -1437,9 +1440,9 @@ fn translate_closure_call(
     // carries the already-resolved concrete type, so use that.
     let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
 
-    // Extract the closure body's name from the closure type in args[0].
-    // This is critical for unified compilation where Instance::resolve returns
-    // a trait shim instead of the closure body directly.
+    // Extract the closure body's name from the closure type in args[0]. This
+    // avoids targeting a ClosureOnce adapter when instance resolution selected
+    // one, while remaining correct for calls that resolve directly to the body.
     let closure_body_name = extract_closure_body_name(&args[0], body);
 
     let raw_callee = closure_body_name
@@ -1470,22 +1473,12 @@ fn translate_closure_call(
     )?;
     last_op = tuple_last_op;
 
-    // Determine whether the resolved closure body expects a reference.
-    //
-    // In `std` mode, rustc generates `FnOnce::call_once(self, args)` which passes
-    // the closure BY VALUE. But the closure body expects `&self` (a reference).
-    //
-    // In `no_std` mode, rustc generates `FnMut::call_mut(&mut self, args)` which
-    // already passes a reference.
-    //
-    // When we have call_once, we need to create a reference to the closure value
-    // before calling the closure body.
-    //
-    // A compiler shim for `FnOnce` over an `Fn`/`FnMut` closure receives the
-    // closure by value but calls a body that expects a reference. A genuine
-    // by-value `FnOnce` closure resolves directly to its body (`Item`) and must
-    // stay by value. Calls whose MIR receiver is already a reference need no
-    // extra borrow in either case.
+    // Determine whether bypassing a resolved adapter shim requires us to
+    // reproduce its receiver borrow. A ClosureOnce shim for an `Fn`/`FnMut`
+    // closure receives the closure by value but calls a body that expects a
+    // reference. A genuine by-value `FnOnce` closure resolves directly to its
+    // body and must stay by value. A receiver that MIR already passes by
+    // reference needs no extra borrow.
     let receiver_needs_borrow = resolved_is_shim
         && operand_type(&args[0], body).is_some_and(|ty| {
             !matches!(
@@ -1495,8 +1488,7 @@ fn translate_closure_call(
         });
 
     let self_arg = if receiver_needs_borrow {
-        // For call_once: self is passed by value, but closure body expects reference.
-        // Create a MirRefOp to take a reference to the closure value.
+        // Reproduce the adapter shim's borrow before calling the body directly.
         let self_ty = self_value.get_type(ctx);
         let ptr_ty = dialect_mir::types::MirPtrType::get(ctx, self_ty, true, 0);
 
@@ -1534,7 +1526,7 @@ fn translate_closure_call(
         self_value
     };
 
-    // Build unpacked arguments: start with self (or ref to self for call_once)
+    // Build unpacked arguments, starting with the original or adapted receiver.
     let mut unpacked_args = vec![self_arg];
 
     // Unpack the tuple - extract each field
@@ -1776,12 +1768,11 @@ fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo
 
 /// Extracts the closure body's mangled name from a closure operand.
 ///
-/// In unified compilation with `std`, when we see a call like:
+/// When instance resolution selects an adapter shim for a call like:
 ///   `<{closure} as FnOnce<(u32,)>>::call_once(closure_ref, args_tuple)`
 ///
-/// The `call_name` from `Instance::resolve` gives us the trait method shim's name,
-/// not the closure body. We need to extract the closure's DefId from `args[0]`'s type
-/// and resolve that to get the actual closure body's mangled name.
+/// the resolved call name identifies the shim, not the closure body. Extract
+/// the closure's DefId from `args[0]` and resolve the body independently.
 ///
 /// The closure argument can be:
 /// - A direct closure value (type is `Closure(def, substs)`)
@@ -1804,8 +1795,8 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
         _ => return None,
     };
 
-    // Get the closure body instance directly, NOT through resolve_closure
-    // (which returns a call_once shim in unified/std compilation).
+    // Get the closure body instance directly. Resolving the callable-trait
+    // method can legitimately select a ClosureOnce adapter instead.
     //
     // The closure_def.def_id() gives us the DefId of the closure body.
     // We construct the mangled name by creating an FnDef and resolving it.

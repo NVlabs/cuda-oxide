@@ -64,8 +64,11 @@ that body directly or introduce an adapter:
 actual FnOnce, requested FnOnce:
   owned self ---------------------------> closure body(self, args...)
 
-actual Fn/FnMut, requested FnOnce:
+actual Fn, requested FnOnce:
   owned self -> ClosureOnce shim -> borrow self -> closure body(&self, args...)
+
+actual FnMut, requested FnOnce:
+  owned self -> ClosureOnce shim -> borrow self -> closure body(&mut self, args...)
 
 requested Fn/FnMut:
   &self / &mut self --------------------> closure body(receiver, args...)
