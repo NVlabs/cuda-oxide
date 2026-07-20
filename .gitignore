@@ -13,6 +13,8 @@ target/
 .DS_Store
 *.tar.gz
 .cursor/
+.idea/
+*.iml
 .vscode/
 .claude/
 .codex/
