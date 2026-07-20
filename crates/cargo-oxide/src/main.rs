@@ -400,7 +400,7 @@ fn main() {
                 validate_nvvm_ir_arch(&ctx, "cargo build", emit_nvvm_ir, arch.as_deref());
                 commands::codegen_cargo_passthrough(
                     &ctx,
-                    "build",
+                    commands::CargoPassthroughSubcommand::Build,
                     commands::CargoPassthroughOptions {
                         verbose,
                         emit_nvvm_ir,
@@ -426,7 +426,7 @@ fn main() {
             let ctx = commands::resolve_context();
             commands::codegen_cargo_passthrough(
                 &ctx,
-                "test",
+                commands::CargoPassthroughSubcommand::Test,
                 commands::CargoPassthroughOptions {
                     verbose,
                     emit_nvvm_ir: false,

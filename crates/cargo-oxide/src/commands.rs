@@ -248,7 +248,7 @@ pub fn codegen_run(
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
-    apply_codegen_rustflags(&mut cmd, ctx, false, &[]);
+    apply_codegen_rustflags(&mut cmd, ctx, CodegenProfilePolicy::ReleaseLike, &[]);
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch);
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
 
@@ -562,7 +562,12 @@ fn build_interop_device_crate(
         })
         .into_iter()
         .collect::<Vec<_>>();
-    apply_codegen_rustflags(&mut cmd, ctx, false, &fingerprinted_cfgs);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        CodegenProfilePolicy::ReleaseLike,
+        &fingerprinted_cfgs,
+    );
     // This is an internal artifact contract, so it must override a project
     // `[env]` default for the same variable.
     cmd.env("CUDA_OXIDE_PTX_DIR", &ptx_dir);
@@ -666,7 +671,12 @@ fn codegen_build_host_binary(
     apply_default_sanitizer_line_tables(&mut cmd, ctx);
     let fingerprint =
         sanitize_codegen_fingerprint_cfg(ctx, verbose, no_fmad, arch, detected_device_arch, None);
-    apply_codegen_rustflags(&mut cmd, ctx, false, &[fingerprint]);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        CodegenProfilePolicy::ReleaseLike,
+        &[fingerprint],
+    );
     apply_output_mode(&mut cmd, false, arch);
     apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
 
@@ -1263,7 +1273,7 @@ pub fn codegen_build(
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
-    apply_codegen_rustflags(&mut cmd, ctx, false, &[]);
+    apply_codegen_rustflags(&mut cmd, ctx, CodegenProfilePolicy::ReleaseLike, &[]);
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch);
 
     println!("Building {}...", example);
@@ -1557,6 +1567,33 @@ pub struct CargoPassthroughOptions<'a> {
     pub no_fmad: bool,
 }
 
+/// Cargo operations supported by the passthrough path.
+///
+/// The subcommand determines who owns profile-related rustc flags: regular
+/// builds retain cuda-oxide's release-like defaults, while tests leave the
+/// selected Cargo profile intact (including `--release` and `--profile`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CargoPassthroughSubcommand {
+    Build,
+    Test,
+}
+
+impl CargoPassthroughSubcommand {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Test => "test",
+        }
+    }
+
+    fn codegen_profile(self) -> CodegenProfilePolicy {
+        match self {
+            Self::Build => CodegenProfilePolicy::ReleaseLike,
+            Self::Test => CodegenProfilePolicy::CargoSelected,
+        }
+    }
+}
+
 fn normalize_device_codegen_crates(raw: &str) -> Result<String, String> {
     let mut normalized = Vec::new();
     for item in raw.split(',') {
@@ -1772,7 +1809,7 @@ fn backend_artifact_identity(path: &Path) -> String {
 
 fn cargo_passthrough_command(
     ctx: &Context,
-    cargo_subcommand: &str,
+    cargo_subcommand: CargoPassthroughSubcommand,
     opts: &CargoPassthroughOptions<'_>,
     cargo_args: &[String],
 ) -> Result<Command, String> {
@@ -1787,7 +1824,7 @@ fn cargo_passthrough_command(
         passthrough_codegen_fingerprint(ctx, opts, owner_filter.as_deref(), target_arch);
     fingerprinted_device_cfgs.push(format!("cuda_oxide_internal_codegen_env=\"{fingerprint}\""));
     let mut cmd = Command::new("cargo");
-    cmd.arg(cargo_subcommand);
+    cmd.arg(cargo_subcommand.as_str());
     if let Some(features) = opts.features {
         cmd.args(["--features", features]);
     }
@@ -1796,7 +1833,12 @@ fn cargo_passthrough_command(
     // Project configuration provides defaults. Explicit wrapper flags and
     // internal compiler requirements are applied afterward and therefore win.
     apply_common_codegen_env(&mut cmd, ctx, opts.verbose, opts.no_fmad);
-    apply_codegen_rustflags(&mut cmd, ctx, false, &fingerprinted_device_cfgs);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        cargo_subcommand.codegen_profile(),
+        &fingerprinted_device_cfgs,
+    );
 
     if let Some(cargo_target_dir) = opts.cargo_target_dir {
         cmd.env("CARGO_TARGET_DIR", cargo_target_dir);
@@ -1815,12 +1857,13 @@ fn cargo_passthrough_command(
 /// incremental behavior should remain intact.
 pub fn codegen_cargo_passthrough(
     ctx: &Context,
-    cargo_subcommand: &str,
+    cargo_subcommand: CargoPassthroughSubcommand,
     opts: CargoPassthroughOptions<'_>,
     cargo_args: &[String],
 ) {
+    let cargo_subcommand_name = cargo_subcommand.as_str();
     println!("=========================================");
-    println!("RUSTC-CODEGEN-CUDA CARGO {}", cargo_subcommand);
+    println!("RUSTC-CODEGEN-CUDA CARGO {}", cargo_subcommand_name);
     println!("=========================================");
     println!();
 
@@ -1836,11 +1879,11 @@ pub fn codegen_cargo_passthrough(
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
     if displayed_args.is_empty() {
-        println!("Running cargo {}...", cargo_subcommand);
+        println!("Running cargo {}...", cargo_subcommand_name);
     } else {
         println!(
             "Running cargo {} {}...",
-            cargo_subcommand,
+            cargo_subcommand_name,
             displayed_args.join(" ")
         );
     }
@@ -1850,14 +1893,14 @@ pub fn codegen_cargo_passthrough(
     if !status.success() {
         eprintln!(
             "\nCargo {} failed with exit code: {:?}",
-            cargo_subcommand,
+            cargo_subcommand_name,
             status.code()
         );
         std::process::exit(status.code().unwrap_or(1));
     }
 
     println!();
-    println!("✓ Cargo {} succeeded", cargo_subcommand);
+    println!("✓ Cargo {} succeeded", cargo_subcommand_name);
 }
 
 // =============================================================================
@@ -1917,7 +1960,7 @@ pub fn codegen_show_pipeline(
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
     apply_config_env(&mut cmd, ctx);
-    apply_codegen_rustflags(&mut cmd, ctx, false, &[]);
+    apply_codegen_rustflags(&mut cmd, ctx, CodegenProfilePolicy::ReleaseLike, &[]);
     cmd.env("CUDA_OXIDE_VERBOSE", "1");
     cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
     cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
@@ -2023,7 +2066,12 @@ pub fn codegen_debug(
     }
 
     apply_config_env(&mut cmd, ctx);
-    apply_codegen_rustflags(&mut cmd, ctx, true, &[]);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        CodegenProfilePolicy::ReleaseLikeWithDebugInfo,
+        &[],
+    );
     cmd.env("CARGO_PROFILE_RELEASE_DEBUG", "2");
     apply_output_mode(&mut cmd, false, target_arch);
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
@@ -2864,12 +2912,28 @@ fn resolve_example_dir(ctx: &Context, example: &str) -> PathBuf {
 
 const ENCODED_RUSTFLAGS_SEPARATOR: char = '\u{1f}';
 
+/// Profile-related rustc flags owned by cuda-oxide.
+///
+/// Backend selection and MIR/symbol invariants are always applied separately.
+/// `CargoSelected` deliberately adds no optimization, assertion, or debug-info
+/// flags so Cargo's chosen profile remains authoritative.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CodegenProfilePolicy {
+    CargoSelected,
+    ReleaseLike,
+    ReleaseLikeWithDebugInfo,
+}
+
 /// Construct boundary-preserving rustc flags for Cargo.
 ///
 /// `RUSTFLAGS` is whitespace-split by Cargo, which corrupts a single flag
 /// containing spaces. `CARGO_ENCODED_RUSTFLAGS` uses unit separators and keeps
 /// every configured array element and `--device-cfg` value intact.
-fn build_encoded_rustflags(ctx: &Context, debug: bool, device_cfgs: &[String]) -> String {
+fn build_encoded_rustflags(
+    ctx: &Context,
+    profile: CodegenProfilePolicy,
+    device_cfgs: &[String],
+) -> String {
     let existing_encoded = std::env::var("CARGO_ENCODED_RUSTFLAGS").ok();
     let existing = std::env::var("RUSTFLAGS").ok();
     let mut explicit_rustflags = Vec::new();
@@ -2879,7 +2943,7 @@ fn build_encoded_rustflags(ctx: &Context, debug: bool, device_cfgs: &[String]) -
     }
     build_encoded_rustflags_with_existing(
         &ctx.backend_so,
-        debug,
+        profile,
         &ctx.config.extra_rustflags,
         &explicit_rustflags,
         existing_encoded.as_deref(),
@@ -2889,7 +2953,7 @@ fn build_encoded_rustflags(ctx: &Context, debug: bool, device_cfgs: &[String]) -
 
 fn build_encoded_rustflags_with_existing(
     backend_so: &Path,
-    debug: bool,
+    profile: CodegenProfilePolicy,
     configured_rustflags: &[String],
     explicit_rustflags: &[String],
     existing_encoded_rustflags: Option<&str>,
@@ -2913,23 +2977,35 @@ fn build_encoded_rustflags_with_existing(
         flags.extend(existing.split_whitespace().map(str::to_string));
     }
     flags.extend(explicit_rustflags.iter().cloned());
+    flags.push(format!("-Zcodegen-backend={}", backend_so.display()));
+    if matches!(
+        profile,
+        CodegenProfilePolicy::ReleaseLike | CodegenProfilePolicy::ReleaseLikeWithDebugInfo
+    ) {
+        flags.extend([
+            "-Copt-level=3".to_string(),
+            "-Cdebug-assertions=off".to_string(),
+        ]);
+    }
     flags.extend([
-        format!("-Zcodegen-backend={}", backend_so.display()),
-        "-Copt-level=3".to_string(),
-        "-Cdebug-assertions=off".to_string(),
         "-Zmir-enable-passes=-JumpThreading".to_string(),
         "-Csymbol-mangling-version=v0".to_string(),
     ]);
-    if debug {
+    if profile == CodegenProfilePolicy::ReleaseLikeWithDebugInfo {
         flags.push("-Cdebuginfo=2".to_string());
     }
     flags.join(&ENCODED_RUSTFLAGS_SEPARATOR.to_string())
 }
 
-fn apply_codegen_rustflags(cmd: &mut Command, ctx: &Context, debug: bool, device_cfgs: &[String]) {
+fn apply_codegen_rustflags(
+    cmd: &mut Command,
+    ctx: &Context,
+    profile: CodegenProfilePolicy,
+    device_cfgs: &[String],
+) {
     cmd.env(
         "CARGO_ENCODED_RUSTFLAGS",
-        build_encoded_rustflags(ctx, debug, device_cfgs),
+        build_encoded_rustflags(ctx, profile, device_cfgs),
     )
     .env_remove("RUSTFLAGS");
 }
@@ -4271,7 +4347,12 @@ path = "src/other.rs"
             None,
             Some(Path::new("/tmp/generated-ptx")),
         );
-        apply_codegen_rustflags(&mut cmd, &ctx, false, &[fingerprint]);
+        apply_codegen_rustflags(
+            &mut cmd,
+            &ctx,
+            CodegenProfilePolicy::ReleaseLike,
+            &[fingerprint],
+        );
         let encoded = command_env(&cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
         assert!(has_codegen_env_fingerprint(&decoded_rustflags(&encoded)));
     }
@@ -4344,10 +4425,73 @@ path = "src/other.rs"
     }
 
     #[test]
-    fn encoded_rustflags_preserve_inherited_flags_but_required_flags_win() {
+    fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
         let rustflags = build_encoded_rustflags_with_existing(
             Path::new("/tmp/librustc_codegen_cuda.so"),
-            false,
+            CargoPassthroughSubcommand::Test.codegen_profile(),
+            &[],
+            &["--cfg".to_string(), "device_test".to_string()],
+            None,
+            None,
+        );
+        let flags = decoded_rustflags(&rustflags);
+
+        assert_eq!(
+            flags,
+            [
+                "--cfg",
+                "device_test",
+                "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
+                "-Zmir-enable-passes=-JumpThreading",
+                "-Csymbol-mangling-version=v0",
+            ]
+        );
+        assert!(!flags.iter().any(|flag| flag.starts_with("-Copt-level")));
+        assert!(
+            !flags
+                .iter()
+                .any(|flag| flag.starts_with("-Cdebug-assertions"))
+        );
+        assert!(!flags.iter().any(|flag| flag.starts_with("-Cdebuginfo")));
+
+        let ctx = test_context(OxideConfig::default());
+        let opts = CargoPassthroughOptions {
+            verbose: false,
+            emit_nvvm_ir: false,
+            arch: None,
+            features: None,
+            cargo_target_dir: None,
+            device_codegen_crate: None,
+            device_cfgs: &[],
+            no_fmad: false,
+        };
+        for cargo_args in [
+            vec!["--release".to_string()],
+            vec!["--profile".to_string(), "ci".to_string()],
+        ] {
+            let cmd = cargo_passthrough_command(
+                &ctx,
+                CargoPassthroughSubcommand::Test,
+                &opts,
+                &cargo_args,
+            )
+            .unwrap();
+            let mut expected = vec!["test".to_string()];
+            expected.extend(cargo_args);
+            assert_eq!(
+                cmd.get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn build_passthrough_retains_release_profile_and_required_flags() {
+        let rustflags = build_encoded_rustflags_with_existing(
+            Path::new("/tmp/librustc_codegen_cuda.so"),
+            CargoPassthroughSubcommand::Build.codegen_profile(),
             &[],
             &[],
             Some(
@@ -4377,7 +4521,7 @@ path = "src/other.rs"
     fn encoded_rustflags_preserve_configured_flag_boundaries_and_spaces() {
         let rustflags = build_encoded_rustflags_with_existing(
             Path::new("/tmp/backend path/librustc_codegen_cuda.so"),
-            false,
+            CodegenProfilePolicy::ReleaseLike,
             &["--cfg".to_string(), "model=\"alpha beta\"".to_string()],
             &[],
             None,
@@ -4398,10 +4542,10 @@ path = "src/other.rs"
     }
 
     #[test]
-    fn encoded_rustflags_ignore_empty_existing_flags() {
+    fn debug_profile_retains_release_defaults_and_adds_debuginfo() {
         let rustflags = build_encoded_rustflags_with_existing(
             Path::new("/tmp/librustc_codegen_cuda.so"),
-            true,
+            CodegenProfilePolicy::ReleaseLikeWithDebugInfo,
             &[],
             &[],
             None,
@@ -4409,7 +4553,11 @@ path = "src/other.rs"
         );
         let flags = decoded_rustflags(&rustflags);
 
+        assert!(flags.contains(&"-Copt-level=3"));
+        assert!(flags.contains(&"-Cdebug-assertions=off"));
         assert!(flags.contains(&"-Cdebuginfo=2"));
+        assert!(flags.contains(&"-Zmir-enable-passes=-JumpThreading"));
+        assert!(flags.contains(&"-Csymbol-mangling-version=v0"));
         assert!(!flags.contains(&""));
     }
 
@@ -4486,7 +4634,9 @@ MY_BUILD_FLAG = "configured"
             "--nocapture".to_string(),
         ];
 
-        let cmd = cargo_passthrough_command(&ctx, "test", &opts, &cargo_args).unwrap();
+        let cmd =
+            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Test, &opts, &cargo_args)
+                .unwrap();
         assert_eq!(
             cmd.get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
@@ -4551,7 +4701,8 @@ MY_BUILD_FLAG = "configured"
             no_fmad: false,
         };
 
-        let cmd = cargo_passthrough_command(&ctx, "test", &opts, &[]).unwrap();
+        let cmd =
+            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Test, &opts, &[]).unwrap();
         assert_eq!(
             cmd.get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
