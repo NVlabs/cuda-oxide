@@ -27,6 +27,7 @@
 | Module               | Description                                                                  | GPU     |
 |----------------------|------------------------------------------------------------------------------|---------|
 | `thread`             | Thread/block IDs, `index_1d`/`index_2d::<S>`, `sync_threads`                 | All     |
+| `config`             | Metadata-only policy shapes, layouts, memory spaces, tiles, and atoms        | All     |
 | `disjoint`           | `DisjointSlice<T, IndexSpace>` -- safe parallel writes via `ThreadIndex`     | All     |
 | `shared`             | `SharedArray<T, N>`, `DynamicSharedArray<T>` -- block-scoped shared memory   | All     |
 | `warp`               | Shuffle (xor/up/down/idx for i32 and f32), lane_id, vote (all/any/ballot)    | All     |
@@ -74,6 +75,24 @@ A `#[launch_contract(domain = 1, ...)]` moves the 1-D geometry proof into the
 safe prepared host launch; raw launch geometry is unsafe. For non-trivial
 patterns (reductions, histograms), `get_unchecked_mut(usize)` is the unsafe
 element-access escape hatch.
+
+### Compile-time kernel policies
+
+The `config` module provides names for shapes, layouts, memory spaces, tiles,
+and operations. These are zero-sized descriptions: they do not allocate or
+access memory. A kernel library can place them and tuning constants on a policy
+trait, then specialize one generic kernel for each policy type. The policy is
+not passed to the GPU at runtime.
+
+```rust
+#[kernel]
+#[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+#[launch_contract(domain = 1)]
+fn transform<P: TransformPolicy>(out: DisjointSlice<u32>) { /* ... */ }
+```
+
+`MAX_THREADS` is the largest accepted block, not an exact block size. A
+prepared launch checks the concrete value for `P` before calling CUDA.
 
 ### `SharedArray<T, N, ALIGN>` and `DynamicSharedArray<T, ALIGN>`
 

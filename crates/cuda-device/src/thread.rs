@@ -954,6 +954,10 @@ pub unsafe fn __launch_contract_config<const DOMAIN: u8, const U32_COORDINATES: 
 /// - `MIN_BLOCKS` - Minimum blocks per SM for occupancy (optional, default 0 = unspecified).
 ///   Maps to `.minnctapersm`.
 ///
+/// `MAX_THREADS` does not require an exact block size. For example, a maximum
+/// of 256 also permits a launch with 128 threads. Use an exact host
+/// `#[launch_contract(block = (...))]` when the kernel requires one shape.
+///
 /// # Performance Impact
 ///
 /// Launch bounds help the compiler:
@@ -1031,6 +1035,8 @@ const fn validate_launch_bounds(max_threads: u32) {
 /// - `FACTOR = 0` requests full unrolling of this loop and requires a
 ///   compile-time-known trip count.
 /// - `FACTOR >= 2` requests partial unrolling of this loop by that factor.
+///   It groups that many iterations; it does not limit the loop to that many
+///   total iterations, and a remainder still runs.
 #[inline(never)]
 pub fn __unroll_config<const FACTOR: u32>() {
     const { validate_unroll_factor(FACTOR) }

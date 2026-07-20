@@ -19,6 +19,8 @@
 //! A higher-level library decides which descriptions it supports and gives
 //! them behavior. For example, a GEMM library can require a shared-memory tile
 //! to have an alignment and shape accepted by its copy instruction.
+//! Using one of these types as a generic kernel policy creates a separate
+//! specialization. The policy is not passed to the GPU as a runtime argument.
 //!
 //! # Example
 //!

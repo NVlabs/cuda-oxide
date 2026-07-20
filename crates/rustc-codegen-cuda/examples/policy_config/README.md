@@ -26,12 +26,17 @@ trait VectorPolicy: Policy {
     const UNROLL: u32;
 }
 
-#[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+#[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)] // maximum, not exact
+#[launch_contract(domain = 1)]
 fn transform<P: VectorPolicy>() {
-    #[unroll(P::UNROLL)] // `unroll` belongs on the loop.
+    #[unroll(P::UNROLL)] // Copies this many loop iterations at a time.
     while lane < runtime_count { /* ... */ }
 }
 ```
+
+`MAX_THREADS` is the largest block the specialization accepts; it does not
+force every launch to use that many threads. `UNROLL = 4` does not run the loop
+only four times. It groups four iterations and still handles any remainder.
 
 rustc specializes the kernel once for each policy type. cuda-oxide reads the
 concrete constants from monomorphized MIR, so there is no runtime policy
@@ -45,6 +50,21 @@ transform::<WideTilePolicy>  -> transform_TID_<B> -> .maxntid 256
 `PolicyId` is the explicit library-facing stable identity. The `_TID_` entry
 name is the compiler-generated identity that the host and device sides agree
 on for the concrete Rust specialization.
+
+The same concrete maximum is also used by the prepared host launch:
+
+```rust,ignore
+let launch = module.prepare_transform::<SmallTilePolicy>(
+    LaunchConfig1D::new(1, 64, 0),
+)?;
+
+// Still unsafe because this example passes raw pointers; the launch geometry
+// itself was checked before the driver call.
+unsafe { module.transform::<SmallTilePolicy>(&stream, &launch, input, output, count)? };
+```
+
+For `SmallTilePolicy`, preparation rejects blocks over 64 threads. For
+`WideTilePolicy`, it rejects blocks over 256 threads.
 
 Build and inspect the generated PTX without a GPU:
 
@@ -82,9 +102,11 @@ type TileA = Tile<Shape2<64, 128>, Swizzled<128>, Shared, Block>;
 Policy expressions are supported for `launch_bounds` and loop `unroll` first.
 Generic expressions currently need Rust's `generic_const_exprs` feature. Host
 `launch_contract` fields, cluster dimensions, and dynamic shared-memory sizes
-remain literal. A host launch contract requires a literal maximum-thread launch
-bound, but its device-only minimum-block occupancy hint may still come from a
-policy. An unsafe combination is rejected instead of weakening the host check.
+remain literal. A policy-based `launch_bounds` maximum composes with a host
+launch contract and is checked separately for each specialization. The
+minimum-block value remains a compiler occupancy hint; it is not launch
+geometry. Other named constants used for that maximum must be visible at module
+scope because the host contract is generated beside the kernel function.
 
 The example needs no GPU by default. Passing `--launch` is an optional runtime
 check that allocates both tile sizes and executes both specializations.

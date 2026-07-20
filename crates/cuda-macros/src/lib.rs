@@ -450,12 +450,12 @@ enum DynamicSharedContract {
     Range { min_bytes: u32, max_bytes: u32 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 struct CudaModuleLaunchContract {
     domain: u8,
     u32_coordinates: bool,
     exact_block: Option<(u32, u32, u32)>,
-    max_block_threads: Option<u32>,
+    max_block_threads: Option<ConstU32Expr>,
     dynamic_shared: DynamicSharedContract,
     dynamic_shared_alignment: u32,
     min_compute_capability: (u32, u32),
@@ -1161,7 +1161,7 @@ fn cuda_module_kernel(
     rewrite_loop_unroll_attrs(&mut configured_item)?;
     add_launch_bounds_evaluatability_from_attrs(&mut configured_item)?;
     let mut generics = configured_item.sig.generics;
-    if let Some(contract) = launch_contract {
+    if let Some(contract) = launch_contract.as_ref() {
         add_cuda_module_disjoint_contract_bounds(&mut generics, &params, contract.domain);
     }
     let is_generic = has_codegen_generics(&item_fn.sig.generics);
@@ -1845,12 +1845,6 @@ fn cuda_module_launch_contract(
     }
 
     let launch_bounds = cuda_module_launch_bounds(attrs)?;
-    if launch_bounds.is_some_and(|bounds| bounds.max_threads == 0) {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "contracted #[launch_bounds] must allow at least one X-dimension thread",
-        ));
-    }
     if args.exact_block.is_none() && launch_bounds.is_none() {
         return Err(syn::Error::new_spanned(
             attr,
@@ -1858,7 +1852,12 @@ fn cuda_module_launch_contract(
         ));
     }
     let max_block_threads = launch_bounds.map(|bounds| bounds.max_threads);
-    if let (Some(exact), Some(maximum)) = (args.exact_block, max_block_threads) {
+    if let (Some(exact), Some(maximum)) = (
+        args.exact_block,
+        max_block_threads
+            .as_ref()
+            .and_then(|maximum| maximum.literal_value),
+    ) {
         let exact_threads = u64::from(exact.0)
             .checked_mul(u64::from(exact.1))
             .and_then(|xy| xy.checked_mul(u64::from(exact.2)))
@@ -1891,12 +1890,14 @@ fn cuda_module_launch_contract(
     }))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LiteralLaunchBounds {
-    max_threads: u32,
+#[derive(Clone)]
+struct ContractLaunchBounds {
+    max_threads: ConstU32Expr,
 }
 
-fn cuda_module_launch_bounds(attrs: &[syn::Attribute]) -> syn::Result<Option<LiteralLaunchBounds>> {
+fn cuda_module_launch_bounds(
+    attrs: &[syn::Attribute],
+) -> syn::Result<Option<ContractLaunchBounds>> {
     let matching: Vec<_> = attrs
         .iter()
         .filter(|attr| attr_path_ends_with(attr, "launch_bounds"))
@@ -1911,13 +1912,9 @@ fn cuda_module_launch_bounds(attrs: &[syn::Attribute]) -> syn::Result<Option<Lit
         return Ok(None);
     };
     let args = attr.parse_args::<LaunchBoundsArgs>()?;
-    let Some(max_threads) = args.max_threads.literal_value else {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "launch_bounds const expressions are supported for device compilation, but a kernel with launch_contract currently requires a literal maximum-thread bound so its host-side contract can be checked",
-        ));
-    };
-    Ok(Some(LiteralLaunchBounds { max_threads }))
+    Ok(Some(ContractLaunchBounds {
+        max_threads: args.max_threads,
+    }))
 }
 
 fn validate_dimensions_for_domain(
@@ -2160,14 +2157,36 @@ fn generate_cuda_module_launch_contract_impl(kernel: &CudaModuleKernel) -> Optio
         3 => quote! { ::cuda_core::LaunchConfig3D },
         _ => unreachable!(),
     };
+    let max_threads_binding = internal_ident("__cuda_oxide_max_threads");
     let block = if let Some((x, y, z)) = contract.exact_block {
         quote! { ::cuda_core::BlockRequirement::Exact((#x, #y, #z)) }
     } else {
-        let max_threads = contract
+        contract
             .max_block_threads
+            .as_ref()
             .expect("validated contract without exact block has launch bounds");
-        quote! { ::cuda_core::BlockRequirement::MaxThreads(#max_threads) }
+        quote! { ::cuda_core::BlockRequirement::MaxThreads(#max_threads_binding) }
     };
+    let launch_bounds_assertions = contract.max_block_threads.as_ref().map(|maximum| {
+        let maximum = &maximum.expr;
+        let exact_assertion = contract.exact_block.map(|(x, y, z)| {
+            let exact_threads = u128::from(x) * u128::from(y) * u128::from(z);
+            quote! {
+                assert!(
+                    #exact_threads <= (#max_threads_binding) as u128,
+                    "launch_contract exact block exceeds launch_bounds maximum threads",
+                );
+            }
+        });
+        quote! {
+            let #max_threads_binding: u32 = #maximum;
+            assert!(
+                #max_threads_binding > 0,
+                "launch_bounds maximum threads must be greater than zero",
+            );
+            #exact_assertion
+        }
+    });
     let alignment = contract.dynamic_shared_alignment;
     let dynamic_shared = match contract.dynamic_shared {
         DynamicSharedContract::Exact(bytes) => quote! {
@@ -2204,12 +2223,14 @@ fn generate_cuda_module_launch_contract_impl(kernel: &CudaModuleKernel) -> Optio
         #where_clause
         {
             type Config = #config_ty;
-            const SPEC: ::cuda_core::LaunchContractSpec =
+            const SPEC: ::cuda_core::LaunchContractSpec = {
+                #launch_bounds_assertions
                 ::cuda_core::LaunchContractSpec::new(#kernel_name, #block, #dynamic_shared)
                     #cluster
                     #cooperative
                     #compute_capability
-                    #coordinates;
+                    #coordinates
+            };
         }
     })
 }
@@ -4647,6 +4668,11 @@ fn substitute_type(ty: &Type, param: &syn::Ident, replacement: &Type) -> TokenSt
 ///   depend on a generic parameter currently require Rust's
 ///   `generic_const_exprs` feature.
 ///
+/// The first value is a maximum, not an exact launch shape. When a kernel also
+/// has `#[launch_contract(domain = ...)]`, each policy specialization carries
+/// its evaluated maximum into the host contract. Preparation rejects a larger
+/// block before the CUDA launch call.
+///
 /// # Requirements
 ///
 /// - Must be used WITH `#[kernel]` (not standalone)
@@ -4740,6 +4766,13 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// removed before code generation. The declared `dynamic_shared_alignment`
 /// therefore becomes a minimum alignment in generated PTX without adding
 /// kernel hot-path instructions.
+///
+/// A `#[launch_bounds(P::MAX_THREADS, ...)]` maximum may depend on a generic
+/// policy. The generated host contract evaluates it separately for each
+/// specialization. An explicit `block = (x, y, z)` remains exact and must fit
+/// within every policy maximum used with that specialization.
+/// A non-policy constant used for that maximum must be visible at module scope,
+/// because the host contract is generated beside the kernel function.
 #[proc_macro_attribute]
 pub fn launch_contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as LaunchContractArgs);
@@ -4813,10 +4846,10 @@ impl Parse for LaunchBoundsArgs {
 
 /// A source expression whose expected type is `u32` at the generated marker.
 ///
-/// Literal values are retained only for source-time diagnostics and for the
-/// host `launch_contract` expansion, which cannot defer its checks to device
-/// monomorphization. Every other expression stays as typed Rust syntax: rustc,
-/// not this procedural macro, resolves associated constants and arithmetic.
+/// Literal values are retained for early source-time diagnostics. Every other
+/// expression stays as typed Rust syntax: rustc, not this procedural macro,
+/// resolves associated constants and arithmetic for both device metadata and
+/// each monomorphized host launch contract.
 #[derive(Clone)]
 struct ConstU32Expr {
     expr: Expr,
@@ -7167,7 +7200,11 @@ mod tests {
         assert!(expanded.contains("PreparedLaunch<__apply_CudaKernel<F>>"));
         assert!(expanded.contains("fnprepare_apply_for<F"));
         assert!(expanded.contains("__cuda_oxide_type_witness_0:&F"));
-        assert!(expanded.contains("BlockRequirement::MaxThreads(128u32)"));
+        assert!(
+            expanded.contains("let__cuda_oxide_max_threads:u32=128"),
+            "{expanded}"
+        );
+        assert!(expanded.contains("BlockRequirement::MaxThreads(__cuda_oxide_max_threads)"));
     }
 
     #[test]
@@ -7892,7 +7929,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_contract_rejects_deferred_launch_bounds() {
+    fn launch_contract_carries_deferred_launch_bounds_into_host_spec() {
         let module: ItemMod = parse_quote! {
             mod kernels {
                 #[kernel]
@@ -7901,11 +7938,39 @@ mod tests {
                 pub fn configured<P: Policy>() {}
             }
         };
-        let error = expand_cuda_module(module).expect_err("host contract must fail closed");
+        let expanded = expand_to_compact_string(module);
+
         assert!(
-            error
-                .to_string()
-                .contains("launch_contract currently requires a literal maximum-thread bound")
+            expanded.contains("let__cuda_oxide_max_threads:u32=P::MAX_THREADS"),
+            "policy maximum must be part of the host contract: {expanded}"
+        );
+        assert!(
+            expanded.contains("__cuda_oxide_max_threads>0"),
+            "{expanded}"
+        );
+        assert!(expanded.contains("BlockRequirement::MaxThreads(__cuda_oxide_max_threads)"));
+        assert!(expanded.contains("[();(P::MAX_THREADS)asusize]:"));
+    }
+
+    #[test]
+    fn exact_block_checks_a_deferred_launch_bound_per_specialization() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[launch_bounds(P::MAX_THREADS)]
+                #[launch_contract(domain = 1, block = (64, 1, 1))]
+                pub fn configured<P: Policy>() {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        assert!(
+            expanded.contains("BlockRequirement::Exact((64u32,1u32,1u32))"),
+            "an explicit block must remain exact: {expanded}"
+        );
+        assert!(
+            expanded.contains("64u128<=(__cuda_oxide_max_threads)asu128"),
+            "the policy bound must be checked for each specialization: {expanded}"
         );
     }
 

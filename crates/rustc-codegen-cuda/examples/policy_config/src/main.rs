@@ -6,12 +6,14 @@
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features)]
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::{
+    BlockRequirement, CudaContext, DeviceBuffer, KernelLaunchContract, LaunchConfig1D,
+};
 use cuda_device::config::{
     Atom, AtomKind, AtomSpec, Block, Global, Policy, PolicyId, RowMajor, Shape, Shape1, Thread,
     Tile, TileSpec,
 };
-use cuda_device::{cuda_module, kernel, launch_bounds, thread};
+use cuda_device::{cuda_module, kernel, launch_bounds, launch_contract, thread};
 
 /// The vocabulary this vector kernel library understands.
 ///
@@ -72,6 +74,7 @@ mod kernels {
 
     #[kernel]
     #[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+    #[launch_contract(domain = 1)]
     pub unsafe fn transform<P: VectorPolicy>(input: *const u32, output: *mut u32, count: u32) {
         let base = thread::index_1d().get() * P::ITEMS_PER_THREAD as usize;
         let mut lane = 0;
@@ -178,9 +181,8 @@ fn verify_policy_metadata<P: VectorPolicy>() {
 }
 
 fn verify_generated_ptx() {
-    let llvm_ir =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/policy_config.ll"))
-            .expect("read policy_config.ll; run `cargo oxide build policy_config` first");
+    let llvm_ir = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/policy_config.ll"))
+        .expect("read policy_config.ll; run `cargo oxide build policy_config` first");
     let ptx = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/policy_config.ptx"))
         .expect("read policy_config.ptx; run `cargo oxide build policy_config` first");
     for marker in ["__launch_bounds_config", "__unroll_config"] {
@@ -190,6 +192,15 @@ fn verify_generated_ptx() {
         );
     }
     let [small_name, wide_name] = specialization_names();
+
+    assert_eq!(
+        <kernels::__transform_CudaKernel<SmallTilePolicy> as KernelLaunchContract>::SPEC.block(),
+        BlockRequirement::MaxThreads(64),
+    );
+    assert_eq!(
+        <kernels::__transform_CudaKernel<WideTilePolicy> as KernelLaunchContract>::SPEC.block(),
+        BlockRequirement::MaxThreads(256),
+    );
 
     assert_ne!(SmallTilePolicy::ID, WideTilePolicy::ID);
     assert_eq!(SmallTilePolicy::ID.namespace(), 0x706f_6c69_6379_5f63);
@@ -229,23 +240,31 @@ fn launch_on_gpu() {
     const COUNT: u32 = 11;
     let context = CudaContext::new(0).expect("create CUDA context");
     let stream = context.default_stream();
-    let module = kernels::load(&context).expect("load policy_config module");
+    // SAFETY: cargo-oxide built the embedded artifact from this cuda_module.
+    let module = unsafe { kernels::load(&context) }.expect("load policy_config module");
     let input = DeviceBuffer::<u32>::zeroed(&stream, 4096).expect("allocate input");
     let small_output = DeviceBuffer::<u32>::zeroed(&stream, 1024).expect("allocate small output");
     let wide_output = DeviceBuffer::<u32>::zeroed(&stream, 4096).expect("allocate wide output");
 
-    // SAFETY: each launch has exactly one block. The buffers contain the
-    // policy's full block tile and stay alive until the stream synchronizes.
-    // COUNT is no larger than either policy's per-thread tile.
+    let small_launch = module
+        .prepare_transform::<SmallTilePolicy>(LaunchConfig1D::new(
+            1,
+            SmallTilePolicy::MAX_THREADS,
+            0,
+        ))
+        .expect("prepare SmallTilePolicy launch");
+    let wide_launch = module
+        .prepare_transform::<WideTilePolicy>(LaunchConfig1D::new(1, WideTilePolicy::MAX_THREADS, 0))
+        .expect("prepare WideTilePolicy launch");
+
+    // Geometry was checked against each policy's maximum above. SAFETY: the
+    // raw pointers cover each policy's full block tile and stay valid until
+    // the stream synchronizes. COUNT fits each thread's tile.
     unsafe {
         module
             .transform::<SmallTilePolicy>(
                 &stream,
-                LaunchConfig {
-                    grid_dim: (1, 1, 1),
-                    block_dim: (SmallTilePolicy::MAX_THREADS, 1, 1),
-                    shared_mem_bytes: 0,
-                },
+                &small_launch,
                 input.cu_deviceptr() as *const u32,
                 small_output.cu_deviceptr() as *mut u32,
                 COUNT,
@@ -254,11 +273,7 @@ fn launch_on_gpu() {
         module
             .transform::<WideTilePolicy>(
                 &stream,
-                LaunchConfig {
-                    grid_dim: (1, 1, 1),
-                    block_dim: (WideTilePolicy::MAX_THREADS, 1, 1),
-                    shared_mem_bytes: 0,
-                },
+                &wide_launch,
                 input.cu_deviceptr() as *const u32,
                 wide_output.cu_deviceptr() as *mut u32,
                 COUNT,

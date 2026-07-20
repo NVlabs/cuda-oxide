@@ -14,6 +14,7 @@ The workspace combines:
 - single-source compilation -- host and device code live in the same file, built with one `cargo oxide build`
 - a rustc codegen backend that compiles `#[kernel]` functions to CUDA PTX
 - device-side abstractions (type-safe indexing, shared memory, scoped atomics, barriers, TMA, warp/cluster ops)
+- compile-time kernel policies for separate tuned specializations without runtime policy arguments
 - a host-side runtime for memory management, pinned host transfers, and kernel launching (`cuda-core`, `cuda-async`)
 - a rust-native compilation pipeline using [Pliron](https://github.com/vaivaswatha/pliron), an MLIR-like IR framework in Rust (Rust → Rust MIR → Pliron IR → LLVM IR → PTX)
 

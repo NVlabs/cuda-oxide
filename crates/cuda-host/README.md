@@ -132,6 +132,11 @@ a 2-D configuration cannot be passed to a 1-D contract. The prepared value is
 also branded with the exact kernel specialization, so `reduce::<f32>` and
 `reduce::<f64>` are not interchangeable. Generic closures can use the generated
 `prepare_{kernel}_for(&closure, config)` helper to infer their anonymous type.
+If `#[launch_bounds]` uses a policy constant, each specialization has its own
+host-side maximum. For example, `prepare_transform::<SmallPolicy>` can enforce
+64 threads while `prepare_transform::<WidePolicy>` enforces 256. This is a
+maximum, not an exact size; declare `block = (x, y, z)` when the full shape must
+match.
 
 For contracted kernels, raw `LaunchConfig` is available only through generated
 unsafe methods such as `reduce_unchecked`. Uncontracted generated methods are

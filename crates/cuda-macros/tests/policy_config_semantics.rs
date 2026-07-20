@@ -11,5 +11,9 @@ fn policy_constants_remain_typed_and_fail_closed() {
     t.pass("tests/pass/policy_config_expressions.rs");
     t.compile_fail("tests/compile_fail/policy_config_unresolved.rs");
     t.compile_fail("tests/compile_fail/policy_config_zero_threads.rs");
+    t.compile_fail("tests/compile_fail/policy_contract_zero_threads.rs");
+    t.compile_fail("tests/compile_fail/policy_contract_exact_block_too_large.rs");
+    t.compile_fail("tests/compile_fail/policy_contract_large_3d_block.rs");
+    t.compile_fail("tests/compile_fail/policy_contract_wrong_brand.rs");
     t.compile_fail("tests/compile_fail/policy_config_invalid_unroll.rs");
 }

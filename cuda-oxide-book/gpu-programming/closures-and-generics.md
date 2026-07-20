@@ -82,6 +82,108 @@ The generated method forces monomorphization of `scale::<f32>` so the
 instantiation appears in the compiled PTX even though it is never called
 directly on the CPU.
 
+### Compile-time kernel policies
+
+A policy type groups tuning choices for one generic kernel:
+
+```rust
+#![feature(generic_const_exprs)]
+#![allow(incomplete_features)]
+
+use cuda_core::LaunchConfig1D;
+use cuda_device::{
+    cuda_module, kernel, launch_bounds, launch_contract, thread, DisjointSlice,
+};
+
+trait TransformPolicy {
+    const MAX_THREADS: u32;
+    const MIN_BLOCKS: u32;
+    const UNROLL: u32;
+}
+
+enum Small {}
+impl TransformPolicy for Small {
+    const MAX_THREADS: u32 = 64;
+    const MIN_BLOCKS: u32 = 2;
+    const UNROLL: u32 = 2;
+}
+
+enum Wide {}
+impl TransformPolicy for Wide {
+    const MAX_THREADS: u32 = 256;
+    const MIN_BLOCKS: u32 = 1;
+    const UNROLL: u32 = 4;
+}
+
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[kernel]
+    #[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+    #[launch_contract(domain = 1)]
+    pub fn transform<P: TransformPolicy>(mut output: DisjointSlice<u32>) {
+        let index = thread::index_1d();
+        if let Some(value) = output.get_mut(index) {
+            let mut step = 0;
+            #[unroll(P::UNROLL)]
+            while step < 8 {
+                *value = value.rotate_left(1);
+                step += 1;
+            }
+        }
+    }
+}
+
+let launch = module
+    .prepare_transform::<Small>(LaunchConfig1D::new(1, 64, 0))
+    .expect("valid Small launch");
+module
+    .transform::<Small>(&stream, &launch, &mut output)
+    .expect("launch Small kernel");
+
+let wide_launch = module
+    .prepare_transform::<Wide>(LaunchConfig1D::new(1, 256, 0))
+    .expect("valid Wide launch");
+module
+    .transform::<Wide>(&stream, &wide_launch, &mut output)
+    .expect("launch Wide kernel");
+```
+
+`Small` and `Wide` produce separate PTX kernels. The policy is not a kernel
+argument, and the GPU does not choose a policy at runtime.
+
+A policy can also carry metadata-only descriptions:
+
+```rust
+use cuda_device::config::{
+    Atom, AtomKind, Block, Global, RowMajor, Shape1, Thread, Tile,
+};
+
+type BlockTile = Tile<Shape1<1024>, RowMajor, Global, Block>;
+
+enum Rotate {}
+impl AtomKind for Rotate {}
+type ElementOp = Atom<Rotate, Shape1<1>, Thread>;
+```
+
+`BlockTile` describes 1,024 row-major global-memory elements handled by a
+block. `ElementOp` names a one-element operation handled by a thread; a kernel
+library decides what `Rotate` does. Neither type allocates memory, calculates
+an address, or runs an operation.
+
+`MAX_THREADS` is a maximum, not an exact block size. The prepared launch for
+`Small` accepts at most 64 threads per block; `Wide` accepts at most 256. Use
+`block = (x, y, z)` in `#[launch_contract]` only when the shape must be exact.
+`MIN_BLOCKS` is a compiler occupancy hint, not a requested grid size.
+
+`UNROLL = 4` groups four loop iterations. It does not stop the loop after four
+iterations, and remaining iterations are still handled.
+
+Generic policy expressions currently need Rust's `generic_const_exprs`
+feature. Other named constants used in a contracted `launch_bounds` maximum
+must be visible at module scope.
+
 ### Const-generic kernels
 
 Const parameters work on kernel and device-function entry points:
