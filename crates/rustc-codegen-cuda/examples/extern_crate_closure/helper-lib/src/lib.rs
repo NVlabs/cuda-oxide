@@ -7,16 +7,17 @@
 //!
 //! The closures below are the regression triggers: they live in a
 //! **non-local crate** (from the kernel crate's perspective) and are reached
-//! from device code as callable trait receivers (`FnOnce` arguments to
-//! `bool::then` / `Option::map`). The device collector's cross-crate kernel
-//! check used `TyCtxt::item_name` on every candidate DefId, which ICEs rustc
-//! for unnamed items such as closures ("item_name: no name for DefPath").
+//! from device code as callable trait receivers: `gated_load` passes a
+//! closure directly to `apply`, and `double_even` passes one to `bool::then`.
+//! The device collector's cross-crate kernel check used `TyCtxt::item_name`
+//! on every candidate DefId, which ICEs rustc for unnamed items such as
+//! closures ("item_name: no name for DefPath").
 //! Closures in the *local* crate never hit that path (early `LOCAL_CRATE`
 //! return), so only an external crate like this one reproduces the ICE.
 //!
-//! The shape mirrors real columnar-library code (narrow's `Bitmap::view`):
-//! a bounds gate via `bool::then` with a capturing closure, followed by
-//! combinator-style `Option` mapping.
+//! The two helpers deliberately use different source shapes. The exact
+//! combinator chain is not important to the regression; what matters is that
+//! the resulting callable receiver belongs to this external crate.
 #![no_std]
 
 /// Calls a callable trait receiver. `inline(never)` keeps this frame (and

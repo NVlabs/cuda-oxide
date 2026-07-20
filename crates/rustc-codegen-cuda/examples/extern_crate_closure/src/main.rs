@@ -5,9 +5,10 @@
 
 //! Extern-crate closure collection regression test.
 //!
-//! The kernel calls `helper_lib` functions whose bodies contain closures
-//! (`bool::then` / `Option::map` receivers). Because `helper-lib` is not the
-//! kernel's local crate, the device collector's cross-crate kernel check
+//! The kernel calls `helper_lib` functions whose bodies contain closures:
+//! `gated_load` uses an `if` plus a closure passed to `apply`, while
+//! `double_even` uses `bool::then`. Because `helper-lib` is not the kernel's
+//! local crate, the device collector's cross-crate kernel check
 //! reaches those closure DefIds through
 //! `enqueue_callable_trait_receiver_body` → `should_collect_from_crate`,
 //! which called `TyCtxt::item_name` unconditionally and ICE'd rustc:
