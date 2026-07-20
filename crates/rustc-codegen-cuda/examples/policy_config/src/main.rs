@@ -131,7 +131,7 @@ fn contains_u32_immediate(body: &str, value: u32) -> bool {
     body.contains(&unsigned) || body.contains(&signed) || body.contains(&hex)
 }
 
-fn llvm_function_with_immediate<'a>(llvm_ir: &'a str, value: u32) -> &'a str {
+fn llvm_function_with_immediate(llvm_ir: &str, value: u32) -> &str {
     let decimal = value.to_string();
     let matches: Vec<_> = llvm_ir
         .split("\ndefine ")

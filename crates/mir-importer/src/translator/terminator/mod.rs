@@ -2444,9 +2444,7 @@ fn try_dispatch_intrinsic(
                 "cuda_device::__launch_bounds_config"
                 | "cuda_device::thread::__launch_bounds_config" => "__launch_bounds_config",
                 "cuda_device::__launch_contract_config"
-                | "cuda_device::thread::__launch_contract_config" => {
-                    "__launch_contract_config"
-                }
+                | "cuda_device::thread::__launch_contract_config" => "__launch_contract_config",
                 _ => unreachable!("launch metadata arm matched an unknown marker"),
             };
             if !is_cuda_device_const_marker(func, expected_marker) {
