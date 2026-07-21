@@ -25,6 +25,7 @@ cargo oxide new my_project          # scaffold a new cuda-oxide project
 cargo oxide new my_project --async  # scaffold with async template (tokio + cuda-async)
 cargo oxide run vecadd              # build + run an example
 cargo oxide build vecadd            # compile only (no run)
+cargo oxide build vecadd --materialize-cubin --arch sm_120  # embed native cubin
 cargo oxide emit-ltoir vecadd --arch sm_100  # device code -> .ltoir (Tile/SIMT interop)
 cargo oxide build -- -p my_app      # arbitrary cargo build through cuda-oxide
 cargo oxide test                    # cargo test with cuda-oxide defaults
@@ -43,6 +44,7 @@ cargo oxide setup                   # explicitly build the codegen backend
 
 | Flag                         | Applies to                       | Description                                     |
 |------------------------------|----------------------------------|-------------------------------------------------|
+| `--materialize-cubin`        | run, sanitize, build, test, pipeline, debug | Finalize and embed target-specific native GPU code during the host build |
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
 | `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir | Target architecture override |
 | `--features <F>`             | run, sanitize, debug, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
@@ -71,6 +73,28 @@ For NVVM IR and LTOIR, cuda-oxide records the policy in matching `.options`
 and versioned `.target` files and passes `-fma=0` through libNVVM and
 nvJitLink. Keep both sidecars with the artifact when another build system
 consumes it.
+
+`--materialize-cubin` moves the remaining libNVVM and nvJitLink work into the
+host build. The executable embeds a native cubin, so deployment does not need
+libNVVM, nvJitLink, or a first-load compilation step. This trades portability
+for startup simplicity: the cubin is pinned to the requested architecture and
+cannot use cuda-oxide's load-time PTX bridge on a newer GPU.
+
+```bash
+cargo oxide build vecadd --materialize-cubin --arch sm_120
+```
+
+A concrete architecture and a build-host CUDA Toolkit (libNVVM, nvJitLink, and
+libdevice) are required. cargo-oxide fingerprints the exact compiler inputs and
+rechecks them inside the backend; use the wrapper flag instead of setting
+`CUDA_OXIDE_MATERIALIZE_CUBIN` around raw Cargo. That variable is an internal
+wrapper/backend signal, not a supported user interface: raw Cargo may reuse a
+previous artifact without running the backend, and a backend invocation without
+the wrapper's fingerprint is rejected. Generic `#[cuda_module]`
+kernels, `#[device] extern` declarations, and metadata-interop examples are
+rejected because their run-time multi-artifact linking is not yet represented
+by this single-cubin path. Materialization is also a final-output mode, so it
+cannot be combined with `--emit-nvvm-ir` or `emit-ltoir`.
 
 ## Commands
 

@@ -133,6 +133,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuda-artifact-finalizer"
+version = "0.2.1"
+dependencies = [
+ "libnvvm-sys",
+ "nvjitlink-sys",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "cuda-bindings"
 version = "0.2.1"
 dependencies = [
@@ -161,11 +171,10 @@ dependencies = [
 name = "cuda-host"
 version = "0.2.1"
 dependencies = [
+ "cuda-artifact-finalizer",
  "cuda-core",
  "cuda-macros",
  "half",
- "libnvvm-sys",
- "nvjitlink-sys",
  "sha2",
  "thiserror",
 ]

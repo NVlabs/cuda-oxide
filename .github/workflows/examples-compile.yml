@@ -22,7 +22,9 @@ jobs:
     # backend build + shared dep tree + per-example
     # device codegen. Typically well under an hour with the shared
     # CARGO_TARGET_DIR; the timeout leaves headroom for cold runners.
-    timeout-minutes: 60
+    # Leave job-level headroom around the 50-minute full compile and the
+    # focused 10-minute materialization gate, plus toolkit/LLVM setup.
+    timeout-minutes: 75
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
@@ -36,7 +38,11 @@ jobs:
           cuda: "13.1.1"
           method: network
           sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcurand-dev"]'
+          # nvJitLink is packaged separately from cuda-nvcc on Linux. Keep it
+          # in this already-toolkit-backed job so the materialization gate
+          # below exercises the real public command without adding work to
+          # the latency-sensitive fmt job.
+          non-cuda-sub-packages: '["libcurand-dev", "libnvjitlink-dev"]'
 
       # The device pipeline shells out to LLVM's llc/opt for PTX
       # generation. LLVM 21 is the documented floor for the intrinsics we
@@ -82,6 +88,52 @@ jobs:
           export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
 
           scripts/smoketest.sh --compile-only --no-color
+
+      - name: Default PTX and opt-in cubin artifacts are distinct
+        timeout-minutes: 10
+        env:
+          CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          CUDA_OXIDE_LLC: /usr/bin/llc-21
+          CARGO_TARGET_DIR: ${{ runner.temp }}/examples-shared-target
+        run: |
+          set -euo pipefail
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${CUDA_TOOLKIT_PATH}/lib64:${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+
+          assert_embedded_artifact() {
+            local binary="$1"
+            local expected_version="$2"
+            local expected_kind="$3"
+            local expected_target="$4"
+            local section_file="${RUNNER_TEMP}/vecadd-${expected_kind}.oxart"
+            objcopy --dump-section ".oxart=${section_file}" "${binary}"
+
+            local version name_len target_len target record_offset kind data_offset magic
+            version="$(od -An -tu2 -j8 -N2 "${section_file}" | tr -d '[:space:]')"
+            name_len="$(od -An -tu2 -j16 -N2 "${section_file}" | tr -d '[:space:]')"
+            target_len="$(od -An -tu2 -j18 -N2 "${section_file}" | tr -d '[:space:]')"
+            target="$(od -An -tc -j$((32 + name_len)) -N"${target_len}" "${section_file}" | tr -d '[:space:]')"
+            record_offset=$((32 + name_len + target_len))
+            kind="$(od -An -tu2 -j"${record_offset}" -N2 "${section_file}" | tr -d '[:space:]')"
+            data_offset="$(od -An -tu4 -j$((record_offset + 4)) -N4 "${section_file}" | tr -d '[:space:]')"
+
+            test "${version}" = "${expected_version}"
+            test "${target}" = "${expected_target}"
+            test "${kind}" = "${expected_kind}"
+            if [ "${expected_kind}" = "512" ]; then
+              magic="$(od -An -tx1 -j"${data_offset}" -N4 "${section_file}" | tr -d '[:space:]')"
+              test "${magic}" = "7f454c46"
+            fi
+          }
+
+          cargo oxide build vecadd --arch sm_86
+          assert_embedded_artifact "${CARGO_TARGET_DIR}/release/vecadd" 1 256 sm_86
+
+          cargo oxide build vecadd --materialize-cubin --arch sm_86
+          # Default compile policy remains wire-compatible artifact v1; the
+          # payload kind is what must change from PTX (256) to cubin (512).
+          assert_embedded_artifact "${CARGO_TARGET_DIR}/release/vecadd" 1 512 sm_86
 
       - name: Upload failure logs
         if: failure()

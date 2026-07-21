@@ -133,6 +133,17 @@ pub const KERNEL_SCOPE_LOCAL: &str = "cuda_oxide_kernel_scope_246e25db";
 /// linker to pull the artifact member out of the archive.
 pub const ARTIFACT_ANCHOR_PREFIX: &str = "cuda_oxide_artifact_anchor_246e25db_";
 
+/// Prefix of private statics emitted by `#[cuda_module]` for enabled generic
+/// kernels.
+///
+/// Generic kernel specializations can be emitted into a downstream crate's
+/// device artifact, so loading only the defining crate's artifact is not
+/// sufficient. The host API therefore merges PTX bundles for such modules.
+/// Ahead-of-time cubin materialization cannot preserve that behavior today;
+/// the codegen collector uses this marker to reject the unsupported case
+/// before loading libNVVM or nvJitLink.
+pub const PTX_MERGE_REQUIRED_PREFIX: &str = "cuda_oxide_ptx_merge_required_246e25db_";
+
 // ============================================================================
 // Layer 2 — builders (macro side)
 // ============================================================================
@@ -191,6 +202,13 @@ pub fn instantiate_symbol(base: &str) -> String {
 /// ```
 pub fn constant_symbol(base: &str) -> String {
     format!("{CONSTANT_PREFIX}{base}")
+}
+
+/// Build the compiler marker associated with one generic kernel.
+pub fn ptx_merge_required_marker(base: &str) -> String {
+    let mut symbol = String::from(PTX_MERGE_REQUIRED_PREFIX);
+    push_symbol_sanitized(&mut symbol, base);
+    symbol
 }
 
 /// Build the legacy artifact link-anchor symbol for a package and version.
@@ -296,6 +314,14 @@ pub fn is_device_symbol(name: &str) -> bool {
 /// ```
 pub fn is_device_extern_symbol(name: &str) -> bool {
     name.contains(DEVICE_EXTERN_PREFIX)
+}
+
+/// Returns `true` for a generic-kernel PTX-merge marker path.
+pub fn is_ptx_merge_required_marker(name: &str) -> bool {
+    name.rsplit("::")
+        .next()
+        .and_then(|component| component.strip_prefix(PTX_MERGE_REQUIRED_PREFIX))
+        .is_some_and(|base| !base.is_empty())
 }
 
 /// Returns `true` if `name` is a closure-monomorphization helper symbol.
@@ -465,6 +491,10 @@ mod tests {
         assert_eq!(DEVICE_EXTERN_PREFIX, "cuda_oxide_device_extern_246e25db_");
         assert_eq!(INSTANTIATE_PREFIX, "cuda_oxide_instantiate_246e25db_");
         assert_eq!(CONSTANT_PREFIX, "cuda_oxide_const_246e25db_");
+        assert_eq!(
+            PTX_MERGE_REQUIRED_PREFIX,
+            "cuda_oxide_ptx_merge_required_246e25db_"
+        );
     }
 
     /// Every prefix shares the reserved root. The macro guard checks
@@ -479,6 +509,7 @@ mod tests {
             DEVICE_EXTERN_PREFIX,
             INSTANTIATE_PREFIX,
             CONSTANT_PREFIX,
+            PTX_MERGE_REQUIRED_PREFIX,
         ] {
             assert!(
                 p.starts_with(RESERVED_ROOT),
@@ -496,6 +527,22 @@ mod tests {
         assert!(!DEVICE_EXTERN_PREFIX.contains(DEVICE_PREFIX));
         // ...and vice versa
         assert!(!DEVICE_PREFIX.contains(DEVICE_EXTERN_PREFIX));
+    }
+
+    #[test]
+    fn ptx_merge_markers_are_per_kernel_and_sanitized() {
+        let marker = ptx_merge_required_marker("nested::map-value");
+        assert_eq!(
+            marker,
+            "cuda_oxide_ptx_merge_required_246e25db_nested__map_value"
+        );
+        assert!(is_ptx_merge_required_marker(&marker));
+        assert!(is_ptx_merge_required_marker(&format!(
+            "crate::module::{marker}"
+        )));
+        assert!(!is_ptx_merge_required_marker(PTX_MERGE_REQUIRED_PREFIX));
+        assert!(!is_ptx_merge_required_marker(&format!("prefix_{marker}")));
+        assert!(!is_ptx_merge_required_marker(&format!("{marker}::child")));
     }
 
     /// `kernel_base_name(kernel_symbol(x)) == Some(x)` for any reasonable

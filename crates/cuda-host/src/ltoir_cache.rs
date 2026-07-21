@@ -9,16 +9,13 @@
 //! LTOIR have all been checked. Callers always receive owned bytes and must
 //! load those bytes, rather than reopening a cache path after validation.
 
+use cuda_artifact_finalizer::is_valid_cubin;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-#[cfg(not(unix))]
-use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
 
-const CACHE_KEY_DOMAIN: &[u8] = b"cuda-oxide/ltoir-cubin-cache/key/v1";
 const CACHE_DIRECTORY: &str = "ltoir-cubin-cache";
 const CACHE_VERSION: &str = "v1";
 const MANIFEST_FILE: &str = "manifest.bin";
@@ -28,164 +25,18 @@ const MANIFEST_MAGIC: &[u8] = b"cuda-oxide-ltoir-cache-entry\0";
 const MANIFEST_VERSION: u32 = 1;
 const DIGEST_LENGTH: usize = 32;
 const MAX_CACHE_ARTIFACT_LENGTH: u64 = 1 << 30;
+#[cfg(test)]
 const ELF64_HEADER_LENGTH: usize = 64;
+#[cfg(test)]
 const ELF64_PROGRAM_HEADER_LENGTH: u16 = 56;
-const ELF64_SECTION_HEADER_LENGTH: u16 = 64;
 const MANIFEST_LENGTH: usize =
     MANIFEST_MAGIC.len() + 4 + DIGEST_LENGTH + 8 + DIGEST_LENGTH + 1 + 8 + DIGEST_LENGTH;
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
-#[derive(Debug, PartialEq, Eq)]
-struct FileSnapshot {
-    len: u64,
-    modified: SystemTime,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
-    change_time: (i64, i64),
-}
-
-impl FileSnapshot {
-    fn capture(metadata: &fs::Metadata) -> io::Result<Self> {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
-
-        Ok(Self {
-            len: metadata.len(),
-            modified: metadata.modified()?,
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(unix)]
-            change_time: (metadata.ctime(), metadata.ctime_nsec()),
-        })
-    }
-}
 
 /// Hash bytes exactly as they appear in a cache input.
 pub(crate) fn digest_bytes(bytes: &[u8]) -> [u8; DIGEST_LENGTH] {
     Sha256::digest(bytes).into()
-}
-
-/// Hash the complete contents of a file.
-///
-/// Tool fingerprints should be taken from the same loaded library that is
-/// subsequently used to build the artifact. If that exact file cannot be
-/// identified or read, callers should skip the cache.
-#[cfg(test)]
-pub(crate) fn digest_file(path: &Path) -> io::Result<[u8; DIGEST_LENGTH]> {
-    let file = File::open(path)?;
-    digest_file_handle(&file)
-}
-
-/// Hash the complete contents of an already-open file without changing its
-/// shared cursor.
-///
-/// The retained CUDA-tool descriptor is the provenance boundary: pathname
-/// replacement cannot redirect these reads to another inode.
-pub(crate) fn digest_file_handle(file: &File) -> io::Result<[u8; DIGEST_LENGTH]> {
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "tool fingerprint input is not a regular file",
-        ));
-    }
-    let snapshot = FileSnapshot::capture(&metadata)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileExt;
-
-        let mut offset = 0_u64;
-        loop {
-            let read = match file.read_at(&mut buffer, offset) {
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                result => result?,
-            };
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-            offset = offset
-                .checked_add(read as u64)
-                .ok_or_else(|| io::Error::other("tool file length overflow"))?;
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        let mut reader = file.try_clone()?;
-        reader.seek(SeekFrom::Start(0))?;
-        loop {
-            let read = reader.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-        }
-    }
-
-    let digest = hasher.finalize().into();
-    let after = FileSnapshot::capture(&file.metadata()?)?;
-    if after != snapshot {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "tool file changed while it was fingerprinted",
-        ));
-    }
-    Ok(digest)
-}
-
-/// Builds an unambiguous cache key from ordered, tagged fields.
-///
-/// Both the tag and value are length-prefixed. Field order is significant,
-/// which preserves option ordering and prevents inputs such as `(ab, c)` and
-/// `(a, bc)` from producing the same byte stream before hashing.
-pub(crate) struct CacheKeyBuilder {
-    hasher: Sha256,
-}
-
-impl CacheKeyBuilder {
-    pub(crate) fn new() -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(CACHE_KEY_DOMAIN);
-        Self { hasher }
-    }
-
-    pub(crate) fn field(mut self, tag: &str, value: impl AsRef<[u8]>) -> Self {
-        let tag = tag.as_bytes();
-        let value = value.as_ref();
-
-        self.hasher.update([1]);
-        self.hasher.update(length_prefix(tag.len()));
-        self.hasher.update(tag);
-        self.hasher.update(length_prefix(value.len()));
-        self.hasher.update(value);
-        self
-    }
-
-    pub(crate) fn finish(mut self) -> [u8; DIGEST_LENGTH] {
-        self.hasher.update([0xff]);
-        self.hasher.finalize().into()
-    }
-}
-
-impl Default for CacheKeyBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn length_prefix(length: usize) -> [u8; 8] {
-    u64::try_from(length)
-        .expect("cache key fields cannot exceed u64::MAX bytes")
-        .to_be_bytes()
 }
 
 /// Fresh artifacts returned by the expensive compiler/linker pipeline.
@@ -269,7 +120,7 @@ where
     }
 
     let artifacts = build()?;
-    if !looks_like_cubin(&artifacts.cubin) {
+    if !is_valid_cubin(&artifacts.cubin) {
         return Ok(CacheResult::uncached(artifacts));
     }
 
@@ -367,7 +218,7 @@ fn read_valid_entry(
     let Some(cubin) = read_entry_file(&cubin_path, manifest.cubin_length)? else {
         return Ok(None);
     };
-    if digest_bytes(&cubin) != manifest.cubin_digest || !looks_like_cubin(&cubin) {
+    if digest_bytes(&cubin) != manifest.cubin_digest || !is_valid_cubin(&cubin) {
         return Ok(None);
     }
 
@@ -705,171 +556,6 @@ impl Drop for PendingDirectory {
     }
 }
 
-fn looks_like_cubin(bytes: &[u8]) -> bool {
-    // nvJitLink cubins are 64-bit, little-endian ET_EXEC ELF files for
-    // EM_CUDA (190). Validate all declared tables and file-backed ranges so a
-    // truncated ELF prefix never becomes a reusable cache entry.
-    if bytes.len() < ELF64_HEADER_LENGTH
-        || !bytes.starts_with(b"\x7fELF")
-        || bytes[4] != 2
-        || bytes[5] != 1
-        || bytes[6] != 1
-        || read_u16(bytes, 16) != Some(2)
-        || read_u16(bytes, 18) != Some(190)
-        || read_u32(bytes, 20) != Some(1)
-        || read_u16(bytes, 52) != Some(ELF64_HEADER_LENGTH as u16)
-    {
-        return false;
-    }
-
-    let Some(program_offset) = read_u64(bytes, 32) else {
-        return false;
-    };
-    let Some(section_offset) = read_u64(bytes, 40) else {
-        return false;
-    };
-    let Some(program_entry_size) = read_u16(bytes, 54) else {
-        return false;
-    };
-    let Some(program_count) = read_u16(bytes, 56) else {
-        return false;
-    };
-    let Some(section_entry_size) = read_u16(bytes, 58) else {
-        return false;
-    };
-    let Some(section_count) = read_u16(bytes, 60) else {
-        return false;
-    };
-    let Some(section_name_index) = read_u16(bytes, 62) else {
-        return false;
-    };
-
-    if program_count == u16::MAX || (program_count == 0 && section_count == 0) {
-        return false;
-    }
-    let program_table = if program_count == 0 {
-        if program_offset != 0 || !matches!(program_entry_size, 0 | ELF64_PROGRAM_HEADER_LENGTH) {
-            return false;
-        }
-        None
-    } else {
-        if program_entry_size != ELF64_PROGRAM_HEADER_LENGTH {
-            return false;
-        }
-        table_bounds(
-            program_offset,
-            program_entry_size,
-            program_count,
-            bytes.len(),
-        )
-    };
-    let section_table = if section_count == 0 {
-        // Extended section numbering is unnecessary for cubins and would
-        // require trusting section zero before its bounds were known.
-        if section_offset != 0
-            || section_name_index != 0
-            || !matches!(section_entry_size, 0 | ELF64_SECTION_HEADER_LENGTH)
-        {
-            return false;
-        }
-        None
-    } else {
-        if section_entry_size != ELF64_SECTION_HEADER_LENGTH
-            || (section_name_index != 0 && section_name_index >= section_count)
-        {
-            return false;
-        }
-        table_bounds(
-            section_offset,
-            section_entry_size,
-            section_count,
-            bytes.len(),
-        )
-    };
-    if program_count != 0 && program_table.is_none()
-        || section_count != 0 && section_table.is_none()
-    {
-        return false;
-    }
-
-    if let Some((start, _)) = program_table {
-        for index in 0..usize::from(program_count) {
-            let header = start + index * usize::from(program_entry_size);
-            let Some(file_offset) = read_u64(bytes, header + 8) else {
-                return false;
-            };
-            let Some(file_size) = read_u64(bytes, header + 32) else {
-                return false;
-            };
-            if !file_range_is_valid(file_offset, file_size, bytes.len()) {
-                return false;
-            }
-        }
-    }
-
-    if let Some((start, _)) = section_table {
-        for index in 0..usize::from(section_count) {
-            let header = start + index * usize::from(section_entry_size);
-            let Some(section_type) = read_u32(bytes, header + 4) else {
-                return false;
-            };
-            let Some(file_offset) = read_u64(bytes, header + 24) else {
-                return false;
-            };
-            let Some(file_size) = read_u64(bytes, header + 32) else {
-                return false;
-            };
-            // SHT_NOBITS occupies memory but has no bytes in the ELF image.
-            if section_type != 8 && !file_range_is_valid(file_offset, file_size, bytes.len()) {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-fn table_bounds(
-    offset: u64,
-    entry_size: u16,
-    count: u16,
-    file_len: usize,
-) -> Option<(usize, usize)> {
-    if offset < ELF64_HEADER_LENGTH as u64 {
-        return None;
-    }
-    let length = u64::from(entry_size).checked_mul(u64::from(count))?;
-    let end = offset.checked_add(length)?;
-    if end > file_len as u64 {
-        return None;
-    }
-    Some((usize::try_from(offset).ok()?, usize::try_from(end).ok()?))
-}
-
-fn file_range_is_valid(offset: u64, length: u64, file_len: usize) -> bool {
-    offset
-        .checked_add(length)
-        .is_some_and(|end| end <= file_len as u64)
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(
-        bytes.get(offset..offset + 2)?.try_into().ok()?,
-    ))
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        bytes.get(offset..offset + 4)?.try_into().ok()?,
-    ))
-}
-
-fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(
-        bytes.get(offset..offset + 8)?.try_into().ok()?,
-    ))
-}
-
 fn hex_digest(digest: &[u8; DIGEST_LENGTH]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut result = String::with_capacity(DIGEST_LENGTH * 2);
@@ -883,7 +569,6 @@ fn hex_digest(digest: &[u8; DIGEST_LENGTH]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
@@ -961,11 +646,7 @@ mod tests {
     }
 
     fn test_key() -> [u8; DIGEST_LENGTH] {
-        CacheKeyBuilder::new()
-            .field("pipeline", b"test-v1")
-            .field("route", b"nvvm-ir-to-cubin")
-            .field("arch", b"sm_80")
-            .finish()
+        digest_bytes(b"cuda-host cache test key")
     }
 
     #[test]
@@ -1008,64 +689,13 @@ mod tests {
     }
 
     #[test]
-    fn digest_file_tracks_in_place_changes_and_inode_replacement() {
-        let dir = TestDirectory::new("digest-file");
-        let path = dir.path().join("tool.so");
-        fs::write(&path, b"exact tool bytes").unwrap();
-        let first = digest_file(&path).unwrap();
-        assert_eq!(first, digest_bytes(b"exact tool bytes"));
-        assert_eq!(digest_file(&path).unwrap(), first);
-
-        fs::write(&path, b"changed-tool-dat").unwrap();
-        let changed = digest_file(&path).unwrap();
-        assert_eq!(changed, digest_bytes(b"changed-tool-dat"));
-        assert_ne!(
-            changed, first,
-            "same-path content changes must change the digest"
-        );
-
-        let replacement = dir.path().join("replacement.so");
-        fs::write(&replacement, b"replaced-tool-da").unwrap();
-        fs::remove_file(&path).unwrap();
-        fs::rename(&replacement, &path).unwrap();
-        let replaced = digest_file(&path).unwrap();
-        assert_eq!(replaced, digest_bytes(b"replaced-tool-da"));
-        assert_ne!(
-            replaced, changed,
-            "inode replacement must change the digest"
-        );
-    }
-
-    #[test]
-    fn digest_file_handle_stays_bound_to_open_inode_after_replacement() {
-        let dir = TestDirectory::new("digest-open-file");
-        let path = dir.path().join("tool.so");
-        let replacement = dir.path().join("replacement.so");
-        fs::write(&path, b"tool version one").unwrap();
-        fs::write(&replacement, b"tool version two").unwrap();
-
-        let opened = File::open(&path).unwrap();
-        fs::remove_file(&path).unwrap();
-        fs::rename(&replacement, &path).unwrap();
-
-        assert_eq!(
-            digest_file_handle(&opened).unwrap(),
-            digest_bytes(b"tool version one")
-        );
-        assert_eq!(
-            digest_file(&path).unwrap(),
-            digest_bytes(b"tool version two")
-        );
-    }
-
-    #[test]
     fn cubin_validation_rejects_truncated_headers_and_out_of_bounds_tables() {
-        assert!(!looks_like_cubin(&truncated_cubin_prefix()));
-        assert!(looks_like_cubin(&fake_cubin(1)));
+        assert!(!is_valid_cubin(&truncated_cubin_prefix()));
+        assert!(is_valid_cubin(&fake_cubin(1)));
 
         let mut out_of_bounds = fake_cubin(2);
         out_of_bounds[32..40].copy_from_slice(&119_u64.to_le_bytes());
-        assert!(!looks_like_cubin(&out_of_bounds));
+        assert!(!is_valid_cubin(&out_of_bounds));
     }
 
     #[test]
@@ -1110,56 +740,6 @@ mod tests {
         assert_eq!(repaired.cubin, fake_cubin(21));
         assert!(repaired.immutable_cubin_path.is_some());
         assert_eq!(fs::read(outside).unwrap(), b"outside bytes");
-    }
-
-    #[test]
-    fn key_changes_for_every_input_and_is_unambiguous() {
-        let fields: [(&str, &[u8]); 8] = [
-            ("pipeline", b"pipeline-v1"),
-            ("route", b"nvvm-ir-to-cubin"),
-            ("arch", b"sm_80"),
-            ("module", b"kernel"),
-            ("option", b"-lto"),
-            ("source", b"source digest"),
-            ("libdevice", b"libdevice digest"),
-            ("tools", b"exact tool digests"),
-        ];
-
-        let build_key = |changed: Option<usize>| {
-            fields
-                .iter()
-                .enumerate()
-                .fold(CacheKeyBuilder::new(), |builder, (index, (tag, value))| {
-                    if changed == Some(index) {
-                        builder.field(tag, [*value, b" changed"].concat())
-                    } else {
-                        builder.field(tag, *value)
-                    }
-                })
-                .finish()
-        };
-
-        let original = build_key(None);
-        let changed = (0..fields.len()).map(|index| build_key(Some(index)));
-        let all = std::iter::once(original)
-            .chain(changed)
-            .collect::<HashSet<_>>();
-        assert_eq!(all.len(), fields.len() + 1);
-
-        let left = CacheKeyBuilder::new()
-            .field("part", b"ab")
-            .field("part", b"c")
-            .finish();
-        let right = CacheKeyBuilder::new()
-            .field("part", b"a")
-            .field("part", b"bc")
-            .finish();
-        let reordered = CacheKeyBuilder::new()
-            .field("part", b"c")
-            .field("part", b"ab")
-            .finish();
-        assert_ne!(left, right);
-        assert_ne!(left, reordered);
     }
 
     #[test]
@@ -1274,8 +854,8 @@ mod tests {
     #[test]
     fn complete_entries_swapped_between_keys_are_rejected() {
         let dir = TestDirectory::new("swapped-entries");
-        let key_a = CacheKeyBuilder::new().field("source", b"A").finish();
-        let key_b = CacheKeyBuilder::new().field("source", b"B").finish();
+        let key_a = digest_bytes(b"source A");
+        let key_b = digest_bytes(b"source B");
         cache_or_build(dir.path(), &key_a, || Ok::<_, ()>(artifacts(20))).unwrap();
         cache_or_build(dir.path(), &key_b, || Ok::<_, ()>(artifacts(21))).unwrap();
 

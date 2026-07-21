@@ -245,6 +245,10 @@ pub struct DeviceCodegenResult {
     /// Whether later compilation stages may contract ordinary floating-point
     /// multiply/add expressions.
     pub allow_fma_contraction: bool,
+    /// Debug policy used when exporting the NVVM IR. Later materialization
+    /// stages must preserve this policy instead of silently compiling with
+    /// their own defaults.
+    pub debug_kind: llvm_export::export::DebugKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -562,6 +566,7 @@ pub fn generate_device_code<'tcx>(
     let show_rustc_mir = config.dump_rustc_mir;
     let show_mir = config.dump_mir_dialect;
     let show_llvm = config.dump_llvm_dialect;
+    let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
 
     // Print raw rustc MIR if requested (before conversion to stable_mir)
     if show_rustc_mir {
@@ -669,7 +674,6 @@ pub fn generate_device_code<'tcx>(
             }
         }
 
-        let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
         let target_arch = std::env::var("CUDA_OXIDE_TARGET").ok();
         let device_arch_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
         let allow_fma_contraction = std::env::var_os("CUDA_OXIDE_NO_FMA").is_none();
@@ -737,6 +741,7 @@ pub fn generate_device_code<'tcx>(
                     ptx_content,
                     artifact,
                     allow_fma_contraction: compilation_result.allow_fma_contraction,
+                    debug_kind,
                 })
             }
             Err(pipeline_err) => Err(DeviceCodegenError::PtxGeneration(format!(

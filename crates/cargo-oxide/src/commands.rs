@@ -15,6 +15,170 @@ use std::process::Command;
 
 use crate::backend;
 
+const MATERIALIZE_ENV: &str = "CUDA_OXIDE_MATERIALIZE_CUBIN";
+const EXPECTED_PROVENANCE_ENV: &str = "CUDA_OXIDE_INTERNAL_MATERIALIZER_PROVENANCE";
+const MATERIALIZER_PROVENANCE_CFG: &str = "cuda_oxide_internal_materializer_provenance";
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct MaterializationMode {
+    provenance: Option<String>,
+}
+
+impl MaterializationMode {
+    fn enabled(&self) -> bool {
+        self.provenance.is_some()
+    }
+
+    fn apply(&self, cmd: &mut Command) {
+        if let Some(provenance) = &self.provenance {
+            // These override inherited/project values: they are a single
+            // wrapper-generated handshake tied to this Cargo invocation.
+            cmd.env(MATERIALIZE_ENV, "1")
+                .env(EXPECTED_PROVENANCE_ENV, provenance)
+                .env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
+        }
+    }
+}
+
+fn fingerprinted_codegen_cfgs(
+    base_fingerprint: String,
+    materialization: &MaterializationMode,
+) -> Vec<String> {
+    let mut cfgs = vec![base_fingerprint];
+    if let Some(provenance) = &materialization.provenance {
+        // Keep the complete SHA-256 in rustc's command line. The ordinary
+        // environment fingerprint also hashes it, but this full value avoids
+        // reducing exact tool identity to that hash's 64-bit collision space.
+        cfgs.push(format!("{MATERIALIZER_PROVENANCE_CFG}=\"{provenance}\""));
+    }
+    cfgs
+}
+
+fn prepare_materialization(
+    ctx: &Context,
+    cli_requested: bool,
+    cli_arch: Option<&str>,
+    emit_nvvm_ir: bool,
+) -> MaterializationMode {
+    prepare_materialization_result(ctx, cli_requested, cli_arch, emit_nvvm_ir).unwrap_or_else(
+        |error| {
+            eprintln!("Error: {error}");
+            std::process::exit(2);
+        },
+    )
+}
+
+fn prepare_materialization_result(
+    ctx: &Context,
+    cli_requested: bool,
+    cli_arch: Option<&str>,
+    emit_nvvm_ir: bool,
+) -> Result<MaterializationMode, String> {
+    let enabled = if cli_requested {
+        true
+    } else if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
+        let value = value
+            .into_string()
+            .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
+        parse_strict_bool(MATERIALIZE_ENV, &value)?
+    } else if let Some(value) = project_config_env(ctx, MATERIALIZE_ENV) {
+        parse_strict_bool(MATERIALIZE_ENV, value)?
+    } else {
+        false
+    };
+    if !enabled {
+        return Ok(MaterializationMode::default());
+    }
+    if emit_nvvm_ir {
+        return Err(
+            "--materialize-cubin cannot be combined with --emit-nvvm-ir; one requests a final cubin and the other requests NVVM IR"
+                .to_string(),
+        );
+    }
+
+    let arch = configured_arch_label(ctx, cli_arch).ok_or_else(|| {
+        "--materialize-cubin requires --arch, CUDA_OXIDE_TARGET, or a configured default-arch"
+            .to_string()
+    })?;
+    let _: cuda_artifact_finalizer::CudaArch = arch
+        .parse()
+        .map_err(|error| format!("invalid materialization target {arch:?}: {error}"))?;
+
+    Ok(MaterializationMode {
+        provenance: Some(discover_materializer_provenance(ctx)?),
+    })
+}
+
+fn discover_materializer_provenance(ctx: &Context) -> Result<String, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("could not locate cargo-oxide executable: {error}"))?;
+    let mut command = materializer_discovery_command(ctx, &executable);
+    let output = command
+        .output()
+        .map_err(|error| format!("could not start CUDA materializer discovery: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "CUDA materializer discovery failed: {}",
+            stderr.trim()
+        ));
+    }
+    let provenance = String::from_utf8(output.stdout)
+        .map_err(|_| "CUDA materializer discovery returned non-UTF-8 output".to_string())?;
+    let provenance = provenance.trim();
+    if provenance.len() != 64
+        || !provenance
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(format!(
+            "CUDA materializer discovery returned an invalid provenance digest: {provenance:?}"
+        ));
+    }
+    Ok(provenance.to_string())
+}
+
+fn materializer_discovery_command(ctx: &Context, executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command.arg("__materializer-provenance");
+    apply_config_env(&mut command, ctx);
+    apply_ld_library_path(&mut command, ctx);
+    command
+}
+
+pub fn print_materializer_provenance() {
+    let finalizer = cuda_artifact_finalizer::Finalizer::discover().unwrap_or_else(|error| {
+        eprintln!("could not discover CUDA artifact finalizer: {error}");
+        std::process::exit(1);
+    });
+    let provenance = finalizer.provenance_digest().unwrap_or_else(|| {
+        eprintln!(
+            "the loaded libNVVM or nvJitLink library cannot be tied to an exact file; refusing materialization because Cargo could not fingerprint the compiler inputs"
+        );
+        std::process::exit(1);
+    });
+    println!("{}", digest_hex(&provenance));
+}
+
+fn parse_strict_bool(name: &str, value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(format!(
+            "{name} must be a boolean (accepted true values: 1, true, yes, on; false values: 0, false, no, off), got {value:?}"
+        )),
+    }
+}
+
+fn digest_hex(digest: &[u8; 32]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hex
+}
+
 /// Project-local cuda-oxide defaults loaded from `.cargo/cuda-oxide.toml`.
 #[derive(Debug, Clone, Default)]
 pub struct OxideConfig {
@@ -166,6 +330,7 @@ pub fn codegen_run(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    materialize_cubin: bool,
 ) {
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
@@ -177,6 +342,7 @@ pub fn codegen_run(
 
     let output_format = format_label(emit_nvvm_ir);
     let target_arch = configured_arch(ctx, arch);
+    let materialization = prepare_materialization(ctx, materialize_cubin, arch, emit_nvvm_ir);
     // Target precedence for `cargo oxide run` (highest first):
     //   1. --arch <sm_XX>            explicit user override   -> CUDA_OXIDE_TARGET
     //   2. CUDA_OXIDE_TARGET=<sm_XX> explicit env override (from the parent)
@@ -190,7 +356,8 @@ pub fn codegen_run(
     // We only detect for `run`, not `build`/`pipeline`: `run` loads the cubin
     // on the local GPU, whereas those may legitimately cross-compile for
     // another machine.
-    let detected_device_arch = detect_run_target_arch(target_arch, emit_nvvm_ir);
+    let detected_device_arch =
+        detect_run_target_arch(target_arch, emit_nvvm_ir || materialization.enabled());
 
     if let Some(interop) = interop.filter(|config| !config.device_crates.is_empty()) {
         codegen_run_interop(
@@ -205,6 +372,7 @@ pub fn codegen_run(
             features,
             bin,
             no_fmad,
+            &materialization,
         );
         return;
     }
@@ -215,7 +383,15 @@ pub fn codegen_run(
     println!("RUSTC-CODEGEN-CUDA: {}", example);
     println!("=========================================");
     println!();
-    if emit_nvvm_ir {
+    if materialization.enabled() {
+        println!("Output format: materialized cubin");
+        println!(
+            "Target arch: {}",
+            configured_arch_label(ctx, arch)
+                .expect("materialization requires a configured architecture")
+        );
+        println!();
+    } else if emit_nvvm_ir {
         println!("Output format: {}", output_format);
         println!(
             "Target arch: {}",
@@ -248,8 +424,23 @@ pub fn codegen_run(
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
-    apply_codegen_rustflags(&mut cmd, ctx, CodegenProfilePolicy::ReleaseLike, &[]);
-    apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch);
+    let fingerprint = standard_codegen_fingerprint_cfg(
+        ctx,
+        verbose,
+        no_fmad,
+        emit_nvvm_ir,
+        target_arch,
+        detected_device_arch.as_deref(),
+        &materialization,
+    );
+    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        CodegenProfilePolicy::ReleaseLike,
+        &fingerprinted_cfgs,
+    );
+    apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
 
     if let Some(bin) = bin {
@@ -284,6 +475,7 @@ pub fn codegen_sanitize(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    materialize_cubin: bool,
 ) {
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
@@ -293,9 +485,11 @@ pub fn codegen_sanitize(
 
     let interop = load_interop_config(&example_dir);
     let target_arch = configured_arch(ctx, arch);
-    let detected_device_arch = detect_run_target_arch(target_arch, false);
+    let materialization = prepare_materialization(ctx, materialize_cubin, arch, false);
+    let detected_device_arch = detect_run_target_arch(target_arch, materialization.enabled());
 
     if let Some(interop) = interop.filter(|config| !config.device_crates.is_empty()) {
+        reject_interop_output_mode(false, &materialization);
         println!("=========================================");
         println!("RUSTC-CODEGEN-CUDA SANITIZE INTEROP: {}", example);
         println!("=========================================");
@@ -319,6 +513,7 @@ pub fn codegen_sanitize(
                 no_fmad,
                 sanitizer_line_tables: true,
             },
+            &materialization,
         );
         let binary = build_host_cargo(ctx, example, &example_dir, features, bin, verbose);
         run_compute_sanitizer(
@@ -354,6 +549,7 @@ pub fn codegen_sanitize(
         features,
         bin,
         no_fmad,
+        &materialization,
     );
     run_compute_sanitizer(
         ctx,
@@ -410,8 +606,9 @@ fn codegen_run_interop(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    materialization: &MaterializationMode,
 ) {
-    reject_interop_nvvm_ir(emit_nvvm_ir);
+    reject_interop_output_mode(emit_nvvm_ir, materialization);
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA INTEROP: {}", example);
@@ -432,6 +629,7 @@ fn codegen_run_interop(
         arch,
         detected_device_arch,
         InteropDeviceBuildOptions::standard(no_fmad),
+        materialization,
     );
     run_host_cargo(ctx, example, example_dir, "run", features, bin, verbose);
 }
@@ -447,8 +645,9 @@ fn codegen_build_interop(
     arch: Option<&str>,
     features: Option<&str>,
     no_fmad: bool,
+    materialization: &MaterializationMode,
 ) {
-    reject_interop_nvvm_ir(emit_nvvm_ir);
+    reject_interop_output_mode(emit_nvvm_ir, materialization);
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA INTEROP BUILD: {}", example);
@@ -468,11 +667,17 @@ fn codegen_build_interop(
         arch,
         None,
         InteropDeviceBuildOptions::standard(no_fmad),
+        materialization,
     );
     run_host_cargo(ctx, example, example_dir, "build", features, None, verbose);
 }
 
-fn reject_interop_nvvm_ir(emit_nvvm_ir: bool) {
+fn reject_interop_output_mode(emit_nvvm_ir: bool, materialization: &MaterializationMode) {
+    if materialization.enabled() {
+        eprintln!("Error: --materialize-cubin is not supported for metadata interop examples yet.");
+        eprintln!("Interop host crates currently consume PTX files from nested device crates.");
+        std::process::exit(2);
+    }
     if emit_nvvm_ir {
         eprintln!("Error: --emit-nvvm-ir is not supported for metadata interop examples yet.");
         eprintln!("Interop host crates embed PTX artifacts produced by nested device crates.");
@@ -480,6 +685,7 @@ fn reject_interop_nvvm_ir(emit_nvvm_ir: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_interop_device_crates(
     ctx: &Context,
     example_dir: &Path,
@@ -488,6 +694,7 @@ fn build_interop_device_crates(
     arch: Option<&str>,
     detected_device_arch: Option<&str>,
     options: InteropDeviceBuildOptions,
+    materialization: &MaterializationMode,
 ) {
     for device_crate in &interop.device_crates {
         build_interop_device_crate(
@@ -498,6 +705,7 @@ fn build_interop_device_crates(
             arch,
             detected_device_arch,
             options,
+            materialization,
         );
     }
 }
@@ -511,6 +719,7 @@ fn build_interop_device_crate(
     arch: Option<&str>,
     detected_device_arch: Option<&str>,
     options: InteropDeviceBuildOptions,
+    materialization: &MaterializationMode,
 ) {
     let manifest_path = example_dir.join(&device_crate.manifest_path);
     let manifest_path = manifest_path.canonicalize().unwrap_or_else(|e| {
@@ -548,20 +757,17 @@ fn build_interop_device_crate(
         .current_dir(device_dir);
 
     apply_interop_device_codegen_options(&mut cmd, ctx, verbose, options);
-    let fingerprinted_cfgs = options
-        .sanitizer_line_tables
-        .then(|| {
-            sanitize_codegen_fingerprint_cfg(
-                ctx,
-                verbose,
-                options.no_fmad,
-                arch,
-                detected_device_arch,
-                Some(&ptx_dir),
-            )
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
+    let fingerprint = interop_codegen_fingerprint_cfg(
+        ctx,
+        verbose,
+        options.no_fmad,
+        arch,
+        detected_device_arch,
+        &ptx_dir,
+        options.sanitizer_line_tables,
+        materialization,
+    );
+    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, materialization);
     apply_codegen_rustflags(
         &mut cmd,
         ctx,
@@ -571,7 +777,7 @@ fn build_interop_device_crate(
     // This is an internal artifact contract, so it must override a project
     // `[env]` default for the same variable.
     cmd.env("CUDA_OXIDE_PTX_DIR", &ptx_dir);
-    apply_output_mode(&mut cmd, false, arch);
+    apply_output_mode(&mut cmd, false, arch, materialization);
     apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
 
     let status = cmd.status().expect("Failed to build interop device crate");
@@ -656,6 +862,7 @@ fn codegen_build_host_binary(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    materialization: &MaterializationMode,
 ) -> PathBuf {
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(example_dir);
@@ -669,15 +876,23 @@ fn codegen_build_host_binary(
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
     apply_default_sanitizer_line_tables(&mut cmd, ctx);
-    let fingerprint =
-        sanitize_codegen_fingerprint_cfg(ctx, verbose, no_fmad, arch, detected_device_arch, None);
+    let fingerprint = sanitize_codegen_fingerprint_cfg(
+        ctx,
+        verbose,
+        no_fmad,
+        arch,
+        detected_device_arch,
+        None,
+        materialization,
+    );
+    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, materialization);
     apply_codegen_rustflags(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLike,
-        &[fingerprint],
+        &fingerprinted_cfgs,
     );
-    apply_output_mode(&mut cmd, false, arch);
+    apply_output_mode(&mut cmd, false, arch, materialization);
     apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
 
     if let Some(bin) = bin {
@@ -1223,6 +1438,7 @@ fn run_compute_sanitizer(
 /// Same as [`codegen_run`] but uses `cargo build --release` instead of
 /// `cargo run`. Useful for cross-compilation or when the target hardware
 /// (e.g., Blackwell tensor cores) isn't available on the build machine.
+#[allow(clippy::too_many_arguments)]
 pub fn codegen_build(
     ctx: &Context,
     example: &str,
@@ -1231,8 +1447,10 @@ pub fn codegen_build(
     arch: Option<&str>,
     features: Option<&str>,
     no_fmad: bool,
+    materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
+    let materialization = prepare_materialization(ctx, materialize_cubin, arch, emit_nvvm_ir);
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
     } else {
@@ -1252,6 +1470,7 @@ pub fn codegen_build(
             target_arch,
             features,
             no_fmad,
+            &materialization,
         );
         return;
     }
@@ -1273,8 +1492,23 @@ pub fn codegen_build(
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
-    apply_codegen_rustflags(&mut cmd, ctx, CodegenProfilePolicy::ReleaseLike, &[]);
-    apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch);
+    let fingerprint = standard_codegen_fingerprint_cfg(
+        ctx,
+        verbose,
+        no_fmad,
+        emit_nvvm_ir,
+        target_arch,
+        None,
+        &materialization,
+    );
+    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        CodegenProfilePolicy::ReleaseLike,
+        &fingerprinted_cfgs,
+    );
+    apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
 
     println!("Building {}...", example);
     println!();
@@ -1344,6 +1578,7 @@ pub fn emit_ltoir(
         Some(&sm_arch),
         features,
         no_fmad,
+        false,
     );
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.
@@ -1375,12 +1610,7 @@ pub fn emit_ltoir(
     });
 
     let compute_arch = parsed_arch.compute();
-    let ltoir = compile_nvvm_to_ltoir(
-        &ir,
-        example,
-        &parsed_arch,
-        compile_options.fma_contraction_enabled(),
-    );
+    let ltoir = compile_nvvm_to_ltoir(&ir, example, &parsed_arch, compile_options);
 
     // Step 3: write the artifact.
     let out_path = output
@@ -1445,7 +1675,9 @@ pub fn emit_ltoir(
 ///
 /// Accepts `sm_XX` (the form `--arch` and the rest of cargo-oxide use),
 /// `compute_XX` (passed through), or a bare `XX`.
-fn parse_nvvm_arch(arch: &str) -> Result<libnvvm_sys::CudaArch, libnvvm_sys::CudaArchParseError> {
+fn parse_nvvm_arch(
+    arch: &str,
+) -> Result<cuda_artifact_finalizer::CudaArch, cuda_artifact_finalizer::CudaArchParseError> {
     let normalized = if arch.starts_with("sm_") || arch.starts_with("compute_") {
         arch.to_string()
     } else {
@@ -1460,98 +1692,38 @@ fn parse_nvvm_arch(arch: &str) -> Result<libnvvm_sys::CudaArch, libnvvm_sys::Cud
 fn compile_nvvm_to_ltoir(
     ir: &[u8],
     name: &str,
-    arch: &libnvvm_sys::CudaArch,
-    allow_fma_contraction: bool,
+    arch: &cuda_artifact_finalizer::CudaArch,
+    compile_options: oxide_artifacts::ArtifactCompileOptions,
 ) -> Vec<u8> {
-    let nvvm = libnvvm_sys::LibNvvm::load().unwrap_or_else(|e| {
-        eprintln!("Error: could not load libNVVM: {e}");
+    let compiler = cuda_artifact_finalizer::NvvmCompiler::discover().unwrap_or_else(|e| {
+        eprintln!("Error: could not initialize the CUDA artifact compiler: {e}");
         eprintln!("libNVVM ships with the CUDA Toolkit at <CUDA>/nvvm/lib64/libnvvm.so.");
         eprintln!("Run `cargo oxide doctor` to check your toolkit setup.");
         std::process::exit(1);
     });
-    let ir_version = nvvm.ir_version().unwrap_or_else(|e| {
-        eprintln!("Error: could not query libNVVM's accepted IR version: {e}");
-        std::process::exit(1);
-    });
-    if (ir_version.ir_major, ir_version.ir_minor) != (2, 0) {
-        eprintln!(
-            "Error: installed libNVVM accepts NVVM IR {}.{}, but cuda-oxide emits NVVM IR 2.0",
-            ir_version.ir_major, ir_version.ir_minor
-        );
-        std::process::exit(1);
-    }
-    if let Some(llvm_major) = nvvm.llvm_version(arch).unwrap_or_else(|e| {
-        eprintln!(
-            "Error: could not query libNVVM's LLVM dialect for {}: {e}",
-            arch.compute()
-        );
-        std::process::exit(1);
-    }) {
-        let mismatch = if arch.uses_legacy_llvm() {
-            llvm_major != 7
-        } else {
-            llvm_major == 7
-        };
-        if mismatch {
-            let expected = if arch.uses_legacy_llvm() {
-                "legacy LLVM 7 typed-pointer"
-            } else {
-                "modern opaque-pointer"
-            };
-            eprintln!(
-                "Error: libNVVM reports LLVM {llvm_major} for {}, but cuda-oxide selected the {expected} dialect",
-                arch.compute()
-            );
-            std::process::exit(1);
-        }
-    }
-    let mut program = libnvvm_sys::Program::new(&nvvm).unwrap_or_else(|e| {
-        eprintln!("Error: nvvmCreateProgram failed: {e}");
-        std::process::exit(1);
-    });
-
-    // Add libdevice before the kernel module so any __nv_* math calls (exp,
-    // sin, cos, etc.) are resolved at LTOIR compile time, matching the pattern
-    // used by NVCC and cuda-host's own LTOIR path.
-    let libdevice_path = libnvvm_sys::find_libdevice().unwrap_or_else(|e| {
-        eprintln!("Error: could not locate libdevice.10.bc: {e}");
-        eprintln!("Set CUDA_OXIDE_LIBDEVICE, CUDA_TOOLKIT_PATH, or CUDA_HOME.");
-        std::process::exit(1);
-    });
-    let libdevice_bytes = std::fs::read(&libdevice_path).unwrap_or_else(|e| {
-        eprintln!(
-            "Error: could not read libdevice at {}: {e}",
-            libdevice_path.display()
-        );
-        std::process::exit(1);
-    });
-    program
-        .add_module(&libdevice_bytes, "libdevice.10.bc")
-        .unwrap_or_else(|e| {
-            eprintln!("Error: libNVVM rejected libdevice module: {e}");
-            std::process::exit(1);
-        });
-
-    program.add_module(ir, name).unwrap_or_else(|e| {
-        eprintln!("Error: libNVVM rejected the NVVM IR module: {e}");
-        std::process::exit(1);
-    });
-    let arch_opt = format!("-arch={}", arch.compute());
-    program.verify(&[&arch_opt]).unwrap_or_else(|e| {
-        eprintln!("Error: libNVVM verification failed: {e}");
-        std::process::exit(1);
-    });
-    let fma_opt = if allow_fma_contraction {
-        "-fma=1"
-    } else {
-        "-fma=0"
-    };
-    program
-        .compile(&[&arch_opt, "-gen-lto", fma_opt])
+    let options = finalization_options_from_artifact(arch, compile_options);
+    compiler
+        .compile_nvvm_ir_to_ltoir(name, ir, &options)
         .unwrap_or_else(|e| {
             eprintln!("Error: libNVVM -gen-lto compilation failed: {e}");
             std::process::exit(1);
         })
+}
+
+fn finalization_options_from_artifact(
+    arch: &cuda_artifact_finalizer::CudaArch,
+    compile_options: oxide_artifacts::ArtifactCompileOptions,
+) -> cuda_artifact_finalizer::FinalizationOptions {
+    let debug = match compile_options.debug_policy() {
+        oxide_artifacts::ArtifactDebugPolicy::None => cuda_artifact_finalizer::DebugPolicy::None,
+        oxide_artifacts::ArtifactDebugPolicy::LineTables => {
+            cuda_artifact_finalizer::DebugPolicy::LineTables
+        }
+        oxide_artifacts::ArtifactDebugPolicy::Full => cuda_artifact_finalizer::DebugPolicy::Full,
+    };
+    cuda_artifact_finalizer::FinalizationOptions::new(arch.clone())
+        .with_fma_contraction(compile_options.fma_contraction_enabled())
+        .with_debug_policy(debug)
 }
 
 /// Options for `cargo oxide build -- ...` / `cargo oxide test -- ...`.
@@ -1565,6 +1737,7 @@ pub struct CargoPassthroughOptions<'a> {
     pub device_codegen_crate: Option<&'a str>,
     pub device_cfgs: &'a [String],
     pub no_fmad: bool,
+    pub materialize_cubin: bool,
 }
 
 /// Cargo operations supported by the passthrough path.
@@ -1660,15 +1833,23 @@ fn passthrough_codegen_fingerprint(
     opts: &CargoPassthroughOptions<'_>,
     owner_filter: Option<&str>,
     target_arch: Option<&str>,
+    materialization: &MaterializationMode,
 ) -> String {
-    let inherited_env: BTreeMap<String, Option<String>> = std::env::vars_os()
+    let inherited_env: BTreeMap<String, Vec<u8>> = std::env::vars_os()
         .filter_map(|(key, value)| {
             key.into_string()
                 .ok()
-                .map(|key| (key, value.into_string().ok()))
+                .map(|key| (key, value.as_encoded_bytes().to_vec()))
         })
         .collect();
-    passthrough_codegen_fingerprint_with_env(ctx, opts, owner_filter, target_arch, &inherited_env)
+    passthrough_codegen_fingerprint_with_env(
+        ctx,
+        opts,
+        owner_filter,
+        target_arch,
+        materialization,
+        &inherited_env,
+    )
 }
 
 fn passthrough_codegen_fingerprint_with_env(
@@ -1676,12 +1857,13 @@ fn passthrough_codegen_fingerprint_with_env(
     opts: &CargoPassthroughOptions<'_>,
     owner_filter: Option<&str>,
     target_arch: Option<&str>,
-    inherited_env: &BTreeMap<String, Option<String>>,
+    materialization: &MaterializationMode,
+    inherited_env: &BTreeMap<String, Vec<u8>>,
 ) -> String {
     let mut effective_env = BTreeMap::new();
     effective_env.insert(
         "__CUDA_OXIDE_BACKEND_ARTIFACT".to_string(),
-        backend_artifact_identity(&ctx.backend_so),
+        backend_artifact_identity(&ctx.backend_so).into_bytes(),
     );
 
     // Project-configured CUDA_OXIDE_* variables are defaults. Mirror the same
@@ -1691,50 +1873,50 @@ fn passthrough_codegen_fingerprint_with_env(
         if !key.starts_with("CUDA_OXIDE_") {
             continue;
         }
-        match inherited_env.get(key) {
-            Some(Some(value)) => {
-                effective_env.insert(key.clone(), value.clone());
-            }
-            // `apply_config_env` sees the non-Unicode parent value through
-            // var_os and does not replace it; backend readers using `var`
-            // ignore it, so there is no effective Unicode value to hash.
-            Some(None) => {}
-            None => {
-                effective_env.insert(key.clone(), configured_value.clone());
-            }
+        if let Some(value) = inherited_env.get(key) {
+            // Keep the platform encoding. Presence-only backend switches such
+            // as CUDA_OXIDE_NO_FMA remain effective even when their value is
+            // not Unicode, so dropping those bytes could reuse stale code.
+            effective_env.insert(key.clone(), value.clone());
+        } else {
+            effective_env.insert(key.clone(), configured_value.as_bytes().to_vec());
         }
     }
     // Capture backend settings inherited outside project config, including
     // current and future CUDA_OXIDE_* switches.
     for (key, value) in inherited_env
         .iter()
-        .filter(|(key, value)| key.starts_with("CUDA_OXIDE_") && value.is_some())
+        .filter(|(key, _)| key.starts_with("CUDA_OXIDE_"))
     {
-        effective_env.insert(
-            key.clone(),
-            value
-                .as_ref()
-                .expect("filtered to Unicode environment values")
-                .clone(),
-        );
+        effective_env.insert(key.clone(), value.clone());
     }
 
     if opts.verbose {
-        effective_env.insert("CUDA_OXIDE_VERBOSE".to_string(), "1".to_string());
+        effective_env.insert("CUDA_OXIDE_VERBOSE".to_string(), b"1".to_vec());
     }
     if opts.no_fmad {
-        effective_env.insert("CUDA_OXIDE_NO_FMA".to_string(), "1".to_string());
+        effective_env.insert("CUDA_OXIDE_NO_FMA".to_string(), b"1".to_vec());
     }
-    if opts.emit_nvvm_ir {
-        effective_env.insert("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), "1".to_string());
+    if opts.emit_nvvm_ir || materialization.enabled() {
+        effective_env.insert("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), b"1".to_vec());
+    }
+    if let Some(provenance) = &materialization.provenance {
+        effective_env.insert(MATERIALIZE_ENV.to_string(), b"1".to_vec());
+        effective_env.insert(
+            EXPECTED_PROVENANCE_ENV.to_string(),
+            provenance.as_bytes().to_vec(),
+        );
     }
     if let Some(target_arch) = target_arch {
-        effective_env.insert("CUDA_OXIDE_TARGET".to_string(), target_arch.to_string());
+        effective_env.insert(
+            "CUDA_OXIDE_TARGET".to_string(),
+            target_arch.as_bytes().to_vec(),
+        );
     }
     if let Some(owner_filter) = owner_filter {
         effective_env.insert(
             "CUDA_OXIDE_DEVICE_CODEGEN_CRATE".to_string(),
-            owner_filter.to_string(),
+            owner_filter.as_bytes().to_vec(),
         );
     }
 
@@ -1744,7 +1926,7 @@ fn passthrough_codegen_fingerprint_with_env(
     let mut hash = 0xcbf29ce484222325_u64;
     for (key, value) in effective_env {
         update_codegen_fingerprint_hash(&mut hash, key.as_bytes());
-        update_codegen_fingerprint_hash(&mut hash, value.as_bytes());
+        update_codegen_fingerprint_hash(&mut hash, &value);
     }
     format!("{hash:016x}")
 }
@@ -1766,6 +1948,7 @@ fn sanitize_codegen_fingerprint_cfg(
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     ptx_dir: Option<&Path>,
+    materialization: &MaterializationMode,
 ) -> String {
     let opts = CargoPassthroughOptions {
         verbose,
@@ -1776,8 +1959,9 @@ fn sanitize_codegen_fingerprint_cfg(
         device_codegen_crate: None,
         device_cfgs: &[],
         no_fmad,
+        materialize_cubin: materialization.enabled(),
     };
-    let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch);
+    let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
     let mut hash = 0xcbf29ce484222325_u64;
     for bytes in [
         "sanitize-line-tables-v1".as_bytes(),
@@ -1792,19 +1976,96 @@ fn sanitize_codegen_fingerprint_cfg(
     format!("cuda_oxide_internal_codegen_env=\"{hash:016x}\"")
 }
 
+fn standard_codegen_fingerprint_cfg(
+    ctx: &Context,
+    verbose: bool,
+    no_fmad: bool,
+    emit_nvvm_ir: bool,
+    target_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+    materialization: &MaterializationMode,
+) -> String {
+    let opts = CargoPassthroughOptions {
+        verbose,
+        emit_nvvm_ir,
+        arch: target_arch,
+        features: None,
+        cargo_target_dir: None,
+        device_codegen_crate: None,
+        device_cfgs: &[],
+        no_fmad,
+        materialize_cubin: materialization.enabled(),
+    };
+    let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
+    let mut hash = 0xcbf29ce484222325_u64;
+    for bytes in [
+        "standard-codegen-v1".as_bytes(),
+        base.as_bytes(),
+        detected_device_arch.unwrap_or("").as_bytes(),
+    ] {
+        update_codegen_fingerprint_hash(&mut hash, bytes);
+    }
+    format!("cuda_oxide_internal_codegen_env=\"{hash:016x}\"")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn interop_codegen_fingerprint_cfg(
+    ctx: &Context,
+    verbose: bool,
+    no_fmad: bool,
+    target_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+    ptx_dir: &Path,
+    sanitizer_line_tables: bool,
+    materialization: &MaterializationMode,
+) -> String {
+    let base = standard_codegen_fingerprint_cfg(
+        ctx,
+        verbose,
+        no_fmad,
+        false,
+        target_arch,
+        detected_device_arch,
+        materialization,
+    );
+    let mut hash = 0xcbf29ce484222325_u64;
+    for bytes in [
+        "interop-codegen-v1".as_bytes(),
+        base.as_bytes(),
+        if sanitizer_line_tables {
+            b"line-tables"
+        } else {
+            b"default-debug"
+        },
+        ptx_dir.as_os_str().as_encoded_bytes(),
+    ] {
+        update_codegen_fingerprint_hash(&mut hash, bytes);
+    }
+    format!("cuda_oxide_internal_codegen_env=\"{hash:016x}\"")
+}
+
 fn backend_artifact_identity(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let path = canonical.to_string_lossy();
-    let Ok(metadata) = std::fs::metadata(&canonical) else {
-        return format!("{path}|missing");
+    let Ok(mut file) = std::fs::File::open(&canonical) else {
+        return format!("{path}|unreadable");
     };
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    format!("{path}|{}|{modified}", metadata.len())
+    let mut hasher = Sha256::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        let Ok(read) = file.read(&mut chunk) else {
+            return format!("{path}|unreadable");
+        };
+        if read == 0 {
+            break;
+        }
+        hasher.update(&chunk[..read]);
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    format!("{path}|sha256={}", digest_hex(&digest))
 }
 
 fn cargo_passthrough_command(
@@ -1814,15 +2075,25 @@ fn cargo_passthrough_command(
     cargo_args: &[String],
 ) -> Result<Command, String> {
     let target_arch = configured_arch(ctx, opts.arch);
+    let materialization =
+        prepare_materialization(ctx, opts.materialize_cubin, opts.arch, opts.emit_nvvm_ir);
     let owner_filter = configured_device_codegen_crates(ctx, opts.device_codegen_crate)?;
     let mut fingerprinted_device_cfgs = opts.device_cfgs.to_vec();
     // Cargo does not fingerprint arbitrary child environment variables. An
     // otherwise-unused cfg makes every effective codegen setting part of the
     // rustc command line, so changing target/output/FMA/filter settings reruns
     // the backend instead of silently reusing stale PTX or NVVM IR.
-    let fingerprint =
-        passthrough_codegen_fingerprint(ctx, opts, owner_filter.as_deref(), target_arch);
+    let fingerprint = passthrough_codegen_fingerprint(
+        ctx,
+        opts,
+        owner_filter.as_deref(),
+        target_arch,
+        &materialization,
+    );
     fingerprinted_device_cfgs.push(format!("cuda_oxide_internal_codegen_env=\"{fingerprint}\""));
+    if let Some(provenance) = &materialization.provenance {
+        fingerprinted_device_cfgs.push(format!("{MATERIALIZER_PROVENANCE_CFG}=\"{provenance}\""));
+    }
     let mut cmd = Command::new("cargo");
     cmd.arg(cargo_subcommand.as_str());
     if let Some(features) = opts.features {
@@ -1846,7 +2117,7 @@ fn cargo_passthrough_command(
     if let Some(owner_filter) = owner_filter {
         cmd.env("CUDA_OXIDE_DEVICE_CODEGEN_CRATE", owner_filter);
     }
-    apply_output_mode(&mut cmd, opts.emit_nvvm_ir, target_arch);
+    apply_output_mode(&mut cmd, opts.emit_nvvm_ir, target_arch, &materialization);
     Ok(cmd)
 }
 
@@ -1920,13 +2191,19 @@ pub fn codegen_show_pipeline(
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     no_fmad: bool,
+    materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
+    let materialization = prepare_materialization(ctx, materialize_cubin, arch, emit_nvvm_ir);
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
     } else {
         ctx.workspace_root.clone()
     };
+
+    if load_interop_config(&example_dir).is_some_and(|config| !config.device_crates.is_empty()) {
+        reject_interop_output_mode(emit_nvvm_ir, &materialization);
+    }
 
     clean_generated_files(&example_dir, example);
 
@@ -1935,13 +2212,24 @@ pub fn codegen_show_pipeline(
     println!("=========================================");
     println!();
     let target_arch_label = configured_arch_label(ctx, arch);
-    match (emit_nvvm_ir, target_arch_label.as_deref()) {
-        (true, Some(target_arch)) => println!("Output format: NVVM IR (arch: {})", target_arch),
-        (false, Some(target_arch)) => {
+    match (
+        materialization.enabled(),
+        emit_nvvm_ir,
+        target_arch_label.as_deref(),
+    ) {
+        (true, _, Some(target_arch)) => {
+            println!("Output format: materialized cubin (arch: {target_arch})")
+        }
+        (false, true, Some(target_arch)) => {
+            println!("Output format: NVVM IR (arch: {})", target_arch)
+        }
+        (false, false, Some(target_arch)) => {
             println!("Output format: PTX (arch override: {})", target_arch)
         }
-        (false, None) => println!("Output format: PTX (auto-detected arch)"),
-        (true, None) => unreachable!("--emit-nvvm-ir requires a configured architecture"),
+        (false, false, None) => println!("Output format: PTX (auto-detected arch)"),
+        (true, _, None) | (false, true, None) => {
+            unreachable!("IR/final materialization requires a configured architecture")
+        }
     }
     println!();
     println!("Required flags (applied via CARGO_ENCODED_RUSTFLAGS):");
@@ -1960,7 +2248,22 @@ pub fn codegen_show_pipeline(
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
     apply_config_env(&mut cmd, ctx);
-    apply_codegen_rustflags(&mut cmd, ctx, CodegenProfilePolicy::ReleaseLike, &[]);
+    let fingerprint = standard_codegen_fingerprint_cfg(
+        ctx,
+        true,
+        no_fmad,
+        emit_nvvm_ir,
+        target_arch,
+        None,
+        &materialization,
+    );
+    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
+    apply_codegen_rustflags(
+        &mut cmd,
+        ctx,
+        CodegenProfilePolicy::ReleaseLike,
+        &fingerprinted_cfgs,
+    );
     cmd.env("CUDA_OXIDE_VERBOSE", "1");
     cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
     cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
@@ -1969,7 +2272,7 @@ pub fn codegen_show_pipeline(
         cmd.env("CUDA_OXIDE_NO_FMA", "1");
     }
 
-    apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
     apply_ld_library_path(&mut cmd, ctx);
 
     println!("Building {}...", example);
@@ -1995,6 +2298,7 @@ pub fn codegen_show_pipeline(
 /// flags, then launches the debugger on the resulting binary. Prints a
 /// quick-reference cheat sheet for common cuda-gdb commands before handing
 /// control to the debugger.
+#[allow(clippy::too_many_arguments)]
 pub fn codegen_debug(
     ctx: &Context,
     example: &str,
@@ -2003,7 +2307,19 @@ pub fn codegen_debug(
     bin: Option<&str>,
     use_cgdb: bool,
     use_tui: bool,
+    materialize_cubin: bool,
 ) {
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
+    let target_arch = configured_arch(ctx, arch);
+    let materialization = prepare_materialization(ctx, materialize_cubin, arch, false);
+    if load_interop_config(&example_dir).is_some_and(|config| !config.device_crates.is_empty()) {
+        reject_interop_output_mode(false, &materialization);
+    }
+
     let cuda_gdb = find_cuda_toolkit_executable(
         ctx,
         "cuda-gdb",
@@ -2033,14 +2349,7 @@ pub fn codegen_debug(
         None
     };
 
-    let example_dir = if ctx.is_workspace {
-        resolve_example_dir(ctx, example)
-    } else {
-        ctx.workspace_root.clone()
-    };
-
-    let target_arch = configured_arch(ctx, arch);
-    let detected_device_arch = detect_run_target_arch(target_arch, false);
+    let detected_device_arch = detect_run_target_arch(target_arch, materialization.enabled());
 
     if let Some(bin) = bin {
         println!("Building {} (bin: {}) with debug info...", example, bin);
@@ -2066,14 +2375,24 @@ pub fn codegen_debug(
     }
 
     apply_config_env(&mut cmd, ctx);
+    let fingerprint = standard_codegen_fingerprint_cfg(
+        ctx,
+        false,
+        false,
+        false,
+        target_arch,
+        detected_device_arch.as_deref(),
+        &materialization,
+    );
+    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
     apply_codegen_rustflags(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLikeWithDebugInfo,
-        &[],
+        &fingerprinted_cfgs,
     );
     cmd.env("CARGO_PROFILE_RELEASE_DEBUG", "2");
-    apply_output_mode(&mut cmd, false, target_arch);
+    apply_output_mode(&mut cmd, false, target_arch, &materialization);
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
     apply_ld_library_path(&mut cmd, ctx);
 
@@ -3015,13 +3334,19 @@ fn apply_codegen_rustflags(
 /// `arch` is an explicit pin (`--arch`); it becomes `CUDA_OXIDE_TARGET`, the
 /// hard override the backend honors as-is. The auto-detected GPU arch is *not*
 /// routed here -- see [`apply_device_arch_hint`].
-fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) {
+fn apply_output_mode(
+    cmd: &mut Command,
+    emit_nvvm_ir: bool,
+    arch: Option<&str>,
+    materialization: &MaterializationMode,
+) {
     if let Some(target_arch) = arch {
         cmd.env("CUDA_OXIDE_TARGET", target_arch);
     }
-    if emit_nvvm_ir {
+    if emit_nvvm_ir || materialization.enabled() {
         cmd.env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
     }
+    materialization.apply(cmd);
 }
 
 fn configured_arch<'a>(ctx: &'a Context, cli_arch: Option<&'a str>) -> Option<&'a str> {
@@ -3707,6 +4032,76 @@ mod tests {
     }
 
     #[test]
+    fn strict_materialization_boolean_rejects_presence_only_values() {
+        for value in ["1", "true", " YES ", "on"] {
+            assert!(parse_strict_bool(MATERIALIZE_ENV, value).unwrap());
+        }
+        for value in ["0", "false", " NO ", "off"] {
+            assert!(!parse_strict_bool(MATERIALIZE_ENV, value).unwrap());
+        }
+        for value in ["", "enabled", "2"] {
+            let error = parse_strict_bool(MATERIALIZE_ENV, value).unwrap_err();
+            assert!(error.contains("must be a boolean"), "{error}");
+        }
+    }
+
+    #[test]
+    fn materialization_rejects_nvvm_ir_as_a_competing_final_output() {
+        let error = prepare_materialization_result(
+            &test_context(OxideConfig::default()),
+            true,
+            Some("sm_90"),
+            true,
+        )
+        .expect_err("the two user-facing final output modes must conflict");
+
+        assert!(error.contains("cannot be combined with --emit-nvvm-ir"));
+    }
+
+    #[test]
+    fn materializer_discovery_uses_the_same_project_tool_environment_as_rustc() {
+        let configured_libdevice = "/configured/cuda/nvvm/libdevice/libdevice.10.bc";
+        let ctx = test_context(OxideConfig {
+            env: vec![
+                (
+                    "CUDA_OXIDE_LIBDEVICE".to_string(),
+                    configured_libdevice.to_string(),
+                ),
+                (
+                    "CUDA_TOOLKIT_PATH".to_string(),
+                    "/configured/cuda".to_string(),
+                ),
+                (
+                    "LD_LIBRARY_PATH".to_string(),
+                    "/configured/cuda/lib64".to_string(),
+                ),
+            ],
+            ..OxideConfig::default()
+        });
+        let discovery = materializer_discovery_command(&ctx, Path::new("/fake/cargo-oxide"));
+        let mut rustc_child = Command::new("cargo");
+        apply_common_codegen_env(&mut rustc_child, &ctx, false, false);
+
+        for key in [
+            "CUDA_OXIDE_LIBDEVICE",
+            "CUDA_TOOLKIT_PATH",
+            "LD_LIBRARY_PATH",
+        ] {
+            assert_eq!(
+                command_env(&discovery, key),
+                command_env(&rustc_child, key),
+                "discovery and rustc must see the same {key}"
+            );
+        }
+        if std::env::var_os("CUDA_OXIDE_LIBDEVICE").is_none() {
+            assert_eq!(
+                command_env(&discovery, "CUDA_OXIDE_LIBDEVICE").as_deref(),
+                Some(configured_libdevice)
+            );
+        }
+    }
+
+    #[test]
     fn artifact_stem_normalizes_hyphens_like_cargo() {
         assert_eq!(artifact_stem("rustlantis-smoke"), "rustlantis_smoke");
         assert_eq!(artifact_stem("vecadd"), "vecadd");
@@ -4346,6 +4741,7 @@ path = "src/other.rs"
             Some("sm_80"),
             None,
             Some(Path::new("/tmp/generated-ptx")),
+            &MaterializationMode::default(),
         );
         apply_codegen_rustflags(
             &mut cmd,
@@ -4376,12 +4772,44 @@ path = "src/other.rs"
     #[test]
     fn sanitize_fingerprint_tracks_output_affecting_settings() {
         let ctx = test_context(OxideConfig::default());
-        let base = sanitize_codegen_fingerprint_cfg(&ctx, false, false, None, Some("sm_80"), None);
+        let base = sanitize_codegen_fingerprint_cfg(
+            &ctx,
+            false,
+            false,
+            None,
+            Some("sm_80"),
+            None,
+            &MaterializationMode::default(),
+        );
 
         for changed in [
-            sanitize_codegen_fingerprint_cfg(&ctx, false, true, None, Some("sm_80"), None),
-            sanitize_codegen_fingerprint_cfg(&ctx, false, false, None, Some("sm_90"), None),
-            sanitize_codegen_fingerprint_cfg(&ctx, false, false, Some("sm_80"), None, None),
+            sanitize_codegen_fingerprint_cfg(
+                &ctx,
+                false,
+                true,
+                None,
+                Some("sm_80"),
+                None,
+                &MaterializationMode::default(),
+            ),
+            sanitize_codegen_fingerprint_cfg(
+                &ctx,
+                false,
+                false,
+                None,
+                Some("sm_90"),
+                None,
+                &MaterializationMode::default(),
+            ),
+            sanitize_codegen_fingerprint_cfg(
+                &ctx,
+                false,
+                false,
+                Some("sm_80"),
+                None,
+                None,
+                &MaterializationMode::default(),
+            ),
             sanitize_codegen_fingerprint_cfg(
                 &ctx,
                 false,
@@ -4389,6 +4817,7 @@ path = "src/other.rs"
                 None,
                 Some("sm_80"),
                 Some(Path::new("/tmp/generated-ptx")),
+                &MaterializationMode::default(),
             ),
         ] {
             assert_ne!(base, changed);
@@ -4464,6 +4893,7 @@ path = "src/other.rs"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            materialize_cubin: false,
         };
         for cargo_args in [
             vec!["--release".to_string()],
@@ -4626,6 +5056,7 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: Some("gpu-kernels, math_gpu"),
             device_cfgs: &device_cfgs,
             no_fmad: false,
+            materialize_cubin: false,
         };
         let cargo_args = vec![
             "-p".to_string(),
@@ -4699,6 +5130,7 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            materialize_cubin: false,
         };
 
         let cmd =
@@ -4743,6 +5175,7 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            materialize_cubin: false,
         };
         let inherited_env = BTreeMap::new();
         let base_hash = passthrough_codegen_fingerprint_with_env(
@@ -4750,6 +5183,7 @@ MY_BUILD_FLAG = "configured"
             &base,
             None,
             Some("sm_80"),
+            &MaterializationMode::default(),
             &inherited_env,
         );
 
@@ -4780,6 +5214,7 @@ MY_BUILD_FLAG = "configured"
                 &arch,
                 None,
                 Some("sm_90"),
+                &MaterializationMode::default(),
                 &inherited_env,
             )
         );
@@ -4790,6 +5225,7 @@ MY_BUILD_FLAG = "configured"
                 &emit,
                 None,
                 Some("sm_80"),
+                &MaterializationMode::default(),
                 &inherited_env,
             )
         );
@@ -4800,6 +5236,7 @@ MY_BUILD_FLAG = "configured"
                 &no_fmad,
                 None,
                 Some("sm_80"),
+                &MaterializationMode::default(),
                 &inherited_env,
             )
         );
@@ -4810,6 +5247,7 @@ MY_BUILD_FLAG = "configured"
                 &base,
                 Some("gpu_kernel"),
                 Some("sm_80"),
+                &MaterializationMode::default(),
                 &inherited_env,
             )
         );
@@ -4820,9 +5258,57 @@ MY_BUILD_FLAG = "configured"
                 &base,
                 None,
                 Some("sm_80"),
+                &MaterializationMode::default(),
                 &inherited_env,
             )
         );
+        let materialized = MaterializationMode {
+            provenance: Some("ab".repeat(32)),
+        };
+        assert_ne!(
+            base_hash,
+            passthrough_codegen_fingerprint_with_env(
+                &ctx,
+                &base,
+                None,
+                Some("sm_80"),
+                &materialized,
+                &inherited_env,
+            ),
+            "exact CUDA-tool provenance must change Cargo's rustc fingerprint"
+        );
+    }
+
+    #[test]
+    fn passthrough_fingerprint_tracks_non_unicode_presence_switch_bytes() {
+        let ctx = test_context(OxideConfig::default());
+        let opts = CargoPassthroughOptions {
+            verbose: false,
+            emit_nvvm_ir: false,
+            arch: Some("sm_80"),
+            features: None,
+            cargo_target_dir: None,
+            device_codegen_crate: None,
+            device_cfgs: &[],
+            no_fmad: false,
+            materialize_cubin: false,
+        };
+        let fingerprint = |inherited_env: &BTreeMap<String, Vec<u8>>| {
+            passthrough_codegen_fingerprint_with_env(
+                &ctx,
+                &opts,
+                None,
+                Some("sm_80"),
+                &MaterializationMode::default(),
+                inherited_env,
+            )
+        };
+        let absent = BTreeMap::new();
+        let first = BTreeMap::from([("CUDA_OXIDE_NO_FMA".to_string(), vec![0xff])]);
+        let second = BTreeMap::from([("CUDA_OXIDE_NO_FMA".to_string(), vec![0xfe])]);
+
+        assert_ne!(fingerprint(&absent), fingerprint(&first));
+        assert_ne!(fingerprint(&first), fingerprint(&second));
     }
 
     #[test]
@@ -4839,6 +5325,8 @@ MY_BUILD_FLAG = "configured"
         std::fs::create_dir_all(&root).unwrap();
         let backend = root.join("librustc_codegen_cuda.so");
         std::fs::write(&backend, b"first").unwrap();
+        let original = std::fs::metadata(&backend).unwrap();
+        let original_modified = original.modified().unwrap();
 
         let mut ctx = test_context(OxideConfig::default());
         ctx.backend_so = backend.clone();
@@ -4851,13 +5339,37 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            materialize_cubin: false,
         };
         let inherited_env = BTreeMap::new();
-        let before =
-            passthrough_codegen_fingerprint_with_env(&ctx, &opts, None, None, &inherited_env);
-        std::fs::write(&backend, b"second-build-is-larger").unwrap();
-        let after =
-            passthrough_codegen_fingerprint_with_env(&ctx, &opts, None, None, &inherited_env);
+        let before = passthrough_codegen_fingerprint_with_env(
+            &ctx,
+            &opts,
+            None,
+            None,
+            &MaterializationMode::default(),
+            &inherited_env,
+        );
+        // Preserve the weak metadata identity that used to be fingerprinted:
+        // only the bytes differ.
+        std::fs::write(&backend, b"other").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&backend)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+        let replacement = std::fs::metadata(&backend).unwrap();
+        assert_eq!(replacement.len(), original.len());
+        assert_eq!(replacement.modified().unwrap(), original_modified);
+        let after = passthrough_codegen_fingerprint_with_env(
+            &ctx,
+            &opts,
+            None,
+            None,
+            &MaterializationMode::default(),
+            &inherited_env,
+        );
 
         assert_ne!(before, after);
         std::fs::remove_dir_all(root).unwrap();
@@ -4909,10 +5421,43 @@ MY_BUILD_FLAG = "configured"
     }
 
     #[test]
+    fn emit_ltoir_preserves_fma_and_debug_policy_for_libnvvm() {
+        let arch = parse_nvvm_arch("sm_90").unwrap();
+        for (artifact_debug, finalizer_debug) in [
+            (
+                oxide_artifacts::ArtifactDebugPolicy::None,
+                cuda_artifact_finalizer::DebugPolicy::None,
+            ),
+            (
+                oxide_artifacts::ArtifactDebugPolicy::LineTables,
+                cuda_artifact_finalizer::DebugPolicy::LineTables,
+            ),
+            (
+                oxide_artifacts::ArtifactDebugPolicy::Full,
+                cuda_artifact_finalizer::DebugPolicy::Full,
+            ),
+        ] {
+            let artifact_options = oxide_artifacts::ArtifactCompileOptions::new()
+                .with_fma_contraction(false)
+                .with_debug_policy(artifact_debug);
+            let finalizer_options = finalization_options_from_artifact(&arch, artifact_options);
+
+            assert_eq!(finalizer_options.target(), &arch);
+            assert!(!finalizer_options.allow_fma_contraction());
+            assert_eq!(finalizer_options.debug_policy(), finalizer_debug);
+        }
+    }
+
+    #[test]
     fn apply_output_mode_sets_target_for_arch_override() {
         let mut cmd = Command::new("cargo");
 
-        apply_output_mode(&mut cmd, false, Some("sm_120"));
+        apply_output_mode(
+            &mut cmd,
+            false,
+            Some("sm_120"),
+            &MaterializationMode::default(),
+        );
 
         assert_eq!(
             command_env(&cmd, "CUDA_OXIDE_TARGET").as_deref(),
@@ -4925,7 +5470,12 @@ MY_BUILD_FLAG = "configured"
     fn apply_output_mode_sets_nvvm_ir_flag_and_target() {
         let mut cmd = Command::new("cargo");
 
-        apply_output_mode(&mut cmd, true, Some("sm_100a"));
+        apply_output_mode(
+            &mut cmd,
+            true,
+            Some("sm_100a"),
+            &MaterializationMode::default(),
+        );
 
         assert_eq!(
             command_env(&cmd, "CUDA_OXIDE_TARGET").as_deref(),
@@ -4938,10 +5488,38 @@ MY_BUILD_FLAG = "configured"
     }
 
     #[test]
+    fn materialization_forces_nvvm_ir_and_exact_provenance_handshake() {
+        let mut cmd = Command::new("cargo");
+        let materialization = MaterializationMode {
+            provenance: Some("42".repeat(32)),
+        };
+
+        apply_output_mode(&mut cmd, false, Some("sm_90"), &materialization);
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR").as_deref(),
+            Some("1")
+        );
+        assert_eq!(command_env(&cmd, MATERIALIZE_ENV).as_deref(), Some("1"));
+        assert_eq!(
+            command_env(&cmd, EXPECTED_PROVENANCE_ENV).as_deref(),
+            Some("4242424242424242424242424242424242424242424242424242424242424242")
+        );
+        assert_eq!(
+            fingerprinted_codegen_cfgs("base=\"hash\"".to_string(), &materialization),
+            [
+                "base=\"hash\"".to_string(),
+                "cuda_oxide_internal_materializer_provenance=\"4242424242424242424242424242424242424242424242424242424242424242\""
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn apply_output_mode_leaves_auto_detect_ptx_unset() {
         let mut cmd = Command::new("cargo");
 
-        apply_output_mode(&mut cmd, false, None);
+        apply_output_mode(&mut cmd, false, None, &MaterializationMode::default());
 
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_TARGET"), None);
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR"), None);
@@ -4985,7 +5563,7 @@ MY_BUILD_FLAG = "configured"
     fn debug_output_mode_forwards_detected_gpu_hint() {
         let mut cmd = Command::new("cargo");
 
-        apply_output_mode(&mut cmd, false, None);
+        apply_output_mode(&mut cmd, false, None, &MaterializationMode::default());
         apply_device_arch_hint(&mut cmd, None, Some("sm_120a"));
 
         assert_eq!(
@@ -5000,7 +5578,12 @@ MY_BUILD_FLAG = "configured"
     fn debug_output_mode_honors_explicit_arch_override() {
         let mut cmd = Command::new("cargo");
 
-        apply_output_mode(&mut cmd, false, Some("sm_90"));
+        apply_output_mode(
+            &mut cmd,
+            false,
+            Some("sm_90"),
+            &MaterializationMode::default(),
+        );
         apply_device_arch_hint(&mut cmd, Some("sm_90"), Some("sm_120a"));
 
         assert_eq!(

@@ -24,8 +24,8 @@
 //!   directory and selects PTX, cubin, NVVM IR, or LTOIR using the recorded
 //!   artifact mode. Use this for normal module loading.
 //!
-//! All work is done via [`libnvvm_sys`] and [`nvjitlink_sys`] (`dlopen` of
-//! `libnvvm.so` and `libnvJitLink.so` from the CUDA Toolkit). No external
+//! All compilation work is delegated to [`cuda_artifact_finalizer`] (`dlopen`
+//! of `libnvvm.so` and `libnvJitLink.so` from the CUDA Toolkit). No external
 //! C tools are required, no symlinked `tools/` directory, no boilerplate.
 //!
 //! # Discovery
@@ -39,10 +39,11 @@
 //!   `<root>/nvvm/libdevice/libdevice.10.bc` for the same roots.
 //! - **Artifact target and options**: the emitted `<name>.target` records the
 //!   source architecture. Versioned targets require `<name>.options`, which
-//!   preserves the FMA policy through libNVVM and nvJitLink. The explicit
-//!   `CUDA_OXIDE_TARGET` override remains the fallback for legacy artifacts.
-//!   The CUDA context is queried separately for the GPU that will execute the
-//!   module.
+//!   preserves FMA and debug policy through libNVVM and nvJitLink. Version-1
+//!   sidecars imply no debug output; version 2 records line-table or full-debug
+//!   preservation. The explicit `CUDA_OXIDE_TARGET` override remains the
+//!   fallback for legacy artifacts. The CUDA context is queried separately for
+//!   the GPU that will execute the module.
 //!
 //! # Native cubin cache
 //!
@@ -51,8 +52,8 @@
 //! Blackwell PTX bridge keep their normal paths.
 //!
 //! An entry is keyed by the exact input bytes, normalized target, module names,
-//! ordered compiler/linker options (including FMA policy), libdevice bytes,
-//! and SHA-256 digests of the exact loaded `libnvvm.so` and
+//! ordered compiler/linker options (including FMA and debug policy), libdevice
+//! bytes, and SHA-256 digests of the exact loaded `libnvvm.so` and
 //! `libnvJitLink.so` files. Unknown tool identity
 //! disables reuse. Entries are published atomically below
 //! `.oxide-artifacts/ltoir-cubin-cache/v1` and are rechecked before their owned
@@ -73,35 +74,24 @@
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::ltoir_cache::{
-    BuiltArtifacts, CacheKeyBuilder, CacheResult, cache_or_build, digest_file_handle,
+use crate::ltoir_cache::{BuiltArtifacts, CacheResult, cache_or_build};
+use cuda_artifact_finalizer::{
+    CudaArch, CudaArchParseError, FinalizationOptions, Finalizer, FinalizerError, FinalizerOutput,
+    LtoLinker, NamedInput, NvJitLinkError, NvvmError,
 };
-use cuda_core::embedded::{ArtifactCompileOptions, COMPILE_OPTIONS_TARGET_MARKER};
+#[cfg(test)]
+use cuda_artifact_finalizer::{
+    ToolProvenance, ltoir_artifact_digest_with_provenance, nvvm_ir_artifact_digest_with_provenance,
+};
+use cuda_core::embedded::{
+    ArtifactCompileOptions, ArtifactDebugPolicy, COMPILE_OPTIONS_TARGET_MARKER,
+};
 use cuda_core::{CudaContext, CudaModule, DriverError};
-use libnvvm_sys::{CudaArch, CudaArchParseError, LibNvvm, NvvmError, Program};
-use nvjitlink_sys::{InputType, LibNvJitLink, Linker, NvJitLinkError};
+#[cfg(test)]
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 use thiserror::Error;
-
-// Bump this whenever an unlisted compiler/linker input or pipeline semantic
-// changes. Explicit options are also part of each key below.
-const CACHE_RECIPE: &[u8] = b"cuda-host/native-ltoir-cubin/v2";
-
-struct LoadedNvvmTool {
-    library: Arc<LibNvvm>,
-    digest: Option<[u8; 32]>,
-}
-
-struct LoadedNvJitLinkTool {
-    library: Arc<LibNvJitLink>,
-    digest: Option<[u8; 32]>,
-}
-
-static NVVM_TOOL: OnceLock<Arc<LoadedNvvmTool>> = OnceLock::new();
-static NVJITLINK_TOOL: OnceLock<Arc<LoadedNvJitLinkTool>> = OnceLock::new();
-static NVVM_TOOL_LOAD: OnceLock<Mutex<()>> = OnceLock::new();
-static NVJITLINK_TOOL_LOAD: OnceLock<Mutex<()>> = OnceLock::new();
 
 // ============================================================================
 // Errors
@@ -214,6 +204,35 @@ pub enum LtoirError {
     /// pipeline produced a cubin.
     #[error("CUDA driver: {0}")]
     Driver(#[from] DriverError),
+
+    /// The shared driver-independent finalizer rejected an invalid plan or
+    /// malformed tool output.
+    #[error(transparent)]
+    Finalizer(FinalizerError),
+}
+
+impl From<FinalizerError> for LtoirError {
+    fn from(error: FinalizerError) -> Self {
+        match error {
+            FinalizerError::Nvvm(error) => Self::Nvvm(error),
+            FinalizerError::NvJitLink(error) => Self::NvJitLink(error),
+            FinalizerError::LibdeviceNotFound { tried } => Self::LibdeviceNotFound { tried },
+            FinalizerError::Io { path, source } => Self::Io { path, source },
+            FinalizerError::UnsupportedNvvmIrVersion { major, minor } => {
+                Self::UnsupportedNvvmIrVersion { major, minor }
+            }
+            FinalizerError::DialectMismatch {
+                target,
+                llvm_major,
+                expected,
+            } => Self::DialectMismatch {
+                target,
+                llvm_major,
+                expected,
+            },
+            other => Self::Finalizer(other),
+        }
+    }
 }
 
 // ============================================================================
@@ -253,7 +272,7 @@ fn build_cubin_from_ll_file(ll_path: &Path, arch: &CudaArch) -> Result<FileCubin
         path: ll_path.to_path_buf(),
         source,
     })?;
-    let allow_fma_contraction = read_fma_contraction_option(ll_path)?;
+    let compile_options = read_compile_options(ll_path)?;
     validate_ir_target_sidecar(ll_path, arch)?;
     // Record the supplied target for older or manually created `.ll` files.
     // The sibling `.ltoir` can then be loaded after the `.ll` is removed.
@@ -267,13 +286,13 @@ fn build_cubin_from_ll_file(ll_path: &Path, arch: &CudaArch) -> Result<FileCubin
     let ltoir_path = dir.join(format!("{stem}.ltoir"));
     let cubin_path = dir.join(format!("{stem}.cubin"));
 
-    let cached = cached_nvvm_ir_to_cubin_with_options(
+    let cached = cached_nvvm_ir_to_cubin_with_compile_options(
         dir,
         &ll_bytes,
         &ll_path.display().to_string(),
         &ltoir_path.display().to_string(),
         arch,
-        allow_fma_contraction,
+        compile_options,
     )?;
     let ltoir = cached
         .ltoir
@@ -312,19 +331,36 @@ pub fn build_cubin_from_nvvm_ir(
     build_cubin_from_nvvm_ir_with_options(nvvm_ir, module_name, arch, true)
 }
 
-/// Compile NVVM IR bytes to a loadable cubin while preserving the artifact's
-/// floating-point contraction policy.
+/// Compile NVVM IR bytes to a loadable cubin with an explicit FMA policy.
+///
+/// This compatibility helper uses no debug information. Use
+/// [`build_cubin_from_nvvm_ir_with_compile_options`] when all deferred artifact
+/// policy must be preserved.
 pub fn build_cubin_from_nvvm_ir_with_options(
     nvvm_ir: &[u8],
     module_name: &str,
     arch: &str,
     allow_fma_contraction: bool,
 ) -> Result<Vec<u8>, LtoirError> {
+    build_cubin_from_nvvm_ir_with_compile_options(
+        nvvm_ir,
+        module_name,
+        arch,
+        ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction),
+    )
+}
+
+/// Compile NVVM IR bytes to a cubin while preserving every deferred compile
+/// policy recorded with the artifact.
+pub fn build_cubin_from_nvvm_ir_with_compile_options(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
-    let ltoir =
-        compile_nvvm_ir_to_ltoir_parsed(nvvm_ir, module_name, &arch, allow_fma_contraction)?;
-    let ltoir_name = format!("{module_name}.ltoir");
-    link_ltoir_to_cubin_parsed_with_options(&ltoir, &ltoir_name, &arch, allow_fma_contraction)
+    let options = finalization_options(&arch, compile_options);
+    Ok(Finalizer::discover()?.materialize_nvvm_ir(module_name, nvvm_ir, &options)?)
 }
 
 /// Compile NVVM IR bytes to forward-compatible PTX.
@@ -340,19 +376,46 @@ pub fn build_ptx_from_nvvm_ir(
     build_ptx_from_nvvm_ir_with_options(nvvm_ir, module_name, arch, true)
 }
 
-/// Compile NVVM IR bytes to forward-compatible PTX while preserving the
-/// artifact's floating-point contraction policy.
+/// Compile NVVM IR bytes to forward-compatible PTX with an explicit FMA
+/// policy.
+///
+/// This compatibility helper uses no debug information. Use
+/// [`build_ptx_from_nvvm_ir_with_compile_options`] when all deferred artifact
+/// policy must be preserved.
 pub fn build_ptx_from_nvvm_ir_with_options(
     nvvm_ir: &[u8],
     module_name: &str,
     arch: &str,
     allow_fma_contraction: bool,
 ) -> Result<Vec<u8>, LtoirError> {
+    build_ptx_from_nvvm_ir_with_compile_options(
+        nvvm_ir,
+        module_name,
+        arch,
+        ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction),
+    )
+}
+
+/// Compile NVVM IR bytes to PTX while preserving every deferred compile
+/// policy recorded with the artifact.
+pub fn build_ptx_from_nvvm_ir_with_compile_options(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
-    let ltoir =
-        compile_nvvm_ir_to_ltoir_parsed(nvvm_ir, module_name, &arch, allow_fma_contraction)?;
+    let finalizer = Finalizer::discover()?;
+    let options = finalization_options(&arch, compile_options);
+    let ltoir = finalizer
+        .compiler()
+        .compile_nvvm_ir_to_ltoir(module_name, nvvm_ir, &options)?;
     let ltoir_name = format!("{module_name}.ltoir");
-    link_ltoir_to_ptx_parsed_with_options(&ltoir, &ltoir_name, &arch, allow_fma_contraction)
+    Ok(finalizer.link_ltoir(
+        &[NamedInput::new(&ltoir_name, &ltoir)],
+        &options,
+        FinalizerOutput::Ptx,
+    )?)
 }
 
 /// Link a single LTOIR payload to a loadable cubin image in memory.
@@ -364,16 +427,35 @@ pub fn link_ltoir_to_cubin(
     link_ltoir_to_cubin_with_options(ltoir, module_name, arch, true)
 }
 
-/// Link a single LTOIR payload to a cubin while preserving the artifact's
-/// floating-point contraction policy.
+/// Link a single LTOIR payload to a cubin with an explicit FMA policy.
+///
+/// This compatibility helper uses no debug information. Use
+/// [`link_ltoir_to_cubin_with_compile_options`] when all deferred artifact
+/// policy must be preserved.
 pub fn link_ltoir_to_cubin_with_options(
     ltoir: &[u8],
     module_name: &str,
     arch: &str,
     allow_fma_contraction: bool,
 ) -> Result<Vec<u8>, LtoirError> {
+    link_ltoir_to_cubin_with_compile_options(
+        ltoir,
+        module_name,
+        arch,
+        ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction),
+    )
+}
+
+/// Link LTOIR to a cubin while preserving every deferred compile policy
+/// recorded with the artifact.
+pub fn link_ltoir_to_cubin_with_compile_options(
+    ltoir: &[u8],
+    module_name: &str,
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
-    link_ltoir_to_cubin_parsed_with_options(ltoir, module_name, &arch, allow_fma_contraction)
+    link_ltoir_to_cubin_parsed_with_compile_options(ltoir, module_name, &arch, compile_options)
 }
 
 /// Link one LTOIR payload to forward-compatible PTX.
@@ -388,162 +470,95 @@ pub fn link_ltoir_to_ptx(
     link_ltoir_to_ptx_with_options(ltoir, module_name, arch, true)
 }
 
-/// Link one LTOIR payload to forward-compatible PTX while preserving the
-/// artifact's floating-point contraction policy.
+/// Link one LTOIR payload to forward-compatible PTX with an explicit FMA
+/// policy.
+///
+/// This compatibility helper uses no debug information. Use
+/// [`link_ltoir_to_ptx_with_compile_options`] when all deferred artifact policy
+/// must be preserved.
 pub fn link_ltoir_to_ptx_with_options(
     ltoir: &[u8],
     module_name: &str,
     arch: &str,
     allow_fma_contraction: bool,
 ) -> Result<Vec<u8>, LtoirError> {
-    let arch: CudaArch = arch.parse()?;
-    link_ltoir_to_ptx_parsed_with_options(ltoir, module_name, &arch, allow_fma_contraction)
-}
-
-fn link_ltoir_to_cubin_parsed_with_options(
-    ltoir: &[u8],
-    module_name: &str,
-    arch: &CudaArch,
-    allow_fma_contraction: bool,
-) -> Result<Vec<u8>, LtoirError> {
-    let nvj = LibNvJitLink::load()?;
-    link_ltoir_to_cubin_with_tool_options(&nvj, ltoir, module_name, arch, allow_fma_contraction)
-}
-
-fn link_ltoir_to_cubin_with_tool_options(
-    nvj: &LibNvJitLink,
-    ltoir: &[u8],
-    module_name: &str,
-    arch: &CudaArch,
-    allow_fma_contraction: bool,
-) -> Result<Vec<u8>, LtoirError> {
-    let arch_opt = format!("-arch={}", arch.sm());
-    let options = nvjitlink_lto_options(&arch_opt, false, allow_fma_contraction);
-    let mut linker = Linker::new(nvj, &options)?;
-    linker.add(InputType::Ltoir, ltoir, module_name)?;
-    Ok(linker.finish()?)
-}
-
-fn link_ltoir_to_ptx_parsed_with_options(
-    ltoir: &[u8],
-    module_name: &str,
-    arch: &CudaArch,
-    allow_fma_contraction: bool,
-) -> Result<Vec<u8>, LtoirError> {
-    let nvj = LibNvJitLink::load()?;
-    link_ltoir_to_ptx_with_tool_options(&nvj, ltoir, module_name, arch, allow_fma_contraction)
-}
-
-fn link_ltoir_to_ptx_with_tool_options(
-    nvj: &LibNvJitLink,
-    ltoir: &[u8],
-    module_name: &str,
-    arch: &CudaArch,
-    allow_fma_contraction: bool,
-) -> Result<Vec<u8>, LtoirError> {
-    let arch_opt = format!("-arch={}", arch.sm());
-    let options = nvjitlink_lto_options(&arch_opt, true, allow_fma_contraction);
-    let mut linker = Linker::new(nvj, &options)?;
-    linker.add(InputType::Ltoir, ltoir, module_name)?;
-    Ok(linker.finish_ptx()?)
-}
-
-fn nvjitlink_lto_options(arch_opt: &str, emit_ptx: bool, allow_fma_contraction: bool) -> Vec<&str> {
-    let mut options = vec![arch_opt, "-lto"];
-    if emit_ptx {
-        options.push("-ptx");
-    }
-    options.push(if allow_fma_contraction {
-        "-fma=1"
-    } else {
-        "-fma=0"
-    });
-    options
-}
-
-fn compile_nvvm_ir_to_ltoir_parsed(
-    nvvm_ir: &[u8],
-    module_name: &str,
-    arch: &CudaArch,
-    allow_fma_contraction: bool,
-) -> Result<Vec<u8>, LtoirError> {
-    let libdevice_bytes = read_libdevice_bytes()?;
-    let nvvm = LibNvvm::load()?;
-    validate_nvvm_frontend(&nvvm, arch)?;
-    compile_nvvm_ir_to_ltoir_with(
-        &nvvm,
-        nvvm_ir,
+    link_ltoir_to_ptx_with_compile_options(
+        ltoir,
         module_name,
         arch,
-        &libdevice_bytes,
-        allow_fma_contraction,
+        ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction),
     )
 }
 
-fn read_libdevice_bytes() -> Result<Vec<u8>, LtoirError> {
-    let path = find_libdevice()?;
-    std::fs::read(&path).map_err(|source| LtoirError::Io { path, source })
+/// Link LTOIR to PTX while preserving every deferred compile policy recorded
+/// with the artifact.
+pub fn link_ltoir_to_ptx_with_compile_options(
+    ltoir: &[u8],
+    module_name: &str,
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
+    let arch: CudaArch = arch.parse()?;
+    link_ltoir_to_ptx_parsed_with_compile_options(ltoir, module_name, &arch, compile_options)
 }
 
-fn validate_nvvm_frontend(nvvm: &LibNvvm, arch: &CudaArch) -> Result<(), LtoirError> {
-    let ir_version = nvvm.ir_version()?;
-    if (ir_version.ir_major, ir_version.ir_minor) != (2, 0) {
-        return Err(LtoirError::UnsupportedNvvmIrVersion {
-            major: ir_version.ir_major,
-            minor: ir_version.ir_minor,
-        });
-    }
-    if let Some(llvm_major) = nvvm.llvm_version(arch)? {
-        let mismatch = if arch.uses_legacy_llvm() {
-            llvm_major != 7
-        } else {
-            llvm_major == 7
-        };
-        if mismatch {
-            return Err(LtoirError::DialectMismatch {
-                target: arch.compute(),
-                llvm_major,
-                expected: if arch.uses_legacy_llvm() {
-                    "legacy LLVM 7"
-                } else {
-                    "modern opaque-pointer"
-                },
-            });
-        }
-    }
-    Ok(())
-}
-
-fn compile_nvvm_ir_to_ltoir_with(
-    nvvm: &LibNvvm,
-    nvvm_ir: &[u8],
+fn link_ltoir_to_cubin_parsed_with_compile_options(
+    ltoir: &[u8],
     module_name: &str,
     arch: &CudaArch,
-    libdevice_bytes: &[u8],
-    allow_fma_contraction: bool,
+    compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
-    let mut prog = Program::new(nvvm)?;
-    // Add libdevice first so the kernel module's __nv_* references are
-    // resolved at compile time. Order doesn't strictly matter -- libNVVM
-    // does its own symbol resolution -- but this matches the pattern used
-    // by NVCC and the device_ffi_test C tools.
-    prog.add_module(libdevice_bytes, "libdevice.10.bc")?;
-    prog.add_module(nvvm_ir, module_name)?;
-
-    let arch_opt = format!("-arch={}", arch.compute());
-    prog.verify(&[&arch_opt])?;
-    let options = nvvm_compile_options(&arch_opt, allow_fma_contraction);
-    Ok(prog.compile(&options)?)
+    link_ltoir_with_shared_finalizer(
+        ltoir,
+        module_name,
+        arch,
+        compile_options,
+        FinalizerOutput::Cubin,
+    )
 }
 
-fn nvvm_compile_options(arch_opt: &str, allow_fma_contraction: bool) -> Vec<&str> {
-    let mut options = vec![arch_opt, "-gen-lto"];
-    options.push(if allow_fma_contraction {
-        "-fma=1"
-    } else {
-        "-fma=0"
-    });
-    options
+fn link_ltoir_to_ptx_parsed_with_compile_options(
+    ltoir: &[u8],
+    module_name: &str,
+    arch: &CudaArch,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
+    link_ltoir_with_shared_finalizer(
+        ltoir,
+        module_name,
+        arch,
+        compile_options,
+        FinalizerOutput::Ptx,
+    )
+}
+
+fn link_ltoir_with_shared_finalizer(
+    ltoir: &[u8],
+    module_name: &str,
+    arch: &CudaArch,
+    compile_options: ArtifactCompileOptions,
+    output: FinalizerOutput,
+) -> Result<Vec<u8>, LtoirError> {
+    let options = finalization_options(arch, compile_options);
+    Ok(LtoLinker::discover()?.link_ltoir(
+        &[NamedInput::new(module_name, ltoir)],
+        &options,
+        output,
+    )?)
+}
+
+fn finalization_options(
+    arch: &CudaArch,
+    compile_options: ArtifactCompileOptions,
+) -> FinalizationOptions {
+    let debug = match compile_options.debug_policy() {
+        ArtifactDebugPolicy::None => cuda_artifact_finalizer::DebugPolicy::None,
+        ArtifactDebugPolicy::LineTables => cuda_artifact_finalizer::DebugPolicy::LineTables,
+        ArtifactDebugPolicy::Full => cuda_artifact_finalizer::DebugPolicy::Full,
+    };
+    FinalizationOptions::new(arch.clone())
+        .with_fma_contraction(compile_options.fma_contraction_enabled())
+        .with_debug_policy(debug)
 }
 
 #[cfg(test)]
@@ -554,58 +569,43 @@ fn cached_nvvm_ir_to_cubin(
     ltoir_module_name: &str,
     arch: &CudaArch,
 ) -> Result<CacheResult, LtoirError> {
-    cached_nvvm_ir_to_cubin_with_options(
+    cached_nvvm_ir_to_cubin_with_compile_options(
         source_dir,
         nvvm_ir,
         nvvm_module_name,
         ltoir_module_name,
         arch,
-        true,
+        ArtifactCompileOptions::new(),
     )
 }
 
-fn cached_nvvm_ir_to_cubin_with_options(
+fn cached_nvvm_ir_to_cubin_with_compile_options(
     source_dir: &Path,
     nvvm_ir: &[u8],
     nvvm_module_name: &str,
     ltoir_module_name: &str,
     arch: &CudaArch,
-    allow_fma_contraction: bool,
+    compile_options: ArtifactCompileOptions,
 ) -> Result<CacheResult, LtoirError> {
-    let libdevice = read_libdevice_bytes()?;
-    let nvvm = load_nvvm_tool()?;
-    validate_nvvm_frontend(&nvvm.library, arch)?;
-    let nvj = load_nvjitlink_tool()?;
-
-    let key = nvvm.digest.and_then(|nvvm_digest| {
-        nvj.digest.map(|nvjitlink_digest| {
-            nvvm_ir_cubin_cache_key_with_options(
-                nvvm_ir,
-                nvvm_module_name,
-                ltoir_module_name,
-                arch,
-                &libdevice,
-                (&nvvm_digest, &nvjitlink_digest),
-                allow_fma_contraction,
-            )
-        })
-    });
+    let finalizer = Finalizer::discover()?;
+    let options = finalization_options(arch, compile_options);
+    let key = finalizer.nvvm_ir_artifact_digest(
+        nvvm_module_name,
+        ltoir_module_name,
+        nvvm_ir,
+        &options,
+        FinalizerOutput::Cubin,
+    );
 
     let build = || -> Result<BuiltArtifacts, LtoirError> {
-        let ltoir = compile_nvvm_ir_to_ltoir_with(
-            &nvvm.library,
-            nvvm_ir,
-            nvvm_module_name,
-            arch,
-            &libdevice,
-            allow_fma_contraction,
-        )?;
-        let cubin = link_ltoir_to_cubin_with_tool_options(
-            &nvj.library,
-            &ltoir,
-            ltoir_module_name,
-            arch,
-            allow_fma_contraction,
+        let ltoir =
+            finalizer
+                .compiler()
+                .compile_nvvm_ir_to_ltoir(nvvm_module_name, nvvm_ir, &options)?;
+        let cubin = finalizer.link_ltoir(
+            &[NamedInput::new(ltoir_module_name, &ltoir)],
+            &options,
+            FinalizerOutput::Cubin,
         )?;
         Ok(BuiltArtifacts::new(cubin, Some(ltoir)))
     };
@@ -625,29 +625,31 @@ fn cached_ltoir_to_cubin(
     module_name: &str,
     arch: &CudaArch,
 ) -> Result<CacheResult, LtoirError> {
-    cached_ltoir_to_cubin_with_options(source_dir, ltoir, module_name, arch, true)
+    cached_ltoir_to_cubin_with_compile_options(
+        source_dir,
+        ltoir,
+        module_name,
+        arch,
+        ArtifactCompileOptions::new(),
+    )
 }
 
-fn cached_ltoir_to_cubin_with_options(
+fn cached_ltoir_to_cubin_with_compile_options(
     source_dir: &Path,
     ltoir: &[u8],
     module_name: &str,
     arch: &CudaArch,
-    allow_fma_contraction: bool,
+    compile_options: ArtifactCompileOptions,
 ) -> Result<CacheResult, LtoirError> {
-    let nvj = load_nvjitlink_tool()?;
-    let key = nvj.digest.map(|digest| {
-        ltoir_cubin_cache_key_with_options(ltoir, module_name, arch, &digest, allow_fma_contraction)
-    });
+    let linker = LtoLinker::discover()?;
+    let options = finalization_options(arch, compile_options);
+    let inputs = [NamedInput::new(module_name, ltoir)];
+    let key = linker.artifact_digest(&inputs, &options, FinalizerOutput::Cubin);
     let build = || -> Result<BuiltArtifacts, LtoirError> {
-        link_ltoir_to_cubin_with_tool_options(
-            &nvj.library,
-            ltoir,
-            module_name,
-            arch,
-            allow_fma_contraction,
-        )
-        .map(|cubin| BuiltArtifacts::new(cubin, None))
+        Ok(BuiltArtifacts::new(
+            linker.link_ltoir(&inputs, &options, FinalizerOutput::Cubin)?,
+            None,
+        ))
     };
 
     let result = match key {
@@ -656,103 +658,6 @@ fn cached_ltoir_to_cubin_with_options(
     };
     report_cache_result(&result);
     Ok(result)
-}
-
-fn load_nvvm_tool() -> Result<Arc<LoadedNvvmTool>, LtoirError> {
-    if let Some(loaded) = NVVM_TOOL.get() {
-        return Ok(Arc::clone(loaded));
-    }
-    let _load_guard = NVVM_TOOL_LOAD
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(loaded) = NVVM_TOOL.get() {
-        return Ok(Arc::clone(loaded));
-    }
-
-    let library = LibNvvm::load_for_cache()?;
-    let digest = loaded_nvvm_digest(&library);
-    let loaded = Arc::new(LoadedNvvmTool {
-        library: Arc::new(library),
-        digest,
-    });
-    let _ = NVVM_TOOL.set(Arc::clone(&loaded));
-    Ok(loaded)
-}
-
-fn load_nvjitlink_tool() -> Result<Arc<LoadedNvJitLinkTool>, LtoirError> {
-    if let Some(loaded) = NVJITLINK_TOOL.get() {
-        return Ok(Arc::clone(loaded));
-    }
-    let _load_guard = NVJITLINK_TOOL_LOAD
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(loaded) = NVJITLINK_TOOL.get() {
-        return Ok(Arc::clone(loaded));
-    }
-
-    let library = LibNvJitLink::load_for_cache()?;
-    let digest = loaded_nvjitlink_digest(&library);
-    let loaded = Arc::new(LoadedNvJitLinkTool {
-        library: Arc::new(library),
-        digest,
-    });
-    let _ = NVJITLINK_TOOL.set(Arc::clone(&loaded));
-    Ok(loaded)
-}
-
-fn loaded_nvvm_digest(nvvm: &LibNvvm) -> Option<[u8; 32]> {
-    let file = nvvm.loaded_file_if_unchanged();
-    let digest = loaded_tool_digest("libNVVM", file)?;
-    if nvvm.loaded_file_if_unchanged().is_some() {
-        Some(digest)
-    } else {
-        report_changed_tool("libNVVM");
-        None
-    }
-}
-
-fn loaded_nvjitlink_digest(nvj: &LibNvJitLink) -> Option<[u8; 32]> {
-    let file = nvj.loaded_file_if_unchanged();
-    let digest = loaded_tool_digest("nvJitLink", file)?;
-    if nvj.loaded_file_if_unchanged().is_some() {
-        Some(digest)
-    } else {
-        report_changed_tool("nvJitLink");
-        None
-    }
-}
-
-fn loaded_tool_digest(label: &str, file: Option<&std::fs::File>) -> Option<[u8; 32]> {
-    let Some(file) = file else {
-        if std::env::var_os("CUDA_OXIDE_VERBOSE").is_some() {
-            eprintln!(
-                "cuda-oxide: {label} has no exact loaded-file identity; bypassing the cubin cache"
-            );
-        }
-        return None;
-    };
-
-    match digest_file_handle(file) {
-        Ok(digest) => Some(digest),
-        Err(error) => {
-            if std::env::var_os("CUDA_OXIDE_VERBOSE").is_some() {
-                eprintln!(
-                    "cuda-oxide: could not fingerprint the loaded {label} file ({error}); bypassing the cubin cache"
-                );
-            }
-            None
-        }
-    }
-}
-
-fn report_changed_tool(label: &str) {
-    if std::env::var_os("CUDA_OXIDE_VERBOSE").is_some() {
-        eprintln!(
-            "cuda-oxide: {label} changed while it was fingerprinted; bypassing the cubin cache"
-        );
-    }
 }
 
 #[cfg(test)]
@@ -765,17 +670,18 @@ fn nvvm_ir_cubin_cache_key(
     libnvvm_digest: &[u8; 32],
     nvjitlink_digest: &[u8; 32],
 ) -> [u8; 32] {
-    nvvm_ir_cubin_cache_key_with_options(
+    nvvm_ir_cubin_cache_key_with_compile_options(
         nvvm_ir,
         nvvm_module_name,
         ltoir_module_name,
         arch,
         libdevice,
         (libnvvm_digest, nvjitlink_digest),
-        true,
+        ArtifactCompileOptions::new(),
     )
 }
 
+#[cfg(test)]
 fn nvvm_ir_cubin_cache_key_with_options(
     nvvm_ir: &[u8],
     nvvm_module_name: &str,
@@ -785,44 +691,41 @@ fn nvvm_ir_cubin_cache_key_with_options(
     tool_digests: (&[u8; 32], &[u8; 32]),
     allow_fma_contraction: bool,
 ) -> [u8; 32] {
+    nvvm_ir_cubin_cache_key_with_compile_options(
+        nvvm_ir,
+        nvvm_module_name,
+        ltoir_module_name,
+        arch,
+        libdevice,
+        tool_digests,
+        ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction),
+    )
+}
+
+#[cfg(test)]
+fn nvvm_ir_cubin_cache_key_with_compile_options(
+    nvvm_ir: &[u8],
+    nvvm_module_name: &str,
+    ltoir_module_name: &str,
+    arch: &CudaArch,
+    libdevice: &[u8],
+    tool_digests: (&[u8; 32], &[u8; 32]),
+    compile_options: ArtifactCompileOptions,
+) -> [u8; 32] {
     let (libnvvm_digest, nvjitlink_digest) = tool_digests;
-    let nvvm_arch = format!("-arch={}", arch.compute());
-    let linker_arch = format!("-arch={}", arch.sm());
-    CacheKeyBuilder::new()
-        .field("recipe", CACHE_RECIPE)
-        .field("route", b"nvvm-ir-to-native-cubin")
-        .field("output", b"elf-cubin")
-        .field("nvvm-ir", nvvm_ir)
-        .field("nvvm-module-name", nvvm_module_name.as_bytes())
-        .field("libdevice", libdevice)
-        .field("libdevice-module-name", b"libdevice.10.bc")
-        .field("module-order", b"libdevice,nvvm-ir")
-        .field("nvvm-verify-option", nvvm_arch.as_bytes())
-        .field("nvvm-compile-option", nvvm_arch.as_bytes())
-        .field("nvvm-compile-option", b"-gen-lto")
-        .field(
-            "nvvm-fma-policy",
-            if allow_fma_contraction {
-                &b"-fma=1"[..]
-            } else {
-                &b"-fma=0"[..]
-            },
-        )
-        .field("nvjitlink-input-kind", b"ltoir")
-        .field("nvjitlink-module-name", ltoir_module_name.as_bytes())
-        .field("nvjitlink-option", linker_arch.as_bytes())
-        .field("nvjitlink-option", b"-lto")
-        .field(
-            "nvjitlink-fma-policy",
-            if allow_fma_contraction {
-                &b"-fma=1"[..]
-            } else {
-                &b"-fma=0"[..]
-            },
-        )
-        .field("libnvvm-sha256", libnvvm_digest)
-        .field("libnvjitlink-sha256", nvjitlink_digest)
-        .finish()
+    nvvm_ir_artifact_digest_with_provenance(
+        nvvm_module_name,
+        ltoir_module_name,
+        nvvm_ir,
+        &finalization_options(arch, compile_options),
+        FinalizerOutput::Cubin,
+        ToolProvenance {
+            libnvvm_sha256: Some(*libnvvm_digest),
+            nvjitlink_sha256: Some(*nvjitlink_digest),
+            libdevice_sha256: Sha256::digest(libdevice).into(),
+        },
+    )
+    .expect("test provenance supplies exact CUDA tool identities")
 }
 
 #[cfg(test)]
@@ -832,9 +735,16 @@ fn ltoir_cubin_cache_key(
     arch: &CudaArch,
     nvjitlink_digest: &[u8; 32],
 ) -> [u8; 32] {
-    ltoir_cubin_cache_key_with_options(ltoir, module_name, arch, nvjitlink_digest, true)
+    ltoir_cubin_cache_key_with_compile_options(
+        ltoir,
+        module_name,
+        arch,
+        nvjitlink_digest,
+        ArtifactCompileOptions::new(),
+    )
 }
 
+#[cfg(test)]
 fn ltoir_cubin_cache_key_with_options(
     ltoir: &[u8],
     module_name: &str,
@@ -842,27 +752,29 @@ fn ltoir_cubin_cache_key_with_options(
     nvjitlink_digest: &[u8; 32],
     allow_fma_contraction: bool,
 ) -> [u8; 32] {
-    let linker_arch = format!("-arch={}", arch.sm());
+    ltoir_cubin_cache_key_with_compile_options(
+        ltoir,
+        module_name,
+        arch,
+        nvjitlink_digest,
+        ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction),
+    )
+}
 
-    CacheKeyBuilder::new()
-        .field("recipe", CACHE_RECIPE)
-        .field("route", b"standalone-ltoir-to-native-cubin")
-        .field("output", b"elf-cubin")
-        .field("ltoir", ltoir)
-        .field("nvjitlink-input-kind", b"ltoir")
-        .field("nvjitlink-module-name", module_name.as_bytes())
-        .field("nvjitlink-option", linker_arch.as_bytes())
-        .field("nvjitlink-option", b"-lto")
-        .field(
-            "nvjitlink-fma-policy",
-            if allow_fma_contraction {
-                &b"-fma=1"[..]
-            } else {
-                &b"-fma=0"[..]
-            },
-        )
-        .field("libnvjitlink-sha256", nvjitlink_digest)
-        .finish()
+#[cfg(test)]
+fn ltoir_cubin_cache_key_with_compile_options(
+    ltoir: &[u8],
+    module_name: &str,
+    arch: &CudaArch,
+    nvjitlink_digest: &[u8; 32],
+    compile_options: ArtifactCompileOptions,
+) -> [u8; 32] {
+    ltoir_artifact_digest_with_provenance(
+        &[NamedInput::new(module_name, ltoir)],
+        &finalization_options(arch, compile_options),
+        FinalizerOutput::Cubin,
+        nvjitlink_digest,
+    )
 }
 
 fn uncached_result(artifacts: BuiltArtifacts) -> CacheResult {
@@ -951,12 +863,12 @@ pub fn load_kernel_module(
                 }
                 ExecutionRoute::PtxBridge => {
                     let nvvm_ir = read_artifact(&ll)?;
-                    let allow_fma_contraction = read_fma_contraction_option(&ll)?;
-                    let ptx = build_ptx_from_nvvm_ir_with_options(
+                    let compile_options = read_compile_options(&ll)?;
+                    let ptx = build_ptx_from_nvvm_ir_with_compile_options(
                         &nvvm_ir,
                         &ll.display().to_string(),
                         &emitted.sm(),
-                        allow_fma_contraction,
+                        compile_options,
                     )?;
                     Ok(ctx.load_module_from_image(&ptx)?)
                 }
@@ -966,23 +878,23 @@ pub fn load_kernel_module(
             let emitted = target_arch_for_artifact(&ltoir)?;
             let execution = execution_arch_for_context(ctx)?;
             let bytes = read_artifact(&ltoir)?;
-            let allow_fma_contraction = read_fma_contraction_option(&ltoir)?;
+            let compile_options = read_compile_options(&ltoir)?;
             let image = match execution_route(&emitted, &execution)? {
                 ExecutionRoute::Cubin => {
-                    cached_ltoir_to_cubin_with_options(
+                    cached_ltoir_to_cubin_with_compile_options(
                         ltoir.parent().unwrap_or_else(|| Path::new(".")),
                         &bytes,
                         &ltoir.display().to_string(),
                         &emitted,
-                        allow_fma_contraction,
+                        compile_options,
                     )?
                     .cubin
                 }
-                ExecutionRoute::PtxBridge => link_ltoir_to_ptx_parsed_with_options(
+                ExecutionRoute::PtxBridge => link_ltoir_to_ptx_parsed_with_compile_options(
                     &bytes,
                     &ltoir.display().to_string(),
                     &emitted,
-                    allow_fma_contraction,
+                    compile_options,
                 )?,
             };
             Ok(ctx.load_module_from_image(&image)?)
@@ -1054,11 +966,14 @@ fn select_file_artifact(
 /// Returns [`LtoirError::LibdeviceNotFound`] with the full list of probed
 /// paths if nothing matches.
 ///
-/// Thin wrapper over [`libnvvm_sys::find_libdevice`], which owns the probe
+/// Thin wrapper over [`cuda_artifact_finalizer::find_libdevice`], which owns the probe
 /// (libdevice ships in the toolkit's `nvvm/` component next to `libnvvm.so`).
 pub fn find_libdevice() -> Result<PathBuf, LtoirError> {
-    libnvvm_sys::find_libdevice()
-        .map_err(|libnvvm_sys::LibdeviceNotFound { tried }| LtoirError::LibdeviceNotFound { tried })
+    cuda_artifact_finalizer::find_libdevice().map_err(
+        |cuda_artifact_finalizer::LibdeviceNotFound { tried }| LtoirError::LibdeviceNotFound {
+            tried,
+        },
+    )
 }
 
 /// Read and validate an explicit source target from `CUDA_OXIDE_TARGET`.
@@ -1137,16 +1052,18 @@ fn emitted_compile_options_path(ll_path: &Path) -> PathBuf {
     ll_path.with_extension("options")
 }
 
-fn read_fma_contraction_option(ll_path: &Path) -> Result<bool, LtoirError> {
+fn read_compile_options(ll_path: &Path) -> Result<ArtifactCompileOptions, LtoirError> {
     let path = emitted_compile_options_path(ll_path);
     match std::fs::read_to_string(&path) {
-        Ok(value) => ArtifactCompileOptions::from_sidecar_text(&value)
-            .map(|options| options.fma_contraction_enabled())
-            .map_err(|error| LtoirError::InvalidCompileOptions {
+        Ok(value) => ArtifactCompileOptions::from_sidecar_text(&value).map_err(|error| {
+            LtoirError::InvalidCompileOptions {
                 path,
                 value: error.to_string(),
-            }),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            }
+        }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ArtifactCompileOptions::new())
+        }
         Err(source) => Err(LtoirError::Io { path, source }),
     }
 }
@@ -1170,7 +1087,7 @@ fn read_emitted_target(ll_path: &Path) -> Result<Option<CudaArch>, LtoirError> {
                             value: "required sidecar is missing".to_string(),
                         });
                     }
-                    read_fma_contraction_option(ll_path)?;
+                    read_compile_options(ll_path)?;
                     Ok(Some(arch))
                 }
                 _ => Err(LtoirError::InvalidCompileOptions {
@@ -1208,7 +1125,7 @@ fn write_artifact_target_sidecar(
         path: options_path.clone(),
         source,
     })? {
-        read_fma_contraction_option(artifact_path)?;
+        read_compile_options(artifact_path)?;
         format!("{}\n{COMPILE_OPTIONS_TARGET_MARKER}\n", target.sm())
     } else {
         format!("{}\n", target.sm())
@@ -1309,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn versioned_target_requires_valid_compile_options() {
+    fn versioned_target_accepts_v1_and_v2_compile_options() {
         let dir = temp_dir("versioned_compile_options");
         std::fs::create_dir_all(&dir).unwrap();
         let ll = dir.join("kernel.ll");
@@ -1325,10 +1242,33 @@ mod tests {
             Err(LtoirError::InvalidCompileOptions { .. })
         ));
 
-        let options = ArtifactCompileOptions::new().with_fma_contraction(false);
-        std::fs::write(dir.join("kernel.options"), options.sidecar_text()).unwrap();
+        let v1_options = ArtifactCompileOptions::new().with_fma_contraction(false);
+        assert!(
+            v1_options
+                .sidecar_text()
+                .starts_with("cuda-oxide-compile-options-v1\n")
+        );
+        std::fs::write(dir.join("kernel.options"), v1_options.sidecar_text()).unwrap();
         assert_eq!(read_emitted_target(&ll).unwrap().unwrap().sm(), "sm_86");
-        assert!(!read_fma_contraction_option(&ll).unwrap());
+        assert_eq!(read_compile_options(&ll).unwrap(), v1_options);
+
+        let line_tables =
+            ArtifactCompileOptions::new().with_debug_policy(ArtifactDebugPolicy::LineTables);
+        assert!(
+            line_tables
+                .sidecar_text()
+                .starts_with("cuda-oxide-compile-options-v2\n")
+        );
+        std::fs::write(dir.join("kernel.options"), line_tables.sidecar_text()).unwrap();
+        assert_eq!(read_emitted_target(&ll).unwrap().unwrap().sm(), "sm_86");
+        assert_eq!(read_compile_options(&ll).unwrap(), line_tables);
+
+        let full_debug = ArtifactCompileOptions::new()
+            .with_fma_contraction(false)
+            .with_debug_policy(ArtifactDebugPolicy::Full);
+        std::fs::write(dir.join("kernel.options"), full_debug.sidecar_text()).unwrap();
+        assert_eq!(read_emitted_target(&ll).unwrap().unwrap().sm(), "sm_86");
+        assert_eq!(read_compile_options(&ll).unwrap(), full_debug);
 
         std::fs::write(dir.join("kernel.options"), "fma-contraction=off\n").unwrap();
         assert!(matches!(
@@ -1336,27 +1276,46 @@ mod tests {
             Err(LtoirError::InvalidCompileOptions { .. })
         ));
 
+        std::fs::remove_file(dir.join("kernel.options")).unwrap();
+        std::fs::write(dir.join("kernel.target"), "sm_86\n").unwrap();
+        assert_eq!(read_emitted_target(&ll).unwrap().unwrap().sm(), "sm_86");
+        assert_eq!(
+            read_compile_options(&ll).unwrap(),
+            ArtifactCompileOptions::new(),
+            "legacy artifacts default to FMA enabled with no debug information"
+        );
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn nvidia_lto_options_set_fma_policy_explicitly() {
-        assert_eq!(
-            nvvm_compile_options("-arch=compute_86", true),
-            ["-arch=compute_86", "-gen-lto", "-fma=1"]
-        );
-        assert_eq!(
-            nvvm_compile_options("-arch=compute_86", false),
-            ["-arch=compute_86", "-gen-lto", "-fma=0"]
-        );
-        assert_eq!(
-            nvjitlink_lto_options("-arch=sm_86", false, false),
-            ["-arch=sm_86", "-lto", "-fma=0"]
-        );
-        assert_eq!(
-            nvjitlink_lto_options("-arch=sm_86", true, true),
-            ["-arch=sm_86", "-lto", "-ptx", "-fma=1"]
-        );
+    fn finalization_preserves_fma_and_debug_policy() {
+        let arch: CudaArch = "sm_90a".parse().unwrap();
+        for allow_fma in [false, true] {
+            for (artifact_debug, finalizer_debug) in [
+                (
+                    ArtifactDebugPolicy::None,
+                    cuda_artifact_finalizer::DebugPolicy::None,
+                ),
+                (
+                    ArtifactDebugPolicy::LineTables,
+                    cuda_artifact_finalizer::DebugPolicy::LineTables,
+                ),
+                (
+                    ArtifactDebugPolicy::Full,
+                    cuda_artifact_finalizer::DebugPolicy::Full,
+                ),
+            ] {
+                let artifact_options = ArtifactCompileOptions::new()
+                    .with_fma_contraction(allow_fma)
+                    .with_debug_policy(artifact_debug);
+                let finalizer_options = finalization_options(&arch, artifact_options);
+
+                assert_eq!(finalizer_options.target(), &arch);
+                assert_eq!(finalizer_options.allow_fma_contraction(), allow_fma);
+                assert_eq!(finalizer_options.debug_policy(), finalizer_debug);
+            }
+        }
     }
 
     #[test]
@@ -1664,6 +1623,31 @@ mod tests {
             ),
             "FMA policy changes both libNVVM and nvJitLink output"
         );
+
+        let line_tables = nvvm_ir_cubin_cache_key_with_compile_options(
+            b"nvvm ir",
+            "kernel.ll",
+            "kernel.ltoir",
+            &arch,
+            b"libdevice",
+            (&nvvm, &nvjitlink),
+            ArtifactCompileOptions::new().with_debug_policy(ArtifactDebugPolicy::LineTables),
+        );
+        let full_debug = nvvm_ir_cubin_cache_key_with_compile_options(
+            b"nvvm ir",
+            "kernel.ll",
+            "kernel.ltoir",
+            &arch,
+            b"libdevice",
+            (&nvvm, &nvjitlink),
+            ArtifactCompileOptions::new().with_debug_policy(ArtifactDebugPolicy::Full),
+        );
+        assert_ne!(original, line_tables, "line information changes the key");
+        assert_ne!(original, full_debug, "full debug changes the key");
+        assert_ne!(
+            line_tables, full_debug,
+            "line tables and full debug are distinct compiler policies"
+        );
     }
 
     #[test]
@@ -1697,6 +1681,26 @@ mod tests {
             original,
             ltoir_cubin_cache_key_with_options(b"ltoir", "kernel.ltoir", &arch, &nvjitlink, false,),
             "FMA policy changes nvJitLink LTO output"
+        );
+        let line_tables = ltoir_cubin_cache_key_with_compile_options(
+            b"ltoir",
+            "kernel.ltoir",
+            &arch,
+            &nvjitlink,
+            ArtifactCompileOptions::new().with_debug_policy(ArtifactDebugPolicy::LineTables),
+        );
+        let full_debug = ltoir_cubin_cache_key_with_compile_options(
+            b"ltoir",
+            "kernel.ltoir",
+            &arch,
+            &nvjitlink,
+            ArtifactCompileOptions::new().with_debug_policy(ArtifactDebugPolicy::Full),
+        );
+        assert_ne!(original, line_tables, "line information changes the key");
+        assert_ne!(original, full_debug, "full debug changes the key");
+        assert_ne!(
+            line_tables, full_debug,
+            "line tables and full debug are distinct linker policies"
         );
         assert_ne!(
             original,
@@ -1741,14 +1745,8 @@ entry:
         assert!(first_bytes.starts_with(b"\x7fELF"));
         assert_eq!(first, dir.join("kernel.cubin"));
 
-        let nvvm_a = load_nvvm_tool().unwrap();
-        let nvvm_b = load_nvvm_tool().unwrap();
-        assert!(Arc::ptr_eq(&nvvm_a, &nvvm_b));
-        assert!(nvvm_a.digest.is_some());
-        let nvjitlink_a = load_nvjitlink_tool().unwrap();
-        let nvjitlink_b = load_nvjitlink_tool().unwrap();
-        assert!(Arc::ptr_eq(&nvjitlink_a, &nvjitlink_b));
-        assert!(nvjitlink_a.digest.is_some());
+        let finalizer = Finalizer::discover().unwrap();
+        assert!(finalizer.provenance_digest().is_some());
 
         let second = build_cubin_from_ll(&ll, "compute_86").unwrap();
         assert_eq!(second, first, "normalized target spelling should hit");

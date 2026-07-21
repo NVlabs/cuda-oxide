@@ -301,6 +301,20 @@ The first compiler/linker handles are retained for the process lifetime;
 restart the process to select another toolkit or after replacing one in place.
 Remove the `.oxide-artifacts` directory to clear all cached entries.
 
+The driver-independent `cuda-artifact-finalizer` crate owns the shared
+libNVVM/nvJitLink policy. Runtime loading and build-time materialization
+therefore use the same target, FMA, debug, input-order, provenance, and cubin
+validation rules.
+
+Deferred NVVM IR and LTOIR keep those policies in `<module>.options`. Existing
+v1 sidecars record FMA contraction and imply no debug information; v2 sidecars
+also record line-table or full-debug preservation. Missing sidecars on legacy,
+unversioned artifacts retain the historical default of FMA enabled and no
+debug information. In-memory callers can use the
+`*_with_compile_options` helpers to carry the complete policy. The older
+`*_with_options(..., allow_fma_contraction)` helpers remain available and use
+no debug information.
+
 ## Tiling Utilities (tcgen05)
 
 Host-side layout transformations for Blackwell tensor cores. tcgen05 requires

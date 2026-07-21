@@ -5,6 +5,7 @@ members = [
     "crates/cuda-intrinsics",
     "crates/cuda-intrinsics-gen",
     "crates/cuda-device",
+    "crates/cuda-artifact-finalizer",
     "crates/cuda-host",
     "crates/cuda-macros",
     "crates/llvm-export",
@@ -62,6 +63,7 @@ cuda-oxide-codegen = { path = "crates/cuda-oxide-codegen" }
 mir-transforms = { path = "crates/mir-transforms" }
 nvvm-transforms = { path = "crates/nvvm-transforms" }
 cuda-device = { path = "crates/cuda-device" }
+cuda-artifact-finalizer = { path = "crates/cuda-artifact-finalizer" }
 cuda-host = { path = "crates/cuda-host" }
 cuda-macros = { path = "crates/cuda-macros" }
 cuda-bindings = { path = "crates/cuda-bindings" }
