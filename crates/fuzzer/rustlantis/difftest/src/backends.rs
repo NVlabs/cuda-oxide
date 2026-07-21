@@ -109,7 +109,7 @@ pub struct BackendInitError(pub String);
 
 pub trait Backend: Send + Sync {
     fn compile(&self, _: &Source, _: &Path) -> ProcessOutput {
-        panic!("not implemented")
+        unimplemented!("this backend does not support compilation")
     }
 
     fn execute(&self, source: &Source, target: &Path) -> ExecResult {
