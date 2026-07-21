@@ -9,16 +9,14 @@ struct UsizeSombrero {
     small_values_upper_bound: usize,
 }
 
-impl UsizeSombrero {
-    fn small_values_range(&self) -> std::ops::Range<usize> {
-        0..self.small_values_upper_bound
-    }
-}
-
 impl Distribution<usize> for UsizeSombrero {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> usize {
+        if self.small_values_upper_bound == 0 {
+            return rng.random_range(usize::MIN..=usize::MAX);
+        }
+
         match rng.random_range(0..=1) {
-            0 => rng.random_range(self.small_values_range()),
+            0 => rng.random_range(0..self.small_values_upper_bound),
             1 => rng.random_range(usize::MIN..=usize::MAX),
             _ => unreachable!(),
         }
@@ -176,13 +174,64 @@ fn generate_f64<R: Rng + ?Sized>(rng: &mut R) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+
+    struct SequenceRng {
+        values: VecDeque<u64>,
+    }
+
+    impl SequenceRng {
+        fn new(values: impl IntoIterator<Item = u64>) -> Self {
+            Self {
+                values: values.into_iter().collect(),
+            }
+        }
+    }
+
+    impl RngCore for SequenceRng {
+        fn next_u32(&mut self) -> u32 {
+            self.next_u64() as u32
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.values.pop_front().expect("test RNG value")
+        }
+
+        fn fill_bytes(&mut self, dst: &mut [u8]) {
+            for chunk in dst.chunks_mut(std::mem::size_of::<u64>()) {
+                let bytes = self.next_u64().to_le_bytes();
+                chunk.copy_from_slice(&bytes[..chunk.len()]);
+            }
+        }
+    }
 
     #[test]
-    fn usize_sombrero_uses_configured_small_values_upper_bound() {
+    fn positive_bound_drives_small_value_sampling() {
         let distribution = UsizeSombrero {
             small_values_upper_bound: 3,
         };
+        let mut rng = SequenceRng::new([0, u64::MAX]);
 
-        assert_eq!(distribution.small_values_range(), 0..3);
+        assert_eq!(distribution.sample(&mut rng), 2);
+    }
+
+    #[test]
+    fn positive_bound_keeps_the_full_width_bucket() {
+        let distribution = UsizeSombrero {
+            small_values_upper_bound: 3,
+        };
+        let mut rng = SequenceRng::new([u64::MAX, 0x1234]);
+
+        assert_eq!(distribution.sample(&mut rng), 0x1234);
+    }
+
+    #[test]
+    fn zero_bound_disables_the_small_value_bucket() {
+        let distribution = UsizeSombrero {
+            small_values_upper_bound: 0,
+        };
+        let mut rng = SequenceRng::new([0x1234]);
+
+        assert_eq!(distribution.sample(&mut rng), 0x1234);
     }
 }
