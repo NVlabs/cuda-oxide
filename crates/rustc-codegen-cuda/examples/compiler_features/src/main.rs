@@ -414,6 +414,38 @@ mod kernels {
             *out_elem = product;
         }
     }
+
+    // =============================================================================
+    // CONSTANT ASSERT OPERANDS (COMPILE-ONLY REGRESSION)
+    // =============================================================================
+
+    /// Keeps rustc's `assert(!const true, ...)` form (expected=false) in
+    /// optimized MIR. This kernel is compiled to exercise importer lowering
+    /// but is deliberately never launched by the host test.
+    #[allow(unconditional_panic)]
+    #[kernel]
+    pub fn compile_constant_assert_expected_false(value: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            *out_elem = value / 0;
+        }
+    }
+
+    /// Keeps rustc's `assert(const false, ...)` form (expected=true) in
+    /// optimized MIR. Like the division case, this is a compile-only probe and
+    /// must not be launched.
+    #[allow(unconditional_panic)]
+    // The out-of-bounds index is the point: it is what produces the constant
+    // assert condition this probe exists to compile.
+    #[allow(clippy::out_of_bounds_indexing)]
+    #[kernel]
+    pub fn compile_constant_assert_expected_true(mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let empty: [u32; 0] = [];
+            *out_elem = empty[0];
+        }
+    }
 }
 
 // =============================================================================
