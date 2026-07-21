@@ -124,6 +124,71 @@ fn empty_enum_types_are_valid_but_reject_value_operations() {
 }
 
 #[test]
+fn enum_type_verifier_rejects_malformed_flattened_metadata() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    let discr = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+
+    let non_integer_discriminant = MirEnumType {
+        name: "NonIntegerDiscriminant".to_string(),
+        discriminant_ty: f32_ty.into(),
+        variant_names: vec!["Only".to_string()],
+        variant_discriminants: vec![0],
+        variant_field_counts: vec![0],
+        all_field_types: vec![],
+        all_field_offsets: vec![],
+        tag_offset: 0,
+        total_size: 0,
+        abi_align: 0,
+    };
+    let error = non_integer_discriminant
+        .verify(&ctx)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("discriminant type must be an integer type"),
+        "unexpected non-integer discriminant diagnostic: {error}"
+    );
+
+    let malformed_field_count = MirEnumType {
+        name: "MalformedFieldCount".to_string(),
+        discriminant_ty: discr.into(),
+        variant_names: vec!["Only".to_string()],
+        variant_discriminants: vec![0],
+        variant_field_counts: vec![2],
+        all_field_types: vec![discr.into()],
+        all_field_offsets: vec![],
+        tag_offset: 0,
+        total_size: 0,
+        abi_align: 0,
+    };
+    let error = malformed_field_count.verify(&ctx).unwrap_err().to_string();
+    assert!(
+        error.contains("describe 2 fields but 1 field type entries were recorded"),
+        "unexpected field-count diagnostic: {error}"
+    );
+
+    let malformed_offsets = MirEnumType {
+        name: "MalformedOffsets".to_string(),
+        discriminant_ty: discr.into(),
+        variant_names: vec!["Only".to_string()],
+        variant_discriminants: vec![0],
+        variant_field_counts: vec![2],
+        all_field_types: vec![discr.into(), discr.into()],
+        all_field_offsets: vec![0],
+        tag_offset: 0,
+        total_size: 0,
+        abi_align: 0,
+    };
+    let error = malformed_offsets.verify(&ctx).unwrap_err().to_string();
+    assert!(
+        error.contains("field offset count must be empty or match"),
+        "unexpected field-offset diagnostic: {error}"
+    );
+}
+
+#[test]
 fn test_mir_control_flow_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);

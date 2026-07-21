@@ -6,6 +6,7 @@
 //! MIR dialect types.
 
 use pliron::builtin::type_interfaces::FloatTypeInterface;
+use pliron::builtin::types::IntegerType;
 use pliron::context::Context;
 use pliron::derive::{pliron_type, type_interface_impl};
 use pliron::location::Location;
@@ -736,6 +737,7 @@ impl EnumVariant {
 ///
 /// # Verification
 /// * Zero variants are valid and represent an uninhabited Rust type.
+/// * The discriminant type must be an integer type.
 /// * The parallel variant metadata vectors must have consistent lengths.
 #[pliron_type(
     name = "mir.enum",
@@ -949,10 +951,21 @@ impl MirEnumType {
 }
 
 impl Verify for MirEnumType {
-    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
         // Rust permits uninhabited enums with no variants. Enum operations
         // reject attempts to construct, inspect, or mutate values of these
         // types.
+        if self
+            .discriminant_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_none()
+        {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType discriminant type must be an integer type"
+            );
+        }
         if self.variant_names.len() != self.variant_discriminants.len() {
             return verify_err!(
                 Location::Unknown,
@@ -963,6 +976,32 @@ impl Verify for MirEnumType {
             return verify_err!(
                 Location::Unknown,
                 "MirEnumType variant field count must match variant count"
+            );
+        }
+        let Some(recorded_field_count) = self
+            .variant_field_counts
+            .iter()
+            .try_fold(0usize, |sum, &count| sum.checked_add(count as usize))
+        else {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType total variant field count overflows usize"
+            );
+        };
+        if recorded_field_count != self.all_field_types.len() {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType variant field counts describe {} fields but {} field type entries were recorded",
+                recorded_field_count,
+                self.all_field_types.len()
+            );
+        }
+        if !self.all_field_offsets.is_empty()
+            && self.all_field_offsets.len() != self.all_field_types.len()
+        {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType field offset count must be empty or match the field type count"
             );
         }
         if self.total_size > 0 {

@@ -19,10 +19,21 @@
 //! 3. Generic logic via concrete wrappers, including multiple monomorphizations
 //! 4. Device function using GPU intrinsics (thread indexing)
 //! 5. F16, TF32, and INT8 warp-MMA lowering through the complete PTX pipeline
+//! 6. A zero-variant enum type in statically unreachable device code
 
 use cuda_device::thread;
 use cuda_device::wmma::{mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_f16, mma_m16n8k32_s32_s8};
 use cuda_device::{device, ptx_asm};
+
+/// Uninhabited argument used to exercise zero-variant enum type import.
+pub enum StandaloneNever {}
+
+/// The type must survive MIR verification, while the empty match lowers
+/// directly to unreachable code without constructing or inspecting a value.
+#[device]
+pub fn empty_enum_argument(value: StandaloneNever) -> u32 {
+    match value {}
+}
 
 // =============================================================================
 // TEST 1: Simple standalone device functions
@@ -253,6 +264,10 @@ fn main() {
             "Test 5: f32-to-TF32 conversion path",
         ),
         ("int8_mma_registers", "Test 5: signed INT8 warp-MMA stub"),
+        (
+            "empty_enum_argument",
+            "Test 6: zero-variant enum in unreachable device code",
+        ),
     ];
 
     let mut passed = 0;
