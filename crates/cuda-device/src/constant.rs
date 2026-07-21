@@ -35,12 +35,23 @@
 //! }
 //! ```
 //!
-//! Host code overrides the initializer between launches with the
-//! macro-generated `set_<name>` methods on the loaded module:
+//! Host code populates the constant with the macro-generated `set_<name>`
+//! methods on the loaded module:
 //!
 //! ```ignore
 //! module.set_coeffs(&stream, &[10.0, 20.0, 30.0, 40.0])?;
 //! ```
+//!
+//! # Initialization limitation
+//!
+//! CUDA Oxide currently emits [`ConstantMemory::UNINIT`] as an all-zero
+//! placeholder. It does not lower arbitrary non-zero Rust static initializers
+//! into PTX constant-memory data.
+//!
+//! Populate the constant before any kernel reads it. Use `set_<name>` before
+//! the kernel launch on the same stream, or use `set_<name>_blocking`. The
+//! placeholder bytes are zero, and [`ConstantMemoryValue`] restricts `T` to
+//! types for which the all-zero bit pattern is valid.
 //!
 //! # Why a wrapper type instead of a bare `static`
 //!
@@ -136,22 +147,24 @@ pub struct ConstantMemory<T: ConstantMemoryValue>(UnsafeCell<T>);
 unsafe impl<T: ConstantMemoryValue + Send> Sync for ConstantMemory<T> {}
 
 impl<T: ConstantMemoryValue> ConstantMemory<T> {
-    /// Placeholder value for a `#[constant]` static. The host must call
-    /// the macro-generated `set_<name>` before any kernel reads the
-    /// constant; honoring arbitrary non-zero initializers in codegen is
-    /// not yet implemented.
+    /// All-zero placeholder for a `#[constant]` static.
     ///
-    /// Mirrors the convention used by [`SharedArray::UNINIT`](crate::SharedArray)
-    /// and [`Barrier::UNINIT`](crate::barrier::Barrier): a single placeholder
-    /// constant for a type that's expected to be populated out-of-band.
+    /// CUDA Oxide does not currently lower arbitrary non-zero Rust static
+    /// initializers into PTX constant-memory data. Populate the value before
+    /// any kernel reads it by calling the macro-generated `set_<name>` before
+    /// the kernel launch on the same stream, or by using
+    /// `set_<name>_blocking`.
     ///
-    /// # Note
+    /// This follows the placeholder convention used by
+    /// [`SharedArray::UNINIT`](crate::SharedArray) and
+    /// [`Barrier::UNINIT`](crate::barrier::Barrier).
     ///
-    /// The underlying bytes are zero. The [`ConstantMemoryValue`] bound is the
-    /// safety gate that rules out types where the all-zero placeholder would
-    /// violate Rust's validity invariants. Custom types can opt in with an
-    /// `unsafe impl ConstantMemoryValue` when their layout and zero value make
-    /// that promise true.
+    /// `UNINIT` means that the constant has not received its application value;
+    /// its underlying bytes are zero. The [`ConstantMemoryValue`] bound rules
+    /// out types for which this all-zero placeholder would violate Rust's
+    /// validity invariants. Custom types may opt in with an
+    /// `unsafe impl ConstantMemoryValue` only when their layout and zero value
+    /// satisfy that contract.
     #[allow(clippy::declare_interior_mutable_const)]
     pub const UNINIT: Self = ConstantMemory(UnsafeCell::new(unsafe {
         core::mem::MaybeUninit::<T>::zeroed().assume_init()
