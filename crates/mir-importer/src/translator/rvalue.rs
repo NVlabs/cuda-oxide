@@ -20,6 +20,7 @@
 //! | `Use(operand)`      | `mir.load` of the source slot (no op for constants)   |
 //! | `Aggregate`         | `mir.construct_tuple/struct/enum/array`               |
 //! | `Repeat`            | `mir.construct_array` (array repeat syntax)           |
+//! | `CopyForDeref`      | Same place-read lowering as `Copy`/`Move`             |
 //!
 //! # Key Functions
 //!
@@ -1597,16 +1598,28 @@ pub fn translate_rvalue(
 
             Ok((Some(op), result, prev_op_after_operand))
         }
-        _ => {
-            // TODO (npasham): Handle other Rvalue variants
-            input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "Rvalue variant {:?} not yet implemented",
-                    rvalue
-                ))
-            )
+        mir::Rvalue::CopyForDeref(place) => {
+            // CopyForDeref is semantically a place read. Any load or projection
+            // operations emitted by translate_place are already inserted and tracked.
+            let (value, last_inserted) =
+                translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc)?;
+
+            Ok((None, value, last_inserted))
         }
+        mir::Rvalue::Len(place) => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Rvalue::Len for place {:?} not yet implemented",
+                place
+            ))
+        ),
+        mir::Rvalue::ThreadLocalRef(item) => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Rvalue::ThreadLocalRef {:?} is not supported in device code",
+                item
+            ))
+        ),
     }
 }
 
