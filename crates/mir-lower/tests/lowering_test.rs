@@ -1116,8 +1116,8 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     // Kernel args: [mask (i32), value (i64), lane/delta (i32)].
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i64_ty.into(), i32_ty.into()]);
@@ -2638,7 +2638,7 @@ fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), an
                 .get_attr_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))?;
             (template.contains("%clusterid") || template.contains("%nclusterid"))
-                .then(|| (template, asm))
+                .then_some((template, asm))
         })
         .collect::<Vec<_>>();
     assert_eq!(lowered.len(), 2);
@@ -6157,11 +6157,11 @@ fn test_ldmatrix_rejects_wrong_result_arity() {
         0,
     );
     let ldmatrix = nvvm::LdmatrixOp::new(op);
-    ldmatrix.set_attr_nvvm_ldmatrix_shape(&mut ctx, nvvm::LdmatrixShapeAttr::M8n8);
-    ldmatrix.set_attr_nvvm_ldmatrix_multiplicity(&mut ctx, nvvm::LdmatrixMultiplicityAttr::X1);
-    ldmatrix.set_attr_nvvm_ldmatrix_layout(&mut ctx, nvvm::LdmatrixLayoutAttr::Normal);
-    ldmatrix.set_attr_nvvm_ldmatrix_element(&mut ctx, nvvm::LdmatrixElementAttr::B16);
-    ldmatrix.set_attr_nvvm_ldmatrix_state_space(&mut ctx, nvvm::LdmatrixStateSpaceAttr::Shared);
+    ldmatrix.set_attr_nvvm_ldmatrix_shape(&ctx, nvvm::LdmatrixShapeAttr::M8n8);
+    ldmatrix.set_attr_nvvm_ldmatrix_multiplicity(&ctx, nvvm::LdmatrixMultiplicityAttr::X1);
+    ldmatrix.set_attr_nvvm_ldmatrix_layout(&ctx, nvvm::LdmatrixLayoutAttr::Normal);
+    ldmatrix.set_attr_nvvm_ldmatrix_element(&ctx, nvvm::LdmatrixElementAttr::B16);
+    ldmatrix.set_attr_nvvm_ldmatrix_state_space(&ctx, nvvm::LdmatrixStateSpaceAttr::Shared);
     op.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 
