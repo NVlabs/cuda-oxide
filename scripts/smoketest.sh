@@ -1226,6 +1226,18 @@ run_cargo() {
         cargo oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
     fi
+    if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "helper_fn" ]]; then
+        local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local nested_defs entry_count
+        nested_defs="$(grep -cE '^\.visible \.func .*_RI.*nested_identity' "${ptx}" 2>/dev/null)"
+        entry_count="$(grep -cE '^\.visible \.entry ' "${ptx}" 2>/dev/null)"
+        if [[ ! -s "${ptx}" || ${nested_defs} -ne 2 || ${entry_count} -ne 1 ]] \
+            || ! grep -qF '.visible .entry vecadd_with_helper(' "${ptx}" \
+            || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${ptx}"; then
+            printf 'helper_fn expected one kernel entry and two canonically mangled nested_identity device functions, with no helper _TID_ exports\n' >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "standalone_device_fn" ]]; then
         local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local tf32_count
