@@ -5,23 +5,19 @@
 
 //! Sibling regression for issue #21: pointer-source niched Transmute.
 //!
-//! `step_by` exercises the *integer-source* form of the cast that PR #64
-//! addresses: rustc stores `Option<NonZeroUsize>` as `i64` (niche = 0) and
-//! transmutes it to the un-niched `{ i8, { { i64 } } }` aggregate.
+//! `step_by` exercises the *integer-source* form of the cast: rustc stores
+//! `Option<NonZeroUsize>` in one `usize` (niche = 0), so cuda-oxide must keep
+//! the enum's physical bytes instead of inventing a separate tag.
 //!
 //! This kernel exercises the *pointer-source* form: rustc stores
-//! `Option<&T>` as a single `ptr` (niche = null) and, when materialising the
-//! un-niched `{ i8, { ptr } }` aggregate, emits a `Cast(Transmute)` whose
+//! `Option<&T>` as a single `ptr` (niche = null), and the `Cast(Transmute)`
 //! source is a pointer rather than an integer.
 //!
-//! The integer-source path is handled by PR #64's new branch in
-//! `emit_pointer_cast`. The pointer-source path falls into the older
-//! `src_is_ptr && dst_is_struct` branch, which was written for fat-pointer
-//! construction (`&[T] = { ptr, i64 }`) and inserts the source at field 0.
-//! For a niched enum field 0 is the discriminant, so the resulting
-//! aggregate is either type-invalid LLVM IR or, if it sneaks past the
-//! verifier, semantically wrong (the pointer ends up in the discriminant
-//! slot, the payload stays `undef`).
+//! The historical bug sent this through the generic pointer-to-struct path,
+//! which was written for fat-pointer construction (`&[T] = { ptr, i64 }`).
+//! Enum Transmute now uses the enum's rustc-derived physical type and an
+//! exact-size, aligned memory round-trip, so the pointer remains the niche
+//! carrier and no synthetic discriminant is introduced.
 //!
 //! Run with:
 //!   cargo oxide run option_ref_transmute

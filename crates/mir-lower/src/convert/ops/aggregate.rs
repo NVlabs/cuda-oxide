@@ -24,22 +24,21 @@
 //!
 //! # Enum Representation
 //!
-//! Enums are represented as `{ discriminant, field0, field1, ... }` structs where
-//! fields from all variants are flattened into a single struct.
+//! Enums use rustc's physical layout, not a cuda-oxide-only tagged struct.
+//! [`build_enum_slot_map`] places the direct tag or niche carrier and every
+//! payload at rustc's byte offsets, reuses identical overlapping storage, and
+//! routes differently typed overlaps through byte-addressed memory. `Single`
+//! and `Empty` layouts have no carrier at all.
 //!
-//! The discriminant slot (field 0) holds the variant's DECLARED
-//! discriminant value, not its variant index. For `core::cmp::Ordering`
-//! that means `Less` stores -1 (i8 bit pattern 255), `Equal` 0,
-//! `Greater` 1; a variant-index tag would make `Less` match the `Equal`
-//! arm (issue #146). The value-to-store comes from
-//! `MirEnumType::variant_discriminants`, which the importer fills from
-//! `rustc`'s `discriminant_for_variant`.
+//! A direct tag holds the variant's DECLARED discriminant value, not its
+//! position. For `core::cmp::Ordering`, `Less` therefore stores -1 (the i8 bit
+//! pattern 255), `Equal` stores 0, and `Greater` stores 1. A niche layout
+//! instead uses rustc's wrapping `niche_start + variant_offset` encoding and
+//! introduces no extra tag.
 
-use crate::convert::ops::cast::const_scalar_from_u64;
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
     build_union_storage_type, convert_type, is_zero_sized_type, make_slice_struct,
-    scalar_path_at_offset,
 };
 use dialect_mir::ops::{
     MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp, MirInsertFieldOp,
@@ -47,7 +46,11 @@ use dialect_mir::ops::{
 };
 use dialect_mir::types::{
     MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirStructType,
-    MirTupleType, MirUnionType,
+    MirTupleType, MirUnionType, enum_carrier_kind, enum_layout_kind,
+};
+use llvm_export::attributes::{ICmpPredicateAttr, IntegerOverflowFlagsAttr};
+use llvm_export::op_interfaces::{
+    CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag,
 };
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -720,10 +723,111 @@ fn enum_byte_gep(
 ) -> Value {
     use llvm_export::ops::GepIndex;
     let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-    let gep_op =
-        llvm::GetElementPtrOp::new(ctx, base, vec![GepIndex::Constant(offset as u32)], i8_ty);
+    let offset = emit_integer_constant(ctx, rewriter, 64, u128::from(offset));
+    let gep_op = llvm::GetElementPtrOp::new(ctx, base, vec![GepIndex::Value(offset)], i8_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
     gep_op.get_operation().deref(ctx).get_result(0)
+}
+
+/// The physical carrier write required to select one source variant.
+/// `None` is a real semantic result for the untagged niche variant and for
+/// rustc's single inhabited variant; it must never be replaced by a guessed
+/// memory write.
+fn enum_carrier_bits_for_variant(
+    enum_ty: &MirEnumType,
+    variant: usize,
+) -> std::result::Result<Option<u128>, String> {
+    if variant >= enum_ty.variant_count() || enum_ty.variant_is_inhabited(variant) != Some(true) {
+        return Err(format!(
+            "cannot select uninhabited or missing variant {} of '{}'",
+            variant,
+            enum_ty.name()
+        ));
+    }
+
+    match enum_ty.layout_kind {
+        enum_layout_kind::DIRECT => enum_ty
+            .variant_discriminants
+            .get(variant)
+            .copied()
+            .map(|bits| Some(u128::from(bits)))
+            .ok_or_else(|| format!("variant {} has no declared discriminant", variant)),
+        enum_layout_kind::NICHE => {
+            // This check deliberately comes before the encoded range check:
+            // rustc permits the untagged variant index to lie inside that
+            // range. Its range position is a dead niche value; selecting the
+            // actual untagged variant remains a no-op.
+            if variant == enum_ty.untagged_variant as usize {
+                return Ok(None);
+            }
+            if !(enum_ty.niche_variant_start as usize..=enum_ty.niche_variant_end as usize)
+                .contains(&variant)
+            {
+                return Err(format!(
+                    "inhabited variant {} is not representable by niche layout of '{}'",
+                    variant,
+                    enum_ty.name()
+                ));
+            }
+            let offset = (variant as u128) - u128::from(enum_ty.niche_variant_start);
+            let mut bits = enum_ty.niche_start().wrapping_add(offset);
+            if enum_ty.carrier_width < 128 {
+                bits &= (1u128 << enum_ty.carrier_width) - 1;
+            }
+            Ok(Some(bits))
+        }
+        enum_layout_kind::SINGLE if variant == enum_ty.single_variant as usize => Ok(None),
+        enum_layout_kind::SINGLE => Err(format!(
+            "variant {} is not the single inhabited variant of '{}'",
+            variant,
+            enum_ty.name()
+        )),
+        enum_layout_kind::EMPTY => Err(format!("enum '{}' is uninhabited", enum_ty.name())),
+        enum_layout_kind::UNKNOWN => Err(format!(
+            "enum '{}' has unknown physical layout",
+            enum_ty.name()
+        )),
+        other => Err(format!(
+            "enum '{}' has invalid layout kind {}",
+            enum_ty.name(),
+            other
+        )),
+    }
+}
+
+fn emit_integer_constant(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    width: u32,
+    bits: u128,
+) -> Value {
+    let ty = IntegerType::get(ctx, width, Signedness::Signless);
+    let attr = pliron::builtin::attributes::IntegerAttr::new(
+        ty,
+        APInt::from_u128(bits, NonZeroUsize::new(width as usize).unwrap()),
+    );
+    let op = llvm::ConstantOp::new(ctx, attr.into());
+    rewriter.insert_operation(ctx, op.get_operation());
+    op.get_operation().deref(ctx).get_result(0)
+}
+
+fn emit_carrier_constant(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    enum_ty: &MirEnumType,
+    carrier_ty: TypeHandle,
+    bits: u128,
+) -> Result<Value> {
+    let integer = emit_integer_constant(ctx, rewriter, enum_ty.carrier_width, bits);
+    match enum_ty.carrier_kind {
+        enum_carrier_kind::INTEGER => Ok(integer),
+        enum_carrier_kind::POINTER => {
+            let cast = llvm::IntToPtrOp::new(ctx, integer, carrier_ty);
+            rewriter.insert_operation(ctx, cast.get_operation());
+            Ok(cast.get_operation().deref(ctx).get_result(0))
+        }
+        _ => pliron::input_err_noloc!("enum carrier constant requested without a carrier"),
+    }
 }
 
 /// Convert `mir.construct_enum` (e.g. `E::A(x)`) to LLVM operations.
@@ -757,20 +861,10 @@ pub(crate) fn convert_construct_enum(
         (result_ty, operands, variant_index)
     };
 
-    let (variant_discriminants, variant_field_counts, mir_discr_ty, abi_align): (
-        Vec<u64>,
-        Vec<u32>,
-        TypeHandle,
-        u64,
-    ) = {
+    let enum_ty: MirEnumType = {
         let ty_ref = result_ty.deref(ctx);
         match ty_ref.downcast_ref::<MirEnumType>() {
-            Some(e) => (
-                e.variant_discriminants.clone(),
-                e.variant_field_counts.clone(),
-                e.discriminant_ty,
-                e.abi_align(),
-            ),
+            Some(e) => e.clone(),
             None => {
                 return pliron::input_err_noloc!(
                     "MirConstructEnumOp result type must be MirEnumType"
@@ -785,57 +879,30 @@ pub(crate) fn convert_construct_enum(
     // in agreement. Filler slots are simply never written.
     let slot_map = build_enum_slot_map(ctx, result_ty).map_err(anyhow_to_pliron)?;
     let llvm_struct_ty = slot_map.llvm_struct_ty;
-    let llvm_discriminant_ty = convert_type(ctx, mir_discr_ty).map_err(anyhow_to_pliron)?;
 
     let undef_op = llvm::UndefOp::new(ctx, llvm_struct_ty);
     rewriter.insert_operation(ctx, undef_op.get_operation());
     let mut current_struct = undef_op.get_operation().deref(ctx).get_result(0);
+    let mut last_op = undef_op.get_operation();
 
-    // The tag width comes from the enum's discriminant type; assuming a
-    // width (the old `unwrap_or(8)`) would silently store a wrong-sized
-    // tag for any enum whose discriminant is not an integer type.
-    let discr_width = match llvm_discriminant_ty
-        .deref(ctx)
-        .downcast_ref::<IntegerType>()
-        .map(|t| t.width())
+    if let Some(bits) = enum_carrier_bits_for_variant(&enum_ty, variant_index)
+        .map_err(|error| pliron::input_error_noloc!("MirConstructEnumOp: {error}"))?
     {
-        Some(w) => w,
-        None => {
-            return pliron::input_err_noloc!(
-                "MirConstructEnumOp discriminant type must be an integer type"
-            );
-        }
-    };
-    // The stored tag is the variant's declared discriminant VALUE (not the
-    // variant index). A variant index without a discriminant entry means
-    // the MirEnumType is malformed; falling back to the index would
-    // silently resurrect the issue #146 miscompile.
-    let discr_value = match variant_discriminants.get(variant_index).copied() {
-        Some(v) => v,
-        None => {
-            return pliron::input_err_noloc!(
-                "MirConstructEnumOp variant index {} has no discriminant ({} discriminants recorded)",
-                variant_index,
-                variant_discriminants.len()
-            );
-        }
-    };
-    let discr_apint = APInt::from_u64(
-        discr_value,
-        NonZeroUsize::new(discr_width as usize).unwrap(),
-    );
-    let llvm_discr_ty = IntegerType::get(ctx, discr_width, Signedness::Signless);
-    let discr_attr = pliron::builtin::attributes::IntegerAttr::new(llvm_discr_ty, discr_apint);
-    let discr_const = llvm::ConstantOp::new(ctx, discr_attr.into());
-    rewriter.insert_operation(ctx, discr_const.get_operation());
-    let discr_val = discr_const.get_operation().deref(ctx).get_result(0);
+        let carrier_slot = slot_map.carrier_slot.ok_or_else(|| {
+            pliron::input_error_noloc!("MirConstructEnumOp requires a physical carrier slot")
+        })?;
+        let carrier_ty = slot_map.carrier_llvm_ty.ok_or_else(|| {
+            pliron::input_error_noloc!("MirConstructEnumOp requires a physical carrier type")
+        })?;
+        let carrier = emit_carrier_constant(ctx, rewriter, &enum_ty, carrier_ty, bits)?;
+        let insert = llvm::InsertValueOp::new(ctx, current_struct, carrier, vec![carrier_slot]);
+        rewriter.insert_operation(ctx, insert.get_operation());
+        current_struct = insert.get_operation().deref(ctx).get_result(0);
+        last_op = insert.get_operation();
+    }
 
-    let insert_discr =
-        llvm::InsertValueOp::new(ctx, current_struct, discr_val, vec![slot_map.tag_slot]);
-    rewriter.insert_operation(ctx, insert_discr.get_operation());
-    current_struct = insert_discr.get_operation().deref(ctx).get_result(0);
-
-    let field_base: usize = variant_field_counts
+    let field_base: usize = enum_ty
+        .variant_field_counts
         .iter()
         .take(variant_index)
         .map(|&c| c as usize)
@@ -844,7 +911,6 @@ pub(crate) fn convert_construct_enum(
     // Insert every payload field that owns a struct slot; remember the
     // slotless ones for the memory pass below.
     let mut deferred: Vec<(usize, Value)> = Vec::new();
-    let mut last_op = insert_discr.get_operation();
     for (i, operand) in operands.into_iter().enumerate() {
         let flat = field_base + i;
         let Some(slot) = slot_map.field_slots.get(flat) else {
@@ -880,10 +946,30 @@ pub(crate) fn convert_construct_enum(
     // Slotless fields: copy the half-built value to the stack, write
     // each remaining payload at its byte position, and load the finished
     // enum back as the result.
+    let abi_align = enum_ty.abi_align();
     let slot_ptr = spill_enum_value(ctx, rewriter, current_struct, llvm_struct_ty, abi_align);
     for (flat, operand) in deferred {
         let field_ptr = enum_byte_gep(ctx, rewriter, slot_ptr, slot_map.field_offsets[flat]);
-        let store_op = llvm::StoreOp::new(ctx, operand, field_ptr);
+        // `bool` is an LLVM i1 as a value but occupies one full byte in
+        // Rust memory. When that byte is also an enum's i8 niche carrier
+        // (Option<bool>), storing i1 and reloading i8 would leave the upper
+        // carrier bits implicit. Materialize the exact physical byte so the
+        // constructed carrier is unambiguously 0 or 1.
+        let stored_operand = if enum_ty.all_field_sizes[flat] == 1
+            && operand
+                .get_type(ctx)
+                .deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 1)
+        {
+            let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+            let zext = llvm::ZExtOp::new_with_nneg(ctx, operand, byte_ty, false);
+            rewriter.insert_operation(ctx, zext.get_operation());
+            zext.get_operation().deref(ctx).get_result(0)
+        } else {
+            operand
+        };
+        let store_op = llvm::StoreOp::new(ctx, stored_operand, field_ptr);
         rewriter.insert_operation(ctx, store_op.get_operation());
     }
     let load_op = llvm::LoadOp::new(ctx, slot_ptr, llvm_struct_ty);
@@ -924,18 +1010,10 @@ fn enum_slot_map_of_operand(
     Ok((map, abi_align))
 }
 
-/// Convert `mir.set_discriminant` (writing an enum's tag) to
-/// `llvm.getelementptr` + `llvm.store`.
-///
-/// The tag is written into the slot map's `tag_slot`. The discriminant
-/// value operand is already the variant's DECLARED discriminant, so no
-/// index-to-value translation is needed here.
-///
-/// For niche-encoded enums the importer attaches a `niche_encoding`
-/// attribute. When the target variant is the niche variant
-/// (`is_niche_variant`), the niche bit pattern is also stored into the
-/// payload scalar so the in-memory representation is consistent with the
-/// synthetic `{ discriminant, payload }` model.
+/// Convert `mir.set_discriminant` to the one physical carrier write rustc's
+/// layout requires. Direct layouts write the declared discriminant; Niche
+/// layouts write wrapping `niche_start + range_offset`. Selecting the
+/// untagged Niche variant or an inhabited Single variant is a no-op.
 pub(crate) fn convert_set_discriminant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -943,7 +1021,14 @@ pub(crate) fn convert_set_discriminant(
     operands_info: &OperandsInfo,
 ) -> Result<()> {
     let enum_ptr = op.deref(ctx).get_operand(0);
-    let discr_val = op.deref(ctx).get_operand(1);
+    let target = MirSetDiscriminantOp::new(op)
+        .get_attr_set_discriminant_variant_index(ctx)
+        .map(|attr| attr.0 as usize)
+        .ok_or_else(|| {
+            pliron::input_error_noloc!(
+                "MirSetDiscriminantOp missing set_discriminant_variant_index"
+            )
+        })?;
 
     let enum_ty: MirEnumType = {
         let mir_ptr_pointee =
@@ -965,103 +1050,23 @@ pub(crate) fn convert_set_discriminant(
         }
     };
 
-    // Niche-encoded enums have no recorded rustc layout (total_size == 0) but
-    // are still valid when the importer attached niche metadata. Reject only
-    // hand-built IR that tries to store a tag without that metadata.
-    let set_op = MirSetDiscriminantOp::new(op);
-    let has_niche_attrs = set_op.get_attr_set_niche_encoding(ctx).is_some();
-    if enum_ty.total_size() == 0 && !has_niche_attrs {
-        return pliron::input_err_noloc!(
-            "MirSetDiscriminantOp requires a direct-tag enum with recorded layout"
-        );
-    }
+    let Some(bits) = enum_carrier_bits_for_variant(&enum_ty, target)
+        .map_err(|error| pliron::input_error_noloc!("MirSetDiscriminantOp: {error}"))?
+    else {
+        rewriter.erase_operation(ctx, op);
+        return Ok(());
+    };
 
-    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty, ctx).into();
+    let tag_offset = enum_ty.tag_offset();
+    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty.clone(), ctx).into();
     let slot_map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
-    let llvm_struct_ty = slot_map.llvm_struct_ty;
-
-    use llvm_export::ops::GepIndex;
-    let gep_indices = vec![GepIndex::Constant(0), GepIndex::Constant(slot_map.tag_slot)];
-    let tag_ptr_op = llvm::GetElementPtrOp::new(ctx, enum_ptr, gep_indices, llvm_struct_ty);
-    rewriter.insert_operation(ctx, tag_ptr_op.get_operation());
-
-    let tag_ptr = tag_ptr_op.get_operation().deref(ctx).get_result(0);
-    let store_op = llvm::StoreOp::new(ctx, discr_val, tag_ptr);
+    let carrier_ty = slot_map.carrier_llvm_ty.ok_or_else(|| {
+        pliron::input_error_noloc!("MirSetDiscriminantOp physical write has no carrier type")
+    })?;
+    let carrier = emit_carrier_constant(ctx, rewriter, &enum_ty, carrier_ty, bits)?;
+    let carrier_ptr = enum_byte_gep(ctx, rewriter, enum_ptr, tag_offset);
+    let store_op = llvm::StoreOp::new(ctx, carrier, carrier_ptr);
     rewriter.insert_operation(ctx, store_op.get_operation());
-
-    // Niche-encoded enum: if the variant being set uses the niche value,
-    // write that bit pattern into the payload scalar as well.
-    let is_niche_variant = set_op
-        .get_attr_is_niche_variant(ctx)
-        .map(|b| bool::from(b.clone()))
-        .unwrap_or(false);
-    if is_niche_variant {
-        let niche_value = set_op
-            .get_attr_set_niche_value(ctx)
-            .map(|r| r.clone())
-            .ok_or_else(|| {
-                pliron::input_error_noloc!(
-                    "MirSetDiscriminantOp is_niche_variant set without set_niche_value"
-                )
-            })?
-            .value()
-            .to_u64();
-
-        // The importer records WHICH payload field carries the niche and its
-        // byte offset within that field. Niche encoding stores all data in the
-        // single untagged variant, so `field_index` selects that variant's
-        // field (usually 0, but a later field for `enum E { A, B(u32, NonZeroU32) }`).
-        let niche = set_op
-            .get_attr_set_niche_encoding(ctx)
-            .map(|r| r.clone())
-            .ok_or_else(|| {
-                pliron::input_error_noloc!(
-                    "MirSetDiscriminantOp is_niche_variant set without set_niche_encoding"
-                )
-            })?;
-        let field_index = niche.niche_field_index as usize;
-
-        let Some(payload_slot) = slot_map.field_slots.get(field_index).copied().flatten() else {
-            return pliron::input_err_noloc!(
-                "niche-encoded enum SetDiscriminant has no payload slot for niche field {}",
-                field_index
-            );
-        };
-        let Some(&payload_ty) = slot_map.field_llvm_types.get(field_index) else {
-            return pliron::input_err_noloc!(
-                "niche-encoded enum SetDiscriminant has no payload field type for niche field {}",
-                field_index
-            );
-        };
-
-        let Some((scalar_ty, deep_path)) =
-            scalar_path_at_offset(ctx, payload_ty, niche.niche_field_offset)
-        else {
-            return pliron::input_err_noloc!(
-                "niche-encoded enum payload has no scalar slot at offset {} for the niche value",
-                niche.niche_field_offset
-            );
-        };
-
-        let mut payload_gep = vec![GepIndex::Constant(0), GepIndex::Constant(payload_slot)];
-        payload_gep.extend(deep_path.iter().map(|&i| GepIndex::Constant(i)));
-        let payload_ptr_op = llvm::GetElementPtrOp::new(ctx, enum_ptr, payload_gep, llvm_struct_ty);
-        rewriter.insert_operation(ctx, payload_ptr_op.get_operation());
-        let payload_ptr = payload_ptr_op.get_operation().deref(ctx).get_result(0);
-
-        let is_ptr = scalar_ty.deref(ctx).is::<llvm_export::types::PointerType>();
-        let is_int = scalar_ty.deref(ctx).is::<IntegerType>();
-        if !is_ptr && !is_int {
-            return pliron::input_err_noloc!(
-                "niche-encoded enum payload scalar is not an integer or pointer"
-            );
-        }
-
-        let niche_val = const_scalar_from_u64(ctx, rewriter, scalar_ty, niche_value)?;
-
-        let payload_store = llvm::StoreOp::new(ctx, niche_val, payload_ptr);
-        rewriter.insert_operation(ctx, payload_store.get_operation());
-    }
 
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -1070,11 +1075,9 @@ pub(crate) fn convert_set_discriminant(
 /// Convert `mir.get_discriminant` (reading which variant is alive) to
 /// `llvm.extractvalue`.
 ///
-/// The tag is read from the slot map's `tag_slot`. That is usually slot
-/// 0, but rustc may put the tag after a payload, so the slot is never
-/// assumed. The value read is the variant's DECLARED discriminant (what
-/// `construct_enum` stored), so the `match` that follows compares
-/// declared values, never variant positions.
+/// Direct layouts read the tag from the slot map's carrier slot. Niche
+/// layouts decode rustc's wrapping carrier range; Single layouts materialize
+/// their one logical discriminant as a constant. No slot number is assumed.
 pub(crate) fn convert_get_discriminant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -1086,11 +1089,140 @@ pub(crate) fn convert_get_discriminant(
         None => return pliron::input_err_noloc!("MirGetDiscriminantOp requires an operand"),
     };
 
-    let (slot_map, _abi_align) = enum_slot_map_of_operand(ctx, operands_info, enum_val)?;
+    let enum_ty: MirEnumType = operands_info
+        .lookup_most_recent_of_type::<MirEnumType>(ctx, enum_val)
+        .map(|ty| ty.clone())
+        .ok_or_else(|| pliron::input_error_noloc!("Expected MirEnumType for discriminant read"))?;
+    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty.clone(), ctx).into();
+    let slot_map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
+    let logical_ty = convert_type(ctx, enum_ty.discriminant_ty).map_err(anyhow_to_pliron)?;
+    let logical_width = logical_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .map(IntegerType::width)
+        .ok_or_else(|| {
+            pliron::input_error_noloc!("MirGetDiscriminantOp logical result must be integer")
+        })?;
 
-    let extract_op = llvm::ExtractValueOp::new(ctx, enum_val, vec![slot_map.tag_slot])?;
-    rewriter.insert_operation(ctx, extract_op.get_operation());
-    rewriter.replace_operation(ctx, op, extract_op.get_operation());
+    let result = match enum_ty.layout_kind {
+        enum_layout_kind::DIRECT => {
+            let slot = slot_map.carrier_slot.ok_or_else(|| {
+                pliron::input_error_noloc!("Direct enum has no physical carrier slot")
+            })?;
+            let extract = llvm::ExtractValueOp::new(ctx, enum_val, vec![slot])?;
+            rewriter.insert_operation(ctx, extract.get_operation());
+            extract.get_operation().deref(ctx).get_result(0)
+        }
+        enum_layout_kind::SINGLE => {
+            if enum_ty.variant_is_inhabited(enum_ty.single_variant as usize) != Some(true) {
+                return pliron::input_err_noloc!(
+                    "Cannot read discriminant of an uninhabited single-variant enum"
+                );
+            }
+            let value = *enum_ty
+                .variant_discriminants
+                .get(enum_ty.single_variant as usize)
+                .ok_or_else(|| {
+                    pliron::input_error_noloc!("Single enum has no declared discriminant")
+                })?;
+            emit_integer_constant(ctx, rewriter, logical_width, u128::from(value))
+        }
+        enum_layout_kind::NICHE => {
+            let slot = slot_map.carrier_slot.ok_or_else(|| {
+                pliron::input_error_noloc!("Niche enum has no physical carrier slot")
+            })?;
+            let extract = llvm::ExtractValueOp::new(ctx, enum_val, vec![slot])?;
+            rewriter.insert_operation(ctx, extract.get_operation());
+            let carrier = extract.get_operation().deref(ctx).get_result(0);
+            let carrier_int_ty: TypeHandle =
+                IntegerType::get(ctx, enum_ty.carrier_width, Signedness::Signless).into();
+            let carrier_int = if enum_ty.carrier_kind == enum_carrier_kind::POINTER {
+                let cast = llvm::PtrToIntOp::new(ctx, carrier, carrier_int_ty);
+                rewriter.insert_operation(ctx, cast.get_operation());
+                cast.get_operation().deref(ctx).get_result(0)
+            } else {
+                carrier
+            };
+
+            let niche_start =
+                emit_integer_constant(ctx, rewriter, enum_ty.carrier_width, enum_ty.niche_start());
+            let relative = llvm::SubOp::new_with_overflow_flag(
+                ctx,
+                carrier_int,
+                niche_start,
+                IntegerOverflowFlagsAttr::default(),
+            )
+            .get_operation();
+            rewriter.insert_operation(ctx, relative);
+            let relative_val = relative.deref(ctx).get_result(0);
+            let max = emit_integer_constant(
+                ctx,
+                rewriter,
+                enum_ty.carrier_width,
+                u128::from(enum_ty.niche_variant_end - enum_ty.niche_variant_start),
+            );
+            let in_range =
+                llvm::ICmpOp::new(ctx, ICmpPredicateAttr::ULE, relative_val, max).get_operation();
+            rewriter.insert_operation(ctx, in_range);
+            // The range test is carrier-width wrapping arithmetic, exactly
+            // like rustc. Variant indices themselves live at the logical
+            // discriminant width: the start index may be larger than the
+            // carrier can represent (e.g. variants 298..=299 in an i8 niche).
+            let logical_relative = match enum_ty.carrier_width.cmp(&logical_width) {
+                std::cmp::Ordering::Equal => relative_val,
+                std::cmp::Ordering::Greater => {
+                    let cast = llvm::TruncOp::new(ctx, relative_val, logical_ty).get_operation();
+                    rewriter.insert_operation(ctx, cast);
+                    cast.deref(ctx).get_result(0)
+                }
+                std::cmp::Ordering::Less => {
+                    // LLVM's zext op requires its explicit `nneg` flag even
+                    // when the flag is false. Niche decoding is ordinary
+                    // unsigned extension, so it must never claim nneg.
+                    let cast = llvm::ZExtOp::new_with_nneg(ctx, relative_val, logical_ty, false)
+                        .get_operation();
+                    rewriter.insert_operation(ctx, cast);
+                    cast.deref(ctx).get_result(0)
+                }
+            };
+            let niche_base = emit_integer_constant(
+                ctx,
+                rewriter,
+                logical_width,
+                u128::from(enum_ty.niche_variant_start),
+            );
+            let niche_variant = llvm::AddOp::new_with_overflow_flag(
+                ctx,
+                logical_relative,
+                niche_base,
+                IntegerOverflowFlagsAttr::default(),
+            )
+            .get_operation();
+            rewriter.insert_operation(ctx, niche_variant);
+            let untagged = emit_integer_constant(
+                ctx,
+                rewriter,
+                logical_width,
+                u128::from(enum_ty.untagged_variant),
+            );
+            let in_range_value = in_range.deref(ctx).get_result(0);
+            let niche_variant_value = niche_variant.deref(ctx).get_result(0);
+            let select = llvm::SelectOp::new(ctx, in_range_value, niche_variant_value, untagged)
+                .get_operation();
+            rewriter.insert_operation(ctx, select);
+            select.deref(ctx).get_result(0)
+        }
+        enum_layout_kind::EMPTY => {
+            return pliron::input_err_noloc!("Cannot read discriminant of uninhabited enum");
+        }
+        _ => {
+            return pliron::input_err_noloc!(
+                "Cannot read discriminant of enum with unknown physical layout"
+            );
+        }
+    };
+
+    rewriter.replace_operation_with_values(ctx, op, vec![result]);
 
     Ok(())
 }
@@ -1335,10 +1467,11 @@ pub(crate) fn convert_array_element_addr(
 mod tests {
     use super::*;
     use crate::convert::ops::test_util::*;
-    use dialect_mir::attributes::{FieldIndexAttr, NicheEncodingAttr, VariantIndexAttr};
+    use dialect_mir::attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr};
     use dialect_mir::ops as mir;
     use dialect_mir::types::{EnumVariant, MirPtrType, MirSliceType, MirStructType};
-    use pliron::builtin::attributes::{BoolAttr, IntegerAttr};
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::attributes::IntegerAttr;
     use pliron::common_traits::Verify;
 
     fn insert_indices(ctx: &Context, inserts: &[llvm::InsertValueOp]) -> Vec<Vec<u32>> {
@@ -1580,7 +1713,7 @@ mod tests {
         let mut ctx = make_ctx();
 
         let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signed).into();
-        let enum_ty: TypeHandle = MirEnumType::get(
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
             &mut ctx,
             "OrderingLike".to_string(),
             discr_ty,
@@ -1590,6 +1723,9 @@ mod tests {
                 EnumVariant::unit("Equal".to_string()),
                 EnumVariant::unit("Greater".to_string()),
             ],
+            0,
+            1,
+            1,
         )
         .into();
 
@@ -1643,7 +1779,8 @@ mod tests {
 
     /// SetDiscriminant must use the slot map instead of assuming that the tag
     /// is field zero, and its GEP must retain the source pointer's GPU address
-    /// space. This shape puts an i64 payload first and an i8 tag at byte 8.
+    /// space. This shape puts an i64 payload first and an i8 tag above the
+    /// u32 range, proving the byte GEP does not truncate offsets to u32.
     #[test]
     fn set_discriminant_uses_tag_slot_and_preserves_shared_address_space() {
         use llvm_export::ops::GepIndex;
@@ -1653,33 +1790,35 @@ mod tests {
         let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         let payload_a: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let payload_b: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let tag_offset = u64::from(u32::MAX) + 1;
         let enum_ty: TypeHandle = MirEnumType::get_with_layout(
             &mut ctx,
             "TagAfterPayload".to_string(),
             discr_ty,
             vec![3, 7],
             vec![
-                EnumVariant::new_with_offsets("A".to_string(), vec![payload_a], vec![0]),
-                EnumVariant::new_with_offsets("B".to_string(), vec![payload_b], vec![0]),
+                EnumVariant::new_with_layout("A".to_string(), vec![payload_a], vec![0], vec![8]),
+                EnumVariant::new_with_layout("B".to_string(), vec![payload_b], vec![0], vec![8]),
             ],
-            8,
-            16,
+            tag_offset,
+            tag_offset + 8,
             8,
         )
         .into();
         let ptr_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, enum_ty, true).into();
 
-        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, discr_ty], vec![]);
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty], vec![]);
         let enum_ptr = block.deref(&ctx).get_argument(0);
-        let discr = block.deref(&ctx).get_argument(1);
         let set = Operation::new(
             &mut ctx,
             mir::MirSetDiscriminantOp::get_concrete_op_info(),
             vec![],
-            vec![enum_ptr, discr],
+            vec![enum_ptr],
             vec![],
             0,
         );
+        mir::MirSetDiscriminantOp::new(set)
+            .set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(1));
         set.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -1692,12 +1831,22 @@ mod tests {
 
         let gep = find_first::<llvm::GetElementPtrOp>(&ctx, &body).unwrap();
         let indices = gep.indices(&ctx);
-        assert!(
-            matches!(
-                indices.as_slice(),
-                [GepIndex::Constant(0), GepIndex::Constant(1)]
-            ),
-            "the tag at byte 8 must be LLVM struct slot 1"
+        assert!(matches!(indices.as_slice(), [GepIndex::Value(_)]));
+        let GepIndex::Value(offset) = indices[0] else {
+            unreachable!()
+        };
+        let offset_def = offset.defining_op().expect("byte offset must be constant");
+        let offset_constant = Operation::get_op::<llvm::ConstantOp>(offset_def, &ctx)
+            .expect("byte offset must be an LLVM constant");
+        let offset_attr = offset_constant.get_value(&ctx);
+        assert_eq!(
+            offset_attr
+                .downcast_ref::<IntegerAttr>()
+                .expect("byte offset must be integer")
+                .value()
+                .to_u64(),
+            tag_offset,
+            "the write must use rustc's absolute carrier byte offset"
         );
         let gep_result_ty = gep.get_operation().deref(&ctx).get_result(0).get_type(&ctx);
         assert_eq!(
@@ -1727,262 +1876,595 @@ mod tests {
         );
     }
 
-    /// A synthetic tag used for cuda-oxide's device-private niche model is
-    /// not a physical rustc tag and must never be written by SetDiscriminant.
-    #[test]
-    fn set_discriminant_rejects_enum_without_recorded_direct_layout() {
-        let mut ctx = make_ctx();
-        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
-        let enum_ty: TypeHandle = MirEnumType::get(
-            &mut ctx,
-            "NoPhysicalTag".to_string(),
-            discr_ty,
-            vec![0, 1],
-            vec![
-                EnumVariant::unit("None".to_string()),
-                EnumVariant::unit("Some".to_string()),
-            ],
-        )
-        .into();
-        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
-
-        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, discr_ty], vec![]);
-        let enum_ptr = block.deref(&ctx).get_argument(0);
-        let discr = block.deref(&ctx).get_argument(1);
-        let set = Operation::new(
-            &mut ctx,
-            mir::MirSetDiscriminantOp::get_concrete_op_info(),
-            vec![],
-            vec![enum_ptr, discr],
-            vec![],
-            0,
-        );
-        set.insert_at_back(block, &ctx);
-        append_mir_return(&mut ctx, block, vec![]);
-
-        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
-            .expect_err("a no-tag enum must not lower to a synthetic tag store");
-        assert!(
-            error
-                .to_string()
-                .contains("requires a direct-tag enum with recorded layout"),
-            "unexpected lowering error: {error}"
-        );
-    }
-
-    /// Build a niche-encoded `Option<NonZeroU32>`-shaped enum with a synthetic
-    /// `{ u8 tag, u32 payload }` representation (`total_size == 0`).
-    fn make_niche_enum_ty(ctx: &mut Context) -> TypeHandle {
-        let u8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Unsigned).into();
-        let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
-        MirEnumType::get(
+    fn unit_niche_enum(
+        ctx: &mut Context,
+        carrier: (u8, u32, u32),
+        niche_start: u128,
+        niche_range: std::ops::RangeInclusive<u32>,
+        untagged_variant: u32,
+        inhabited: Vec<u8>,
+    ) -> TypeHandle {
+        let (carrier_kind, carrier_width, carrier_address_space) = carrier;
+        let logical_width = if inhabited.len() > u8::MAX as usize {
+            16
+        } else {
+            8
+        };
+        let logical_ty: TypeHandle =
+            IntegerType::get(ctx, logical_width, Signedness::Unsigned).into();
+        let variants = (0..inhabited.len())
+            .map(|index| EnumVariant::unit(format!("V{index}")))
+            .collect::<Vec<_>>();
+        let discriminants = (0..inhabited.len() as u64).collect();
+        let carrier_size = u64::from(carrier_width).div_ceil(8);
+        let carrier_align = carrier_size.next_power_of_two().min(16);
+        MirEnumType::get_with_encoding(
             ctx,
-            "OptionLike".to_string(),
-            u8_ty,
-            vec![0, 1],
-            vec![
-                EnumVariant::new("Some".to_string(), vec![u32_ty]),
-                EnumVariant::unit("None".to_string()),
-            ],
+            "UnitNiche".into(),
+            logical_ty,
+            discriminants,
+            variants,
+            0,
+            carrier_size,
+            carrier_align,
+            enum_layout_kind::NICHE,
+            carrier_kind,
+            carrier_width,
+            carrier_address_space,
+            niche_start as u64,
+            (niche_start >> 64) as u64,
+            *niche_range.start(),
+            *niche_range.end(),
+            untagged_variant,
+            0,
+            inhabited,
         )
         .into()
     }
 
     #[test]
-    fn convert_set_discriminant_niche_variant_writes_payload() {
+    fn niche_encoding_handles_untagged_inside_range_and_u128_wrap() {
         let mut ctx = make_ctx();
-        let enum_ty = make_niche_enum_ty(&mut ctx);
-        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
-        let enum_ptr_ty = MirPtrType::get_generic(&mut ctx, enum_ty, true);
-
-        let (module_ptr, block) =
-            build_kernel(&mut ctx, vec![enum_ptr_ty.into(), discr_ty], vec![]);
-        let enum_ptr = block.deref(&ctx).get_argument(0);
-        let discr_val = block.deref(&ctx).get_argument(1);
-
-        let set_op = Operation::new(
+        let inside = unit_niche_enum(
             &mut ctx,
-            mir::MirSetDiscriminantOp::get_concrete_op_info(),
-            vec![],
-            vec![enum_ptr, discr_val],
-            vec![],
-            0,
-        );
-        let wrapped = mir::MirSetDiscriminantOp::new(set_op);
-        wrapped.set_attr_set_niche_encoding(
-            &mut ctx,
-            NicheEncodingAttr {
-                niche_start: 0,
-                niche_variant_idx: 1,
-                niche_variant_end_idx: 1,
-                untagged_variant_idx: 0,
-                niche_field_index: 0,
-                niche_field_offset: 0,
-            },
-        );
-        wrapped.set_attr_is_niche_variant(&mut ctx, BoolAttr::new(true));
-        let niche_value_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
-        let niche_value_attr = IntegerAttr::new(
-            niche_value_ty,
-            APInt::from_u64(0, NonZeroUsize::new(64).unwrap()),
-        );
-        wrapped.set_attr_set_niche_value(&mut ctx, niche_value_attr);
-        set_op.insert_at_back(block, &ctx);
-        append_mir_return(&mut ctx, block, vec![]);
-
-        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
-
-        let body = kernel_blocks(&ctx, module_ptr);
-        let stores = find_all::<llvm::StoreOp>(&ctx, &body);
-        assert_eq!(
-            stores.len(),
-            2,
-            "niche variant set_discriminant must write both tag and payload"
-        );
-    }
-
-    #[test]
-    fn convert_set_discriminant_niche_untagged_only_writes_tag() {
-        let mut ctx = make_ctx();
-        let enum_ty = make_niche_enum_ty(&mut ctx);
-        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
-        let enum_ptr_ty = MirPtrType::get_generic(&mut ctx, enum_ty, true);
-
-        let (module_ptr, block) =
-            build_kernel(&mut ctx, vec![enum_ptr_ty.into(), discr_ty], vec![]);
-        let enum_ptr = block.deref(&ctx).get_argument(0);
-        let discr_val = block.deref(&ctx).get_argument(1);
-
-        let set_op = Operation::new(
-            &mut ctx,
-            mir::MirSetDiscriminantOp::get_concrete_op_info(),
-            vec![],
-            vec![enum_ptr, discr_val],
-            vec![],
-            0,
-        );
-        let wrapped = mir::MirSetDiscriminantOp::new(set_op);
-        wrapped.set_attr_set_niche_encoding(
-            &mut ctx,
-            NicheEncodingAttr {
-                niche_start: 0,
-                niche_variant_idx: 1,
-                niche_variant_end_idx: 1,
-                untagged_variant_idx: 0,
-                niche_field_index: 0,
-                niche_field_offset: 0,
-            },
-        );
-        wrapped.set_attr_is_niche_variant(&mut ctx, BoolAttr::new(false));
-        set_op.insert_at_back(block, &ctx);
-        append_mir_return(&mut ctx, block, vec![]);
-
-        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
-
-        let body = kernel_blocks(&ctx, module_ptr);
-        let stores = find_all::<llvm::StoreOp>(&ctx, &body);
-        assert_eq!(
-            stores.len(),
+            (enum_carrier_kind::INTEGER, 8, 0),
+            42,
+            0..=1,
             1,
-            "untagged variant set_discriminant must write only the tag"
+            vec![1, 1],
+        );
+        let inside_ref = inside.deref(&ctx);
+        let inside_enum = inside_ref.downcast_ref::<MirEnumType>().unwrap();
+        assert_eq!(enum_carrier_bits_for_variant(inside_enum, 0), Ok(Some(42)));
+        assert_eq!(
+            enum_carrier_bits_for_variant(inside_enum, 1),
+            Ok(None),
+            "the untagged variant is a no-op even when its index is in the niche range"
+        );
+        drop(inside_ref);
+
+        let wrapping = unit_niche_enum(
+            &mut ctx,
+            (enum_carrier_kind::INTEGER, 128, 0),
+            u128::MAX,
+            0..=1,
+            0,
+            vec![1, 1],
+        );
+        let wrapping_ref = wrapping.deref(&ctx);
+        let wrapping_enum = wrapping_ref.downcast_ref::<MirEnumType>().unwrap();
+        assert_eq!(
+            enum_carrier_bits_for_variant(wrapping_enum, 1),
+            Ok(Some(0)),
+            "niche arithmetic must wrap across the full u128 carrier"
         );
     }
 
-    /// A data variant with several fields (`enum E { Nothing, Something(u32,
-    /// NonZeroU32) }`) puts the niche in the SECOND field. The importer records
-    /// `niche_field_index = 1`, so the payload write must target that field's
-    /// slot (2), not the first `u32` (slot 1). Before the offset-based locator
-    /// the write silently landed in slot 1 because it was an integer.
     #[test]
-    fn convert_set_discriminant_niche_targets_correct_multifield_slot() {
+    fn set_discriminant_niche_writes_only_tagged_variant_carrier() {
+        for (target, expected_stores) in [(0, 1), (1, 0)] {
+            let mut ctx = make_ctx();
+            let enum_ty = unit_niche_enum(
+                &mut ctx,
+                (enum_carrier_kind::INTEGER, 8, 0),
+                0,
+                0..=0,
+                1,
+                vec![1, 1],
+            );
+            let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+            let (module, block) = build_kernel(&mut ctx, vec![ptr_ty], vec![]);
+            let ptr = block.deref(&ctx).get_argument(0);
+            let set = Operation::new(
+                &mut ctx,
+                mir::MirSetDiscriminantOp::get_concrete_op_info(),
+                vec![],
+                vec![ptr],
+                vec![],
+                0,
+            );
+            mir::MirSetDiscriminantOp::new(set)
+                .set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(target));
+            set.insert_at_back(block, &ctx);
+            append_mir_return(&mut ctx, block, vec![]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+            let body = kernel_blocks(&ctx, module);
+            assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), expected_stores);
+            assert_eq!(count_ops::<mir::MirSetDiscriminantOp>(&ctx, &body), 0);
+        }
+    }
+
+    #[test]
+    fn shared_pointer_niche_carrier_rejects_target_dependent_width() {
+        let mut ctx = make_ctx();
+        let enum_ty = unit_niche_enum(
+            &mut ctx,
+            (enum_carrier_kind::POINTER, 64, 3),
+            0,
+            0..=0,
+            1,
+            vec![1, 1],
+        );
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("shared pointer carrier must reject");
+        assert!(
+            error.to_string().contains("target-mode dependent"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn option_bool_uses_i8_carrier_and_spills_i1_payload() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let bool_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OptionBool".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![bool_ty], vec![0], vec![1]),
+            ],
+            0,
+            1,
+            1,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::INTEGER,
+            8,
+            0,
+            2,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(
+            slot_map
+                .carrier_llvm_ty
+                .unwrap()
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .unwrap()
+                .width(),
+            8,
+            "Option<bool>'s memory carrier is i8, not bool's semantic i1"
+        );
+        assert_eq!(slot_map.field_slots, vec![None]);
+
+        let (module, block) = build_kernel(&mut ctx, vec![bool_ty], vec![enum_ty]);
+        let payload = block.deref(&ctx).get_argument(0);
+        let construct = Operation::new(
+            &mut ctx,
+            mir::MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![payload],
+            vec![],
+            0,
+        );
+        mir::MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(1));
+        construct.insert_at_back(block, &ctx);
+        let result = construct.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(count_ops::<llvm::InsertValueOp>(&ctx, &body), 0);
+        assert!(find_all::<llvm::ZExtOp>(&ctx, &body).iter().any(|zext| {
+            zext.get_operation()
+                .deref(&ctx)
+                .get_operand(0)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 1)
+                && zext
+                    .get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx)
+                    .deref(&ctx)
+                    .downcast_ref::<IntegerType>()
+                    .is_some_and(|integer| integer.width() == 8)
+        }));
+        assert!(find_all::<llvm::StoreOp>(&ctx, &body).iter().any(|store| {
+            store
+                .get_operand_value(&ctx)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 8)
+        }));
+    }
+
+    #[test]
+    fn direct_bool_uses_i8_storage_and_spills_i1_payload() {
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let bool_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "DirectBool".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![bool_ty], vec![4], vec![1]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(slot_map.field_slots, vec![None]);
+        let storage_fields = slot_map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("enum storage must be an LLVM struct")
+            .fields()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            storage_fields[1]
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .map(IntegerType::width),
+            Some(8),
+            "the standalone Rust bool byte must use physical i8 storage"
+        );
+
+        let (module, block) = build_kernel(&mut ctx, vec![bool_ty], vec![enum_ty]);
+        let payload = block.deref(&ctx).get_argument(0);
+        let construct = Operation::new(
+            &mut ctx,
+            mir::MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![payload],
+            vec![],
+            0,
+        );
+        mir::MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+        construct.insert_at_back(block, &ctx);
+        let result = construct.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::InsertValueOp>(&ctx, &body),
+            1,
+            "only the direct tag should be inserted as an SSA struct field"
+        );
+        assert!(find_all::<llvm::ZExtOp>(&ctx, &body).iter().any(|zext| {
+            zext.get_operation()
+                .deref(&ctx)
+                .get_operand(0)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 1)
+                && zext
+                    .get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx)
+                    .deref(&ctx)
+                    .downcast_ref::<IntegerType>()
+                    .is_some_and(|integer| integer.width() == 8)
+        }));
+        assert!(find_all::<llvm::StoreOp>(&ctx, &body).iter().any(|store| {
+            store
+                .get_operand_value(&ctx)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 8)
+        }));
+    }
+
+    #[test]
+    fn later_field_niche_set_writes_exact_carrier_offset() {
         use llvm_export::ops::GepIndex;
 
         let mut ctx = make_ctx();
-        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let logical: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
-        let enum_ty: TypeHandle = MirEnumType::get(
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
-            "MultiField".to_string(),
-            u8_ty,
+            "Wrapper".into(),
+            vec!["pad".into(), "nz".into()],
+            vec![u32_ty, u32_ty],
             vec![0, 1],
-            vec![
-                EnumVariant::unit("Nothing".to_string()),
-                EnumVariant::new("Something".to_string(), vec![u32_ty, u32_ty]),
-            ],
+            vec![0, 4],
+            8,
+            4,
         )
         .into();
-        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
-        let enum_ptr_ty = MirPtrType::get_generic(&mut ctx, enum_ty, true);
-
-        let (module_ptr, block) =
-            build_kernel(&mut ctx, vec![enum_ptr_ty.into(), discr_ty], vec![]);
-        let enum_ptr = block.deref(&ctx).get_argument(0);
-        let discr_val = block.deref(&ctx).get_argument(1);
-
-        let set_op = Operation::new(
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybeWrapper".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![wrapper], vec![0], vec![8]),
+            ],
+            4,
+            8,
+            4,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::INTEGER,
+            32,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let (module, block) = build_kernel(&mut ctx, vec![ptr_ty], vec![]);
+        let ptr = block.deref(&ctx).get_argument(0);
+        let set = Operation::new(
             &mut ctx,
             mir::MirSetDiscriminantOp::get_concrete_op_info(),
             vec![],
-            vec![enum_ptr, discr_val],
+            vec![ptr],
             vec![],
             0,
         );
-        let wrapped = mir::MirSetDiscriminantOp::new(set_op);
-        wrapped.set_attr_set_niche_encoding(
-            &mut ctx,
-            NicheEncodingAttr {
-                niche_start: 0,
-                niche_variant_idx: 0,
-                niche_variant_end_idx: 0,
-                untagged_variant_idx: 1,
-                // Niche lives in Something's second field (the NonZero-like u32).
-                niche_field_index: 1,
-                niche_field_offset: 0,
-            },
-        );
-        wrapped.set_attr_is_niche_variant(&mut ctx, BoolAttr::new(true));
-        let niche_value_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
-        let niche_value_attr = IntegerAttr::new(
-            niche_value_ty,
-            APInt::from_u64(0, NonZeroUsize::new(64).unwrap()),
-        );
-        wrapped.set_attr_set_niche_value(&mut ctx, niche_value_attr);
-        set_op.insert_at_back(block, &ctx);
+        mir::MirSetDiscriminantOp::new(set)
+            .set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
+        set.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
-        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
-
-        let body = kernel_blocks(&ctx, module_ptr);
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        let gep = find_first::<llvm::GetElementPtrOp>(&ctx, &body).unwrap();
+        let indices = gep.indices(&ctx);
+        let [GepIndex::Value(offset)] = indices.as_slice() else {
+            panic!("carrier access must use a byte-offset SSA value");
+        };
+        let constant =
+            Operation::get_op::<llvm::ConstantOp>(offset.defining_op().unwrap(), &ctx).unwrap();
         assert_eq!(
-            find_all::<llvm::StoreOp>(&ctx, &body).len(),
-            2,
-            "must write both the tag and the niche payload"
+            constant
+                .get_value(&ctx)
+                .downcast_ref::<IntegerAttr>()
+                .unwrap()
+                .value()
+                .to_u64(),
+            4
         );
+    }
 
-        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
-        let payload_geps: Vec<_> = geps
-            .iter()
-            .map(|g| g.indices(&ctx))
-            .filter(|idx| {
-                matches!(
-                    idx.as_slice(),
-                    [GepIndex::Constant(0), GepIndex::Constant(2)]
-                )
-            })
-            .collect();
-        assert_eq!(
-            payload_geps.len(),
+    #[test]
+    fn get_niche_discriminant_adds_large_range_start_at_logical_width() {
+        let mut ctx = make_ctx();
+        let enum_ty = unit_niche_enum(
+            &mut ctx,
+            (enum_carrier_kind::INTEGER, 8, 0),
+            0,
+            298..=299,
+            0,
+            {
+                let mut inhabited = vec![0; 300];
+                inhabited[0] = 1;
+                inhabited[298] = 1;
+                inhabited[299] = 1;
+                inhabited
+            },
+        );
+        let logical_ty: TypeHandle = IntegerType::get(&ctx, 16, Signedness::Unsigned).into();
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ty], vec![logical_ty]);
+        let value = block.deref(&ctx).get_argument(0);
+        let get = Operation::new(
+            &mut ctx,
+            mir::MirGetDiscriminantOp::get_concrete_op_info(),
+            vec![logical_ty],
+            vec![value],
+            vec![],
+            0,
+        );
+        get.insert_at_back(block, &ctx);
+        let result = get.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(count_ops::<llvm::ZExtOp>(&ctx, &body), 1);
+        let add = find_first::<llvm::AddOp>(&ctx, &body).expect("logical variant add");
+        for operand in add.get_operation().deref(&ctx).operands() {
+            assert_eq!(
+                operand
+                    .get_type(&ctx)
+                    .deref(&ctx)
+                    .downcast_ref::<IntegerType>()
+                    .unwrap()
+                    .width(),
+                16,
+                "variant-index arithmetic must occur at logical width"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_negative_discriminant_read_remains_signed_for_widening() {
+        let mut ctx = make_ctx();
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signed).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signed).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Negative".into(),
+            i8_ty,
+            vec![255, 0],
+            vec![EnumVariant::unit("N".into()), EnumVariant::unit("Z".into())],
+            0,
             1,
-            "the niche payload must be written to slot 2 (Something's second field); \
-             found {} GEP(s) total",
-            geps.len()
+            1,
+        )
+        .into();
+        let (module, block) = build_kernel(&mut ctx, vec![], vec![i32_ty]);
+        let construct = Operation::new(
+            &mut ctx,
+            mir::MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![],
+            vec![],
+            0,
         );
-        assert!(
-            !geps.iter().any(|g| matches!(
-                g.indices(&ctx).as_slice(),
-                [GepIndex::Constant(0), GepIndex::Constant(1)]
-            )),
-            "must NOT write into slot 1 (the first, non-niche u32)"
+        mir::MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+        construct.insert_at_back(block, &ctx);
+        let enum_value = construct.deref(&ctx).get_result(0);
+        let get = Operation::new(
+            &mut ctx,
+            mir::MirGetDiscriminantOp::get_concrete_op_info(),
+            vec![i8_ty],
+            vec![enum_value],
+            vec![],
+            0,
         );
+        get.insert_at_back(block, &ctx);
+        let discriminant = get.deref(&ctx).get_result(0);
+        let cast = Operation::new(
+            &mut ctx,
+            mir::MirCastOp::get_concrete_op_info(),
+            vec![i32_ty],
+            vec![discriminant],
+            vec![],
+            0,
+        );
+        mir::MirCastOp::new(cast).set_attr_cast_kind(&ctx, MirCastKindAttr::IntToInt);
+        cast.insert_at_back(block, &ctx);
+        let widened = cast.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![widened]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(count_ops::<llvm::SExtOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::ZExtOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn single_layout_preserves_large_and_negative_declared_discriminants() {
+        for (width, signedness, bits, widened_width, expects_sext) in [
+            (16, Signedness::Unsigned, 1_000, 16, false),
+            (8, Signedness::Signed, 251, 32, true),
+        ] {
+            let mut ctx = make_ctx();
+            let logical: TypeHandle = IntegerType::get(&ctx, width, signedness).into();
+            let destination: TypeHandle = IntegerType::get(&ctx, widened_width, signedness).into();
+            let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+                &mut ctx,
+                "Single".into(),
+                logical,
+                vec![bits],
+                vec![EnumVariant::unit("Only".into())],
+                0,
+                0,
+                1,
+                enum_layout_kind::SINGLE,
+                enum_carrier_kind::NONE,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                vec![1],
+            )
+            .into();
+            let (module, block) = build_kernel(&mut ctx, vec![], vec![destination]);
+            let construct = Operation::new(
+                &mut ctx,
+                mir::MirConstructEnumOp::get_concrete_op_info(),
+                vec![enum_ty],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstructEnumOp::new(construct)
+                .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+            construct.insert_at_back(block, &ctx);
+            let enum_value = construct.deref(&ctx).get_result(0);
+            let get = Operation::new(
+                &mut ctx,
+                mir::MirGetDiscriminantOp::get_concrete_op_info(),
+                vec![logical],
+                vec![enum_value],
+                vec![],
+                0,
+            );
+            get.insert_at_back(block, &ctx);
+            let discr = get.deref(&ctx).get_result(0);
+            let returned = if widened_width == width {
+                discr
+            } else {
+                let cast = Operation::new(
+                    &mut ctx,
+                    mir::MirCastOp::get_concrete_op_info(),
+                    vec![destination],
+                    vec![discr],
+                    vec![],
+                    0,
+                );
+                mir::MirCastOp::new(cast).set_attr_cast_kind(&ctx, MirCastKindAttr::IntToInt);
+                cast.insert_at_back(block, &ctx);
+                cast.deref(&ctx).get_result(0)
+            };
+            append_mir_return(&mut ctx, block, vec![returned]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+            let body = kernel_blocks(&ctx, module);
+            let found_bits = find_all::<llvm::ConstantOp>(&ctx, &body)
+                .iter()
+                .any(|constant| {
+                    constant
+                        .get_value(&ctx)
+                        .downcast_ref::<IntegerAttr>()
+                        .is_some_and(|value| value.value().to_u64() == bits)
+                });
+            assert!(
+                found_bits,
+                "single discriminant {bits} must not be truncated"
+            );
+            assert_eq!(count_ops::<llvm::SExtOp>(&ctx, &body) == 1, expects_sext);
+        }
     }
 }

@@ -593,59 +593,6 @@ pub fn translate_rvalue(
             let cast_op = MirCastOp::new(op);
             cast_op.set_attr_cast_kind(ctx, cast_kind_attr);
 
-            // Record rustc's niche encoding on the cast so mir-lower can
-            // rebuild our un-niched `MirEnumType` aggregate (issue #21).
-            // The attribute is a typed `NicheEncodingAttr` so the contract
-            // between importer and lowering is enforced by pliron rather
-            // than by a hand-rolled string key.
-            if matches!(kind, mir::CastKind::Transmute)
-                && let Ok(layout) = ty.layout()
-            {
-                let shape = layout.shape();
-                if let rustc_public::abi::VariantsShape::Multiple {
-                    tag_encoding:
-                        rustc_public::abi::TagEncoding::Niche {
-                            untagged_variant,
-                            niche_variants,
-                            niche_start,
-                        },
-                    tag_field,
-                    ..
-                } = &shape.variants
-                {
-                    // Niched scalars are at most 64 bits wide. If rustc ever
-                    // hands us something wider, fail loudly instead of
-                    // truncating: the wrong bit pattern would silently match a
-                    // different enum variant at runtime.
-                    let niche_start_u64 = u64::try_from(*niche_start).map_err(|_| {
-                        input_error_noloc!(TranslationErr::unsupported(format!(
-                            "Niche start {} exceeds u64; niched-enum Transmute with > 64-bit scalar is not supported",
-                            niche_start
-                        )))
-                    })?;
-                    let niche_variant_idx = niche_variants.start().to_index() as u32;
-                    let niche_variant_end_idx = niche_variants.end().to_index() as u32;
-                    let untagged_variant_idx = untagged_variant.to_index() as u32;
-                    let (niche_field_index, niche_field_offset) =
-                        crate::translator::statement::niche_field_location(
-                            &shape,
-                            *tag_field,
-                            untagged_variant.to_index(),
-                        );
-                    cast_op.set_attr_niche_encoding(
-                        ctx,
-                        dialect_mir::attributes::NicheEncodingAttr {
-                            niche_start: niche_start_u64,
-                            niche_variant_idx,
-                            niche_variant_end_idx,
-                            untagged_variant_idx,
-                            niche_field_index,
-                            niche_field_offset,
-                        },
-                    );
-                }
-            }
-
             let result = op.deref(ctx).get_result(0);
 
             Ok((Some(op), result, prev_op_after_operand))
@@ -1475,19 +1422,21 @@ pub fn translate_rvalue(
         mir::Rvalue::Discriminant(place) => {
             // Get the discriminant (tag) from an enum value.
             //
-            // Two discriminant types are in play:
-            //   - `native_tag_ty`: the physical tag type stored in memory,
-            //     tracked by `MirEnumType::discriminant_type()` (e.g. `u8`
-            //     for a niche-optimized `Option<*mut T>`).
+            // Two discriminant types can be in play:
+            //   - `native_tag_ty`: the logical result type produced by our
+            //     enum operation. For Direct layouts this is the physical tag
+            //     type; for Niche/Single layouts the operation decodes or
+            //     materializes the logical discriminant directly.
             //   - `mir_discr_ty`: the type stable-MIR declares for the
             //     `Rvalue::Discriminant(place)` value itself, via
             //     `Ty::kind().discriminant_ty()`. This is what rustc uses
             //     to type the destination local (often `i64`).
             //
-            // `MirGetDiscriminantOp` returns the native tag. When the two
-            // types disagree we widen via `mir.cast IntToInt` so the rvalue
-            // matches what stable-MIR promised. Without this, storing the
-            // result into its destination slot would fail verification.
+            // When the two types disagree (normally a narrow Direct tag versus
+            // stable MIR's wider declared type), widen via `mir.cast IntToInt`
+            // so the rvalue matches what stable MIR promised. Without this,
+            // storing the result into its destination slot would fail
+            // verification.
             use dialect_mir::ops::MirGetDiscriminantOp;
             use dialect_mir::types::MirEnumType;
             use pliron::builtin::types::IntegerType;
@@ -5959,6 +5908,23 @@ fn translate_enum_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let relocation_count = match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
+            _ => 0,
+        },
+        _ => 0,
+    };
+    if relocation_count != 0 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Enum constant contains {} pointer relocation(s); cuda-oxide cannot yet preserve enum pointer provenance",
+                relocation_count
+            ))
+        );
+    }
     let enum_bytes = constant_bytes(constant, "enum", loc.clone())?;
     translate_enum_constant_from_bytes(
         ctx,
@@ -6196,7 +6162,7 @@ fn translate_struct_constant_from_bytes(
 
     // Structs have a single variant in the ADT metadata.
     let variants = adt_def.variants();
-    let struct_variant = variants.get(0).ok_or_else(|| {
+    let struct_variant = variants.first().ok_or_else(|| {
         input_error_noloc!(TranslationErr::unsupported(
             "Struct ADT has no variants in metadata"
         ))
@@ -6221,7 +6187,7 @@ fn translate_struct_constant_from_bytes(
                 field_idx, e
             )))
         })?;
-        let field_size = field_layout.shape().size.bytes() as usize;
+        let field_size = field_layout.shape().size.bytes();
         let field_offset = *field_offsets.get(field_idx).ok_or_else(|| {
             input_error_noloc!(TranslationErr::unsupported(format!(
                 "Missing layout offset for struct field {}",
@@ -7003,6 +6969,27 @@ pub(crate) fn constant_bytes(
 }
 
 /// Determine the active enum variant from layout metadata plus raw bytes.
+fn decode_niche_variant_index(
+    tag_value: u128,
+    carrier_mask: u128,
+    niche_start: u128,
+    niche_variant_start: usize,
+    niche_variant_end: usize,
+    untagged_variant: usize,
+) -> usize {
+    let relative = tag_value.wrapping_sub(niche_start) & carrier_mask;
+    let span = (niche_variant_end - niche_variant_start) as u128;
+
+    // Compare at the full physical carrier width. Converting `relative` to
+    // host usize before this check can turn 2^64 into zero on a 64-bit host
+    // and select the wrong variant for an i128 carrier.
+    if relative <= span {
+        niche_variant_start + relative as usize
+    } else {
+        untagged_variant
+    }
+}
+
 fn enum_variant_index_from_bytes(
     rust_ty: &rustc_public::ty::Ty,
     enum_bytes: &[u8],
@@ -7085,14 +7072,14 @@ fn enum_variant_index_from_bytes(
 
                     let niche_start_idx = niche_variants.start().to_index();
                     let niche_end_idx = niche_variants.end().to_index();
-                    let relative = tag_value.wrapping_sub(*niche_start) & mask;
-                    let candidate = niche_start_idx.saturating_add(relative as usize);
-
-                    if candidate >= niche_start_idx && candidate <= niche_end_idx {
-                        Ok(candidate)
-                    } else {
-                        Ok(untagged_variant.to_index())
-                    }
+                    Ok(decode_niche_variant_index(
+                        tag_value,
+                        mask,
+                        *niche_start,
+                        niche_start_idx,
+                        niche_end_idx,
+                        untagged_variant.to_index(),
+                    ))
                 }
             }
         }
@@ -7946,6 +7933,25 @@ fn create_ghost_enum_default(
     op
 }
 
-// (The hand-rolled niche-attribute writer that lived here was replaced
-// by `MirCastOp::set_attr_niche_encoding(...)`, generated from the typed
-// `NicheEncodingAttr` slot declared on the op.)
+#[cfg(test)]
+mod enum_niche_decode_tests {
+    use super::decode_niche_variant_index;
+
+    #[test]
+    fn i128_relative_value_is_checked_before_usize_conversion() {
+        assert_eq!(
+            decode_niche_variant_index(1u128 << 64, u128::MAX, 0, 0, 1, 2),
+            2,
+            "2^64 must not truncate to relative variant zero on a 64-bit host"
+        );
+    }
+
+    #[test]
+    fn niche_decode_wraps_at_the_carrier_width() {
+        assert_eq!(
+            decode_niche_variant_index(0, u8::MAX.into(), u8::MAX.into(), 3, 4, 1),
+            4,
+            "u8 carrier value 0 is one step after niche_start 255"
+        );
+    }
+}

@@ -3,29 +3,127 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Positive test: niche-encoded enum discriminant writes via `SetDiscriminant`
-//! are lowered correctly on the device.
+//! Host/device ABI regression for basic and nested niche-encoded enums.
 //!
-//! `Option<NonZeroU32>` is niche-encoded as a single `u32` where `0` means
-//! `None`. The custom MIR helper emits `StatementKind::SetDiscriminant` to the
-//! niche variant (`None`, variant index 0) so lowering must write both the
-//! synthetic discriminant and the payload niche value.
-//!
-//! Usage:
-//!   cargo oxide run set_discriminant_niche
+//! The kernel reads enum bytes written by the host, then custom MIR
+//! `SetDiscriminant` changes the input values to `None`. It also constructs an
+//! `Option<bool>` on the device for the host to read back. `MaybeWrapper` is
+//! the important later-field case: its niche is `Wrapper::nz`, at byte 4
+//! rather than byte 0.
 
 #![feature(core_intrinsics, custom_mir)]
 #![allow(internal_features)]
 
 use core::intrinsics::mir::*;
 use core::num::NonZeroU32;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaContext, DeviceBuffer, DeviceCopy, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct Basic(Option<NonZeroU32>);
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct Boolean(Option<bool>);
+
+/// A standalone Rust `bool` is an SSA `i1`, but its payload storage is one
+/// complete byte after this enum's four-byte direct tag. Keeping this in the
+/// real example prevents the enum slot map from ever using `i1` as a physical
+/// aggregate field.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DirectBoolean {
+    Value(bool),
+    Empty,
+}
+
+/// rustc uses `B` as this enum's ordinary payload variant. `A` and `C` are
+/// encoded in invalid `bool` values in the same byte; the niche-variant range
+/// still spans source indices `A..=C`, so `B` lies inside that range even
+/// though its `false`/`true` payload bytes remain the untagged representation.
+/// Consequently `A` is byte 2, the range slot for `B` (byte 3) is skipped,
+/// and `C` is byte 4.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InteriorBoolean {
+    A,
+    B(bool),
+    C,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Wrapper {
+    pad: u32,
+    nz: NonZeroU32,
+}
+
+#[derive(Clone, Copy)]
+enum MaybeWrapper {
+    None,
+    Some(Wrapper),
+}
+
+// These values are copied as bytes to device memory. This example verifies
+// that cuda-oxide now gives those bytes exactly the same meaning as rustc.
+unsafe impl DeviceCopy for Basic {}
+unsafe impl DeviceCopy for Boolean {}
+unsafe impl DeviceCopy for DirectBoolean {}
+unsafe impl DeviceCopy for InteriorBoolean {}
+unsafe impl DeviceCopy for Wrapper {}
+unsafe impl DeviceCopy for MaybeWrapper {}
+
+// Import-only probes for rustc's Empty and Single layout forms. Keeping them
+// in a kernel signature ensures the real importer sees zero- and one-variant
+// enums; no impossible value is ever constructed or dereferenced.
+pub enum Never {}
+pub enum Only {
+    Value = 1_000,
+}
+pub enum Impossible {
+    Value(u32, Never),
+}
+pub enum ImpossibleMany {
+    First(Never),
+    Second(Never),
+}
+#[repr(i8)]
+#[derive(Clone, Copy)]
+pub enum Negative {
+    Below = -1,
+    Zero = 0,
+}
+
+unsafe impl DeviceCopy for Negative {}
+
 #[custom_mir(dialect = "runtime", phase = "optimized")]
-fn force_set_niche_none(opt: &mut Option<NonZeroU32>) {
+fn force_basic_none(value: &mut Option<NonZeroU32>) {
     mir!({
-        SetDiscriminant(*opt, 0);
+        SetDiscriminant(*value, 0);
+        Return()
+    })
+}
+
+#[custom_mir(dialect = "runtime", phase = "optimized")]
+fn force_nested_none(value: &mut MaybeWrapper) {
+    mir!({
+        SetDiscriminant(*value, 0);
+        Return()
+    })
+}
+
+#[custom_mir(dialect = "runtime", phase = "optimized")]
+fn force_boolean_none(value: &mut Option<bool>) {
+    mir!({
+        SetDiscriminant(*value, 0);
+        Return()
+    })
+}
+
+#[custom_mir(dialect = "runtime", phase = "optimized")]
+fn force_pointer_none<'a>(value: &mut Option<&'a u32>) {
+    mir!({
+        SetDiscriminant(*value, 0);
         Return()
     })
 }
@@ -34,72 +132,351 @@ fn force_set_niche_none(opt: &mut Option<NonZeroU32>) {
 mod kernels {
     use super::*;
 
-    /// Each thread starts with `Some(NonZeroU32::new(42))`, then uses custom
-    /// MIR to emit `SetDiscriminant` to `None` (variant index 0). The output is
-    /// `1` if the discriminant write was observed, `0` otherwise.
     #[kernel]
-    pub fn set_discriminant_niche_kernel(mut out: DisjointSlice<u32>) {
-        let idx = thread::index_1d();
-        if let Some(out_elem) = out.get_mut(idx) {
-            let some_value = unsafe { NonZeroU32::new_unchecked(42) };
-            let mut opt: Option<NonZeroU32> = Some(some_value);
+    pub fn niche_roundtrip(
+        mut basic: DisjointSlice<Basic>,
+        mut boolean: DisjointSlice<Boolean>,
+        mut constructed_boolean: DisjointSlice<Boolean>,
+        mut direct_boolean: DisjointSlice<DirectBoolean>,
+        mut constructed_direct_boolean: DisjointSlice<DirectBoolean>,
+        mut observed_direct_boolean: DisjointSlice<u8>,
+        mut interior_boolean: DisjointSlice<InteriorBoolean>,
+        mut constructed_interior_boolean: DisjointSlice<InteriorBoolean>,
+        mut observed_interior_boolean: DisjointSlice<u8>,
+        mut pointer_niche_cleared: DisjointSlice<u8>,
+        mut nested: DisjointSlice<MaybeWrapper>,
+        mut negative: DisjointSlice<Negative>,
+        mut observed: DisjointSlice<u32>,
+    ) {
+        let Some(basic) = basic.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(nested) = nested.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(boolean) = boolean.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(constructed_boolean) = constructed_boolean.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(direct_boolean) = direct_boolean.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(constructed_direct_boolean) =
+            constructed_direct_boolean.get_mut(thread::index_1d())
+        else {
+            return;
+        };
+        let Some(observed_direct_boolean) = observed_direct_boolean.get_mut(thread::index_1d())
+        else {
+            return;
+        };
+        let Some(interior_boolean) = interior_boolean.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(constructed_interior_boolean) =
+            constructed_interior_boolean.get_mut(thread::index_1d())
+        else {
+            return;
+        };
+        let Some(observed_interior_boolean) = observed_interior_boolean.get_mut(thread::index_1d())
+        else {
+            return;
+        };
+        let Some(pointer_niche_cleared) = pointer_niche_cleared.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(negative) = negative.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(out) = observed.get_mut(thread::index_1d()) else {
+            return;
+        };
 
-            // This helper emits `StatementKind::SetDiscriminant` directly.
-            force_set_niche_none(&mut opt);
+        let basic_value = match basic.0 {
+            Some(value) => value.get(),
+            None => 0,
+        };
+        let nested_value = match *nested {
+            MaybeWrapper::Some(value) => value.pad ^ value.nz.get().rotate_left(7),
+            MaybeWrapper::None => u32::MAX,
+        };
+        let boolean_value = match boolean.0 {
+            None => 0x10,
+            Some(false) => 0x20,
+            Some(true) => 0x40,
+        };
+        *observed_direct_boolean = match *direct_boolean {
+            DirectBoolean::Value(false) => 0xD0,
+            DirectBoolean::Value(true) => 0xD1,
+            DirectBoolean::Empty => 0xDE,
+        };
+        *observed_interior_boolean = match *interior_boolean {
+            InteriorBoolean::A => 0xA0,
+            InteriorBoolean::B(false) => 0xB0,
+            InteriorBoolean::B(true) => 0xB1,
+            InteriorBoolean::C => 0xC0,
+        };
+        // This cast must sign-extend the physical i8 discriminant. In
+        // particular, `Negative::Below` must become -1, not 255.
+        let negative_value = *negative as i32;
+        *out = basic_value ^ nested_value ^ boolean_value ^ (negative_value as u32);
 
-            *out_elem = match opt {
-                Some(_) => 0,
-                None => 1,
-            };
-        }
+        // Option<bool> has an i8 memory carrier (`0`, `1`, and the niche `2`)
+        // even though an ordinary bool is i1 in LLVM. Returning a newly
+        // constructed value exercises that physical i8 representation in the
+        // opposite direction too.
+        constructed_boolean.0 = Some(thread::index_1d().get() % 2 == 0);
+        *constructed_direct_boolean = match thread::index_1d().get() % 3 {
+            0 => DirectBoolean::Value(false),
+            1 => DirectBoolean::Value(true),
+            _ => DirectBoolean::Empty,
+        };
+        *constructed_interior_boolean = match thread::index_1d().get() % 4 {
+            0 => InteriorBoolean::A,
+            1 => InteriorBoolean::B(false),
+            2 => InteriorBoolean::B(true),
+            _ => InteriorBoolean::C,
+        };
+
+        // A reference is represented by a generic pointer. `None` must write
+        // a null pointer through that physical carrier, not an integer-shaped
+        // synthetic tag.
+        let local = 0xCAFE_BABEu32;
+        let mut pointer_niche = Some(&local);
+        force_pointer_none(&mut pointer_niche);
+        *pointer_niche_cleared = pointer_niche.is_none() as u8;
+
+        force_basic_none(&mut basic.0);
+        force_boolean_none(&mut boolean.0);
+        force_nested_none(nested);
+    }
+
+    #[kernel]
+    pub unsafe fn enum_layout_import_probe(
+        _only: *const Only,
+        _never: *const Never,
+        _impossible: *const Impossible,
+        _impossible_many: *const ImpossibleMany,
+    ) {
     }
 }
 
 fn main() {
-    println!("=== set_discriminant_niche ===");
-    println!(
-        "Verifying that MIR SetDiscriminant lowers to a device-side tag + payload write for niche-encoded enums."
+    assert_eq!(std::mem::size_of::<Basic>(), 4);
+    assert_eq!(std::mem::size_of::<Boolean>(), 1);
+    assert_eq!(std::mem::size_of::<DirectBoolean>(), 8);
+    assert_eq!(std::mem::align_of::<DirectBoolean>(), 4);
+    assert_eq!(std::mem::size_of::<InteriorBoolean>(), 1);
+    assert_eq!(std::mem::size_of::<Wrapper>(), 8);
+    assert_eq!(std::mem::size_of::<MaybeWrapper>(), 8);
+
+    // On this pinned rustc, `B(false)`/`B(true)` keep the valid bool carrier
+    // bytes 0/1. `A` starts the niche range at 2; `B`'s position would be 3,
+    // but is skipped because `B` is the untagged variant, so `C` becomes 4.
+    // These assertions make the source-level regression's physical contract
+    // explicit before the same bytes cross the host/device boundary.
+    let interior_boolean_encodings = [
+        unsafe { std::mem::transmute::<InteriorBoolean, u8>(InteriorBoolean::A) },
+        unsafe { std::mem::transmute::<InteriorBoolean, u8>(InteriorBoolean::B(false)) },
+        unsafe { std::mem::transmute::<InteriorBoolean, u8>(InteriorBoolean::B(true)) },
+        unsafe { std::mem::transmute::<InteriorBoolean, u8>(InteriorBoolean::C) },
+    ];
+    assert_eq!(interior_boolean_encodings, [2, 0, 1, 4]);
+    assert!(
+        !interior_boolean_encodings.contains(&3),
+        "the niche position corresponding to untagged B must stay unused"
     );
+
+    // For the inhabited variant every byte is initialized, so this is also a
+    // host-side proof that the nested NonZero carrier is the later u32 field.
+    let layout_probe = MaybeWrapper::Some(Wrapper {
+        pad: 0x1122_3344,
+        nz: NonZeroU32::new(0x5566_7788).unwrap(),
+    });
+    let probe_bytes = unsafe { std::mem::transmute::<MaybeWrapper, [u8; 8]>(layout_probe) };
+    assert_eq!(&probe_bytes[4..8], &0x5566_7788u32.to_ne_bytes());
+
+    const N: usize = 64;
+    let basic_host = (0..N)
+        .map(|index| {
+            Basic(if index % 3 == 0 {
+                None
+            } else {
+                NonZeroU32::new(index as u32 + 1)
+            })
+        })
+        .collect::<Vec<_>>();
+    let nested_host = (0..N)
+        .map(|index| {
+            if index % 5 == 0 {
+                MaybeWrapper::None
+            } else {
+                MaybeWrapper::Some(Wrapper {
+                    pad: 0xA500_0000 | index as u32,
+                    nz: NonZeroU32::new(index as u32 + 17).unwrap(),
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+    let boolean_host = (0..N)
+        .map(|index| {
+            Boolean(match index % 3 {
+                0 => None,
+                1 => Some(false),
+                _ => Some(true),
+            })
+        })
+        .collect::<Vec<_>>();
+    let direct_boolean_host = (0..N)
+        .map(|index| match index % 3 {
+            0 => DirectBoolean::Value(false),
+            1 => DirectBoolean::Value(true),
+            _ => DirectBoolean::Empty,
+        })
+        .collect::<Vec<_>>();
+    let expected_direct_boolean = direct_boolean_host
+        .iter()
+        .map(|value| match value {
+            DirectBoolean::Value(false) => 0xD0,
+            DirectBoolean::Value(true) => 0xD1,
+            DirectBoolean::Empty => 0xDE,
+        })
+        .collect::<Vec<u8>>();
+    let negative_host = (0..N)
+        .map(|index| {
+            if index % 2 == 0 {
+                Negative::Below
+            } else {
+                Negative::Zero
+            }
+        })
+        .collect::<Vec<_>>();
+    let interior_boolean_host = (0..N)
+        .map(|index| match index % 4 {
+            0 => InteriorBoolean::A,
+            1 => InteriorBoolean::B(false),
+            2 => InteriorBoolean::B(true),
+            _ => InteriorBoolean::C,
+        })
+        .collect::<Vec<_>>();
+    let expected_interior_boolean = interior_boolean_host
+        .iter()
+        .map(|value| match value {
+            InteriorBoolean::A => 0xA0,
+            InteriorBoolean::B(false) => 0xB0,
+            InteriorBoolean::B(true) => 0xB1,
+            InteriorBoolean::C => 0xC0,
+        })
+        .collect::<Vec<u8>>();
+    let expected = basic_host
+        .iter()
+        .zip(&boolean_host)
+        .zip(&nested_host)
+        .zip(&negative_host)
+        .map(|(((basic, boolean), nested), negative)| {
+            let basic = basic.0.map_or(0, NonZeroU32::get);
+            let boolean = match boolean.0 {
+                None => 0x10,
+                Some(false) => 0x20,
+                Some(true) => 0x40,
+            };
+            let nested = match nested {
+                MaybeWrapper::Some(value) => value.pad ^ value.nz.get().rotate_left(7),
+                MaybeWrapper::None => u32::MAX,
+            };
+            let negative = *negative as i32;
+            basic ^ nested ^ boolean ^ (negative as u32)
+        })
+        .collect::<Vec<_>>();
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
-
-    const N: usize = 64;
-    let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
+    let mut basic_device = DeviceBuffer::from_host(&stream, &basic_host).unwrap();
+    let mut boolean_device = DeviceBuffer::from_host(&stream, &boolean_host).unwrap();
+    let mut constructed_boolean_device = DeviceBuffer::zeroed(&stream, N).unwrap();
+    let mut direct_boolean_device = DeviceBuffer::from_host(&stream, &direct_boolean_host).unwrap();
+    let mut constructed_direct_boolean_device = DeviceBuffer::zeroed(&stream, N).unwrap();
+    let mut observed_direct_boolean_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
+    let mut interior_boolean_device =
+        DeviceBuffer::from_host(&stream, &interior_boolean_host).unwrap();
+    let mut constructed_interior_boolean_device = DeviceBuffer::zeroed(&stream, N).unwrap();
+    let mut observed_interior_boolean_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
+    let mut pointer_niche_cleared_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
+    let mut nested_device = DeviceBuffer::from_host(&stream, &nested_host).unwrap();
+    let mut negative_device = DeviceBuffer::from_host(&stream, &negative_host).unwrap();
+    let mut observed_device = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
     unsafe {
         module
-            .set_discriminant_niche_kernel(
+            .niche_roundtrip(
                 &stream,
                 LaunchConfig::for_num_elems(N as u32),
-                &mut out_dev,
+                &mut basic_device,
+                &mut boolean_device,
+                &mut constructed_boolean_device,
+                &mut direct_boolean_device,
+                &mut constructed_direct_boolean_device,
+                &mut observed_direct_boolean_device,
+                &mut interior_boolean_device,
+                &mut constructed_interior_boolean_device,
+                &mut observed_interior_boolean_device,
+                &mut pointer_niche_cleared_device,
+                &mut nested_device,
+                &mut negative_device,
+                &mut observed_device,
             )
             .expect("Kernel launch failed");
     }
 
-    let out_host = out_dev.to_host_vec(&stream).unwrap();
+    let observed = observed_device.to_host_vec(&stream).unwrap();
+    let basic_after = basic_device.to_host_vec(&stream).unwrap();
+    let boolean_after = boolean_device.to_host_vec(&stream).unwrap();
+    let constructed_boolean_after = constructed_boolean_device.to_host_vec(&stream).unwrap();
+    let constructed_direct_boolean_after = constructed_direct_boolean_device
+        .to_host_vec(&stream)
+        .unwrap();
+    let observed_direct_boolean = observed_direct_boolean_device.to_host_vec(&stream).unwrap();
+    let constructed_interior_boolean_after = constructed_interior_boolean_device
+        .to_host_vec(&stream)
+        .unwrap();
+    let observed_interior_boolean = observed_interior_boolean_device
+        .to_host_vec(&stream)
+        .unwrap();
+    let pointer_niche_cleared = pointer_niche_cleared_device.to_host_vec(&stream).unwrap();
+    let nested_after = nested_device.to_host_vec(&stream).unwrap();
+    assert_eq!(
+        observed, expected,
+        "device must decode host-written enum bytes"
+    );
+    assert!(basic_after.iter().all(|value| value.0.is_none()));
+    assert!(boolean_after.iter().all(|value| value.0.is_none()));
+    assert!(
+        constructed_boolean_after
+            .iter()
+            .enumerate()
+            .all(|(index, value)| value.0 == Some(index % 2 == 0))
+    );
+    assert_eq!(observed_direct_boolean, expected_direct_boolean);
+    assert_eq!(
+        constructed_direct_boolean_after, direct_boolean_host,
+        "device constructions must preserve a direct-tagged bool payload"
+    );
+    assert_eq!(observed_interior_boolean, expected_interior_boolean);
+    assert_eq!(
+        constructed_interior_boolean_after, interior_boolean_host,
+        "device constructions must preserve A/B(false)/B(true)/C"
+    );
+    assert!(pointer_niche_cleared.iter().all(|value| *value == 1));
+    assert!(
+        nested_after
+            .iter()
+            .all(|value| matches!(value, MaybeWrapper::None))
+    );
 
-    let mut errors = 0;
-    for (i, &v) in out_host.iter().enumerate() {
-        if v != 1 {
-            errors += 1;
-            if errors <= 5 {
-                eprintln!("  Error at [{}]: expected 1 (None), got {}", i, v);
-            }
-        }
-    }
-
-    if errors == 0 {
-        println!(
-            "PASS: all {} threads observed the niche SetDiscriminant write.",
-            N
-        );
-    } else {
-        eprintln!(
-            "FAIL: {} threads did not observe the niche SetDiscriminant write.",
-            errors
-        );
-        std::process::exit(1);
-    }
+    println!(
+        "set_discriminant_niche: PASS ({N} host->device decodes and device->host enum writes)"
+    );
 }

@@ -4,20 +4,21 @@
  */
 
 use dialect_mir::{
-    attributes::{MirCastKindAttr, NicheEncodingAttr},
+    attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr},
     ops::{
         MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
-        MirCondBranchOp, MirConstantOp, MirConstructSliceOp, MirDivOp, MirEqOp, MirExtractFieldOp,
-        MirFuncOp, MirGeOp, MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp,
-        MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp,
-        MirSetDiscriminantOp, MirStoreOp, MirSubOp,
+        MirCondBranchOp, MirConstantOp, MirConstructEnumOp, MirConstructSliceOp, MirDivOp,
+        MirEnumPayloadOp, MirEqOp, MirExtractFieldOp, MirFuncOp, MirGeOp, MirGetDiscriminantOp,
+        MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp,
+        MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp, MirSetDiscriminantOp,
+        MirStoreOp, MirSubOp,
     },
     types::{EnumVariant, MirEnumType, MirPtrType, MirSliceType, MirTupleType, MirUnionType},
 };
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
-        attributes::{BoolAttr, IntegerAttr, StringAttr, TypeAttr},
+        attributes::{IntegerAttr, StringAttr, TypeAttr},
         op_interfaces::OperandSegmentInterface,
         types::{FP32Type, FunctionType, IntegerType, Signedness},
     },
@@ -1061,8 +1062,21 @@ fn test_mir_set_discriminant_verify() {
     let enum_ptr = blk.deref(&ctx).get_argument(0);
     let discr_val = blk.deref(&ctx).get_argument(1);
 
-    // Valid: pointer to enum + discriminant of the enum's discriminant type.
-    let op_valid = Operation::new(
+    // Malformed IR must be diagnosed without panicking, regardless of whether
+    // the generated operand-count interface happens to run first.
+    let op_no_operands = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    let no_operands = MirSetDiscriminantOp::new(op_no_operands);
+    no_operands.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
+    assert!(no_operands.verify(&ctx).is_err(), "zero operands rejected");
+
+    let op_extra_operand = Operation::new(
         &mut ctx,
         MirSetDiscriminantOp::get_concrete_op_info(),
         vec![],
@@ -1070,17 +1084,32 @@ fn test_mir_set_discriminant_verify() {
         vec![],
         0,
     );
+    let extra_operand = MirSetDiscriminantOp::new(op_extra_operand);
+    extra_operand.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
     assert!(
-        MirSetDiscriminantOp::new(op_valid).verify(&ctx).is_ok(),
-        "Valid set_discriminant"
+        extra_operand.verify(&ctx).is_err(),
+        "extra operand rejected"
     );
+
+    // Valid: pointer to enum plus the semantic target variant attribute.
+    let op_valid = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![enum_ptr],
+        vec![],
+        0,
+    );
+    let valid = MirSetDiscriminantOp::new(op_valid);
+    valid.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(1));
+    assert!(valid.verify(&ctx).is_ok(), "Valid set_discriminant");
 
     // Invalid: first operand is not a pointer.
     let op_bad_ptr = Operation::new(
         &mut ctx,
         MirSetDiscriminantOp::get_concrete_op_info(),
         vec![],
-        vec![discr_val, discr_val],
+        vec![discr_val],
         vec![],
         0,
     );
@@ -1089,118 +1118,222 @@ fn test_mir_set_discriminant_verify() {
         "Non-pointer enum operand rejected"
     );
 
+    // Invalid: SetDiscriminant writes memory and therefore cannot accept an
+    // immutable pointer even when the pointee is the right enum.
+    let immutable_ptr_ty = MirPtrType::get_generic(&mut ctx, enum_ty.into(), false);
+    let immutable_block = BasicBlock::new(&mut ctx, None, vec![immutable_ptr_ty.into()]);
+    let immutable_ptr = immutable_block.deref(&ctx).get_argument(0);
+    let op_immutable = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![immutable_ptr],
+        vec![],
+        0,
+    );
+    let immutable = MirSetDiscriminantOp::new(op_immutable);
+    immutable.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
+    assert!(
+        immutable.verify(&ctx).is_err(),
+        "immutable pointer rejected"
+    );
+
     // Invalid: pointer does not point to an enum.
     let i32_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
     let blk_i32 = BasicBlock::new(&mut ctx, None, vec![i32_ptr_ty.into(), i8_ty.into()]);
     let i32_ptr = blk_i32.deref(&ctx).get_argument(0);
-    let i32_discr = blk_i32.deref(&ctx).get_argument(1);
     let op_bad_pointee = Operation::new(
         &mut ctx,
         MirSetDiscriminantOp::get_concrete_op_info(),
         vec![],
-        vec![i32_ptr, i32_discr],
+        vec![i32_ptr],
         vec![],
         0,
     );
+    let bad_pointee = MirSetDiscriminantOp::new(op_bad_pointee);
+    bad_pointee.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
     assert!(
-        MirSetDiscriminantOp::new(op_bad_pointee)
-            .verify(&ctx)
-            .is_err(),
+        bad_pointee.verify(&ctx).is_err(),
         "Non-enum pointee rejected"
     );
 
-    // Invalid: discriminant type mismatch (i32 instead of i8).
-    let blk_bad_discr = BasicBlock::new(&mut ctx, None, vec![enum_ptr_ty.into(), i32_ty.into()]);
-    let enum_ptr_2 = blk_bad_discr.deref(&ctx).get_argument(0);
-    let bad_discr = blk_bad_discr.deref(&ctx).get_argument(1);
-    let op_bad_discr = Operation::new(
+    // Invalid: target attribute is required.
+    let op_missing_target = Operation::new(
         &mut ctx,
         MirSetDiscriminantOp::get_concrete_op_info(),
         vec![],
-        vec![enum_ptr_2, bad_discr],
+        vec![enum_ptr],
         vec![],
         0,
     );
     assert!(
-        MirSetDiscriminantOp::new(op_bad_discr)
+        MirSetDiscriminantOp::new(op_missing_target)
             .verify(&ctx)
             .is_err(),
-        "Discriminant type mismatch rejected"
+        "Missing target rejected"
     );
 
-    // Valid niche-encoded variant: attributes are consistent.
-    let op_niche = Operation::new(
+    // Invalid: target index is out of bounds.
+    let op_oob = Operation::new(
         &mut ctx,
         MirSetDiscriminantOp::get_concrete_op_info(),
         vec![],
-        vec![enum_ptr, discr_val],
+        vec![enum_ptr],
         vec![],
         0,
     );
-    let niche_wrapped = MirSetDiscriminantOp::new(op_niche);
-    niche_wrapped.set_attr_set_niche_encoding(
-        &ctx,
-        NicheEncodingAttr {
-            niche_start: 0,
-            niche_variant_idx: 1,
-            niche_variant_end_idx: 1,
-            untagged_variant_idx: 0,
-            niche_field_index: 0,
-            niche_field_offset: 0,
-        },
-    );
-    niche_wrapped.set_attr_is_niche_variant(&ctx, BoolAttr::new(true));
-    let niche_value_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
-    let niche_value_attr = IntegerAttr::new(
-        niche_value_ty,
-        APInt::from_u64(0, NonZeroUsize::new(64).unwrap()),
-    );
-    niche_wrapped.set_attr_set_niche_value(&ctx, niche_value_attr.clone());
-    assert!(
-        niche_wrapped.verify(&ctx).is_ok(),
-        "Valid niche set_discriminant"
-    );
+    let oob = MirSetDiscriminantOp::new(op_oob);
+    oob.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(2));
+    assert!(oob.verify(&ctx).is_err(), "Out-of-bounds target rejected");
+}
 
-    // Invalid: is_niche_variant without set_niche_encoding or set_niche_value.
-    let op_niche_missing = Operation::new(
+#[test]
+fn test_mir_enum_ops_malformed_arity_is_diagnostic() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let unit_enum = MirEnumType::get(
         &mut ctx,
-        MirSetDiscriminantOp::get_concrete_op_info(),
-        vec![],
-        vec![enum_ptr, discr_val],
-        vec![],
-        0,
+        "Unit".into(),
+        i8_ty.into(),
+        vec![0],
+        vec![EnumVariant::unit("Only".into())],
     );
-    let niche_missing_wrapped = MirSetDiscriminantOp::new(op_niche_missing);
-    niche_missing_wrapped.set_attr_is_niche_variant(&ctx, BoolAttr::new(true));
-    assert!(
-        niche_missing_wrapped.verify(&ctx).is_err(),
-        "is_niche_variant without set_niche_encoding/set_niche_value rejected"
+    let payload_enum = MirEnumType::get(
+        &mut ctx,
+        "Payload".into(),
+        i8_ty.into(),
+        vec![0],
+        vec![EnumVariant::new("Only".into(), vec![i32_ty.into()])],
     );
+    let block = BasicBlock::new(&mut ctx, None, vec![unit_enum.into(), payload_enum.into()]);
+    let unit_value = block.deref(&ctx).get_argument(0);
+    let payload_value = block.deref(&ctx).get_argument(1);
 
-    // Invalid: set_niche_value present but is_niche_variant false.
-    let op_value_no_flag = Operation::new(
+    let construct_no_result = Operation::new(
         &mut ctx,
-        MirSetDiscriminantOp::get_concrete_op_info(),
+        MirConstructEnumOp::get_concrete_op_info(),
         vec![],
-        vec![enum_ptr, discr_val],
+        vec![],
         vec![],
         0,
     );
-    let value_no_flag_wrapped = MirSetDiscriminantOp::new(op_value_no_flag);
-    value_no_flag_wrapped.set_attr_set_niche_encoding(
-        &ctx,
-        NicheEncodingAttr {
-            niche_start: 0,
-            niche_variant_idx: 1,
-            niche_variant_end_idx: 1,
-            untagged_variant_idx: 0,
-            niche_field_index: 0,
-            niche_field_offset: 0,
-        },
+    let construct_no_result = MirConstructEnumOp::new(construct_no_result);
+    construct_no_result.set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+    assert!(construct_no_result.verify(&ctx).is_err());
+
+    let construct_extra_result = Operation::new(
+        &mut ctx,
+        MirConstructEnumOp::get_concrete_op_info(),
+        vec![unit_enum.into(), unit_enum.into()],
+        vec![],
+        vec![],
+        0,
     );
-    value_no_flag_wrapped.set_attr_set_niche_value(&ctx, niche_value_attr);
-    assert!(
-        value_no_flag_wrapped.verify(&ctx).is_err(),
-        "set_niche_value without is_niche_variant rejected"
+    let construct_extra_result = MirConstructEnumOp::new(construct_extra_result);
+    construct_extra_result.set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+    assert!(construct_extra_result.verify(&ctx).is_err());
+
+    let get_empty = Operation::new(
+        &mut ctx,
+        MirGetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
     );
+    assert!(MirGetDiscriminantOp::new(get_empty).verify(&ctx).is_err());
+    let get_extra = Operation::new(
+        &mut ctx,
+        MirGetDiscriminantOp::get_concrete_op_info(),
+        vec![i8_ty.into(), i8_ty.into()],
+        vec![unit_value, unit_value],
+        vec![],
+        0,
+    );
+    assert!(MirGetDiscriminantOp::new(get_extra).verify(&ctx).is_err());
+
+    let payload_empty = Operation::new(
+        &mut ctx,
+        MirEnumPayloadOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    let payload_empty = MirEnumPayloadOp::new(payload_empty);
+    payload_empty.set_attr_payload_variant_index(&ctx, VariantIndexAttr(0));
+    payload_empty.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+    assert!(payload_empty.verify(&ctx).is_err());
+
+    let payload_extra = Operation::new(
+        &mut ctx,
+        MirEnumPayloadOp::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into()],
+        vec![payload_value, payload_value],
+        vec![],
+        0,
+    );
+    let payload_extra = MirEnumPayloadOp::new(payload_extra);
+    payload_extra.set_attr_payload_variant_index(&ctx, VariantIndexAttr(0));
+    payload_extra.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+    assert!(payload_extra.verify(&ctx).is_err());
+}
+
+#[test]
+fn test_mir_enum_payload_rejects_uninhabited_variant() {
+    use dialect_mir::types::{enum_carrier_kind, enum_layout_kind};
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let enum_ty = MirEnumType::get_with_encoding(
+        &mut ctx,
+        "HasImpossibleField".into(),
+        i8_ty.into(),
+        vec![0, 1],
+        vec![
+            EnumVariant::unit("Live".into()),
+            // An uninhabited variant's unused physical offsets need not fit
+            // the object. The verifier must stop them reaching lowering.
+            EnumVariant::new_with_layout(
+                "Impossible".into(),
+                vec![i32_ty.into()],
+                vec![64],
+                vec![4],
+            ),
+        ],
+        0,
+        1,
+        1,
+        enum_layout_kind::DIRECT,
+        enum_carrier_kind::INTEGER,
+        8,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        vec![1, 0],
+    );
+    assert!(enum_ty.verify(&ctx).is_ok());
+
+    let block = BasicBlock::new(&mut ctx, None, vec![enum_ty.into()]);
+    let value = block.deref(&ctx).get_argument(0);
+    let op = Operation::new(
+        &mut ctx,
+        MirEnumPayloadOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![value],
+        vec![],
+        0,
+    );
+    let payload = MirEnumPayloadOp::new(op);
+    payload.set_attr_payload_variant_index(&ctx, VariantIndexAttr(1));
+    payload.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+    assert!(payload.verify(&ctx).is_err());
 }

@@ -225,14 +225,10 @@ pub fn convert_func(
     // Kernel parameters are host data: the host writes them (by value at
     // launch, or into DeviceBuffer memory behind a pointer or slice) and
     // the kernel reads the same bytes, so both sides must agree on what
-    // every byte means. Most enums are fine; their device layout is
-    // byte-identical to rustc's. The exception is enums whose layout we
-    // do not model: niche-encoded ones like Option<&T>, where the host
-    // stores NO tag at all (it marks None with an impossible payload
-    // value, null, since a real &T is never null) while the device adds
-    // an explicit tag of its own. The two sides would read different
-    // bytes, so reject those here at the boundary. Using such an enum
-    // purely inside a kernel is fine and stays allowed.
+    // every byte means. Importer-produced Direct, Niche, Single, and Empty
+    // enum layouts are byte-identical to rustc. A legacy/hand-built Unknown
+    // layout has no such proof, so reject it here with a focused ABI error;
+    // physical lowering independently rejects Unknown layouts everywhere.
     if is_kernel {
         let mir_arg_types = {
             use pliron::builtin::type_interfaces::FunctionTypeInterface;
@@ -246,17 +242,12 @@ pub fn convert_func(
                     .map_err(anyhow_to_pliron)?
             {
                 return pliron::input_err_noloc!(
-                    "kernel `{}` parameter {} contains enum `{}`, whose layout differs \
-                     between host and device: the host encodes the variant inside the \
-                     payload itself (Rust's niche optimisation, e.g. null means None for \
-                     a never-null reference) while the device stores an explicit tag. \
-                     Reading it from a kernel would read the wrong bytes. Give the enum an \
-                     explicit discriminant repr (e.g. #[repr(u32)]) to pass it across the \
-                     kernel boundary; using `{}` only inside kernel code (locals, \
-                     construct, match) works as before.",
+                    "kernel `{}` parameter {} contains enum `{}` with unknown physical \
+                     rustc layout at the kernel boundary; refusing to guess its bytes. \
+                     This indicates legacy or malformed dialect-mir input rather than an \
+                     unsupported Rust niche layout.",
                     func_name_str,
                     i,
-                    enum_name,
                     enum_name
                 );
             }

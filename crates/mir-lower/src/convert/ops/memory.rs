@@ -1486,30 +1486,32 @@ mod tests {
         // #[repr(u32)] fieldless (issue #118 shape): {i32}, 4 bytes.
         let repr_u32 = make_enum_ty(&mut ctx, "ReprU32", 32, unit_variants(4), 4, 4);
         let conv = convert_type(&mut ctx, repr_u32).unwrap();
-        assert_eq!(llvm_type_size_align(&ctx, conv), (4, 4), "repr(u32) tag");
+        assert_eq!(
+            llvm_type_size_align(&ctx, conv),
+            Some((4, 4)),
+            "repr(u32) tag"
+        );
 
         // #[repr(usize)] fieldless: {i64}, 8 bytes.
         let repr_usize = make_enum_ty(&mut ctx, "ReprUsize", 64, unit_variants(4), 8, 8);
         let conv = convert_type(&mut ctx, repr_usize).unwrap();
-        assert_eq!(llvm_type_size_align(&ctx, conv), (8, 8), "repr(usize) tag");
+        assert_eq!(
+            llvm_type_size_align(&ctx, conv),
+            Some((8, 8)),
+            "repr(usize) tag"
+        );
 
-        // u8 tag but 8-byte rustc size (repr(align(8)) raise): the converted
-        // struct must gain a trailing [7 x i8] pad to reach 8 bytes.
+        // A trailing byte pad can match size but cannot raise the LLVM type's
+        // natural alignment. Reject repr(align(8)) until the type system can
+        // express that contract; accepting size 8 / alignment 1 would make
+        // arrays and by-value ABI uses unsound.
         let padded = make_enum_ty(&mut ctx, "Padded", 8, unit_variants(2), 8, 8);
-        let conv = convert_type(&mut ctx, padded).unwrap();
-        let (size, _align) = llvm_type_size_align(&ctx, conv);
-        assert_eq!(size, 8, "trailing pad must raise the size to rustc's 8");
-        {
-            let conv_ref = conv.deref(&ctx);
-            let struct_ty = conv_ref
-                .downcast_ref::<llvm_export::types::StructType>()
-                .expect("converted enum is a struct");
-            assert_eq!(
-                struct_ty.fields().count(),
-                2,
-                "tag + one trailing pad field; pad appended at the END"
-            );
-        }
+        let error = convert_type(&mut ctx, padded).expect_err("over-aligned enum must reject");
+        assert!(
+            error
+                .to_string()
+                .contains("alignment 1 but rustc requires 8")
+        );
 
         // u8 tag + i64 payload, rustc size 16: the slot map places the
         // payload at its rustc byte offset 8 behind an explicit
@@ -1520,14 +1522,14 @@ mod tests {
             "OnePayload",
             8,
             vec![
-                EnumVariant::new_with_offsets("A".to_string(), vec![i64_payload], vec![8]),
+                EnumVariant::new_with_layout("A".to_string(), vec![i64_payload], vec![8], vec![8]),
                 EnumVariant::unit("B".to_string()),
             ],
             16,
             8,
         );
         let conv = convert_type(&mut ctx, payload).unwrap();
-        let (size, _align) = llvm_type_size_align(&ctx, conv);
+        let (size, _align) = llvm_type_size_align(&ctx, conv).unwrap();
         assert_eq!(size, 16, "natural layout matches rustc size, no pad");
         let conv_ref = conv.deref(&ctx);
         let struct_ty = conv_ref
@@ -1551,7 +1553,7 @@ mod tests {
         let mut ctx = make_ctx();
         let e = make_multi_payload_enum_ty(&mut ctx);
         let map = build_enum_slot_map(&mut ctx, e).unwrap();
-        assert_eq!(map.tag_slot, 0);
+        assert_eq!(map.carrier_slot, Some(0));
         assert_eq!(
             map.field_slots,
             vec![Some(1), Some(1)],
@@ -1559,7 +1561,7 @@ mod tests {
         );
         assert_eq!(
             llvm_type_size_align(&ctx, map.llvm_struct_ty),
-            (8, 4),
+            Some((8, 4)),
             "byte-identical to rustc's 8-byte layout, not the 12-byte concat"
         );
     }
@@ -1581,8 +1583,8 @@ mod tests {
             tag_ty,
             vec![0, 1],
             vec![
-                EnumVariant::new_with_offsets("A".to_string(), vec![u64_a], vec![0]),
-                EnumVariant::new_with_offsets("B".to_string(), vec![u64_b], vec![0]),
+                EnumVariant::new_with_layout("A".to_string(), vec![u64_a], vec![0], vec![8]),
+                EnumVariant::new_with_layout("B".to_string(), vec![u64_b], vec![0], vec![8]),
             ],
             8,
             16,
@@ -1595,14 +1597,18 @@ mod tests {
             vec![Some(0), Some(0)],
             "payloads share the first slot"
         );
-        assert_eq!(map.tag_slot, 1, "tag claims its own slot at byte 8");
-        let (size, _align) = llvm_type_size_align(&ctx, map.llvm_struct_ty);
+        assert_eq!(
+            map.carrier_slot,
+            Some(1),
+            "tag claims its own slot at byte 8"
+        );
+        let (size, _align) = llvm_type_size_align(&ctx, map.llvm_struct_ty).unwrap();
         assert_eq!(size, 16, "{{ i64, i8, [7 x i8] }}");
     }
 
-    /// Multi-payload enum whose variants overlap in Rust (8 bytes) but
-    /// concatenate in our model (12 bytes structural): mimics
-    /// `#[repr(u32)] enum E { A(u32), B(u32) }`.
+    /// Multi-payload enum whose variants overlap in Rust: both payloads use
+    /// bytes 4..8 after the direct `u32` tag, so the complete value is eight
+    /// bytes. Mimics `#[repr(u32)] enum E { A(u32), B(u32) }`.
     fn make_multi_payload_enum_ty(ctx: &mut Context) -> TypeHandle {
         let i32_a: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
         let i32_b: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
@@ -1611,20 +1617,18 @@ mod tests {
             "MultiPayload",
             32,
             vec![
-                EnumVariant::new_with_offsets("A".to_string(), vec![i32_a], vec![4]),
-                EnumVariant::new_with_offsets("B".to_string(), vec![i32_b], vec![4]),
+                EnumVariant::new_with_layout("A".to_string(), vec![i32_a], vec![4], vec![4]),
+                EnumVariant::new_with_layout("B".to_string(), vec![i32_b], vec![4], vec![4]),
             ],
             8,
             4,
         )
     }
 
-    /// Device-local GEP + load of a layout-divergent enum must LOWER: a
-    /// non-kernel pointer is device-laid-out, so the structural
-    /// `{tag, fields...}` model sizes both the writes and the reads
-    /// consistently (issue #131's in-kernel `[E; 4]` arrays). Only kernel
-    /// parameters (host-laid-out memory) reject divergent enums; see
-    /// `kernel_param_accepts_multi_payload_enum`.
+    /// Device-local GEP + load must use the same exact eight-byte rustc layout
+    /// as every other enum path. This protects pointer stride in issue #131's
+    /// in-kernel `[E; 4]` arrays; the sibling kernel-parameter test proves the
+    /// same representation is also valid at the host/device boundary.
     #[test]
     fn device_local_multi_payload_enum_gep_and_load_lower() {
         let mut ctx = make_ctx();
@@ -1659,13 +1663,11 @@ mod tests {
         append_mir_return(&mut ctx, block, vec![]);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr)
-            .expect("device-local divergent enum GEP + load must lower");
+            .expect("device-local rustc-layout enum GEP + load must lower");
     }
 
-    /// A KERNEL parameter that carries a layout-divergent enum across the
-    /// host/device ABI boundary must fail loudly: the host lays the data
-    /// out with rustc's real (overlapped) layout while the device model
-    /// concatenates payloads, so stride and field offsets disagree.
+    /// A kernel parameter may carry this enum because the device slot map is
+    /// byte-identical to rustc's overlapped host layout.
     #[test]
     fn kernel_param_accepts_multi_payload_enum() {
         use pliron::builtin::attributes::StringAttr;
@@ -1698,20 +1700,15 @@ mod tests {
             .expect("multi-payload enum kernel param must lower");
     }
 
-    /// `Option<&T>`-style enums store no tag on the host (Rust hides the
-    /// variant inside the payload: null means None), but the device
-    /// models them WITH an explicit tag, so their bytes disagree and
-    /// they must be rejected at the kernel boundary. This pins the hole
-    /// the narrowed guard closes: the old size-comparison guard skipped
-    /// these enums entirely and let them through.
+    /// A legacy enum without physical rustc metadata must be rejected at the
+    /// kernel boundary. Importer-produced niche layouts are now known and are
+    /// accepted; this fixture deliberately constructs `Unknown` metadata.
     #[test]
-    fn kernel_param_rejects_niched_enum() {
+    fn kernel_param_rejects_enum_with_unknown_layout() {
         use pliron::builtin::attributes::StringAttr;
 
         let mut ctx = make_ctx();
-        // The device's model of Option<&T>: an explicit u8 tag plus the
-        // pointer payload, with total_size 0 ("layout not recorded"),
-        // exactly what the importer builds for niche-encoded enums.
+        // MirEnumType::get with no layout is the legacy Unknown form.
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let pointee = MirPtrType::get_generic(&mut ctx, i32_ty, false);
         let tag_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
@@ -1746,16 +1743,13 @@ mod tests {
         }
 
         let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
-            .expect_err("niched enum kernel param must be rejected");
+            .expect_err("unknown-layout enum kernel param must be rejected");
         let msg = format!("{err}");
         assert!(
             msg.contains("Option") && msg.contains("kernel boundary"),
             "error must name the enum and the kernel boundary, got: {msg}"
         );
-        assert!(
-            msg.contains("niche"),
-            "error must explain the niche layout mismatch, got: {msg}"
-        );
+        assert!(msg.contains("unknown physical rustc layout"));
     }
 
     /// Build a `mir.shared_alloc` returning `MirPtrType<i32, addrspace=3>` of

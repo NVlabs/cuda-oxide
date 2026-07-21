@@ -1,8 +1,8 @@
 [package]
-name = "set_discriminant_niche_multifield"
+name = "error_enum_constant_provenance"
 version = "0.1.0"
 edition = "2024"
-authors = ["Nihal Pasham <nihalp@nvidia.com>"]
+authors = ["NVIDIA Corporation"]
 license = "Apache-2.0"
 
 [workspace]

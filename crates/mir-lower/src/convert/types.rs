@@ -100,10 +100,11 @@
 
 use dialect_mir::types::{
     MirDisjointSliceType, MirEnumType, MirSliceType, MirStructType, MirTupleType, MirUnionType,
+    enum_carrier_kind, enum_layout_kind,
 };
 use llvm_export::types as llvm_types;
 use llvm_export::types::PointerTypeExt;
-use pliron::builtin::type_interfaces::FunctionTypeInterface;
+use pliron::builtin::type_interfaces::{FloatTypeInterface, FunctionTypeInterface};
 use pliron::builtin::types::{FP32Type, FP64Type, FunctionType, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
@@ -612,7 +613,14 @@ pub(crate) fn build_union_storage_type(
     let mut pointer_carrier: Option<TypeHandle> = None;
     for (index, &field_ty) in union_ty.field_types().iter().enumerate() {
         let llvm_field_ty = convert_type(ctx, field_ty)?;
-        let (field_size, field_align) = llvm_type_size_align(ctx, llvm_field_ty);
+        let (field_size, field_align) =
+            llvm_type_size_align(ctx, llvm_field_ty).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "union `{}` field {} has unsupported LLVM size/alignment",
+                    union_ty.name(),
+                    index
+                )
+            })?;
         if field_size > size {
             return Err(anyhow::anyhow!(
                 "union `{}` field {} lowers to {} bytes but the union is only {} bytes",
@@ -677,7 +685,12 @@ pub(crate) fn build_union_storage_type(
         }
     }
     let storage: TypeHandle = llvm_types::StructType::get_unnamed(ctx, storage_fields).into();
-    let (llvm_size, llvm_align) = llvm_type_size_align(ctx, storage);
+    let (llvm_size, llvm_align) = llvm_type_size_align(ctx, storage).ok_or_else(|| {
+        anyhow::anyhow!(
+            "union `{}` storage has unsupported LLVM layout",
+            union_ty.name()
+        )
+    })?;
     if llvm_size != size || llvm_align != align {
         return Err(anyhow::anyhow!(
             "union `{}` storage lowered to size/alignment {}/{} but rustc requires {}/{}",
@@ -699,6 +712,9 @@ fn llvm_type_contains_pointer(ctx: &Context, ty: TypeHandle) -> bool {
     if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
         return llvm_type_contains_pointer(ctx, array.elem_type());
     }
+    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+        return llvm_type_contains_pointer(ctx, vector.elem_type());
+    }
     if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
         return struct_ty
             .fields()
@@ -707,10 +723,100 @@ fn llvm_type_contains_pointer(ctx: &Context, ty: TypeHandle) -> bool {
     false
 }
 
+pub(crate) fn llvm_type_contains_pointer_in_address_space(
+    ctx: &Context,
+    ty: TypeHandle,
+    address_space: u32,
+) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
+        return pointer.address_space() == address_space;
+    }
+    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+        return llvm_type_contains_pointer_in_address_space(ctx, array.elem_type(), address_space);
+    }
+    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+        return llvm_type_contains_pointer_in_address_space(ctx, vector.elem_type(), address_space);
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+        return struct_ty
+            .fields()
+            .any(|field| llvm_type_contains_pointer_in_address_space(ctx, field, address_space));
+    }
+    false
+}
+
+/// Whether this is an aggregate/vector that contains LLVM `i1` storage.
+///
+/// Rust `bool` is an SSA `i1`, but its memory representation is one complete
+/// byte whose only valid values are 0 and 1. A top-level scalar bool can be
+/// canonicalized through an explicit i8 storage slot. Doing the same inside
+/// an aggregate would require a recursive value conversion, so enum storage
+/// rejects that case instead of exposing LLVM's unspecified upper seven bits
+/// to Rust memory.
+fn llvm_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if let Some(integer) = ty_ref.downcast_ref::<IntegerType>() {
+        return integer.width() == 1;
+    }
+    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+        return llvm_type_contains_i1(ctx, array.elem_type());
+    }
+    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+        return llvm_type_contains_i1(ctx, vector.elem_type());
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+        return struct_ty
+            .fields()
+            .any(|field| llvm_type_contains_i1(ctx, field));
+    }
+    false
+}
+
+/// Whether a MIR aggregate contains a semantic Rust bool value.
+///
+/// This deliberately stops at pointers/slices: a pointee bool does not occupy
+/// bytes in the aggregate itself. It also stops at nested enums, whose own
+/// slot-map construction is responsible for canonicalizing a top-level bool
+/// or rejecting a deeper one. Inspecting the MIR type is necessary because a
+/// union may lower to raw i8 storage and thereby hide a bool from the LLVM
+/// type-level check above.
+fn mir_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if let Some(integer) = ty_ref.downcast_ref::<IntegerType>() {
+        return integer.width() == 1;
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        return struct_ty
+            .field_types()
+            .iter()
+            .copied()
+            .any(|field| mir_type_contains_i1(ctx, field));
+    }
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+        return tuple_ty
+            .get_types()
+            .iter()
+            .copied()
+            .any(|field| mir_type_contains_i1(ctx, field));
+    }
+    if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        return mir_type_contains_i1(ctx, array_ty.element_ty);
+    }
+    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
+        return union_ty
+            .field_types()
+            .iter()
+            .copied()
+            .any(|field| mir_type_contains_i1(ctx, field));
+    }
+    false
+}
+
 /// Whether loading and storing this LLVM value preserves every byte in its
-/// allocation. In particular, `i1` is not byte-faithful: storing it rewrites a
-/// whole Rust `bool` byte as 0 or 1.
-fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool {
+/// allocation. In particular, `i1` is not byte-faithful: it occupies one
+/// addressable byte, but LLVM does not define the upper seven stored bits.
+pub(crate) fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool {
     let ty_ref = ty.deref(ctx);
     if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
         return int_ty.width().is_multiple_of(8);
@@ -733,7 +839,9 @@ fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool {
             if !llvm_type_is_byte_faithful(ctx, field) {
                 return false;
             }
-            let (field_size, field_align) = llvm_type_size_align(ctx, field);
+            let Some((field_size, field_align)) = llvm_type_size_align(ctx, field) else {
+                return false;
+            };
             let field_align = field_align.max(1);
             let aligned_end = end.div_ceil(field_align) * field_align;
             if aligned_end != end {
@@ -790,39 +898,72 @@ fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
 /// Unlike [`get_type_size`], which sums struct fields without alignment,
 /// this computes the real allocation size, which is what GEP striding and
 /// the enum size check below need.
-pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> (u64, u64) {
+pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> {
     let ty_ref = ty.deref(ctx);
 
     if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
         let size = (int_ty.width() as u64).div_ceil(8);
         // i8 → 1, i16 → 2, i32 → 4, i64 → 8, i128 → 16.
-        return (size, size.next_power_of_two().min(16));
+        return Some((size, size.next_power_of_two().min(16)));
     }
     if ty_ref.is::<llvm_types::HalfType>() {
-        return (2, 2);
+        return Some((2, 2));
     }
     if ty_ref.is::<FP32Type>() {
-        return (4, 4);
+        return Some((4, 4));
     }
     if ty_ref.is::<FP64Type>() {
-        return (8, 8);
+        return Some((8, 8));
     }
     if ty_ref.is::<llvm_types::PointerType>() {
-        return (8, 8);
+        // Lowering runs before the exporter chooses the minimal, legacy, or
+        // modern NVPTX data layout. The first two use 64-bit pointers in all
+        // address spaces; modern NVVM alone uses p3:32. Enum storage rejects
+        // shared pointers below because no one target-agnostic size is sound.
+        return Some((8, 8));
     }
     if let Some(arr_ty) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
-        let (elem_size, elem_align) = llvm_type_size_align(ctx, arr_ty.elem_type());
-        return (elem_size * arr_ty.size(), elem_align.max(1));
+        let (elem_size, elem_align) = llvm_type_size_align(ctx, arr_ty.elem_type())?;
+        return Some((elem_size.checked_mul(arr_ty.size())?, elem_align.max(1)));
+    }
+    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+        if vector.is_scalable() {
+            return None;
+        }
+        let element_bits = {
+            let element = vector.elem_type();
+            let element_ref = element.deref(ctx);
+            if let Some(integer) = element_ref.downcast_ref::<IntegerType>() {
+                u64::from(integer.width())
+            } else if let Some(float) = type_cast::<dyn FloatTypeInterface>(&*element_ref) {
+                u64::try_from(float.get_semantics().bits).ok()?
+            } else if element_ref.is::<llvm_types::PointerType>() {
+                64
+            } else {
+                return None;
+            }
+        };
+        let total_bits = element_bits.checked_mul(u64::from(vector.num_elements()))?;
+        let size = total_bits.div_ceil(8);
+        // Both cuda-oxide NVPTX data layouts explicitly define fixed vector
+        // ABI alignment only for these widths. Refuse to guess LLVM defaults
+        // for any other width in physical Rust layout code.
+        let align = match total_bits {
+            16 => 2,
+            32 => 4,
+            64 => 8,
+            128 => 16,
+            _ => return None,
+        };
+        return Some((size, align));
     }
     if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
         let fields: Vec<_> = struct_ty.fields().collect();
-        let (_end, size, align) = natural_struct_layout(ctx, &fields);
-        return (size, align);
+        let (_end, size, align) = natural_struct_layout(ctx, &fields)?;
+        return Some((size, align));
     }
 
-    // Vector types and anything unrecognised: conservative 8-byte fallback,
-    // matching get_type_size.
-    (8, 8)
+    None
 }
 
 /// Natural (non-packed) LLVM struct layout over `fields`.
@@ -831,18 +972,21 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> (u64, u64) 
 /// the last field, `size` is `end` rounded up to the struct alignment (the
 /// allocation size LLVM uses for GEP striding), and `align` is the widest
 /// field alignment.
-pub(crate) fn natural_struct_layout(ctx: &Context, fields: &[TypeHandle]) -> (u64, u64, u64) {
+pub(crate) fn natural_struct_layout(
+    ctx: &Context,
+    fields: &[TypeHandle],
+) -> Option<(u64, u64, u64)> {
     let mut end = 0u64;
     let mut align = 1u64;
     for field in fields {
-        let (field_size, field_align) = llvm_type_size_align(ctx, *field);
+        let (field_size, field_align) = llvm_type_size_align(ctx, *field)?;
         let field_align = field_align.max(1);
         end = end.div_ceil(field_align) * field_align;
         end += field_size;
         align = align.max(field_align);
     }
     let size = end.div_ceil(align) * align;
-    (end, size, align)
+    Some((end, size, align))
 }
 
 /// The LLVM struct for an enum, plus a map saying where the tag and each
@@ -854,16 +998,18 @@ pub(crate) fn natural_struct_layout(ctx: &Context, fields: &[TypeHandle]) -> (u6
 pub(crate) struct EnumSlotMap {
     /// The final LLVM struct type, including any `[N x i8]` filler slots.
     pub llvm_struct_ty: TypeHandle,
-    /// Which struct slot holds the tag.
-    pub tag_slot: u32,
+    /// Which struct slot holds rustc's physical tag/niche carrier. `None`
+    /// for `Single` and `Empty` layouts, which have no tag in memory.
+    pub carrier_slot: Option<u32>,
+    /// Converted physical carrier type (integer or pointer), when present.
+    pub carrier_llvm_ty: Option<TypeHandle>,
     /// Which struct slot holds each payload field, in the flattened
     /// order of `MirEnumType::all_field_types`. `None` means the field
     /// has no slot of its own: it is zero-sized, or its bytes are shared
     /// with a different-typed field of another variant. Such fields are
     /// read and written through memory at `field_offsets` instead.
     pub field_slots: Vec<Option<u32>>,
-    /// Byte position of each payload field inside the enum (copied from
-    /// the type; empty when the layout was not recorded).
+    /// Byte position of each payload field inside the enum.
     pub field_offsets: Vec<u64>,
     /// Converted LLVM type of each payload field.
     pub field_llvm_types: Vec<TypeHandle>,
@@ -905,9 +1051,9 @@ pub(crate) struct EnumSlotMap {
 /// `[N x i8]` filler so the struct's size is exactly rustc's no matter
 /// what LLVM's own layout rules would have done.
 ///
-/// Niche-encoded enums (`total_size == 0`, layout not recorded) keep the
-/// old simple model instead: `{tag, all fields in order}`. That model is
-/// only used inside kernels and never crosses the host boundary.
+/// Direct and Niche carriers are claimed first, so a semantic field with a
+/// different SSA type cannot redefine the same physical bytes. Single and
+/// Empty layouts simply have no carrier. Unknown layouts are rejected.
 ///
 /// If the finished struct's size does not come out equal to rustc's,
 /// something is deeply wrong and lowering would miscompile, so that is a
@@ -921,9 +1067,16 @@ pub(crate) fn build_enum_slot_map(
         discriminant_ty,
         all_field_types,
         all_field_offsets,
+        all_field_sizes,
+        variant_field_counts,
+        variant_inhabited,
         tag_offset,
         total_size,
         abi_align,
+        layout_kind,
+        carrier_kind,
+        carrier_width,
+        carrier_address_space,
     ) = {
         let ty_ref = ty.deref(ctx);
         let enum_ty = ty_ref
@@ -934,75 +1087,181 @@ pub(crate) fn build_enum_slot_map(
             enum_ty.discriminant_ty,
             enum_ty.all_field_types.clone(),
             enum_ty.all_field_offsets.clone(),
+            enum_ty.all_field_sizes.clone(),
+            enum_ty.variant_field_counts.clone(),
+            enum_ty.variant_inhabited.clone(),
             enum_ty.tag_offset(),
             enum_ty.total_size(),
             enum_ty.abi_align(),
+            enum_ty.layout_kind,
+            enum_ty.carrier_kind,
+            enum_ty.carrier_width,
+            enum_ty.carrier_address_space,
         )
     };
 
-    let llvm_discr_ty = convert_type(ctx, discriminant_ty)?;
+    if layout_kind == enum_layout_kind::UNKNOWN {
+        return Err(anyhow::anyhow!(
+            "enum slot map: `{}` has unknown physical layout; refusing to guess its bytes",
+            name
+        ));
+    }
+    if carrier_kind == enum_carrier_kind::POINTER
+        && carrier_address_space == llvm_types::address_space::SHARED
+    {
+        return Err(anyhow::anyhow!(
+            "enum slot map: `{}` uses a shared-memory pointer carrier whose size is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM); refusing target-agnostic enum lowering",
+            name
+        ));
+    }
+    if carrier_kind == enum_carrier_kind::INTEGER && !carrier_width.is_multiple_of(8) {
+        return Err(anyhow::anyhow!(
+            "enum slot map: `{}` integer carrier width {} is not a whole number of bytes; refusing physical storage with unspecified upper byte bits",
+            name,
+            carrier_width
+        ));
+    }
+
+    let carrier_ty: Option<TypeHandle> = match carrier_kind {
+        enum_carrier_kind::NONE => None,
+        enum_carrier_kind::INTEGER if layout_kind == enum_layout_kind::DIRECT => {
+            let converted = convert_type(ctx, discriminant_ty)?;
+            let width = converted
+                .deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .map(IntegerType::width);
+            if width != Some(carrier_width) {
+                return Err(anyhow::anyhow!(
+                    "enum slot map: `{}` direct carrier does not match its declared discriminant type",
+                    name
+                ));
+            }
+            Some(converted)
+        }
+        enum_carrier_kind::INTEGER => {
+            Some(IntegerType::get(ctx, carrier_width, Signedness::Signless).into())
+        }
+        enum_carrier_kind::POINTER => {
+            Some(llvm_types::PointerType::get(ctx, carrier_address_space).into())
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` has invalid carrier kind {}",
+                name,
+                carrier_kind
+            ));
+        }
+    };
     let mut field_llvm_types = Vec::with_capacity(all_field_types.len());
     for &field_ty in &all_field_types {
         field_llvm_types.push(convert_type(ctx, field_ty)?);
     }
 
-    if total_size == 0 {
-        // Layout not recorded (niche-encoded shapes): keep the simple
-        // {tag, all fields in order} struct. Fine inside a kernel, never
-        // allowed across the host boundary.
-        let mut llvm_fields = vec![llvm_discr_ty];
-        llvm_fields.extend(field_llvm_types.iter().copied());
-        let field_slots = (0..field_llvm_types.len())
-            .map(|i| Some(1 + i as u32))
-            .collect();
-        return Ok(EnumSlotMap {
-            llvm_struct_ty: llvm_types::StructType::get_unnamed(ctx, llvm_fields).into(),
-            tag_slot: 0,
-            field_slots,
-            field_offsets: vec![],
-            field_llvm_types,
-        });
-    }
-
-    if all_field_offsets.len() != all_field_types.len() {
+    if all_field_offsets.len() != all_field_types.len()
+        || all_field_sizes.len() != all_field_types.len()
+    {
         return Err(anyhow::anyhow!(
             "enum slot map: `{}` has {} field offsets for {} fields",
             name,
-            all_field_offsets.len(),
+            all_field_offsets.len().min(all_field_sizes.len()),
             all_field_types.len()
         ));
     }
 
-    // Phase 1: decide who gets a struct slot. The tag goes first so a
-    // payload field can never take its bytes.
+    // Phase 1: decide who gets a struct slot. The physical carrier goes
+    // first so a semantic field can never claim its bytes using a different
+    // type (e.g. `bool` is i1 semantically but i8 in Option<bool> storage).
     // claims: (byte position, byte size, converted type), no two overlap.
     let mut claims: Vec<(u64, u64, TypeHandle)> = Vec::new();
-    let (tag_size, tag_align) = llvm_type_size_align(ctx, llvm_discr_ty);
-    if tag_offset % tag_align.max(1) != 0 || tag_offset + tag_size > total_size {
-        return Err(anyhow::anyhow!(
-            "enum slot map: `{}` tag (size {}, align {}) cannot sit at byte {} of {}",
-            name,
-            tag_size,
-            tag_align,
-            tag_offset,
-            total_size
-        ));
-    }
-    claims.push((tag_offset, tag_size, llvm_discr_ty));
-    let tag_claim: usize = 0;
+    let carrier_claim = if let Some(carrier_ty) = carrier_ty {
+        let (carrier_size, carrier_align) =
+            llvm_type_size_align(ctx, carrier_ty).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "enum slot map: `{}` carrier has unsupported LLVM layout",
+                    name
+                )
+            })?;
+        let expected_size = u64::from(carrier_width).div_ceil(8);
+        if carrier_size != expected_size
+            || tag_offset % carrier_align.max(1) != 0
+            || tag_offset
+                .checked_add(carrier_size)
+                .is_none_or(|end| end > total_size)
+        {
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` carrier (size {}, align {}) cannot sit at byte {} of {}",
+                name,
+                carrier_size,
+                carrier_align,
+                tag_offset,
+                total_size
+            ));
+        }
+        claims.push((tag_offset, carrier_size, carrier_ty));
+        Some(0usize)
+    } else {
+        None
+    };
 
     let mut claim_of_field: Vec<Option<usize>> = vec![None; field_llvm_types.len()];
+    let mut field_is_inhabited = Vec::with_capacity(field_llvm_types.len());
+    for (variant, count) in variant_field_counts.iter().enumerate() {
+        field_is_inhabited.extend(std::iter::repeat_n(
+            variant_inhabited.get(variant).copied().unwrap_or(0) != 0,
+            *count as usize,
+        ));
+    }
     let mut order: Vec<usize> = (0..field_llvm_types.len()).collect();
-    order.sort_by_key(|&i| (all_field_offsets[i], i));
+    // At one byte position, prefer a representation that preserves all of
+    // its stored bits. This makes the result independent of source-variant
+    // order and prevents an i1/bool view from claiming storage that a later
+    // i8 view needs to preserve. A scalar i1 always uses an i8 storage claim:
+    // construction explicitly zero-extends that scalar below.
+    order.sort_by_key(|&i| {
+        (
+            all_field_offsets[i],
+            !llvm_type_is_byte_faithful(ctx, field_llvm_types[i]),
+            i,
+        )
+    });
     for flat in order {
+        if !field_is_inhabited.get(flat).copied().unwrap_or(false) {
+            continue;
+        }
         let llvm_ty = field_llvm_types[flat];
-        let (size, align) = llvm_type_size_align(ctx, llvm_ty);
+        if llvm_type_contains_pointer_in_address_space(
+            ctx,
+            llvm_ty,
+            llvm_types::address_space::SHARED,
+        ) {
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` field {} contains a shared-memory pointer whose size is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM); refusing target-agnostic enum lowering",
+                name,
+                flat
+            ));
+        }
+        let (size, align) = llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
+            anyhow::anyhow!(
+                "enum slot map: `{}` field {} has unsupported LLVM size/alignment",
+                name,
+                flat
+            )
+        })?;
+        if size != all_field_sizes[flat] {
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` field {} lowers to {} bytes but rustc says {}",
+                name,
+                flat,
+                size,
+                all_field_sizes[flat]
+            ));
+        }
         if size == 0 || is_zero_sized_type(ctx, llvm_ty) {
             // ZSTs own no bytes and no slot.
             continue;
         }
         let offset = all_field_offsets[flat];
-        if offset + size > total_size {
+        if offset.checked_add(size).is_none_or(|end| end > total_size) {
             return Err(anyhow::anyhow!(
                 "enum slot map: `{}` field {} (size {}) at byte {} exceeds total size {}",
                 name,
@@ -1012,6 +1271,65 @@ pub(crate) fn build_enum_slot_map(
                 total_size
             ));
         }
+        if !offset.is_multiple_of(align.max(1)) {
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` field {} requires alignment {} but rustc offset {} is not aligned; packed enum payload access is not yet supported",
+                name,
+                flat,
+                align,
+                offset
+            ));
+        }
+
+        let is_scalar_i1 = llvm_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 1);
+        if !is_scalar_i1
+            && (mir_type_contains_i1(ctx, all_field_types[flat])
+                || llvm_type_contains_i1(ctx, llvm_ty))
+        {
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` field {} contains nested bool/i1 storage; cuda-oxide cannot yet recursively canonicalize each Rust bool memory byte",
+                name,
+                flat
+            ));
+        }
+
+        // Rust bool is a semantic i1 but occupies a complete byte in memory.
+        // Never make i1 the struct's physical storage type: give a standalone
+        // bool an i8 claim, or reuse the exact i8 carrier/field claim already
+        // covering that byte. Construction leaves the bool slotless and the
+        // deferred store below explicitly zero-extends i1 -> i8; extraction
+        // loads i1 from that byte.
+        if is_scalar_i1 {
+            let colliding_claims = claims
+                .iter()
+                .filter(|&&(o, s, _)| offset < o + s && o < offset + size)
+                .collect::<Vec<_>>();
+            if colliding_claims.is_empty() {
+                let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+                claims.push((offset, 1, byte_ty));
+                continue;
+            }
+            let has_exact_i8_storage = colliding_claims.iter().all(|&&(o, s, claim_ty)| {
+                o == offset
+                    && s == 1
+                    && claim_ty
+                        .deref(ctx)
+                        .downcast_ref::<IntegerType>()
+                        .is_some_and(|integer| integer.width() == 8)
+            });
+            if has_exact_i8_storage {
+                continue;
+            }
+            return Err(anyhow::anyhow!(
+                "enum slot map: `{}` scalar bool field {} overlaps storage other than one exact i8 byte; refusing to expose non-canonical bool bits",
+                name,
+                flat
+            ));
+        }
+
         // Another variant already placed the same type at the same
         // position? Then both fields can simply use that slot: variants
         // share bytes, and here they even agree on the type.
@@ -1022,13 +1340,39 @@ pub(crate) fn build_enum_slot_map(
             claim_of_field[flat] = Some(ci);
             continue;
         }
-        // The bytes are taken by a different type, or the position is
-        // not aligned for this type: no slot. The field keeps its byte
-        // position and is accessed through memory instead.
-        let collides = claims
+        // The bytes are taken by a different type. Pointer-free values can
+        // use the memory fallback below. A pointer
+        // cannot: spilling/reloading it through a struct whose corresponding
+        // bytes have a non-pointer type erases LLVM provenance. Likewise an
+        // overlapping non-pointer value cannot be spilled through a pointer
+        // slot without creating a pointer from unrelated bytes.
+        let colliding_claims = claims
             .iter()
-            .any(|&(o, s, _)| offset < o + s && o < offset + size);
-        if collides || offset % align.max(1) != 0 {
+            .filter(|&&(o, s, _)| offset < o + s && o < offset + size)
+            .collect::<Vec<_>>();
+        if !colliding_claims.is_empty() {
+            if llvm_type_contains_pointer(ctx, llvm_ty)
+                || colliding_claims
+                    .iter()
+                    .any(|&&(_, _, claim_ty)| llvm_type_contains_pointer(ctx, claim_ty))
+            {
+                return Err(anyhow::anyhow!(
+                    "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
+                    name,
+                    offset
+                ));
+            }
+            let incoming_is_byte_faithful = llvm_type_is_byte_faithful(ctx, llvm_ty);
+            let claims_are_byte_faithful = colliding_claims
+                .iter()
+                .all(|&&(_, _, claim_ty)| llvm_type_is_byte_faithful(ctx, claim_ty));
+            if !incoming_is_byte_faithful || !claims_are_byte_faithful {
+                return Err(anyhow::anyhow!(
+                    "enum slot map: `{}` field {} overlaps non-identical storage but its lowered type is not byte-faithful (for example, it may contain bool/i1 or implicit padding); refusing a type-punned store",
+                    name,
+                    flat
+                ));
+            }
             continue;
         }
         claims.push((offset, size, llvm_ty));
@@ -1060,7 +1404,8 @@ pub(crate) fn build_enum_slot_map(
     // Arrays of enums step by this size, so a mismatch means every
     // element after the first is read from the wrong place. That is a
     // guaranteed miscompile, hence a hard error, not a debug check.
-    let (_end, natural_size, natural_align) = natural_struct_layout(ctx, &llvm_fields);
+    let (_end, natural_size, natural_align) = natural_struct_layout(ctx, &llvm_fields)
+        .ok_or_else(|| anyhow::anyhow!("enum slot map: `{}` has unsupported LLVM layout", name))?;
     if natural_size != total_size {
         return Err(anyhow::anyhow!(
             "enum slot map: `{}` lowered to {} bytes but rustc says {}",
@@ -1069,10 +1414,14 @@ pub(crate) fn build_enum_slot_map(
             total_size
         ));
     }
-    debug_assert!(
-        natural_align <= abi_align.max(1),
-        "enum slot map: `{name}` natural align {natural_align} exceeds rustc's {abi_align}"
-    );
+    if natural_align != abi_align.max(1) {
+        return Err(anyhow::anyhow!(
+            "enum slot map: `{}` lowered with alignment {} but rustc requires {}; explicit over-aligned enum storage is not yet supported",
+            name,
+            natural_align,
+            abi_align
+        ));
+    }
 
     let field_slots = claim_of_field
         .into_iter()
@@ -1080,7 +1429,8 @@ pub(crate) fn build_enum_slot_map(
         .collect();
     Ok(EnumSlotMap {
         llvm_struct_ty: llvm_types::StructType::get_unnamed(ctx, llvm_fields).into(),
-        tag_slot: slot_of_claim[tag_claim],
+        carrier_slot: carrier_claim.map(|claim| slot_of_claim[claim]),
+        carrier_llvm_ty: carrier_ty,
         field_slots,
         field_offsets: all_field_offsets,
         field_llvm_types,
@@ -1099,97 +1449,14 @@ pub(crate) fn convert_enum_to_llvm(
     Ok(build_enum_slot_map(ctx, ty)?.llvm_struct_ty)
 }
 
-/// Locate the scalar (integer or pointer) at byte `offset` inside an LLVM
-/// aggregate, returning that scalar's type plus the `insertvalue` /
-/// `getelementptr` index path (LLVM struct field indices, explicit padding
-/// fillers included) that reaches it.
-///
-/// This is the shared niche-scalar locator for both the store side
-/// ([`crate::convert::ops::aggregate::convert_set_discriminant`]) and the load
-/// side ([`crate::convert::ops::cast::emit_scalar_to_niched_enum`]). Unlike a
-/// single-field-chain descent it follows the field whose byte range contains
-/// `offset`, so a niche in a later field of a multi-field payload
-/// (`enum E { A, B(u32, NonZeroU32) }`) and niches nested at any depth
-/// (`Option<Wrapper { pad: u32, nz: NonZeroU32 }>`) both resolve correctly.
-/// The importer supplies `offset` via `NicheEncodingAttr::niche_field_offset`.
-///
-/// Returns `None` when no scalar sits exactly at `offset` (e.g. the offset
-/// lands in padding, or in an array/vector we do not descend), so callers turn
-/// an unresolvable niche into an explicit diagnostic rather than a miscompile.
-pub(crate) fn scalar_path_at_offset(
-    ctx: &Context,
-    mut ty: TypeHandle,
-    mut offset: u64,
-) -> Option<(TypeHandle, Vec<u32>)> {
-    let mut path = Vec::new();
-    loop {
-        let is_scalar = {
-            let r = ty.deref(ctx);
-            r.downcast_ref::<IntegerType>().is_some() || r.is::<llvm_types::PointerType>()
-        };
-        if is_scalar {
-            return if offset == 0 { Some((ty, path)) } else { None };
-        }
-
-        let field_tys: Vec<TypeHandle> = {
-            let r = ty.deref(ctx);
-            let s = r.downcast_ref::<llvm_types::StructType>()?;
-            s.fields().collect()
-        };
-
-        // Descend into the field whose [start, start + size) contains `offset`.
-        let mut start = 0u64;
-        let mut chosen: Option<(u32, TypeHandle, u64)> = None;
-        for (i, field_ty) in field_tys.into_iter().enumerate() {
-            let size = get_type_size(ctx, field_ty);
-            if offset >= start && offset < start + size {
-                chosen = Some((i as u32, field_ty, start));
-                break;
-            }
-            start += size;
-        }
-        let (idx, field_ty, field_start) = chosen?;
-        path.push(idx);
-        offset -= field_start;
-        ty = field_ty;
-    }
-}
-
-/// Is this an enum whose device bytes do NOT match the host's?
-///
-/// Most enums now lower byte-identically to rustc's layout and pass any
-/// boundary freely. The exception is enums whose layout we deliberately
-/// did not record (`total_size == 0`):
-///
-/// - Niche-encoded enums like `Option<&T>`. On the host, Rust stores no
-///   tag at all; it reuses an impossible payload value (null, for a
-///   never-null `&T`) to mean `None`. On the device we give such enums
-///   an explicit tag instead, which the host bytes simply do not have.
-/// - Multi-variant enums rustc reports as having a single live variant
-///   (e.g. `Result<T, Infallible>`): same story, the device tag has no
-///   host counterpart.
-///
-/// WHY the device differs at all: nothing in the hardware demands it.
-/// With a real tag, "which variant?" is a one-field load and
-/// "construct" is a one-field store, which is all our discriminant and
-/// construct ops know how to be. With a niche there is no tag to load:
-/// the discriminant must be COMPUTED from the payload (null check,
-/// byte-range check, in general rustc's get_discr range arithmetic),
-/// and constructing `None` means writing a magic payload value. That
-/// per-enum decode/encode logic has not been ported yet, so the device
-/// keeps a synthetic tag, which is fine while the bytes stay on the
-/// device and a lie the moment they meet host memory. Porting the
-/// niche logic is the follow-up that would erase this difference and
-/// retire this check.
-///
-/// One-variant enums with `total_size == 0` are fine: there is nothing
-/// for the two sides to disagree about.
-///
-/// Returns the enum's name when its bytes are unmodeled, else `None`.
+/// Return an enum name only when the dialect lacks rustc's physical layout.
+/// All importer-produced Direct, Niche, Single, and Empty layouts are
+/// byte-faithful; legacy `Unknown` values are rejected everywhere rather than
+/// receiving a guessed internal representation.
 pub(crate) fn enum_unmodeled_in_memory(ctx: &Context, ty: TypeHandle) -> Option<String> {
     let ty_ref = ty.deref(ctx);
     let enum_ty = ty_ref.downcast_ref::<MirEnumType>()?;
-    (enum_ty.total_size() == 0 && enum_ty.variant_count() > 1).then(|| enum_ty.name().to_string())
+    (enum_ty.layout_kind == enum_layout_kind::UNKNOWN).then(|| enum_ty.name().to_string())
 }
 
 /// Search a kernel parameter's type for an enum the host and device
@@ -1199,12 +1466,9 @@ pub(crate) fn enum_unmodeled_in_memory(ctx: &Context, ty: TypeHandle) -> Option<
 /// inside slices and arrays, in struct/tuple fields, and in other enums'
 /// payloads. It returns the first offending enum's name.
 ///
-/// Only kernel signatures are checked. A kernel parameter is host data
-/// (passed by value at launch, or reachable through a `DeviceBuffer`
-/// pointer), so its bytes must mean the same thing on both sides. The
-/// same enum used purely INSIDE a kernel (locals, construct, match) is
-/// fine and is deliberately not rejected: there, both reader and writer
-/// are the device, using one consistent layout.
+/// Kernel signatures are checked early for a focused diagnostic. Lowering also
+/// rejects Unknown layouts for locals, globals, and physical operations, so no
+/// guessed representation can escape through an internal-only path.
 ///
 /// `visited` breaks cycles through recursive types (`TypeHandle` is
 /// interned, so equality is identity).
@@ -1277,7 +1541,8 @@ pub(crate) fn validate_initialized_global_layout(
     validate_initialized_global_type(ctx, mir_ty, &mut Vec::new())?;
 
     let llvm_ty = convert_type(ctx, mir_ty)?;
-    let (llvm_size, llvm_align) = llvm_type_size_align(ctx, llvm_ty);
+    let (llvm_size, llvm_align) = llvm_type_size_align(ctx, llvm_ty)
+        .ok_or_else(|| anyhow::anyhow!("initialized global has unsupported LLVM size/alignment"))?;
     if llvm_size != initializer_size || llvm_align > initializer_align {
         return Err(anyhow::anyhow!(
             "initialized global type is not byte-compatible with rustc's allocation: the lowered LLVM value has size/alignment {}/{}, but the initializer has size/alignment {}/{}",
@@ -1303,7 +1568,7 @@ fn validate_initialized_global_type(
 
     if let Some(name) = enum_unmodeled_in_memory(ctx, mir_ty) {
         return Err(anyhow::anyhow!(
-            "initialized global contains niche-encoded enum `{}`; cuda-oxide's current device enum representation is not byte-compatible with rustc's allocation",
+            "initialized global contains enum `{}` with unknown physical layout; refusing to guess a byte representation",
             name
         ));
     }
@@ -1351,7 +1616,13 @@ fn validate_initialized_global_type(
         Kind::Enum(enum_ty) => {
             if enum_ty.total_size() > 0 {
                 let llvm_ty = convert_type(ctx, mir_ty)?;
-                let (llvm_size, llvm_align) = llvm_type_size_align(ctx, llvm_ty);
+                let (llvm_size, llvm_align) =
+                    llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "initialized enum `{}` has unsupported LLVM size/alignment",
+                            enum_ty.name()
+                        )
+                    })?;
                 if llvm_size != enum_ty.total_size() || llvm_align > enum_ty.abi_align() {
                     return Err(anyhow::anyhow!(
                         "initialized enum `{}` is not byte-compatible with rustc's layout: the lowered LLVM value has size/alignment {}/{}, but rustc requires {}/{}",
@@ -1383,7 +1654,12 @@ fn validate_initialized_struct_layout(
 ) -> Result<(), anyhow::Error> {
     if struct_ty.total_size == 0 {
         let llvm_ty = convert_type(ctx, mir_ty)?;
-        let (llvm_size, _) = llvm_type_size_align(ctx, llvm_ty);
+        let (llvm_size, _) = llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
+            anyhow::anyhow!(
+                "initialized struct `{}` has unsupported LLVM size/alignment",
+                struct_ty.name()
+            )
+        })?;
         if llvm_size == 0 {
             return Ok(());
         }
@@ -1413,7 +1689,13 @@ fn validate_initialized_struct_layout(
     let mut slot_offsets = Vec::with_capacity(llvm_fields.len());
     let mut current_offset = 0u64;
     for llvm_field in &llvm_fields {
-        let (field_size, field_align) = llvm_type_size_align(ctx, *llvm_field);
+        let (field_size, field_align) =
+            llvm_type_size_align(ctx, *llvm_field).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "initialized struct `{}` field has unsupported LLVM size/alignment",
+                    struct_ty.name()
+                )
+            })?;
         current_offset = current_offset.div_ceil(field_align.max(1)) * field_align.max(1);
         slot_offsets.push(current_offset);
         current_offset += field_size;
@@ -1436,7 +1718,13 @@ fn validate_initialized_struct_layout(
         }
     }
 
-    let (llvm_size, llvm_align) = llvm_type_size_align(ctx, slots.llvm_struct_ty);
+    let (llvm_size, llvm_align) =
+        llvm_type_size_align(ctx, slots.llvm_struct_ty).ok_or_else(|| {
+            anyhow::anyhow!(
+                "initialized struct `{}` has unsupported LLVM size/alignment",
+                struct_ty.name()
+            )
+        })?;
     if llvm_size != struct_ty.total_size || llvm_align > struct_ty.abi_align {
         return Err(anyhow::anyhow!(
             "initialized struct `{}` lowers to size/alignment {}/{}, but rustc requires {}/{}",
@@ -1594,12 +1882,661 @@ mod tests {
         );
         let union_data = union_ty.deref(&ctx).clone();
         let storage = build_union_storage_type(&mut ctx, &union_data).unwrap();
-        assert_eq!(llvm_type_size_align(&ctx, storage), (4, 4));
+        assert_eq!(llvm_type_size_align(&ctx, storage), Some((4, 4)));
 
         let union_handle: TypeHandle = union_ty.into();
         let array: TypeHandle = MirArrayType::get(&mut ctx, union_handle, 3).into();
         let llvm_array = convert_type(&mut ctx, array).unwrap();
-        assert_eq!(llvm_type_size_align(&ctx, llvm_array), (12, 4));
+        assert_eq!(llvm_type_size_align(&ctx, llvm_array), Some((12, 4)));
+    }
+
+    #[test]
+    fn fixed_vector_layout_uses_packed_bit_width_and_rejects_unknown_widths() {
+        let mut ctx = make_ctx();
+        let i1 = llvm_int(&mut ctx, 1);
+        let v16i1: TypeHandle =
+            llvm_types::VectorType::get(&ctx, i1, 16, llvm_types::VectorTypeKind::Fixed).into();
+        assert_eq!(
+            llvm_type_size_align(&ctx, v16i1),
+            Some((2, 2)),
+            "<16 x i1> is 16 packed bits, not sixteen bytes"
+        );
+
+        let i8 = llvm_int(&mut ctx, 8);
+        let v3i8: TypeHandle =
+            llvm_types::VectorType::get(&ctx, i8, 3, llvm_types::VectorTypeKind::Fixed).into();
+        assert_eq!(
+            llvm_type_size_align(&ctx, v3i8),
+            None,
+            "the NVPTX data layout does not define a 24-bit vector alignment"
+        );
+    }
+
+    #[test]
+    fn enum_array_payload_keeps_exact_size_alignment_and_stride() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let element = mir_uint(&mut ctx, 16);
+        let payload: TypeHandle = MirArrayType::get(&mut ctx, element, 3).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "ArrayPayload".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Empty".into()),
+                EnumVariant::new_with_layout("Data".into(), vec![payload], vec![2], vec![6]),
+            ],
+            0,
+            8,
+            2,
+        )
+        .into();
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(llvm_type_size_align(&ctx, map.llvm_struct_ty), Some((8, 2)));
+
+        let array: TypeHandle = MirArrayType::get(&mut ctx, enum_ty, 5).into();
+        let lowered = convert_type(&mut ctx, array).unwrap();
+        assert_eq!(llvm_type_size_align(&ctx, lowered), Some((40, 2)));
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_partial_byte_integer_carriers() {
+        let mut ctx = make_ctx();
+        let partial_discriminant = mir_uint(&mut ctx, 7);
+        let direct: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "PartialDirect".into(),
+            partial_discriminant,
+            vec![0, 1],
+            vec![EnumVariant::unit("A".into()), EnumVariant::unit("B".into())],
+            0,
+            1,
+            1,
+            enum_layout_kind::DIRECT,
+            enum_carrier_kind::INTEGER,
+            7,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let error = build_enum_slot_map(&mut ctx, direct)
+            .err()
+            .expect("partial-byte Direct carrier must fail closed");
+        assert!(
+            error.to_string().contains("whole number of bytes"),
+            "{error}"
+        );
+
+        let logical = mir_uint(&mut ctx, 8);
+        let payload = mir_uint(&mut ctx, 8);
+        let niche: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "PartialNiche".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![1]),
+            ],
+            0,
+            1,
+            1,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::INTEGER,
+            7,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let error = build_enum_slot_map(&mut ctx, niche)
+            .err()
+            .expect("partial-byte Niche carrier must fail closed");
+        assert!(
+            error.to_string().contains("whole number of bytes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_misaligned_inhabited_payload() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let word = mir_uint(&mut ctx, 32);
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "PackedPayload".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Empty".into()),
+                EnumVariant::new_with_layout("Data".into(), vec![word], vec![1], vec![4]),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("misaligned payload must be rejected");
+        assert!(error.to_string().contains("offset 1 is not aligned"));
+    }
+
+    #[test]
+    fn enum_slot_map_uses_i8_storage_for_nonoverlapping_scalar_bool() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 32);
+        let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "DirectBool".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![boolean], vec![4], vec![1]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(map.field_slots, vec![None]);
+        let fields = struct_fields(&ctx, map.llvm_struct_ty);
+        assert_eq!(fields.len(), 3, "tag, canonical bool byte, tail pad");
+        assert_eq!(
+            fields[1]
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .map(IntegerType::width),
+            Some(8),
+            "Rust bool storage must be an i8 byte, never an LLVM i1 slot"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_allows_nonoverlapping_aggregate_padding_without_bool() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 32);
+        let byte = mir_uint(&mut ctx, 8);
+        let word = mir_uint(&mut ctx, 32);
+        let padded: TypeHandle = MirTupleType::get(&mut ctx, vec![byte, word]).into();
+        let lowered_padded = convert_type(&mut ctx, padded).unwrap();
+        assert!(
+            !llvm_type_is_byte_faithful(&ctx, lowered_padded),
+            "the LLVM i8/i32 tuple has harmless implicit padding"
+        );
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "PaddedPayload".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("Data".into(), vec![padded], vec![4], vec![8]),
+                EnumVariant::unit("Empty".into()),
+            ],
+            0,
+            12,
+            4,
+        )
+        .into();
+
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(map.field_slots, vec![Some(1)]);
+        assert_eq!(
+            llvm_type_size_align(&ctx, map.llvm_struct_ty),
+            Some((12, 4))
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_nonoverlapping_nested_bool_storage() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 32);
+        let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "BoolWrapper".into(),
+            vec!["value".into()],
+            vec![boolean],
+            vec![0],
+            vec![0],
+            1,
+            1,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "DirectBoolWrapper".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![wrapper], vec![4], vec![1]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("nested bool storage must fail closed even without an overlap");
+        assert!(error.to_string().contains("nested bool/i1"), "{error}");
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_bool_hidden_by_union_byte_storage() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 32);
+        let byte = mir_uint(&mut ctx, 8);
+        let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let union: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "BoolOrByte".into(),
+            vec!["flag".into(), "byte".into()],
+            vec![boolean, byte],
+            1,
+            1,
+        )
+        .into();
+        let lowered_union = convert_type(&mut ctx, union).unwrap();
+        assert!(
+            !llvm_type_contains_i1(&ctx, lowered_union),
+            "the union's raw-byte carrier intentionally hides its semantic bool"
+        );
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "DirectUnionBool".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![union], vec![4], vec![1]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("a bool hidden by union byte storage must still fail closed");
+        assert!(error.to_string().contains("nested bool/i1"), "{error}");
+    }
+
+    #[test]
+    fn enum_slot_map_does_not_descend_through_pointer_to_bool() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 32);
+        let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, boolean, false).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "PointerToBool".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![pointer], vec![8], vec![8]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            16,
+            8,
+        )
+        .into();
+
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert!(map.field_slots[0].is_some());
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_pointer_nonpointer_overlap_in_either_variant_order() {
+        for pointer_first in [false, true] {
+            let mut ctx = make_ctx();
+            let discr = mir_uint(&mut ctx, 32);
+            let u8_ty = mir_uint(&mut ctx, 8);
+            let u64_ty = mir_uint(&mut ctx, 64);
+            let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+            let (first_name, first_ty, second_name, second_ty) = if pointer_first {
+                ("Ptr", pointer, "Bits", u64_ty)
+            } else {
+                ("Bits", u64_ty, "Ptr", pointer)
+            };
+            let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+                &mut ctx,
+                "PointerOrBits".into(),
+                discr,
+                vec![0, 1],
+                vec![
+                    EnumVariant::new_with_layout(
+                        first_name.into(),
+                        vec![first_ty],
+                        vec![8],
+                        vec![8],
+                    ),
+                    EnumVariant::new_with_layout(
+                        second_name.into(),
+                        vec![second_ty],
+                        vec![8],
+                        vec![8],
+                    ),
+                ],
+                0,
+                16,
+                8,
+                enum_layout_kind::DIRECT,
+                enum_carrier_kind::INTEGER,
+                32,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                vec![1, 1],
+            )
+            .into();
+            let error = build_enum_slot_map(&mut ctx, enum_ty)
+                .err()
+                .expect("pointer overlap must reject");
+            assert!(
+                error.to_string().contains("pointer provenance"),
+                "pointer_first={pointer_first}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_overlapping_bool_wrapper_storage() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 8);
+        let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "BoolWrapper".into(),
+            vec!["value".into()],
+            vec![boolean],
+            vec![0],
+            vec![0],
+            1,
+            1,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybeBoolWrapper".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![wrapper], vec![0], vec![1]),
+            ],
+            0,
+            1,
+            1,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::INTEGER,
+            8,
+            0,
+            2,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("a nested bool cannot be type-punned through the i8 carrier");
+        assert!(
+            error.to_string().contains("nested bool/i1"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_bool_wrapper_overlap_in_either_variant_order() {
+        for wrapper_first in [false, true] {
+            let mut ctx = make_ctx();
+            let tag = mir_uint(&mut ctx, 32);
+            let byte = mir_uint(&mut ctx, 8);
+            let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+            let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+                &mut ctx,
+                "BoolWrapper".into(),
+                vec!["value".into()],
+                vec![boolean],
+                vec![0],
+                vec![0],
+                1,
+                1,
+            )
+            .into();
+            let (first, second) = if wrapper_first {
+                (wrapper, byte)
+            } else {
+                (byte, wrapper)
+            };
+            let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+                &mut ctx,
+                "BoolWrapperOrByte".into(),
+                tag,
+                vec![0, 1],
+                vec![
+                    EnumVariant::new_with_layout("First".into(), vec![first], vec![4], vec![1]),
+                    EnumVariant::new_with_layout("Second".into(), vec![second], vec![4], vec![1]),
+                ],
+                0,
+                8,
+                4,
+                enum_layout_kind::DIRECT,
+                enum_carrier_kind::INTEGER,
+                32,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                vec![1, 1],
+            )
+            .into();
+
+            let error = build_enum_slot_map(&mut ctx, enum_ty)
+                .err()
+                .expect("nested bool overlap must reject in either declaration order");
+            assert!(
+                error.to_string().contains("nested bool/i1"),
+                "wrapper_first={wrapper_first}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_pointer_struct_overlapping_later_niche() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 8);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let payload: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PointerThenNiche".into(),
+            vec!["pointer".into(), "niche".into()],
+            vec![pointer, u32_ty],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybePointerThenNiche".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
+            ],
+            8,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::INTEGER,
+            32,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("nested pointer overlap must reject");
+        assert!(error.to_string().contains("pointer provenance"));
+    }
+
+    #[test]
+    fn enum_slot_map_keeps_plain_pointer_niche_in_one_pointer_slot() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 8);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybePointer".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![pointer], vec![0], vec![8]),
+            ],
+            0,
+            8,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(map.carrier_slot, Some(0));
+        assert_eq!(map.field_slots, vec![Some(0)]);
+        assert!(
+            struct_fields(&ctx, map.llvm_struct_ty)[0]
+                .deref(&ctx)
+                .is::<llvm_types::PointerType>()
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_nonoverlapping_shared_pointer_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "SharedPointerPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Ptr".into(), vec![shared], vec![8], vec![8]),
+            ],
+            0,
+            16,
+            8,
+            enum_layout_kind::DIRECT,
+            enum_carrier_kind::INTEGER,
+            32,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("shared pointer enum payload must reject");
+        assert!(error.to_string().contains("target-mode dependent"));
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_shared_pointer_vector_payload() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 32);
+        let shared_pointer: TypeHandle =
+            llvm_types::PointerType::get(&ctx, llvm_types::address_space::SHARED).into();
+        let shared_vector: TypeHandle =
+            llvm_types::VectorType::get(&ctx, shared_pointer, 2, llvm_types::VectorTypeKind::Fixed)
+                .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "SharedPointerVector".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout(
+                    "Data".into(),
+                    vec![shared_vector],
+                    vec![16],
+                    vec![16],
+                ),
+                EnumVariant::unit("Empty".into()),
+            ],
+            0,
+            32,
+            16,
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("a vector of shared pointers must fail closed");
+        assert!(
+            error.to_string().contains("shared-memory pointer"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1620,7 +2557,7 @@ mod tests {
         let storage = build_union_storage_type(&mut ctx, &union_data).unwrap();
         let fields = struct_fields(&ctx, storage);
         assert!(fields[1].deref(&ctx).is::<llvm_types::PointerType>());
-        assert_eq!(llvm_type_size_align(&ctx, storage), (8, 8));
+        assert_eq!(llvm_type_size_align(&ctx, storage), Some((8, 8)));
     }
 
     #[test]
@@ -1792,14 +2729,14 @@ mod tests {
         //   struct Arena { layout: Layout, cap: u32, stride: u32, big: u64 }
         //
         // rustc layout: layout @ 0 (8 bytes), big @ 8, cap @ 16,
-        // stride @ 20, size 24. The enum's lowered form { i8, i32 } only
-        // covers 5 of its 8 bytes, so a [3 x i8] pad takes slot 1:
+        // stride @ 20, size 24. The enum now carries its own explicit
+        // internal padding, so the OUTER struct needs no extra padding slot:
         //
-        //   { { i8, i32 }, [3 x i8], i64, i32, i32 }
-        //     layout=0     pad=1     big=2 cap=3 stride=4
+        //   { { i8, [3 x i8], i32 }, i64, i32, i32 }
+        //     layout=0                  big=1 cap=2 stride=3
         let discr = mir_uint(&mut ctx, 8);
         let payload = mir_uint(&mut ctx, 32);
-        let layout_enum: TypeHandle = MirEnumType::get(
+        let layout_enum: TypeHandle = MirEnumType::get_with_layout(
             &mut ctx,
             "Layout".into(),
             discr,
@@ -1807,8 +2744,11 @@ mod tests {
             vec![
                 EnumVariant::unit("Aos".into()),
                 EnumVariant::unit("Soa".into()),
-                EnumVariant::new("AoSoA".into(), vec![payload]),
+                EnumVariant::new_with_layout("AoSoA".into(), vec![payload], vec![4], vec![4]),
             ],
+            0,
+            8,
+            4,
         )
         .into();
         let cap = mir_uint(&mut ctx, 32);
@@ -1825,19 +2765,19 @@ mod tests {
 
         assert_eq!(
             map.decl_to_llvm,
-            vec![Some(0), Some(3), Some(4), Some(2)],
-            "cap/stride/big must skip the [3 x i8] pad at slot 1"
+            vec![Some(0), Some(2), Some(3), Some(1)],
+            "the enum's internal pad must not create an outer struct slot"
         );
 
         let i8s = llvm_int(&mut ctx, 8);
         let i32s = llvm_int(&mut ctx, 32);
         let i64s = llvm_int(&mut ctx, 64);
+        let enum_pad3 = pad(&mut ctx, 3);
         let enum_llvm: TypeHandle =
-            llvm_types::StructType::get_unnamed(&ctx, vec![i8s, i32s]).into();
-        let pad3 = pad(&mut ctx, 3);
+            llvm_types::StructType::get_unnamed(&ctx, vec![i8s, enum_pad3, i32s]).into();
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
-            vec![enum_llvm, pad3, i64s, i32s, i32s]
+            vec![enum_llvm, i64s, i32s, i32s]
         );
     }
 
@@ -1998,7 +2938,7 @@ mod tests {
     }
 
     #[test]
-    fn initialized_global_layout_rejects_niche_encoded_enum() {
+    fn initialized_global_layout_rejects_enum_with_unknown_physical_layout() {
         let mut ctx = make_ctx();
         let discr = mir_uint(&mut ctx, 8);
         let payload = mir_uint(&mut ctx, 32);
@@ -2015,6 +2955,6 @@ mod tests {
         .into();
 
         let err = validate_initialized_global_layout(&mut ctx, niche, 4, 4).unwrap_err();
-        assert!(err.to_string().contains("niche-encoded enum"));
+        assert!(err.to_string().contains("unknown physical layout"));
     }
 }

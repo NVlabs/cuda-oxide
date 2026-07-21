@@ -39,19 +39,12 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
+use dialect_mir::ops::{
+    MirMemcpyOp, MirSetDiscriminantOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp,
+};
 use dialect_mir::types::MirEnumType;
-use dialect_mir::{
-    attributes::NicheEncodingAttr,
-    ops::{
-        MirConstantOp, MirMemcpyOp, MirSetDiscriminantOp, MirStorageDeadOp, MirStorageLiveOp,
-        MirStoreOp,
-    },
-};
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::{
-    attributes::{BoolAttr, IntegerAttr},
-    types::{IntegerType, Signedness},
-};
+use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::location::{Located, Location};
 use pliron::op::Op;
@@ -64,152 +57,6 @@ use pliron::{input_err, input_error};
 use rustc_public::mir;
 use rustc_public_bridge::IndexedVal;
 use std::num::NonZeroUsize;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SetDiscriminantLayout {
-    Direct,
-    Niche,
-    Single { inhabited_variant: usize },
-    Empty,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SetDiscriminantAction {
-    WriteDirectTag,
-    WriteNichePayload,
-    NoOp,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SetDiscriminantLayoutError {
-    UninhabitedVariant,
-}
-
-/// Decide whether `SetDiscriminant` writes a physical tag, does nothing, or
-/// must be rejected. Keeping this decision separate from operation creation
-/// makes every rustc enum layout explicit and independently testable.
-fn classify_set_discriminant(
-    layout: SetDiscriminantLayout,
-    target_variant: usize,
-    target_is_inhabited: bool,
-) -> Result<SetDiscriminantAction, SetDiscriminantLayoutError> {
-    match layout {
-        SetDiscriminantLayout::Direct if target_is_inhabited => {
-            Ok(SetDiscriminantAction::WriteDirectTag)
-        }
-        SetDiscriminantLayout::Direct | SetDiscriminantLayout::Empty => {
-            Err(SetDiscriminantLayoutError::UninhabitedVariant)
-        }
-        SetDiscriminantLayout::Niche => Ok(SetDiscriminantAction::WriteNichePayload),
-        SetDiscriminantLayout::Single { inhabited_variant }
-            if inhabited_variant == target_variant =>
-        {
-            Ok(SetDiscriminantAction::NoOp)
-        }
-        SetDiscriminantLayout::Single { .. } => Err(SetDiscriminantLayoutError::UninhabitedVariant),
-    }
-}
-
-/// rustc's direct-tag layout can still contain source variants that are
-/// impossible to construct, such as `Dead(Never)`. The stable layout API does
-/// not expose per-variant inhabitedness, so derive it from the monomorphized
-/// ADT fields: a variant is uninhabited when any field has an empty layout.
-fn adt_variant_is_inhabited(
-    rust_ty: &rustc_public::ty::Ty,
-    variant_index: usize,
-    loc: Location,
-) -> TranslationResult<bool> {
-    let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt, args)) =
-        rust_ty.kind()
-    else {
-        // Compiler-generated enum-like types (for example coroutines) are not
-        // ADTs. Their layout still identifies Single/Empty impossible cases;
-        // direct layouts are trusted here and validated by type translation.
-        return Ok(true);
-    };
-
-    let index = rustc_public::ty::VariantIdx::to_val(variant_index);
-    let variant = adt.variant(index).ok_or_else(|| {
-        input_error!(
-            loc.clone(),
-            TranslationErr::unsupported(format!(
-                "SetDiscriminant variant index {} is out of bounds",
-                variant_index
-            ))
-        )
-    })?;
-
-    for field in variant.fields() {
-        let field_ty = field.ty_with_args(&args);
-        let field_layout = field_ty.layout().map_err(|e| {
-            input_error!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "Failed to query SetDiscriminant target field layout: {:?}",
-                    e
-                ))
-            )
-        })?;
-        if matches!(
-            field_layout.shape().variants,
-            rustc_public::abi::VariantsShape::Empty
-        ) {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
-}
-
-/// Locate the niche scalar inside a niche-encoded enum's payload.
-///
-/// Niche encoding stores all data in the single `untagged_variant`, so the
-/// enum's flattened `all_field_types` are exactly that variant's fields (every
-/// other variant is dataless). Returns `(niche_field_index, niche_field_offset)`
-/// where the index selects the payload field (in that same source order) that
-/// contains the niche scalar and the offset is the scalar's byte position
-/// *within* that field.
-///
-/// The niche scalar sits at byte `shape.fields.offsets[tag_field]` of the enum
-/// (rustc's `TagEncoding::Niche` doc). The containing untagged field is the one
-/// with the greatest start offset not past the niche, since a variant's fields
-/// never overlap. mir-lower then walks that field's LLVM type by the returned
-/// offset, so multi-field payloads and nested aggregates are handled without a
-/// single-field-chain assumption.
-pub(crate) fn niche_field_location(
-    shape: &rustc_public::abi::LayoutShape,
-    tag_field: usize,
-    untagged_variant_idx: usize,
-) -> (u32, u64) {
-    let niche_offset = match &shape.fields {
-        rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
-            offsets.get(tag_field).map(|s| s.bytes() as u64).unwrap_or(0)
-        }
-        _ => 0,
-    };
-
-    let untagged_offsets: Vec<u64> = match &shape.variants {
-        rustc_public::abi::VariantsShape::Multiple { variants, .. } => variants
-            .get(untagged_variant_idx)
-            .map(|vf| vf.offsets.iter().map(|s| s.bytes() as u64).collect())
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
-
-    // Pick the untagged field whose start offset is the greatest not exceeding
-    // the niche offset (fields do not overlap, so that field contains it).
-    let mut best: Option<(usize, u64)> = None;
-    for (i, &off) in untagged_offsets.iter().enumerate() {
-        if off <= niche_offset && best.map(|(_, b)| off > b).unwrap_or(true) {
-            best = Some((i, off));
-        }
-    }
-
-    match best {
-        Some((i, off)) => (i as u32, niche_offset - off),
-        None => (0, niche_offset),
-    }
-}
 
 /// Translates a MIR statement to one or more `dialect-mir` operations.
 ///
@@ -1016,66 +863,29 @@ pub fn translate_statement(
                 )
             })?;
             let variant_idx = variant_index.to_index();
-
-            match place_ty.kind() {
-                rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt, _))
-                    if adt.kind() == rustc_public::ty::AdtKind::Enum => {}
-                rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Coroutine(..)) => {}
-                other => {
+            let enum_mir_ty = types::translate_type(ctx, &place_ty)?;
+            let (layout_kind, single_variant) = {
+                let enum_ty_obj = enum_mir_ty.deref(ctx);
+                let Some(enum_ty) = enum_ty_obj.downcast_ref::<MirEnumType>() else {
                     return input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
-                            "SetDiscriminant place type is not enum-like: {:?}",
-                            other
+                            "SetDiscriminant place type is not a supported enum: {}",
+                            enum_mir_ty.disp(ctx)
+                        ))
+                    );
+                };
+                if variant_idx >= enum_ty.variant_count() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "SetDiscriminant variant index {} out of bounds for enum '{}'",
+                            variant_idx,
+                            enum_ty.name()
                         ))
                     );
                 }
-            }
-
-            // SetDiscriminant has different physical meanings for rustc's
-            // four enum layouts. Only a Direct layout owns a tag to store.
-            // A Single layout has no tag, so selecting its one inhabited
-            // variant is a true no-op. Niche encoding would require writing
-            // a special payload bit-pattern and remains an explicit error.
-            let layout_shape = place_ty
-                .layout()
-                .map_err(|e| {
-                    input_error!(
-                        loc.clone(),
-                        TranslationErr::unsupported(format!(
-                            "Failed to query enum layout for SetDiscriminant: {:?}",
-                            e
-                        ))
-                    )
-                })?
-                .shape();
-            let layout = match &layout_shape.variants {
-                rustc_public::abi::VariantsShape::Multiple {
-                    tag_encoding: rustc_public::abi::TagEncoding::Direct,
-                    ..
-                } => SetDiscriminantLayout::Direct,
-                rustc_public::abi::VariantsShape::Multiple {
-                    tag_encoding: rustc_public::abi::TagEncoding::Niche { .. },
-                    ..
-                } => SetDiscriminantLayout::Niche,
-                rustc_public::abi::VariantsShape::Single { index } => {
-                    SetDiscriminantLayout::Single {
-                        inhabited_variant: index.to_index(),
-                    }
-                }
-                rustc_public::abi::VariantsShape::Empty => SetDiscriminantLayout::Empty,
-            };
-            let target_is_inhabited = if layout == SetDiscriminantLayout::Direct {
-                adt_variant_is_inhabited(&place_ty, variant_idx, loc.clone())?
-            } else {
-                true
-            };
-
-            match classify_set_discriminant(layout, variant_idx, target_is_inhabited) {
-                Ok(SetDiscriminantAction::WriteDirectTag)
-                | Ok(SetDiscriminantAction::WriteNichePayload) => {}
-                Ok(SetDiscriminantAction::NoOp) => return Ok(prev_op),
-                Err(SetDiscriminantLayoutError::UninhabitedVariant) => {
+                if enum_ty.variant_is_inhabited(variant_idx) != Some(true) {
                     return input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
@@ -1084,171 +894,25 @@ pub fn translate_statement(
                         ))
                     );
                 }
+                (enum_ty.layout_kind, enum_ty.single_variant as usize)
+            };
+
+            match layout_kind {
+                dialect_mir::types::enum_layout_kind::SINGLE if variant_idx == single_variant => {
+                    return Ok(prev_op);
+                }
+                dialect_mir::types::enum_layout_kind::DIRECT
+                | dialect_mir::types::enum_layout_kind::NICHE => {}
+                other => {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "SetDiscriminant cannot lower enum layout kind {}",
+                            other
+                        ))
+                    );
+                }
             }
-
-            // Resolve the enum type of the place being mutated and extract
-            // everything we need from it inside a scoped block so the deref
-            // guard is dropped before we mutably borrow `ctx` again.
-            let (
-                discr_ty_handle,
-                discr_width,
-                discr_signedness,
-                discr_value,
-                niche_encoding_opt,
-                is_niche_variant,
-                niche_value_opt,
-            ) =
-                {
-                    let enum_mir_ty = types::translate_type(ctx, &place_ty)?;
-                    let enum_ty_obj = enum_mir_ty.deref(ctx);
-                    let enum_ty = match enum_ty_obj.downcast_ref::<MirEnumType>() {
-                        Some(et) => et,
-                        None => {
-                            return input_err!(
-                                loc,
-                                TranslationErr::unsupported(format!(
-                                    "SetDiscriminant place type is not an enum: {}",
-                                    enum_mir_ty.disp(ctx)
-                                ))
-                            );
-                        }
-                    };
-                    let discr_value = *enum_ty.variant_discriminants.get(variant_idx).ok_or_else(
-                        || {
-                            input_error!(
-                                loc.clone(),
-                                TranslationErr::unsupported(format!(
-                                    "SetDiscriminant variant index {} out of bounds for enum '{}'",
-                                    variant_idx,
-                                    enum_ty.name()
-                                ))
-                            )
-                        },
-                    )?;
-
-                    let discr_ty_handle = enum_ty.discriminant_type();
-                    let (discr_width, discr_signedness) = {
-                        let discr_ty_obj = discr_ty_handle.deref(ctx);
-                        match discr_ty_obj.downcast_ref::<IntegerType>() {
-                            Some(it) => (it.width(), it.signedness()),
-                            None => {
-                                return input_err!(
-                                    loc,
-                                    TranslationErr::unsupported(
-                                        "SetDiscriminant enum discriminant type is not an integer"
-                                            .to_string()
-                                    )
-                                );
-                            }
-                        }
-                    };
-
-                    // Niche-encoded enums (e.g. `Option<&T>`) store the variant in
-                    // the payload scalar itself. Record the niche layout so
-                    // lowering can write the niche bit pattern when the target
-                    // variant is a niche variant. A single niche can encode a
-                    // contiguous range of variants (e.g. `enum E { A, B, C, D(bool) }`),
-                    // so compute the exact payload value for this variant.
-                    let (niche_encoding_opt, is_niche_variant, niche_value_opt) =
-                        match place_ty.layout() {
-                            Ok(layout) => {
-                                let shape = layout.shape();
-                                match &shape.variants {
-                                rustc_public::abi::VariantsShape::Multiple {
-                                    tag_encoding:
-                                        rustc_public::abi::TagEncoding::Niche {
-                                            untagged_variant,
-                                            niche_variants,
-                                            niche_start,
-                                        },
-                                    tag_field,
-                                    ..
-                                } => {
-                                    let niche_start_u64 =
-                                        u64::try_from(*niche_start).map_err(|_| {
-                                            input_error!(
-                                                loc.clone(),
-                                                TranslationErr::unsupported(format!(
-                                                    "SetDiscriminant niche start {} exceeds u64",
-                                                    niche_start
-                                                ))
-                                            )
-                                        })?;
-                                    let niche_start_idx = niche_variants.start().to_index();
-                                    let niche_end_idx = niche_variants.end().to_index();
-                                    let niche_variant_idx = niche_start_idx as u32;
-                                    let niche_variant_end_idx = niche_end_idx as u32;
-                                    let untagged_variant_idx = untagged_variant.to_index() as u32;
-                                    let (niche_field_index, niche_field_offset) =
-                                        niche_field_location(
-                                            &shape,
-                                            *tag_field,
-                                            untagged_variant.to_index(),
-                                        );
-                                    let is_niche = variant_idx >= niche_start_idx
-                                        && variant_idx <= niche_end_idx;
-                                    let niche_value = if is_niche {
-                                        let offset = (variant_idx - niche_start_idx) as u64;
-                                        Some(niche_start_u64 + offset)
-                                    } else {
-                                        None
-                                    };
-                                    (
-                                        Some(NicheEncodingAttr {
-                                            niche_start: niche_start_u64,
-                                            niche_variant_idx,
-                                            niche_variant_end_idx,
-                                            untagged_variant_idx,
-                                            niche_field_index,
-                                            niche_field_offset,
-                                        }),
-                                        is_niche,
-                                        niche_value,
-                                    )
-                                }
-                                _ => (None, false, None),
-                                }
-                            }
-                            Err(_) => (None, false, None),
-                        };
-
-                    (
-                        discr_ty_handle,
-                        discr_width,
-                        discr_signedness,
-                        discr_value,
-                        niche_encoding_opt,
-                        is_niche_variant,
-                        niche_value_opt,
-                    )
-                };
-
-            // Build the constant discriminant value.
-            let discr_apint = APInt::from_u64(
-                discr_value,
-                NonZeroUsize::new(discr_width as usize).unwrap(),
-            );
-            let discr_ty_typed = IntegerType::get(ctx, discr_width, discr_signedness);
-            let discr_attr =
-                pliron::builtin::attributes::IntegerAttr::new(discr_ty_typed, discr_apint);
-            let const_op = Operation::new(
-                ctx,
-                MirConstantOp::get_concrete_op_info(),
-                vec![discr_ty_handle],
-                vec![],
-                vec![],
-                0,
-            );
-            const_op.deref_mut(ctx).set_loc(loc.clone());
-            MirConstantOp::new(const_op).set_attr_value(ctx, discr_attr);
-
-            if let Some(prev) = prev_op {
-                const_op.insert_after(ctx, prev);
-            } else {
-                const_op.insert_at_front(block_ptr, ctx);
-            }
-            let const_prev = Some(const_op);
-            let discr_val = const_op.deref(ctx).get_result(0);
 
             // Get the address of the enum place.
             let (enum_ptr, addr_prev) = match rvalue::translate_place_address(
@@ -1258,7 +922,7 @@ pub fn translate_statement(
                 place,
                 /* is_mutable */ true,
                 block_ptr,
-                const_prev,
+                prev_op,
                 loc.clone(),
             )? {
                 Some(pair) => pair,
@@ -1278,27 +942,18 @@ pub fn translate_statement(
                 ctx,
                 MirSetDiscriminantOp::get_concrete_op_info(),
                 vec![],
-                vec![enum_ptr, discr_val],
+                vec![enum_ptr],
                 vec![],
                 0,
             );
             set_op.deref_mut(ctx).set_loc(loc.clone());
 
-            let set_op_wrapped = MirSetDiscriminantOp::new(set_op);
-            if let Some(niche) = niche_encoding_opt {
-                set_op_wrapped.set_attr_set_niche_encoding(ctx, niche);
-                set_op_wrapped.set_attr_is_niche_variant(ctx, BoolAttr::new(is_niche_variant));
-                if let Some(niche_value) = niche_value_opt {
-                    let niche_value_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
-                    let niche_value_attr = IntegerAttr::new(
-                        niche_value_ty,
-                        APInt::from_u64(niche_value, NonZeroUsize::new(64).unwrap()),
-                    );
-                    set_op_wrapped.set_attr_set_niche_value(ctx, niche_value_attr);
-                }
-            }
+            MirSetDiscriminantOp::new(set_op).set_attr_set_discriminant_variant_index(
+                ctx,
+                dialect_mir::attributes::VariantIndexAttr(variant_idx as u32),
+            );
 
-            let insert_after = addr_prev.or(const_prev);
+            let insert_after = addr_prev.or(prev_op);
             if let Some(prev) = insert_after {
                 set_op.insert_after(ctx, prev);
             } else {
@@ -1625,49 +1280,4 @@ fn translate_array_agg_into_alloca(
     }
 
     Ok(current_prev)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn set_discriminant_layout_actions_are_explicit() {
-        assert_eq!(
-            classify_set_discriminant(SetDiscriminantLayout::Direct, 2, true),
-            Ok(SetDiscriminantAction::WriteDirectTag)
-        );
-        assert_eq!(
-            classify_set_discriminant(SetDiscriminantLayout::Direct, 2, false),
-            Err(SetDiscriminantLayoutError::UninhabitedVariant)
-        );
-        assert_eq!(
-            classify_set_discriminant(SetDiscriminantLayout::Niche, 0, true),
-            Ok(SetDiscriminantAction::WriteNichePayload)
-        );
-        assert_eq!(
-            classify_set_discriminant(
-                SetDiscriminantLayout::Single {
-                    inhabited_variant: 1,
-                },
-                1,
-                true,
-            ),
-            Ok(SetDiscriminantAction::NoOp)
-        );
-        assert_eq!(
-            classify_set_discriminant(
-                SetDiscriminantLayout::Single {
-                    inhabited_variant: 1,
-                },
-                0,
-                true,
-            ),
-            Err(SetDiscriminantLayoutError::UninhabitedVariant)
-        );
-        assert_eq!(
-            classify_set_discriminant(SetDiscriminantLayout::Empty, 0, false),
-            Err(SetDiscriminantLayoutError::UninhabitedVariant)
-        );
-    }
 }

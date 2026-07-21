@@ -6,15 +6,17 @@
 //! Regression test for issue #21.
 //!
 //! `for i in (a..b).step_by(s)` lowers (after `StepBy::next` is inlined) to
-//! a Transmute between a niche-optimised `i64` and the un-niched aggregate
-//! representation of `Option<NonZeroUsize>`. Before the fix the build
-//! crashed inside llc with
+//! a Transmute involving the one-word, niche-optimised representation of
+//! `Option<NonZeroUsize>`. The historical synthetic-tag model turned the
+//! destination into an unrelated aggregate, and the build crashed in llc
+//! with
 //!
 //!   error: invalid cast opcode for cast from 'i64' to '{ i8, { { i64 } } }'
 //!     %v23 = bitcast i64 %v22 to { i8, { { i64 } } }
 //!
-//! After the fix cuda-oxide rebuilds that aggregate explicitly with an
-//! `icmp` + `select` + nested `insertvalue`, so the resulting PTX runs.
+//! cuda-oxide now records rustc's physical niche carrier directly and lowers
+//! the equal-size Transmute without assigning synthetic enum fields, so the
+//! resulting PTX keeps the original one-word representation.
 //!
 //! The kernel below uses `step_by`; the second kernel is the `while`-loop
 //! form from the original report and acts as a value-correctness control.

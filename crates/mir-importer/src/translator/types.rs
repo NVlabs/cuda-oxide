@@ -86,6 +86,99 @@ fn closure_upvar_tys(substs: &rustc_public::ty::GenericArgs) -> Option<Vec<rustc
     Some(upvar_tys)
 }
 
+/// Whether a fully monomorphized Rust type has at least one valid value.
+///
+/// Stable layout exposes `Empty` for an uninhabited enum itself, but aggregate
+/// wrappers can still have `Single` layout (for example `struct Wrap(!)`).
+/// Walk aggregate fields recursively so such wrappers cannot make an enum
+/// variant look inhabitable merely because its outer shape is `Single`.
+fn monomorphized_ty_is_inhabited(ty: &rustc_public::ty::Ty) -> TranslationResult<bool> {
+    if matches!(
+        ty.layout()
+            .map_err(|e| input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to query inhabitedness layout for {:?}: {:?}",
+                ty, e
+            ))))?
+            .shape()
+            .variants,
+        rustc_public::abi::VariantsShape::Empty
+    ) {
+        return Ok(false);
+    }
+
+    use rustc_public::ty::{AdtKind, RigidTy, TyKind};
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Never) => Ok(false),
+        TyKind::RigidTy(RigidTy::Tuple(fields)) => {
+            for field in fields {
+                if !monomorphized_ty_is_inhabited(&field)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        TyKind::RigidTy(RigidTy::Array(element, count)) => {
+            let count = count.eval_target_usize().map_err(|e| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Failed to evaluate monomorphized array length: {:?}",
+                    e
+                )))
+            })?;
+            Ok(count == 0 || monomorphized_ty_is_inhabited(&element)?)
+        }
+        TyKind::RigidTy(RigidTy::Adt(def, args)) => match def.kind() {
+            AdtKind::Struct => {
+                let Some(variant) = def.variants().into_iter().next() else {
+                    return Ok(true);
+                };
+                for field in variant.fields() {
+                    if !monomorphized_ty_is_inhabited(&field.ty_with_args(&args))? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            AdtKind::Enum => {
+                for variant in def.variants() {
+                    let mut inhabited = true;
+                    for field in variant.fields() {
+                        if !monomorphized_ty_is_inhabited(&field.ty_with_args(&args))? {
+                            inhabited = false;
+                            break;
+                        }
+                    }
+                    if inhabited {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            // Match rustc's inhabitedness predicate: unions are currently
+            // always considered inhabited, independent of their fields.
+            AdtKind::Union => Ok(true),
+        },
+        // ABI univariant layout marks an aggregate uninhabited when any field
+        // layout is uninhabited. A closure is laid out from its captured
+        // upvars, so mirror that physical rule (this is deliberately about
+        // codegen layout, not the visibility-sensitive pattern predicate).
+        TyKind::RigidTy(RigidTy::Closure(_, args)) => {
+            let Some(fields) = closure_upvar_tys(&args) else {
+                return Ok(true);
+            };
+            for field in fields {
+                if !monomorphized_ty_is_inhabited(&field)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        // Pointers/references/functions, scalars and compiler-generated
+        // coroutine values are treated as inhabited unless their top-level
+        // stable layout was `Empty` above.
+        _ => Ok(true),
+    }
+}
+
 /// Returns the `isize` type (i64 on 64-bit targets).
 pub fn get_isize_type(
     ctx: &mut Context,
@@ -636,9 +729,15 @@ pub fn translate_type(
                         shape.abi_align,
                     )
                     .into())
-                } else if variants.len() == 1 {
-                    // Structs have exactly one variant
-                    let variant = &variants[0];
+                } else if matches!(adt_def.kind(), rustc_public::ty::AdtKind::Struct) {
+                    // Dispatch on the ADT kind, not variant count: a Rust enum
+                    // may legitimately have zero or one source variants.
+                    let variant = variants.first().ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Struct {} has no field variant",
+                            trimmed_name
+                        )))
+                    })?;
                     let fields = variant.fields();
 
                     // Extract field names and types (in declaration order)
@@ -709,7 +808,8 @@ pub fn translate_type(
                     )
                     .into())
                 } else {
-                    // Enums have multiple variants.
+                    debug_assert!(matches!(adt_def.kind(), rustc_public::ty::AdtKind::Enum));
+                    // Enums may have zero, one, or multiple source variants.
                     //
                     // The discriminant ("tag") type comes from rustc's layout,
                     // never from a guess: `#[repr(uN/iN)]` (width AND
@@ -731,29 +831,34 @@ pub fn translate_type(
                         })?
                         .shape();
 
-                    // Fallback tag used where the un-niched `MirEnumType`
-                    // model is deliberately self-consistent rather than
-                    // memory-faithful (the niched and single-variant arms
-                    // below): smallest unsigned width that fits the variant
-                    // count.
-                    let variant_count_bits: u32 = if variants.len() <= 256 {
-                        8
-                    } else if variants.len() <= 65536 {
-                        16
-                    } else {
-                        32
-                    };
+                    // Logical discriminant used by the MIR operation for
+                    // layouts that have no direct integer tag. This is not
+                    // part of the enum's storage; the physical carrier is
+                    // recorded separately below.
+                    let declared_discriminant =
+                        rust_ty.kind().discriminant_ty().ok_or_else(|| {
+                            input_error_noloc!(TranslationErr::unsupported(format!(
+                                "Failed to resolve declared discriminant type for {}",
+                                enum_name
+                            )))
+                        })?;
+                    let logical_discriminant_ty = translate_type(ctx, &declared_discriminant)?;
+                    let total_size = layout_shape.size.bytes() as u64;
+                    let abi_align = layout_shape.abi_align;
 
-                    // (discriminant type, tag byte offset, total size in
-                    // bytes, ABI alignment). Size/align are 0 ("unknown")
-                    // except for Direct-tag enums, where mir-lower uses
-                    // them to build the memory-faithful representation.
-                    let (discriminant_ty, tag_offset, total_size, abi_align): (
-                        TypeHandle,
-                        u64,
-                        u64,
-                        u64,
-                    ) = match &layout_shape.variants {
+                    let layout_kind;
+                    let mut carrier_kind = dialect_mir::types::enum_carrier_kind::NONE;
+                    let mut carrier_width = 0u32;
+                    let mut carrier_address_space = 0u32;
+                    let mut tag_offset = 0u64;
+                    let mut niche_start = 0u128;
+                    let mut niche_variant_start = 0u32;
+                    let mut niche_variant_end = 0u32;
+                    let mut untagged_variant = 0u32;
+                    let mut single_variant = 0u32;
+                    let mut variant_inhabited = vec![false; variants.len()];
+
+                    let discriminant_ty: TypeHandle = match &layout_shape.variants {
                         rustc_public::abi::VariantsShape::Multiple {
                             tag,
                             tag_encoding: rustc_public::abi::TagEncoding::Direct,
@@ -771,149 +876,219 @@ pub fn translate_type(
                                     enum_name, primitive
                                 )));
                             };
-                            let tag_ty = pliron::builtin::types::IntegerType::get(
+                            layout_kind = dialect_mir::types::enum_layout_kind::DIRECT;
+                            carrier_kind = dialect_mir::types::enum_carrier_kind::INTEGER;
+                            carrier_width = length.bits() as u32;
+                            tag_offset = crate::translator::layout::enum_tag_offset(
+                                &layout_shape.fields,
+                                *tag_field,
+                                pliron::location::Location::Unknown,
+                            )? as u64;
+                            pliron::builtin::types::IntegerType::get(
                                 ctx,
-                                length.bits() as u32,
+                                carrier_width,
                                 if signed {
                                     pliron::builtin::types::Signedness::Signed
                                 } else {
                                     pliron::builtin::types::Signedness::Unsigned
                                 },
-                            );
-                            // The tag is usually at byte 0, but rustc may
-                            // place it after payload bytes; read its real
-                            // offset via the same lookup constant decoding
-                            // uses (shared `translator::layout` helper).
-                            let tag_offset = crate::translator::layout::enum_tag_offset(
+                            )
+                            .into()
+                        }
+                        rustc_public::abi::VariantsShape::Multiple {
+                            tag,
+                            tag_encoding:
+                                rustc_public::abi::TagEncoding::Niche {
+                                    untagged_variant: rustc_untagged,
+                                    niche_variants,
+                                    niche_start: rustc_niche_start,
+                                },
+                            tag_field,
+                            ..
+                        } => {
+                            let primitive = match tag {
+                                rustc_public::abi::Scalar::Initialized { value, .. }
+                                | rustc_public::abi::Scalar::Union { value } => *value,
+                            };
+                            layout_kind = dialect_mir::types::enum_layout_kind::NICHE;
+                            tag_offset = crate::translator::layout::enum_tag_offset(
                                 &layout_shape.fields,
                                 *tag_field,
                                 pliron::location::Location::Unknown,
                             )? as u64;
-                            (
-                                tag_ty.into(),
-                                tag_offset,
-                                layout_shape.size.bytes() as u64,
-                                layout_shape.abi_align,
-                            )
+                            carrier_width = primitive
+                                .size(&rustc_public::target::MachineInfo::target())
+                                .bits() as u32;
+                            match primitive {
+                                rustc_public::abi::Primitive::Int { .. } => {
+                                    carrier_kind = dialect_mir::types::enum_carrier_kind::INTEGER;
+                                }
+                                rustc_public::abi::Primitive::Pointer(address_space) => {
+                                    carrier_kind = dialect_mir::types::enum_carrier_kind::POINTER;
+                                    carrier_address_space = address_space.0;
+                                    if carrier_address_space == 3 {
+                                        return input_err_noloc!(TranslationErr::unsupported(
+                                            format!(
+                                                "Niche pointer carrier for {} is in shared address space 3, whose width differs between PTX/legacy and modern NVVM; target-agnostic enum lowering cannot represent it",
+                                                enum_name
+                                            )
+                                        ));
+                                    }
+                                    if carrier_width != 64 {
+                                        return input_err_noloc!(TranslationErr::unsupported(
+                                            format!(
+                                                "Niche pointer carrier for {} is {} bits in address space {}; cuda-oxide requires 64-bit non-shared pointers",
+                                                enum_name, carrier_width, carrier_address_space
+                                            )
+                                        ));
+                                    }
+                                }
+                                rustc_public::abi::Primitive::Float { .. } => {
+                                    return input_err_noloc!(TranslationErr::unsupported(format!(
+                                        "Niche carrier for {} is a floating-point scalar",
+                                        enum_name
+                                    )));
+                                }
+                            }
+                            niche_start = *rustc_niche_start;
+                            niche_variant_start = niche_variants.start().to_index() as u32;
+                            niche_variant_end = niche_variants.end().to_index() as u32;
+                            untagged_variant = rustc_untagged.to_index() as u32;
+                            logical_discriminant_ty
                         }
-                        rustc_public::abi::VariantsShape::Multiple {
-                            tag_encoding: rustc_public::abi::TagEncoding::Niche { .. },
-                            ..
-                        } => {
-                            // Niche-encoded enums (e.g. Option<&T>) store
-                            // no tag in rustc's layout; the variant is
-                            // COMPUTED from the payload (null means None).
-                            // Our discriminant/construct ops only know the
-                            // load-a-tag / store-a-tag shape, so until
-                            // that decode logic is ported, the device
-                            // models these enums with an explicit
-                            // variant-count tag of its own, and mir-lower
-                            // rebuilds the aggregate from
-                            // `NicheEncodingAttr`
-                            // (`emit_scalar_to_niched_enum`). Reading
-                            // rustc's niche tag (the payload scalar
-                            // itself) here would break that contract.
-                            // Size/align stay 0 ("layout not recorded"):
-                            // this model is device-private and must never
-                            // meet host bytes; the kernel-boundary check
-                            // in mir-lower enforces exactly that.
-                            let tag_ty = pliron::builtin::types::IntegerType::get(
-                                ctx,
-                                variant_count_bits,
-                                pliron::builtin::types::Signedness::Unsigned,
-                            );
-                            (tag_ty.into(), 0u64, 0u64, 0u64)
-                        }
-                        rustc_public::abi::VariantsShape::Single { .. } => {
-                            // NOT an error: rustc reports `Single` for
-                            // multi-syntactic-variant enums where all but
-                            // one variant is uninhabited (e.g.
-                            // `Result<T, Infallible>` from `TryFrom`).
-                            // There is no tag in memory; keep the
-                            // variant-count tag so in-kernel construct +
-                            // discriminant reads stay self-consistent.
-                            let tag_ty = pliron::builtin::types::IntegerType::get(
-                                ctx,
-                                variant_count_bits,
-                                pliron::builtin::types::Signedness::Unsigned,
-                            );
-                            (tag_ty.into(), 0u64, 0u64, 0u64)
+                        rustc_public::abi::VariantsShape::Single { index } => {
+                            layout_kind = dialect_mir::types::enum_layout_kind::SINGLE;
+                            single_variant = index.to_index() as u32;
+                            logical_discriminant_ty
                         }
                         rustc_public::abi::VariantsShape::Empty => {
-                            // Fully uninhabited enums (e.g. `Infallible`)
-                            // appear in statically-dead paths of core
-                            // library code (`Result<T, Infallible>` match
-                            // arms, iterator adapters). The TYPE must
-                            // translate so those dead arms lower; rustc
-                            // gives it a zero-sized layout with no tag.
-                            // Keep the variant-count tag for shape
-                            // consistency. Materializing a VALUE of an
-                            // uninhabited enum still fails loudly
-                            // ("Cannot materialize a constant for an
-                            // uninhabited enum", rvalue.rs).
-                            let tag_ty = pliron::builtin::types::IntegerType::get(
-                                ctx,
-                                variant_count_bits,
-                                pliron::builtin::types::Signedness::Unsigned,
-                            );
-                            (tag_ty.into(), 0u64, 0u64, 0u64)
+                            layout_kind = dialect_mir::types::enum_layout_kind::EMPTY;
+                            logical_discriminant_ty
                         }
                     };
 
-                    // Declared discriminant VALUES (not variant indices),
-                    // truncated by rustc to the tag width's unsigned bit
-                    // pattern. They must fit in the u64 the dialect stores;
-                    // 128-bit discriminants would silently alias otherwise.
+                    // Declared discriminant VALUES (not variant indices).
+                    // Stable MIR exposes negative values sign-extended in a
+                    // u128, so Direct, Single, and all-uninhabited Empty
+                    // layouts must mask them to the width rustc actually
+                    // uses. Empty may still have source variants; it merely
+                    // has no valid physical value. The dialect currently
+                    // stores discriminants in u64, so reject wider forms
+                    // explicitly rather than silently aliasing them (#306).
+                    let logical_width = discriminant_ty
+                        .deref(ctx)
+                        .downcast_ref::<pliron::builtin::types::IntegerType>()
+                        .map(pliron::builtin::types::IntegerType::width)
+                        .ok_or_else(|| {
+                            input_error_noloc!(TranslationErr::unsupported(format!(
+                                "Enum {} has a non-integer logical discriminant",
+                                enum_name
+                            )))
+                        })?;
                     let mut variant_discriminants = Vec::with_capacity(variants.len());
                     for idx in 0..variants.len() {
                         let variant_idx = rustc_public::ty::VariantIdx::to_val(idx);
                         let discr = adt_def.discriminant_for_variant(variant_idx);
-                        let discr_val = u64::try_from(discr.val).map_err(|_| {
-                            input_error_noloc!(TranslationErr::unsupported(format!(
-                                "Enum discriminant {} for {} variant {} does not fit in 64 bits",
-                                discr.val, enum_name, idx
-                            )))
-                        })?;
+                        let discr_val = match layout_kind {
+                            dialect_mir::types::enum_layout_kind::NICHE => {
+                                if discr.val != idx as u128 {
+                                    return input_err_noloc!(TranslationErr::unsupported(format!(
+                                        "Niche enum {} has declared discriminant {} for variant {}; rustc niche encoding requires discriminant == variant index",
+                                        enum_name, discr.val, idx
+                                    )));
+                                }
+                                idx as u64
+                            }
+                            dialect_mir::types::enum_layout_kind::DIRECT
+                            | dialect_mir::types::enum_layout_kind::SINGLE
+                            | dialect_mir::types::enum_layout_kind::EMPTY => {
+                                let width = if layout_kind
+                                    == dialect_mir::types::enum_layout_kind::DIRECT
+                                {
+                                    carrier_width
+                                } else {
+                                    logical_width
+                                };
+                                if width > 64 {
+                                    return input_err_noloc!(TranslationErr::unsupported(format!(
+                                        "Enum {} uses a {}-bit discriminant; widths above 64 bits are not yet represented losslessly (issue #306)",
+                                        enum_name, width
+                                    )));
+                                }
+                                let mask = if width == 64 {
+                                    u128::from(u64::MAX)
+                                } else {
+                                    (1u128 << width) - 1
+                                };
+                                (discr.val & mask) as u64
+                            }
+                            _ => unreachable!("importer always records a known enum layout"),
+                        };
                         variant_discriminants.push(discr_val);
                     }
 
-                    // Translate each variant. When the layout is recorded
-                    // (total_size > 0), also note where each field lives,
-                    // using the same shared helper constant decoding uses.
+                    // Translate each variant and record where every field
+                    // lives, using the same shared helper constant decoding
+                    // uses. Known Empty/Single layouts may have size zero.
                     // Positions repeat across variants: variants share
                     // bytes, since only one is alive at a time.
                     let mut enum_variants = Vec::with_capacity(variants.len());
                     for (variant_idx, variant) in variants.iter().enumerate() {
                         let fields = variant.fields();
                         let mut field_types = Vec::with_capacity(fields.len());
+                        let mut field_sizes = Vec::with_capacity(fields.len());
+                        let mut inhabited = true;
                         for field in fields {
                             let field_ty = field.ty_with_args(&substs);
+                            let field_layout = field_ty.layout().map_err(|e| {
+                                input_error_noloc!(TranslationErr::unsupported(format!(
+                                    "Failed to query layout of field in {} variant {}: {:?}",
+                                    enum_name, variant_idx, e
+                                )))
+                            })?;
+                            if !monomorphized_ty_is_inhabited(&field_ty)? {
+                                inhabited = false;
+                            }
+                            field_sizes.push(field_layout.shape().size.bytes() as u64);
                             let translated_ty = translate_type(ctx, &field_ty)?;
                             field_types.push(translated_ty);
                         }
-                        if total_size > 0 {
-                            let field_offsets: Vec<u64> =
-                                crate::translator::layout::enum_variant_field_offsets(
-                                    &layout_shape,
-                                    variant_idx,
-                                    pliron::location::Location::Unknown,
-                                )?
-                                .into_iter()
-                                .map(|o| o as u64)
-                                .collect();
-                            enum_variants.push(EnumVariant::new_with_offsets(
-                                variant.name().to_string(),
-                                field_types,
-                                field_offsets,
-                            ));
-                        } else {
-                            enum_variants
-                                .push(EnumVariant::new(variant.name().to_string(), field_types));
+                        if matches!(
+                            layout_kind,
+                            dialect_mir::types::enum_layout_kind::DIRECT
+                                | dialect_mir::types::enum_layout_kind::NICHE
+                                | dialect_mir::types::enum_layout_kind::SINGLE
+                        ) {
+                            variant_inhabited[variant_idx] = inhabited;
                         }
+                        let field_offsets: Vec<u64> = match &layout_shape.variants {
+                            rustc_public::abi::VariantsShape::Single { index }
+                                if index.to_index() != variant_idx =>
+                            {
+                                vec![0; field_types.len()]
+                            }
+                            rustc_public::abi::VariantsShape::Empty => {
+                                vec![0; field_types.len()]
+                            }
+                            _ => crate::translator::layout::enum_variant_field_offsets(
+                                &layout_shape,
+                                variant_idx,
+                                pliron::location::Location::Unknown,
+                            )?
+                            .into_iter()
+                            .map(|o| o as u64)
+                            .collect(),
+                        };
+                        enum_variants.push(EnumVariant::new_with_layout(
+                            variant.name().to_string(),
+                            field_types,
+                            field_offsets,
+                            field_sizes,
+                        ));
                     }
 
                     // Create the enum type
-                    Ok(MirEnumType::get_with_layout(
+                    Ok(MirEnumType::get_with_encoding(
                         ctx,
                         enum_name,
                         discriminant_ty,
@@ -922,6 +1097,17 @@ pub fn translate_type(
                         tag_offset,
                         total_size,
                         abi_align,
+                        layout_kind,
+                        carrier_kind,
+                        carrier_width,
+                        carrier_address_space,
+                        niche_start as u64,
+                        (niche_start >> 64) as u64,
+                        niche_variant_start,
+                        niche_variant_end,
+                        untagged_variant,
+                        single_variant,
+                        variant_inhabited.into_iter().map(u8::from).collect(),
                     )
                     .into())
                 }
