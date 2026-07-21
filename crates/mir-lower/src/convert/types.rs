@@ -723,6 +723,118 @@ fn llvm_type_contains_pointer(ctx: &Context, ty: TypeHandle) -> bool {
     false
 }
 
+/// One pointer-valued leaf in an LLVM aggregate's physical storage.
+///
+/// Offsets are absolute within the enclosing enum. Keeping the address space
+/// in the identity prevents an AS0 pointer carrier from being treated as the
+/// same storage as an AS1 payload pointer merely because both are eight bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct LlvmPointerStorage {
+    offset: u64,
+    size: u64,
+    address_space: u32,
+}
+
+/// Record every pointer-valued leaf in `ty` at its natural LLVM byte offset.
+///
+/// This is deliberately a physical-layout walk rather than a simple
+/// `contains_pointer` predicate. A niche carrier may be one field inside an
+/// aggregate payload, for example the pointer at byte 8 in
+/// `Option<(usize, &T)>`. In that case the aggregate and the carrier overlap,
+/// but they agree exactly about which bytes hold the pointer.
+fn collect_llvm_pointer_storage(
+    ctx: &Context,
+    ty: TypeHandle,
+    base_offset: u64,
+    out: &mut Vec<LlvmPointerStorage>,
+) -> Option<()> {
+    let ty_ref = ty.deref(ctx);
+    if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
+        let (size, _) = llvm_type_size_align(ctx, ty)?;
+        out.push(LlvmPointerStorage {
+            offset: base_offset,
+            size,
+            address_space: pointer.address_space(),
+        });
+        return Some(());
+    }
+    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+        // Expanding an arbitrary array into one record per pointer would let
+        // a valid but enormous type consume unbounded verifier memory. This
+        // repair needs only fixed structs; keep pointer arrays fail-closed.
+        return (!llvm_type_contains_pointer(ctx, array.elem_type())).then_some(());
+    }
+    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+        // Pointer vectors have the same unbounded-expansion problem as arrays
+        // and also carry vector-specific ABI alignment. Reject rather than
+        // approximating either property.
+        return (!llvm_type_contains_pointer(ctx, vector.elem_type())).then_some(());
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+        let fields: Vec<_> = struct_ty.fields().collect();
+        let mut end = 0u64;
+        for field in fields {
+            let (field_size, field_align) = llvm_type_size_align(ctx, field)?;
+            let field_align = field_align.max(1);
+            let remainder = end % field_align;
+            let field_offset = if remainder == 0 {
+                end
+            } else {
+                end.checked_add(field_align - remainder)?
+            };
+            collect_llvm_pointer_storage(ctx, field, base_offset.checked_add(field_offset)?, out)?;
+            end = field_offset.checked_add(field_size)?;
+        }
+        return Some(());
+    }
+
+    // All pointer-bearing LLVM types understood by this lowering are handled
+    // above. Unknown pointer containers must fail closed.
+    (!llvm_type_contains_pointer(ctx, ty)).then_some(())
+}
+
+/// Whether a slotless incoming field and the already selected enum storage
+/// agree exactly about every pointer byte covered by that field.
+///
+/// Equality here is intentionally strict: the same absolute offset, extent,
+/// and address space must appear on both sides. This admits the real rustc
+/// layout of `Option<(usize, &T)>`, while continuing to reject a pointer
+/// variant sharing bytes with integer bits or an aggregate with an additional
+/// pointer for which the enum has only raw-byte storage.
+fn pointer_storage_matches_claims(
+    ctx: &Context,
+    incoming_offset: u64,
+    incoming_size: u64,
+    incoming_ty: TypeHandle,
+    colliding_claims: &[&(u64, u64, TypeHandle)],
+) -> bool {
+    let Some(incoming_end) = incoming_offset.checked_add(incoming_size) else {
+        return false;
+    };
+    let mut incoming = Vec::new();
+    if collect_llvm_pointer_storage(ctx, incoming_ty, incoming_offset, &mut incoming).is_none() {
+        return false;
+    }
+
+    let mut existing = Vec::new();
+    for &&(offset, _size, claim_ty) in colliding_claims {
+        let mut regions = Vec::new();
+        if collect_llvm_pointer_storage(ctx, claim_ty, offset, &mut regions).is_none() {
+            return false;
+        }
+        existing.extend(regions.into_iter().filter(|region| {
+            let Some(region_end) = region.offset.checked_add(region.size) else {
+                return true;
+            };
+            region.offset < incoming_end && incoming_offset < region_end
+        }));
+    }
+
+    incoming.sort_unstable();
+    existing.sort_unstable();
+    incoming == existing
+}
+
 pub(crate) fn llvm_type_contains_pointer_in_address_space(
     ctx: &Context,
     ty: TypeHandle,
@@ -811,6 +923,130 @@ fn mir_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
             .any(|field| mir_type_contains_i1(ctx, field));
     }
     false
+}
+
+/// Whether a stored MIR value contains a non-empty tuple whose rustc field
+/// offsets are not represented in `MirTupleType`.
+///
+/// Pointees are deliberately not inspected: their bytes are outside the value
+/// being laid out. Nested enums validate their own payloads when converted.
+fn mir_type_contains_unmodeled_tuple(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if let Some(tuple) = ty_ref.downcast_ref::<MirTupleType>() {
+        return !tuple.get_types().is_empty();
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        return struct_ty
+            .field_types()
+            .iter()
+            .copied()
+            .any(|field| mir_type_contains_unmodeled_tuple(ctx, field));
+    }
+    if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        return mir_type_contains_unmodeled_tuple(ctx, array_ty.element_ty);
+    }
+    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
+        return union_ty
+            .field_types()
+            .iter()
+            .copied()
+            .any(|field| mir_type_contains_unmodeled_tuple(ctx, field));
+    }
+    false
+}
+
+/// Whether `ty` has enough MIR-level layout information to use as one word of
+/// the narrowly proven tuple-niche shape below.
+fn mir_type_has_recorded_word_layout(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if ty_ref.is::<IntegerType>()
+        || ty_ref.is::<FP32Type>()
+        || ty_ref.is::<FP64Type>()
+        || ty_ref.is::<llvm_types::HalfType>()
+        || ty_ref.is::<dialect_mir::types::MirPtrType>()
+    {
+        return true;
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        if struct_ty.field_types().is_empty() {
+            return true;
+        }
+        return struct_ty.total_size() > 0
+            && struct_ty.abi_align > 0
+            && struct_ty.field_offsets().len() == struct_ty.field_types().len()
+            && struct_ty
+                .field_types()
+                .iter()
+                .copied()
+                .all(|field| mir_type_has_recorded_word_layout(ctx, field));
+    }
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+        return tuple_ty.get_types().is_empty();
+    }
+    if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        return mir_type_has_recorded_word_layout(ctx, array_ty.element_ty);
+    }
+    false
+}
+
+/// Prove the only non-empty tuple payload shape accepted without general
+/// tuple-offset metadata.
+///
+/// For a two-word pointer niche, rustc's carrier offset identifies the exact
+/// pointer word. If both tuple elements are independently byte-faithful
+/// eight-byte values, the other element must occupy the remaining word. The
+/// pointer-region comparison later still checks the actual offset and address
+/// space; this helper only establishes that no third or partially modeled
+/// tuple field can hide in the payload.
+#[allow(clippy::too_many_arguments)]
+fn is_proven_two_word_pointer_niche_tuple(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+    llvm_ty: TypeHandle,
+    rustc_size: u64,
+    layout_kind: u8,
+    carrier_kind: u8,
+    carrier_width: u32,
+) -> bool {
+    if layout_kind != enum_layout_kind::NICHE
+        || carrier_kind != enum_carrier_kind::POINTER
+        || carrier_width != 64
+        || rustc_size != 16
+        || llvm_type_size_align(ctx, llvm_ty) != Some((16, 8))
+        || !llvm_type_is_byte_faithful(ctx, llvm_ty)
+    {
+        return false;
+    }
+
+    let fields = {
+        let ty_ref = mir_ty.deref(ctx);
+        let Some(tuple) = ty_ref.downcast_ref::<MirTupleType>() else {
+            return false;
+        };
+        tuple.get_types().to_vec()
+    };
+    if fields.len() != 2 {
+        return false;
+    }
+
+    let mut direct_pointer_fields = 0usize;
+    for field in fields {
+        if !mir_type_has_recorded_word_layout(ctx, field) {
+            return false;
+        }
+        let is_direct_pointer = field.deref(ctx).is::<dialect_mir::types::MirPtrType>();
+        direct_pointer_fields += usize::from(is_direct_pointer);
+        let Ok(converted) = convert_type(ctx, field) else {
+            return false;
+        };
+        if llvm_type_size_align(ctx, converted).is_none_or(|(size, _)| size != 8)
+            || !llvm_type_is_byte_faithful(ctx, converted)
+            || (!is_direct_pointer && llvm_type_contains_pointer(ctx, converted))
+        {
+            return false;
+        }
+    }
+    direct_pointer_fields == 1
 }
 
 /// Whether loading and storing this LLVM value preserves every byte in its
@@ -1341,26 +1577,53 @@ pub(crate) fn build_enum_slot_map(
             continue;
         }
         // The bytes are taken by a different type. Pointer-free values can
-        // use the memory fallback below. A pointer
-        // cannot: spilling/reloading it through a struct whose corresponding
-        // bytes have a non-pointer type erases LLVM provenance. Likewise an
-        // overlapping non-pointer value cannot be spilled through a pointer
-        // slot without creating a pointer from unrelated bytes.
+        // use the memory fallback below. Pointer-bearing values may do so only
+        // when a physical-layout walk proves that every pointer leaf exactly
+        // matches an existing pointer slot. This is the common
+        // `Option<(usize, &T)>` shape: the niche carrier is the tuple's pointer
+        // field. A pointer/non-pointer overlap, address-space mismatch, or
+        // additional pointer without a pointer slot still fails closed.
         let colliding_claims = claims
             .iter()
             .filter(|&&(o, s, _)| offset < o + s && o < offset + size)
             .collect::<Vec<_>>();
         if !colliding_claims.is_empty() {
-            if llvm_type_contains_pointer(ctx, llvm_ty)
+            let has_pointer_overlap = llvm_type_contains_pointer(ctx, llvm_ty)
                 || colliding_claims
                     .iter()
-                    .any(|&&(_, _, claim_ty)| llvm_type_contains_pointer(ctx, claim_ty))
-            {
-                return Err(anyhow::anyhow!(
-                    "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
-                    name,
-                    offset
-                ));
+                    .any(|&&(_, _, claim_ty)| llvm_type_contains_pointer(ctx, claim_ty));
+            if has_pointer_overlap {
+                // MirTupleType currently records declaration-order field
+                // types but not rustc's physical field offsets. Restrict the
+                // new aggregate-pointer overlap support to the one tuple
+                // shape whose complete layout can be proved without that
+                // metadata: a two-word pointer niche where the carrier pins
+                // the exact pointer word and the other byte-faithful word
+                // occupies the remaining eight bytes.
+                if mir_type_contains_unmodeled_tuple(ctx, all_field_types[flat])
+                    && !is_proven_two_word_pointer_niche_tuple(
+                        ctx,
+                        all_field_types[flat],
+                        llvm_ty,
+                        all_field_sizes[flat],
+                        layout_kind,
+                        carrier_kind,
+                        carrier_width,
+                    )
+                {
+                    return Err(anyhow::anyhow!(
+                        "enum slot map: `{}` field {} contains a non-empty tuple whose rustc field offsets are not preserved; only an exact two-word pointer-niche tuple is currently supported for overlapping pointer storage",
+                        name,
+                        flat
+                    ));
+                }
+                if !pointer_storage_matches_claims(ctx, offset, size, llvm_ty, &colliding_claims) {
+                    return Err(anyhow::anyhow!(
+                        "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
+                        name,
+                        offset
+                    ));
+                }
             }
             let incoming_is_byte_faithful = llvm_type_is_byte_faithful(ctx, llvm_ty);
             let claims_are_byte_faithful = colliding_claims
@@ -1828,7 +2091,8 @@ mod tests {
 
     use super::*;
     use dialect_mir::types::{
-        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirUnionType,
+        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
+        MirUnionType,
     };
 
     fn make_ctx() -> Context {
@@ -2462,6 +2726,240 @@ mod tests {
                 .deref(&ctx)
                 .is::<llvm_types::PointerType>()
         );
+    }
+
+    #[test]
+    fn enum_slot_map_accepts_pointer_first_and_pointer_second_aggregate_niches() {
+        for pointer_first in [true, false] {
+            let mut ctx = make_ctx();
+            let logical = mir_uint(&mut ctx, 64);
+            let index = mir_uint(&mut ctx, 64);
+            let pointee = mir_uint(&mut ctx, 32);
+            let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+            let payload_types = if pointer_first {
+                vec![pointer, index]
+            } else {
+                vec![index, pointer]
+            };
+            let payload: TypeHandle = MirTupleType::get(&mut ctx, payload_types).into();
+            let tag_offset = if pointer_first { 0 } else { 8 };
+            let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+                &mut ctx,
+                "MaybeIndexedRef".into(),
+                logical,
+                vec![0, 1],
+                vec![
+                    EnumVariant::unit("None".into()),
+                    EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
+                ],
+                tag_offset,
+                16,
+                8,
+                enum_layout_kind::NICHE,
+                enum_carrier_kind::POINTER,
+                64,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                vec![1, 1],
+            )
+            .into();
+
+            let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+            assert_eq!(map.field_slots, vec![None]);
+            assert_eq!(map.carrier_slot, Some(if pointer_first { 0 } else { 1 }));
+            assert_eq!(
+                llvm_type_size_align(&ctx, map.llvm_struct_ty),
+                Some((16, 8))
+            );
+            let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
+            let padding = pad(&mut ctx, 8);
+            let expected = if pointer_first {
+                vec![lowered_pointer, padding]
+            } else {
+                vec![padding, lowered_pointer]
+            };
+            assert_eq!(struct_fields(&ctx, map.llvm_struct_ty), expected);
+        }
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_aggregate_with_unrepresented_pointer_leaf() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let pointee = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let payload: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "TwoRefs".into(),
+            vec!["first".into(), "second".into()],
+            vec![pointer, pointer],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybeTwoRefs".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
+            ],
+            8,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("the first pointer has no provenance-preserving storage slot");
+        assert!(error.to_string().contains("pointer provenance"), "{error}");
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_three_field_tuple_even_when_pointer_slot_matches() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let word = mir_uint(&mut ctx, 32);
+        let float: TypeHandle = FP32Type::get(&ctx).into();
+        let pointee = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let payload: TypeHandle = MirTupleType::get(&mut ctx, vec![word, float, pointer]).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybeMixedTuple".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
+            ],
+            8,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("matching the pointer word alone must not prove other tuple field offsets");
+        assert!(
+            error
+                .to_string()
+                .contains("non-empty tuple whose rustc field offsets are not preserved"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_shifted_nested_pointer_carrier() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let index = mir_uint(&mut ctx, 64);
+        let pointee = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let payload: TypeHandle = MirTupleType::get(&mut ctx, vec![index, pointer]).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "ShiftedPointerCarrier".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
+            ],
+            0,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("pointer leaves at different offsets must not be conflated");
+        assert!(error.to_string().contains("pointer provenance"), "{error}");
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_nested_carrier_address_space_mismatch() {
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let index = mir_uint(&mut ctx, 64);
+        let pointee = mir_uint(&mut ctx, 32);
+        let generic_pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let payload: TypeHandle = MirTupleType::get(&mut ctx, vec![generic_pointer, index]).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MismatchedPointerSpace".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
+            ],
+            0,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            llvm_types::address_space::GLOBAL,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("equal byte ranges in different address spaces must not alias");
+        assert!(error.to_string().contains("pointer provenance"), "{error}");
     }
 
     #[test]

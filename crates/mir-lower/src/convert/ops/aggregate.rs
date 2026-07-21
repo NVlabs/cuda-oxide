@@ -1469,7 +1469,7 @@ mod tests {
     use crate::convert::ops::test_util::*;
     use dialect_mir::attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr};
     use dialect_mir::ops as mir;
-    use dialect_mir::types::{EnumVariant, MirPtrType, MirSliceType, MirStructType};
+    use dialect_mir::types::{EnumVariant, MirPtrType, MirSliceType, MirStructType, MirTupleType};
     use llvm_export::types as llvm_types;
     use pliron::builtin::attributes::IntegerAttr;
     use pliron::common_traits::Verify;
@@ -1774,6 +1774,141 @@ mod tests {
             tag_integer.value().to_u64(),
             255,
             "Less must lower to its declared i8 bit-pattern 255, not variant index 0"
+        );
+    }
+
+    #[test]
+    fn nested_pointer_niche_tuple_construct_extract_and_discriminant_lower() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let index: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![index, pointer]).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "Option".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![tuple_ty], vec![0], vec![16]),
+            ],
+            8,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(slot_map.carrier_slot, Some(1));
+        assert_eq!(slot_map.field_slots, vec![None]);
+        let lowered_tuple = convert_type(&mut ctx, tuple_ty).unwrap();
+
+        let (module, block) = build_kernel(&mut ctx, vec![index, pointer], vec![]);
+        let index_value = block.deref(&ctx).get_argument(0);
+        let pointer_value = block.deref(&ctx).get_argument(1);
+        let tuple = Operation::new(
+            &mut ctx,
+            mir::MirConstructTupleOp::get_concrete_op_info(),
+            vec![tuple_ty],
+            vec![index_value, pointer_value],
+            vec![],
+            0,
+        );
+        tuple.insert_at_back(block, &ctx);
+        let tuple_value = tuple.deref(&ctx).get_result(0);
+
+        let construct = Operation::new(
+            &mut ctx,
+            mir::MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![tuple_value],
+            vec![],
+            0,
+        );
+        mir::MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(1));
+        construct.insert_at_back(block, &ctx);
+        let enum_value = construct.deref(&ctx).get_result(0);
+
+        let payload = Operation::new(
+            &mut ctx,
+            mir::MirEnumPayloadOp::get_concrete_op_info(),
+            vec![tuple_ty],
+            vec![enum_value],
+            vec![],
+            0,
+        );
+        mir::MirEnumPayloadOp::new(payload)
+            .set_attr_payload_variant_index(&ctx, VariantIndexAttr(1));
+        mir::MirEnumPayloadOp::new(payload).set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+        payload.insert_at_back(block, &ctx);
+
+        let discriminant = Operation::new(
+            &mut ctx,
+            mir::MirGetDiscriminantOp::get_concrete_op_info(),
+            vec![logical],
+            vec![enum_value],
+            vec![],
+            0,
+        );
+        discriminant.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::IntToPtrOp>(&ctx, &body),
+            0,
+            "constructing the untagged Some payload must not recreate its pointer from bits"
+        );
+        assert_eq!(
+            count_ops::<llvm::PtrToIntOp>(&ctx, &body),
+            1,
+            "reading the pointer niche should inspect the carrier exactly once"
+        );
+        assert_eq!(
+            count_ops::<llvm::StoreOp>(&ctx, &body),
+            3,
+            "construction and extraction should each spill the enum, plus one tuple payload store"
+        );
+        assert_eq!(
+            count_ops::<llvm::LoadOp>(&ctx, &body),
+            2,
+            "construction should reload the enum and extraction should load the tuple payload"
+        );
+        assert_eq!(
+            find_all::<llvm::StoreOp>(&ctx, &body)
+                .iter()
+                .filter(|store| store.get_operand_value(&ctx).get_type(&ctx) == lowered_tuple)
+                .count(),
+            1,
+            "the complete {{i64, ptr}} payload must be written into the enum storage"
+        );
+        assert_eq!(
+            find_all::<llvm::LoadOp>(&ctx, &body)
+                .iter()
+                .filter(|load| {
+                    load.get_operation()
+                        .deref(&ctx)
+                        .get_result(0)
+                        .get_type(&ctx)
+                        == lowered_tuple
+                })
+                .count(),
+            1,
+            "payload extraction must read the complete {{i64, ptr}} tuple back"
         );
     }
 
