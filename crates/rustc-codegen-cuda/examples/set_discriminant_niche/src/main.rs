@@ -64,6 +64,23 @@ enum MaybeWrapper {
     Some(Wrapper),
 }
 
+/// A bool nested inside an aggregate payload. The niche carrier is the
+/// bool's byte (at offset 4, after the u32): `None` stores the invalid bool
+/// value 2 there. Device construction must canonicalize that physical byte
+/// through the aggregate's byte-faithful twin, not store a bare `i1`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Flagged {
+    pad: u32,
+    flag: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MaybeFlagged {
+    None,
+    Some(Flagged),
+}
+
 // These values are copied as bytes to device memory. This example verifies
 // that cuda-oxide now gives those bytes exactly the same meaning as rustc.
 unsafe impl DeviceCopy for Basic {}
@@ -72,6 +89,8 @@ unsafe impl DeviceCopy for DirectBoolean {}
 unsafe impl DeviceCopy for InteriorBoolean {}
 unsafe impl DeviceCopy for Wrapper {}
 unsafe impl DeviceCopy for MaybeWrapper {}
+unsafe impl DeviceCopy for Flagged {}
+unsafe impl DeviceCopy for MaybeFlagged {}
 
 // Import-only probes for rustc's Empty and Single layout forms. Keeping them
 // in a kernel signature ensures the real importer sees zero- and one-variant
@@ -136,6 +155,14 @@ fn force_tuple_pointer_none(value: &mut Option<(u32, u32, &u32)>) {
     })
 }
 
+#[custom_mir(dialect = "runtime", phase = "optimized")]
+fn force_flagged_none(value: &mut MaybeFlagged) {
+    mir!({
+        SetDiscriminant(*value, 0);
+        Return()
+    })
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -156,6 +183,9 @@ mod kernels {
         mut observed_interior_boolean: DisjointSlice<u8>,
         mut pointer_niche_cleared: DisjointSlice<u8>,
         mut tuple_niche_checked: DisjointSlice<u8>,
+        mut nested_boolean: DisjointSlice<MaybeFlagged>,
+        mut constructed_nested_boolean: DisjointSlice<MaybeFlagged>,
+        mut observed_nested_boolean: DisjointSlice<u32>,
         mut nested: DisjointSlice<MaybeWrapper>,
         mut negative: DisjointSlice<Negative>,
         mut observed: DisjointSlice<u32>,
@@ -200,6 +230,18 @@ mod kernels {
             return;
         };
         let Some(tuple_niche_checked) = tuple_niche_checked.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(nested_boolean) = nested_boolean.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(constructed_nested_boolean) =
+            constructed_nested_boolean.get_mut(thread::index_1d())
+        else {
+            return;
+        };
+        let Some(observed_nested_boolean) = observed_nested_boolean.get_mut(thread::index_1d())
+        else {
             return;
         };
         let Some(negative) = negative.get_mut(thread::index_1d()) else {
@@ -278,6 +320,21 @@ mod kernels {
         *tuple_niche_checked =
             u8::from(tuple_sum == 0x1111_2222 + 12) | (u8::from(tuple_niche.is_none()) << 1);
 
+        // A bool nested inside an aggregate payload, with the niche in the
+        // bool's byte. Decoding reads host-written bytes, construction must
+        // write the canonical 0/1 flag byte through the aggregate's
+        // byte-faithful twin, and SetDiscriminant(None) must write the
+        // invalid bool value 2 into that same byte.
+        *observed_nested_boolean = match *nested_boolean {
+            MaybeFlagged::Some(value) => value.pad ^ u32::from(value.flag),
+            MaybeFlagged::None => u32::MAX,
+        };
+        *constructed_nested_boolean = MaybeFlagged::Some(Flagged {
+            pad: thread::index_1d().get() as u32,
+            flag: thread::index_1d().get() % 2 == 0,
+        });
+        force_flagged_none(nested_boolean);
+
         force_basic_none(&mut basic.0);
         force_boolean_none(&mut boolean.0);
         force_nested_none(nested);
@@ -304,6 +361,12 @@ fn main() {
     // Three-field tuple payload with a pointer niche: the pointer is the
     // carrier and rustc reorders it to byte 0.
     assert_eq!(std::mem::size_of::<Option<(u32, u32, &u32)>>(), 16);
+    // Nested-bool niche: no separate tag; `None` is the invalid bool value 2
+    // in the flag byte at offset 4.
+    assert_eq!(std::mem::size_of::<MaybeFlagged>(), 8);
+    let flagged_none_bytes =
+        unsafe { std::mem::transmute::<MaybeFlagged, [u8; 8]>(MaybeFlagged::None) };
+    assert_eq!(flagged_none_bytes[4], 2);
 
     // On this pinned rustc, `B(false)`/`B(true)` keep the valid bool carrier
     // bytes 0/1. `A` starts the niche range at 2; `B`'s position would be 3,
@@ -369,6 +432,26 @@ fn main() {
             _ => DirectBoolean::Empty,
         })
         .collect::<Vec<_>>();
+    let nested_boolean_host = (0..N)
+        .map(|index| match index % 3 {
+            0 => MaybeFlagged::None,
+            1 => MaybeFlagged::Some(Flagged {
+                pad: 0x5A00_0000 | index as u32,
+                flag: false,
+            }),
+            _ => MaybeFlagged::Some(Flagged {
+                pad: 0x5A00_0000 | index as u32,
+                flag: true,
+            }),
+        })
+        .collect::<Vec<_>>();
+    let expected_nested_boolean = nested_boolean_host
+        .iter()
+        .map(|value| match value {
+            MaybeFlagged::Some(value) => value.pad ^ u32::from(value.flag),
+            MaybeFlagged::None => u32::MAX,
+        })
+        .collect::<Vec<u32>>();
     let expected_direct_boolean = direct_boolean_host
         .iter()
         .map(|value| match value {
@@ -439,6 +522,9 @@ fn main() {
     let mut observed_interior_boolean_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
     let mut pointer_niche_cleared_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
     let mut tuple_niche_checked_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
+    let mut nested_boolean_device = DeviceBuffer::from_host(&stream, &nested_boolean_host).unwrap();
+    let mut constructed_nested_boolean_device = DeviceBuffer::zeroed(&stream, N).unwrap();
+    let mut observed_nested_boolean_device = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
     let mut nested_device = DeviceBuffer::from_host(&stream, &nested_host).unwrap();
     let mut negative_device = DeviceBuffer::from_host(&stream, &negative_host).unwrap();
     let mut observed_device = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
@@ -459,6 +545,9 @@ fn main() {
                 &mut observed_interior_boolean_device,
                 &mut pointer_niche_cleared_device,
                 &mut tuple_niche_checked_device,
+                &mut nested_boolean_device,
+                &mut constructed_nested_boolean_device,
+                &mut observed_nested_boolean_device,
                 &mut nested_device,
                 &mut negative_device,
                 &mut observed_device,
@@ -482,6 +571,11 @@ fn main() {
         .unwrap();
     let pointer_niche_cleared = pointer_niche_cleared_device.to_host_vec(&stream).unwrap();
     let tuple_niche_checked = tuple_niche_checked_device.to_host_vec(&stream).unwrap();
+    let nested_boolean_after = nested_boolean_device.to_host_vec(&stream).unwrap();
+    let constructed_nested_boolean = constructed_nested_boolean_device
+        .to_host_vec(&stream)
+        .unwrap();
+    let observed_nested_boolean = observed_nested_boolean_device.to_host_vec(&stream).unwrap();
     let nested_after = nested_device.to_host_vec(&stream).unwrap();
     assert_eq!(
         observed, expected,
@@ -509,6 +603,29 @@ fn main() {
     assert!(
         tuple_niche_checked.iter().all(|value| *value == 3),
         "tuple pointer-niche payload reads and SetDiscriminant(None) must both succeed on device"
+    );
+    assert_eq!(
+        observed_nested_boolean, expected_nested_boolean,
+        "device must decode host-written nested-bool niche bytes"
+    );
+    assert!(
+        nested_boolean_after
+            .iter()
+            .all(|value| matches!(value, MaybeFlagged::None)),
+        "SetDiscriminant(None) must write the invalid bool value into the nested flag byte"
+    );
+    assert!(
+        constructed_nested_boolean
+            .iter()
+            .enumerate()
+            .all(|(index, value)| {
+                *value
+                    == MaybeFlagged::Some(Flagged {
+                        pad: index as u32,
+                        flag: index % 2 == 0,
+                    })
+            }),
+        "device constructions must write canonical nested bool payload bytes"
     );
     assert!(
         nested_after

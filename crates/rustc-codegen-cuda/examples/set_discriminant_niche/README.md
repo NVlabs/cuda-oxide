@@ -3,7 +3,7 @@
 This positive test proves that niche-encoded enums have the same bytes on the
 host and device.
 
-It covers five niche shapes, a direct-tagged `bool` payload, and one signed
+It covers seven niche shapes, a direct-tagged `bool` payload, and one signed
 direct-tag shape:
 
 - `Option<NonZeroU32>`: `0` means `None` in one `u32`.
@@ -19,6 +19,15 @@ direct-tag shape:
   preserving pointer provenance instead of inventing an integer tag.
 - `MaybeWrapper`: the value used to distinguish `None` is a nested
   `NonZeroU32` at byte 4, after an ordinary `u32` field.
+- `MaybeFlagged`: the niche carrier is a `bool` nested inside the aggregate
+  payload (`struct { pad: u32, flag: bool }`), so `None` is the invalid bool
+  value `2` in the flag byte. Device construction writes the payload through
+  its byte-faithful twin, zero-extending the `i1` flag into its canonical
+  memory byte.
+- `Option<(u32, u32, &u32)>` (device-local): a multi-field tuple payload
+  whose pointer field is the niche carrier. rustc reorders the tuple
+  (pointer first) and the recorded tuple field offsets carry that placement
+  to the device.
 - `DirectBoolean`: a non-overlapping `bool` payload still occupies one complete
   byte after its four-byte direct tag. The lowered aggregate must use `i8`
   storage there, with explicit `i1` conversions at the value boundary.

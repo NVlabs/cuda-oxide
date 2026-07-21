@@ -1283,7 +1283,7 @@ fn test_mir_enum_ops_malformed_arity_is_diagnostic() {
 
 #[test]
 fn test_mir_enum_payload_rejects_uninhabited_variant() {
-    use dialect_mir::types::{enum_carrier_kind, enum_layout_kind};
+    use dialect_mir::types::{EnumCarrierKind, EnumEncoding, EnumLayoutKind};
 
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
@@ -1305,20 +1305,16 @@ fn test_mir_enum_payload_rejects_uninhabited_variant() {
                 vec![4],
             ),
         ],
-        0,
-        1,
-        1,
-        enum_layout_kind::DIRECT,
-        enum_carrier_kind::INTEGER,
-        8,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        vec![1, 0],
+        EnumEncoding {
+            tag_offset: 0,
+            total_size: 1,
+            abi_align: 1,
+            layout_kind: EnumLayoutKind::Direct,
+            carrier_kind: EnumCarrierKind::Integer,
+            carrier_width: 8,
+            variant_inhabited: vec![1, 0],
+            ..EnumEncoding::default()
+        },
     );
     assert!(enum_ty.verify(&ctx).is_ok());
 

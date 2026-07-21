@@ -832,7 +832,8 @@ mod tests {
     use dialect_mir::attributes::MirCastKindAttr;
     use dialect_mir::ops as mir;
     use dialect_mir::types::{
-        EnumVariant, MirEnumType, MirPtrType, MirStructType, enum_carrier_kind, enum_layout_kind,
+        EnumCarrierKind, EnumEncoding, EnumLayoutKind, EnumVariant, MirEnumType, MirPtrType,
+        MirStructType,
     };
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
@@ -949,20 +950,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![u32_ty], vec![0], vec![4]),
             ],
-            0,
-            4,
-            4,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::INTEGER,
-            32,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 4,
+                abi_align: 4,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into()
     }
@@ -978,20 +976,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![pointer], vec![0], vec![8]),
             ],
-            0,
-            8,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into()
     }

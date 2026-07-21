@@ -898,16 +898,16 @@ pub fn translate_statement(
             };
 
             match layout_kind {
-                dialect_mir::types::enum_layout_kind::SINGLE if variant_idx == single_variant => {
+                dialect_mir::types::EnumLayoutKind::Single if variant_idx == single_variant => {
                     return Ok(prev_op);
                 }
-                dialect_mir::types::enum_layout_kind::DIRECT
-                | dialect_mir::types::enum_layout_kind::NICHE => {}
+                dialect_mir::types::EnumLayoutKind::Direct
+                | dialect_mir::types::EnumLayoutKind::Niche => {}
                 other => {
                     return input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
-                            "SetDiscriminant cannot lower enum layout kind {}",
+                            "SetDiscriminant cannot lower enum layout kind {:?}",
                             other
                         ))
                     );

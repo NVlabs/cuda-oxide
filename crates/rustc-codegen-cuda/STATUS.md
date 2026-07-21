@@ -16,7 +16,6 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | `error`                               | diagnostics-fixture | `core::fmt` reachable from device   |
 | `error_drop_glue`                     | support-gap         | `TerminatorKind::Drop` (effectful)  |
 | `error_enum_constant_provenance`      | support-gap         | Enum constant pointer relocation    |
-| `error_enum_nested_bool_niche`        | support-gap         | Nested `bool` physical byte          |
 | `error_enum_pointer_overlap`          | support-gap         | Overlaid pointer/integer payload    |
 | `error_enum_shared_pointer_layout`    | support-gap         | Mode-dependent AS3 pointer width    |
 | `error_generated_intrinsic_abi`       | diagnostics-fixture | Unsupported raw intrinsic ABI       |
@@ -39,8 +38,10 @@ relocations cannot be flattened to bytes without replacing an address with
 the pointee's contents. Pointer and integer payloads cannot share one lowered
 slot without erasing LLVM pointer provenance. Shared-memory pointers are 64
 bits in PTX and legacy NVVM output but 32 bits in modern NVVM output, while MIR
-lowering does not yet know which exporter mode will be selected. A nested
-LLVM `i1` also cannot be re-read as Rust's complete one-byte `bool` storage
-without explicitly zero-extending it. Accepting any of these cases would risk
-generating wrong code, so they remain rejected until their information can be
-preserved through lowering.
+lowering does not yet know which exporter mode will be selected. Accepting
+any of these cases would risk generating wrong code, so they remain rejected
+until their information can be preserved through lowering. (Bools nested in
+aggregate payloads are no longer in this list: enum storage claims each
+payload's byte-faithful twin and construction zero-extends every `i1` leaf
+into its canonical memory byte, so `Option<struct { u32, bool }>` and
+friends lower exactly like rustc lays them out.)

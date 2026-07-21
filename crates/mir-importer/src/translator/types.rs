@@ -43,8 +43,8 @@ use rustc_public_bridge::IndexedVal;
 
 // Re-export types from dialect_mir for convenience
 pub use dialect_mir::types::{
-    EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirTupleType,
-    MirUnionType,
+    EnumEncoding, EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType,
+    MirTupleType, MirUnionType,
 };
 use rustc_public::mir::Mutability;
 
@@ -881,7 +881,7 @@ pub fn translate_type(
                     let abi_align = layout_shape.abi_align;
 
                     let layout_kind;
-                    let mut carrier_kind = dialect_mir::types::enum_carrier_kind::NONE;
+                    let mut carrier_kind = dialect_mir::types::EnumCarrierKind::None;
                     let mut carrier_width = 0u32;
                     let mut carrier_address_space = 0u32;
                     let mut tag_offset = 0u64;
@@ -910,8 +910,8 @@ pub fn translate_type(
                                     enum_name, primitive
                                 )));
                             };
-                            layout_kind = dialect_mir::types::enum_layout_kind::DIRECT;
-                            carrier_kind = dialect_mir::types::enum_carrier_kind::INTEGER;
+                            layout_kind = dialect_mir::types::EnumLayoutKind::Direct;
+                            carrier_kind = dialect_mir::types::EnumCarrierKind::Integer;
                             carrier_width = length.bits() as u32;
                             tag_offset = crate::translator::layout::enum_tag_offset(
                                 &layout_shape.fields,
@@ -944,7 +944,7 @@ pub fn translate_type(
                                 rustc_public::abi::Scalar::Initialized { value, .. }
                                 | rustc_public::abi::Scalar::Union { value } => *value,
                             };
-                            layout_kind = dialect_mir::types::enum_layout_kind::NICHE;
+                            layout_kind = dialect_mir::types::EnumLayoutKind::Niche;
                             tag_offset = crate::translator::layout::enum_tag_offset(
                                 &layout_shape.fields,
                                 *tag_field,
@@ -955,10 +955,10 @@ pub fn translate_type(
                                 .bits() as u32;
                             match primitive {
                                 rustc_public::abi::Primitive::Int { .. } => {
-                                    carrier_kind = dialect_mir::types::enum_carrier_kind::INTEGER;
+                                    carrier_kind = dialect_mir::types::EnumCarrierKind::Integer;
                                 }
                                 rustc_public::abi::Primitive::Pointer(address_space) => {
-                                    carrier_kind = dialect_mir::types::enum_carrier_kind::POINTER;
+                                    carrier_kind = dialect_mir::types::EnumCarrierKind::Pointer;
                                     carrier_address_space = address_space.0;
                                     if carrier_address_space == 3 {
                                         return input_err_noloc!(TranslationErr::unsupported(
@@ -991,12 +991,12 @@ pub fn translate_type(
                             logical_discriminant_ty
                         }
                         rustc_public::abi::VariantsShape::Single { index } => {
-                            layout_kind = dialect_mir::types::enum_layout_kind::SINGLE;
+                            layout_kind = dialect_mir::types::EnumLayoutKind::Single;
                             single_variant = index.to_index() as u32;
                             logical_discriminant_ty
                         }
                         rustc_public::abi::VariantsShape::Empty => {
-                            layout_kind = dialect_mir::types::enum_layout_kind::EMPTY;
+                            layout_kind = dialect_mir::types::EnumLayoutKind::Empty;
                             logical_discriminant_ty
                         }
                     };
@@ -1024,7 +1024,7 @@ pub fn translate_type(
                         let variant_idx = rustc_public::ty::VariantIdx::to_val(idx);
                         let discr = adt_def.discriminant_for_variant(variant_idx);
                         let discr_val = match layout_kind {
-                            dialect_mir::types::enum_layout_kind::NICHE => {
+                            dialect_mir::types::EnumLayoutKind::Niche => {
                                 if discr.val != idx as u128 {
                                     return input_err_noloc!(TranslationErr::unsupported(format!(
                                         "Niche enum {} has declared discriminant {} for variant {}; rustc niche encoding requires discriminant == variant index",
@@ -1033,16 +1033,15 @@ pub fn translate_type(
                                 }
                                 idx as u64
                             }
-                            dialect_mir::types::enum_layout_kind::DIRECT
-                            | dialect_mir::types::enum_layout_kind::SINGLE
-                            | dialect_mir::types::enum_layout_kind::EMPTY => {
-                                let width = if layout_kind
-                                    == dialect_mir::types::enum_layout_kind::DIRECT
-                                {
-                                    carrier_width
-                                } else {
-                                    logical_width
-                                };
+                            dialect_mir::types::EnumLayoutKind::Direct
+                            | dialect_mir::types::EnumLayoutKind::Single
+                            | dialect_mir::types::EnumLayoutKind::Empty => {
+                                let width =
+                                    if layout_kind == dialect_mir::types::EnumLayoutKind::Direct {
+                                        carrier_width
+                                    } else {
+                                        logical_width
+                                    };
                                 if width > 64 {
                                     return input_err_noloc!(TranslationErr::unsupported(format!(
                                         "Enum {} uses a {}-bit discriminant; widths above 64 bits are not yet represented losslessly (issue #306)",
@@ -1089,9 +1088,9 @@ pub fn translate_type(
                         }
                         if matches!(
                             layout_kind,
-                            dialect_mir::types::enum_layout_kind::DIRECT
-                                | dialect_mir::types::enum_layout_kind::NICHE
-                                | dialect_mir::types::enum_layout_kind::SINGLE
+                            dialect_mir::types::EnumLayoutKind::Direct
+                                | dialect_mir::types::EnumLayoutKind::Niche
+                                | dialect_mir::types::EnumLayoutKind::Single
                         ) {
                             variant_inhabited[variant_idx] = inhabited;
                         }
@@ -1128,20 +1127,24 @@ pub fn translate_type(
                         discriminant_ty,
                         variant_discriminants,
                         enum_variants,
-                        tag_offset,
-                        total_size,
-                        abi_align,
-                        layout_kind,
-                        carrier_kind,
-                        carrier_width,
-                        carrier_address_space,
-                        niche_start as u64,
-                        (niche_start >> 64) as u64,
-                        niche_variant_start,
-                        niche_variant_end,
-                        untagged_variant,
-                        single_variant,
-                        variant_inhabited.into_iter().map(u8::from).collect(),
+                        EnumEncoding {
+                            tag_offset,
+                            total_size,
+                            abi_align,
+                            layout_kind,
+                            carrier_kind,
+                            carrier_width,
+                            carrier_address_space,
+                            niche_start,
+                            niche_variant_start,
+                            niche_variant_end,
+                            untagged_variant,
+                            single_variant,
+                            variant_inhabited: variant_inhabited
+                                .into_iter()
+                                .map(u8::from)
+                                .collect(),
+                        },
                     )
                     .into())
                 }

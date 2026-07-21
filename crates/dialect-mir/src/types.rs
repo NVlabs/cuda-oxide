@@ -7,7 +7,7 @@
 
 use pliron::builtin::{type_interfaces::FloatTypeInterface, types::IntegerType};
 use pliron::context::Context;
-use pliron::derive::{pliron_type, type_interface_impl};
+use pliron::derive::{format, pliron_type, type_interface_impl};
 use pliron::location::Location;
 use pliron::result::Error;
 use pliron::r#type::{Type, TypeHandle, TypedHandle};
@@ -880,28 +880,74 @@ impl EnumVariant {
 /// * Only an `Empty` layout may have zero source variants.
 /// * Discriminant type must be an integer type.
 ///
-/// Values used by [`MirEnumType::layout_kind`].
+/// Physical rustc layout classification of an enum.
 ///
-/// These are integers rather than a Rust enum because `#[pliron_type]` needs
-/// every field to have the standard textual parser/formatter.
-pub mod enum_layout_kind {
-    pub const UNKNOWN: u8 = 0;
-    pub const DIRECT: u8 = 1;
-    pub const NICHE: u8 = 2;
-    pub const SINGLE: u8 = 3;
-    pub const EMPTY: u8 = 4;
+/// A first-class `#[format]` value (not an integer code) so pliron can
+/// print, parse, and verify it and the compiler rejects nonsense values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[format]
+pub enum EnumLayoutKind {
+    /// Legacy: layout was not recorded.
+    #[default]
+    Unknown,
+    /// A dedicated tag scalar stores the declared discriminant.
+    Direct,
+    /// The discriminant is encoded in otherwise-invalid payload values.
+    Niche,
+    /// One variant, no tag storage needed.
+    Single,
+    /// Zero inhabited variants; values of this type cannot exist.
+    Empty,
 }
 
-/// Values used by [`MirEnumType::carrier_kind`].
-pub mod enum_carrier_kind {
-    pub const NONE: u8 = 0;
-    pub const INTEGER: u8 = 1;
-    pub const POINTER: u8 = 2;
+/// Physical tag/niche carrier classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[format]
+pub enum EnumCarrierKind {
+    /// No carrier (Single/Empty/Unknown layouts).
+    #[default]
+    None,
+    /// The carrier scalar is an integer.
+    Integer,
+    /// The carrier scalar is a pointer (e.g. `Option<&T>`).
+    Pointer,
+}
+
+/// rustc's lossless `u128` niche start, kept as one first-class value.
+///
+/// pliron's textual format has no built-in `u128` field support, so this
+/// newtype provides the `Printable`/`Parsable` pair itself instead of
+/// splitting the value into two `u64` halves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct NicheStart(pub u128);
+
+impl std::fmt::Display for NicheStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pliron::impl_printable_for_display!(NicheStart);
+
+impl pliron::parsable::Parsable for NicheStart {
+    type Arg = ();
+    type Parsed = NicheStart;
+
+    fn parse<'a>(
+        state_stream: &mut pliron::parsable::StateStream<'a>,
+        _arg: Self::Arg,
+    ) -> pliron::parsable::ParseResult<'a, Self::Parsed> {
+        use combine::Parser;
+        pliron::irfmt::parsers::int_parser::<u128>()
+            .map(NicheStart)
+            .parse_stream(state_stream)
+            .into()
+    }
 }
 
 #[pliron_type(
     name = "mir.enum",
-    format = "`<` $name `,` $discriminant_ty `,` `[` vec($variant_names, CharSpace(`,`)) `]` `,` `[` vec($variant_discriminants, CharSpace(`,`)) `]` `,` `[` vec($variant_field_counts, CharSpace(`,`)) `]` `,` `[` vec($all_field_types, CharSpace(`,`)) `]` `,` `[` vec($all_field_offsets, CharSpace(`,`)) `]` `,` `[` vec($all_field_sizes, CharSpace(`,`)) `]` `,` $tag_offset `,` $total_size `,` $abi_align `,` $layout_kind `,` $carrier_kind `,` $carrier_width `,` $carrier_address_space `,` $niche_start_lo `,` $niche_start_hi `,` $niche_variant_start `,` $niche_variant_end `,` $untagged_variant `,` $single_variant `,` `[` vec($variant_inhabited, CharSpace(`,`)) `]` `>`"
+    format = "`<` $name `,` $discriminant_ty `,` `[` vec($variant_names, CharSpace(`,`)) `]` `,` `[` vec($variant_discriminants, CharSpace(`,`)) `]` `,` `[` vec($variant_field_counts, CharSpace(`,`)) `]` `,` `[` vec($all_field_types, CharSpace(`,`)) `]` `,` `[` vec($all_field_offsets, CharSpace(`,`)) `]` `,` `[` vec($all_field_sizes, CharSpace(`,`)) `]` `,` $tag_offset `,` $total_size `,` $abi_align `,` $layout_kind `,` $carrier_kind `,` $carrier_width `,` $carrier_address_space `,` $niche_start `,` $niche_variant_start `,` $niche_variant_end `,` $untagged_variant `,` $single_variant `,` `[` vec($variant_inhabited, CharSpace(`,`)) `]` `>`"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirEnumType {
@@ -940,17 +986,16 @@ pub struct MirEnumType {
     pub total_size: u64,
     /// ABI alignment in bytes, from rustc layout. 0 means unknown.
     pub abi_align: u64,
-    /// Physical rustc layout classification. See [`enum_layout_kind`].
-    pub layout_kind: u8,
-    /// Physical tag/niche carrier classification. See [`enum_carrier_kind`].
-    pub carrier_kind: u8,
+    /// Physical rustc layout classification.
+    pub layout_kind: EnumLayoutKind,
+    /// Physical tag/niche carrier classification.
+    pub carrier_kind: EnumCarrierKind,
     /// Physical carrier width in bits. Zero when there is no carrier.
     pub carrier_width: u32,
     /// Address space of a pointer carrier value. Zero for integer/no carrier.
     pub carrier_address_space: u32,
-    /// Low and high halves of rustc's lossless `u128` niche start.
-    pub niche_start_lo: u64,
-    pub niche_start_hi: u64,
+    /// rustc's lossless `u128` niche start.
+    pub niche_start: NicheStart,
     /// Inclusive variant-index interval described by rustc's niche encoding.
     pub niche_variant_start: u32,
     pub niche_variant_end: u32,
@@ -958,6 +1003,44 @@ pub struct MirEnumType {
     pub untagged_variant: u32,
     /// rustc-selected source variant for a `Single` layout. Its fields can
     /// still make that sole variant uninhabited.
+    pub single_variant: u32,
+    /// One byte per source variant: 1 means proven inhabited, 0 uninhabited.
+    pub variant_inhabited: Vec<u8>,
+}
+
+/// Complete physical encoding for [`MirEnumType::get_with_encoding`].
+///
+/// Named fields instead of positional parameters: most of these values are
+/// plain integers, and a positional list of thirteen of them is a
+/// transposition bug waiting to happen. Fields that do not apply to a given
+/// layout kind stay at their `Default` (zero) values, e.g.
+/// `EnumEncoding { total_size: 4, abi_align: 4, layout_kind:
+/// EnumLayoutKind::Niche, .. }`.
+#[derive(Clone, Debug, Default)]
+pub struct EnumEncoding {
+    /// Byte position of the tag/carrier inside the enum.
+    pub tag_offset: u64,
+    /// Total enum size in bytes from rustc layout (including padding).
+    pub total_size: u64,
+    /// ABI alignment in bytes, from rustc layout. 0 means unknown.
+    pub abi_align: u64,
+    /// Physical rustc layout classification.
+    pub layout_kind: EnumLayoutKind,
+    /// Physical tag/niche carrier classification.
+    pub carrier_kind: EnumCarrierKind,
+    /// Physical carrier width in bits. Zero when there is no carrier.
+    pub carrier_width: u32,
+    /// Address space of a pointer carrier value. Zero for integer/no carrier.
+    pub carrier_address_space: u32,
+    /// rustc's lossless `u128` niche start.
+    pub niche_start: u128,
+    /// Inclusive variant-index interval described by rustc's niche encoding.
+    pub niche_variant_start: u32,
+    /// Inclusive end of the niche variant-index interval.
+    pub niche_variant_end: u32,
+    /// Variant represented by an ordinary valid carrier value.
+    pub untagged_variant: u32,
+    /// rustc-selected source variant for a `Single` layout.
     pub single_variant: u32,
     /// One byte per source variant: 1 means proven inhabited, 0 uninhabited.
     pub variant_inhabited: Vec<u8>,
@@ -1005,11 +1088,11 @@ impl MirEnumType {
     ) -> TypedHandle<Self> {
         let variant_inhabited = vec![1; variants.len()];
         let layout_kind = if total_size > 0 {
-            enum_layout_kind::DIRECT
+            EnumLayoutKind::Direct
         } else {
-            enum_layout_kind::UNKNOWN
+            EnumLayoutKind::Unknown
         };
-        let carrier_width = if layout_kind == enum_layout_kind::DIRECT {
+        let carrier_width = if layout_kind == EnumLayoutKind::Direct {
             discriminant_ty
                 .deref(ctx)
                 .downcast_ref::<IntegerType>()
@@ -1024,50 +1107,47 @@ impl MirEnumType {
             discriminant_ty,
             variant_discriminants,
             variants,
-            tag_offset,
-            total_size,
-            abi_align,
-            layout_kind,
-            if layout_kind == enum_layout_kind::DIRECT {
-                enum_carrier_kind::INTEGER
-            } else {
-                enum_carrier_kind::NONE
+            EnumEncoding {
+                tag_offset,
+                total_size,
+                abi_align,
+                layout_kind,
+                carrier_kind: if layout_kind == EnumLayoutKind::Direct {
+                    EnumCarrierKind::Integer
+                } else {
+                    EnumCarrierKind::None
+                },
+                carrier_width,
+                variant_inhabited,
+                ..EnumEncoding::default()
             },
-            carrier_width,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            variant_inhabited,
         )
     }
 
     /// Create an enum type with its complete physical rustc encoding.
-    #[allow(clippy::too_many_arguments)]
     pub fn get_with_encoding(
         ctx: &mut Context,
         name: String,
         discriminant_ty: TypeHandle,
         variant_discriminants: Vec<u64>,
         variants: Vec<EnumVariant>,
-        tag_offset: u64,
-        total_size: u64,
-        abi_align: u64,
-        layout_kind: u8,
-        carrier_kind: u8,
-        carrier_width: u32,
-        carrier_address_space: u32,
-        niche_start_lo: u64,
-        niche_start_hi: u64,
-        niche_variant_start: u32,
-        niche_variant_end: u32,
-        untagged_variant: u32,
-        single_variant: u32,
-        variant_inhabited: Vec<u8>,
+        encoding: EnumEncoding,
     ) -> TypedHandle<Self> {
+        let EnumEncoding {
+            tag_offset,
+            total_size,
+            abi_align,
+            layout_kind,
+            carrier_kind,
+            carrier_width,
+            carrier_address_space,
+            niche_start,
+            niche_variant_start,
+            niche_variant_end,
+            untagged_variant,
+            single_variant,
+            variant_inhabited,
+        } = encoding;
         // Flatten variants into parallel vectors
         let mut variant_names = Vec::with_capacity(variants.len());
         let mut variant_field_counts = Vec::with_capacity(variants.len());
@@ -1100,8 +1180,7 @@ impl MirEnumType {
                 carrier_kind,
                 carrier_width,
                 carrier_address_space,
-                niche_start_lo,
-                niche_start_hi,
+                niche_start: NicheStart(niche_start),
                 niche_variant_start,
                 niche_variant_end,
                 untagged_variant,
@@ -1203,7 +1282,7 @@ impl MirEnumType {
     }
 
     pub fn niche_start(&self) -> u128 {
-        (u128::from(self.niche_start_hi) << 64) | u128::from(self.niche_start_lo)
+        self.niche_start.0
     }
 
     pub fn variant_is_inhabited(&self, index: usize) -> Option<bool> {
@@ -1237,7 +1316,7 @@ impl Verify for MirEnumType {
         // Rust zero-variant enums are real values at the type level. They are
         // valid only with rustc's Empty physical layout; every other layout
         // needs at least one source variant.
-        if self.variant_names.is_empty() && self.layout_kind != enum_layout_kind::EMPTY {
+        if self.variant_names.is_empty() && self.layout_kind != EnumLayoutKind::Empty {
             return verify_err!(
                 Location::Unknown,
                 "Only an Empty MirEnumType may have zero variants"
@@ -1282,22 +1361,21 @@ impl Verify for MirEnumType {
         }
         if !matches!(
             self.layout_kind,
-            enum_layout_kind::UNKNOWN
-                | enum_layout_kind::DIRECT
-                | enum_layout_kind::NICHE
-                | enum_layout_kind::SINGLE
-                | enum_layout_kind::EMPTY
+            EnumLayoutKind::Unknown
+                | EnumLayoutKind::Direct
+                | EnumLayoutKind::Niche
+                | EnumLayoutKind::Single
+                | EnumLayoutKind::Empty
         ) {
             return verify_err!(Location::Unknown, "MirEnumType has invalid layout kind");
         }
         if !matches!(
             self.carrier_kind,
-            enum_carrier_kind::NONE | enum_carrier_kind::INTEGER | enum_carrier_kind::POINTER
+            EnumCarrierKind::None | EnumCarrierKind::Integer | EnumCarrierKind::Pointer
         ) {
             return verify_err!(Location::Unknown, "MirEnumType has invalid carrier kind");
         }
-        if self.carrier_kind == enum_carrier_kind::INTEGER && !self.carrier_width.is_multiple_of(8)
-        {
+        if self.carrier_kind == EnumCarrierKind::Integer && !self.carrier_width.is_multiple_of(8) {
             return verify_err!(
                 Location::Unknown,
                 "MirEnumType integer carrier width must be a whole number of bytes"
@@ -1334,8 +1412,8 @@ impl Verify for MirEnumType {
 
         let variant_count = self.variant_names.len() as u32;
         match self.layout_kind {
-            enum_layout_kind::DIRECT => {
-                if self.carrier_kind != enum_carrier_kind::INTEGER
+            EnumLayoutKind::Direct => {
+                if self.carrier_kind != EnumCarrierKind::Integer
                     || self.carrier_width == 0
                     || self.carrier_width > 64
                 {
@@ -1362,10 +1440,10 @@ impl Verify for MirEnumType {
                     );
                 }
             }
-            enum_layout_kind::NICHE => {
+            EnumLayoutKind::Niche => {
                 if !matches!(
                     self.carrier_kind,
-                    enum_carrier_kind::INTEGER | enum_carrier_kind::POINTER
+                    EnumCarrierKind::Integer | EnumCarrierKind::Pointer
                 ) || self.carrier_width == 0
                     || self.carrier_width > 128
                 {
@@ -1432,8 +1510,8 @@ impl Verify for MirEnumType {
                     );
                 }
             }
-            enum_layout_kind::SINGLE => {
-                if self.carrier_kind != enum_carrier_kind::NONE
+            EnumLayoutKind::Single => {
+                if self.carrier_kind != EnumCarrierKind::None
                     || self.single_variant >= variant_count
                     || self
                         .variant_inhabited
@@ -1458,8 +1536,8 @@ impl Verify for MirEnumType {
                     );
                 }
             }
-            enum_layout_kind::EMPTY => {
-                if self.carrier_kind != enum_carrier_kind::NONE
+            EnumLayoutKind::Empty => {
+                if self.carrier_kind != EnumCarrierKind::None
                     || self.variant_inhabited.iter().any(|value| *value != 0)
                 {
                     return verify_err!(
@@ -1480,22 +1558,21 @@ impl Verify for MirEnumType {
                     );
                 }
             }
-            enum_layout_kind::UNKNOWN => {}
-            _ => unreachable!(),
+            EnumLayoutKind::Unknown => {}
         }
-        if self.carrier_kind != enum_carrier_kind::POINTER && self.carrier_address_space != 0 {
+        if self.carrier_kind != EnumCarrierKind::Pointer && self.carrier_address_space != 0 {
             return verify_err!(
                 Location::Unknown,
                 "Only pointer enum carriers may have a nonzero address space"
             );
         }
-        if self.carrier_kind == enum_carrier_kind::NONE && self.carrier_width != 0 {
+        if self.carrier_kind == EnumCarrierKind::None && self.carrier_width != 0 {
             return verify_err!(
                 Location::Unknown,
                 "An enum without a carrier must have zero carrier width"
             );
         }
-        if self.carrier_kind == enum_carrier_kind::POINTER {
+        if self.carrier_kind == EnumCarrierKind::Pointer {
             // Lowering is target-mode agnostic. Shared pointers are 64-bit
             // under PTX/legacy data layouts but 32-bit under modern NVVM.
             if self.carrier_address_space == 3 {
@@ -1512,10 +1589,10 @@ impl Verify for MirEnumType {
             }
         }
 
-        if self.layout_kind == enum_layout_kind::UNKNOWN {
+        if self.layout_kind == EnumLayoutKind::Unknown {
             if self.total_size != 0
                 || self.abi_align != 0
-                || self.carrier_kind != enum_carrier_kind::NONE
+                || self.carrier_kind != EnumCarrierKind::None
                 || self.carrier_width != 0
                 || self.carrier_address_space != 0
                 || self.tag_offset != 0
@@ -1556,7 +1633,7 @@ impl Verify for MirEnumType {
             }
             if matches!(
                 self.layout_kind,
-                enum_layout_kind::DIRECT | enum_layout_kind::NICHE
+                EnumLayoutKind::Direct | EnumLayoutKind::Niche
             ) && self
                 .tag_offset
                 .checked_add(u64::from(self.carrier_width).div_ceil(8))
@@ -1568,7 +1645,7 @@ impl Verify for MirEnumType {
                 );
             }
             let carrier_end = self.tag_offset + u64::from(self.carrier_width).div_ceil(8);
-            if self.layout_kind == enum_layout_kind::NICHE {
+            if self.layout_kind == EnumLayoutKind::Niche {
                 let untagged = self.untagged_variant as usize;
                 let Some(untagged_base) =
                     self.variant_field_counts
@@ -1628,13 +1705,13 @@ impl Verify for MirEnumType {
                             continue;
                         }
                         let overlaps_carrier = offset < carrier_end && self.tag_offset < field_end;
-                        if self.layout_kind == enum_layout_kind::DIRECT && overlaps_carrier {
+                        if self.layout_kind == EnumLayoutKind::Direct && overlaps_carrier {
                             return verify_err!(
                                 Location::Unknown,
                                 "MirEnumType direct payload field cannot overlap its tag carrier"
                             );
                         }
-                        if self.layout_kind == enum_layout_kind::NICHE
+                        if self.layout_kind == EnumLayoutKind::Niche
                             && variant != self.untagged_variant as usize
                             && overlaps_carrier
                         {
@@ -1692,12 +1769,11 @@ mod enum_layout_tests {
             tag_offset: 0,
             total_size: 1,
             abi_align: 1,
-            layout_kind: enum_layout_kind::DIRECT,
-            carrier_kind: enum_carrier_kind::INTEGER,
+            layout_kind: EnumLayoutKind::Direct,
+            carrier_kind: EnumCarrierKind::Integer,
             carrier_width: 8,
             carrier_address_space: 0,
-            niche_start_lo: 0,
-            niche_start_hi: 0,
+            niche_start: NicheStart(0),
             niche_variant_start: 0,
             niche_variant_end: 0,
             untagged_variant: 0,
@@ -1720,12 +1796,11 @@ mod enum_layout_tests {
             tag_offset: 0,
             total_size: 1,
             abi_align: 1,
-            layout_kind: enum_layout_kind::NICHE,
-            carrier_kind: enum_carrier_kind::INTEGER,
+            layout_kind: EnumLayoutKind::Niche,
+            carrier_kind: EnumCarrierKind::Integer,
             carrier_width: 8,
             carrier_address_space: 0,
-            niche_start_lo: 0,
-            niche_start_hi: 0,
+            niche_start: NicheStart(0),
             niche_variant_start: 0,
             niche_variant_end: 0,
             untagged_variant: 1,
@@ -1743,8 +1818,8 @@ mod enum_layout_tests {
         empty.variant_discriminants.clear();
         empty.variant_field_counts.clear();
         empty.variant_inhabited.clear();
-        empty.layout_kind = enum_layout_kind::EMPTY;
-        empty.carrier_kind = enum_carrier_kind::NONE;
+        empty.layout_kind = EnumLayoutKind::Empty;
+        empty.carrier_kind = EnumCarrierKind::None;
         empty.carrier_width = 0;
         empty.total_size = 0;
         empty.abi_align = 1;
@@ -1757,8 +1832,8 @@ mod enum_layout_tests {
         impossible.variant_discriminants = vec![1_000];
         impossible.variant_field_counts = vec![0];
         impossible.variant_inhabited = vec![0];
-        impossible.layout_kind = enum_layout_kind::SINGLE;
-        impossible.carrier_kind = enum_carrier_kind::NONE;
+        impossible.layout_kind = EnumLayoutKind::Single;
+        impossible.carrier_kind = EnumCarrierKind::None;
         impossible.carrier_width = 0;
         impossible.total_size = 0;
         impossible.abi_align = 1;
@@ -1804,8 +1879,8 @@ mod enum_layout_tests {
         zst_without_alignment.variant_discriminants.truncate(1);
         zst_without_alignment.variant_field_counts.truncate(1);
         zst_without_alignment.variant_inhabited.truncate(1);
-        zst_without_alignment.layout_kind = enum_layout_kind::SINGLE;
-        zst_without_alignment.carrier_kind = enum_carrier_kind::NONE;
+        zst_without_alignment.layout_kind = EnumLayoutKind::Single;
+        zst_without_alignment.carrier_kind = EnumCarrierKind::None;
         zst_without_alignment.carrier_width = 0;
         zst_without_alignment.total_size = 0;
         zst_without_alignment.abi_align = 0;
@@ -1839,8 +1914,8 @@ mod enum_layout_tests {
         assert!(bad_field_count.verify(&ctx).is_err());
 
         let mut unknown_with_encoding = direct(&ctx);
-        unknown_with_encoding.layout_kind = enum_layout_kind::UNKNOWN;
-        unknown_with_encoding.carrier_kind = enum_carrier_kind::NONE;
+        unknown_with_encoding.layout_kind = EnumLayoutKind::Unknown;
+        unknown_with_encoding.carrier_kind = EnumCarrierKind::None;
         unknown_with_encoding.carrier_width = 0;
         unknown_with_encoding.total_size = 0;
         unknown_with_encoding.abi_align = 0;
@@ -1919,7 +1994,7 @@ mod enum_layout_tests {
     fn pointer_carrier_rejects_target_dependent_shared_address_space() {
         let ctx = Context::new();
         let mut value = niche(&ctx);
-        value.carrier_kind = enum_carrier_kind::POINTER;
+        value.carrier_kind = EnumCarrierKind::Pointer;
         value.carrier_width = 32;
         value.total_size = 4;
         value.abi_align = 4;

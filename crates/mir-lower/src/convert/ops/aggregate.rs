@@ -38,21 +38,23 @@
 
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
-    build_union_storage_type, convert_type, is_zero_sized_type, make_slice_struct,
+    build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
+    llvm_type_contains_i1, make_slice_struct,
 };
 use dialect_mir::ops::{
     MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp, MirInsertFieldOp,
     MirSetDiscriminantOp,
 };
 use dialect_mir::types::{
-    MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirStructType,
-    MirTupleType, MirUnionType, enum_carrier_kind, enum_layout_kind,
+    EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType,
+    MirSliceType, MirStructType, MirTupleType, MirUnionType,
 };
 use llvm_export::attributes::{ICmpPredicateAttr, IntegerOverflowFlagsAttr};
 use llvm_export::op_interfaces::{
     CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag,
 };
 use llvm_export::ops as llvm;
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -746,13 +748,13 @@ fn enum_carrier_bits_for_variant(
     }
 
     match enum_ty.layout_kind {
-        enum_layout_kind::DIRECT => enum_ty
+        EnumLayoutKind::Direct => enum_ty
             .variant_discriminants
             .get(variant)
             .copied()
             .map(|bits| Some(u128::from(bits)))
             .ok_or_else(|| format!("variant {} has no declared discriminant", variant)),
-        enum_layout_kind::NICHE => {
+        EnumLayoutKind::Niche => {
             // This check deliberately comes before the encoded range check:
             // rustc permits the untagged variant index to lie inside that
             // range. Its range position is a dead niche value; selecting the
@@ -776,21 +778,16 @@ fn enum_carrier_bits_for_variant(
             }
             Ok(Some(bits))
         }
-        enum_layout_kind::SINGLE if variant == enum_ty.single_variant as usize => Ok(None),
-        enum_layout_kind::SINGLE => Err(format!(
+        EnumLayoutKind::Single if variant == enum_ty.single_variant as usize => Ok(None),
+        EnumLayoutKind::Single => Err(format!(
             "variant {} is not the single inhabited variant of '{}'",
             variant,
             enum_ty.name()
         )),
-        enum_layout_kind::EMPTY => Err(format!("enum '{}' is uninhabited", enum_ty.name())),
-        enum_layout_kind::UNKNOWN => Err(format!(
+        EnumLayoutKind::Empty => Err(format!("enum '{}' is uninhabited", enum_ty.name())),
+        EnumLayoutKind::Unknown => Err(format!(
             "enum '{}' has unknown physical layout",
             enum_ty.name()
-        )),
-        other => Err(format!(
-            "enum '{}' has invalid layout kind {}",
-            enum_ty.name(),
-            other
         )),
     }
 }
@@ -820,14 +817,72 @@ fn emit_carrier_constant(
 ) -> Result<Value> {
     let integer = emit_integer_constant(ctx, rewriter, enum_ty.carrier_width, bits);
     match enum_ty.carrier_kind {
-        enum_carrier_kind::INTEGER => Ok(integer),
-        enum_carrier_kind::POINTER => {
+        EnumCarrierKind::Integer => Ok(integer),
+        EnumCarrierKind::Pointer => {
             let cast = llvm::IntToPtrOp::new(ctx, integer, carrier_ty);
             rewriter.insert_operation(ctx, cast.get_operation());
             Ok(cast.get_operation().deref(ctx).get_result(0))
         }
         _ => pliron::input_err_noloc!("enum carrier constant requested without a carrier"),
     }
+}
+
+/// Convert a value to its byte-faithful storage twin: every `i1` leaf is
+/// zero-extended to its canonical `i8` memory byte, recursively through
+/// structs and arrays. Values without `i1` storage pass through unchanged.
+///
+/// This is the value-level half of [`llvm_byte_faithful_twin`]: the enum
+/// slot map claims twin-typed storage for bool-bearing payloads, and this
+/// produces the twin-typed value the store into that storage needs.
+fn canonicalize_bool_value_bytes(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    value: Value,
+) -> Result<Value> {
+    let ty = value.get_type(ctx);
+    if !llvm_type_contains_i1(ctx, ty) {
+        return Ok(value);
+    }
+    let is_scalar_i1 = ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == 1);
+    if is_scalar_i1 {
+        let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let zext = llvm::ZExtOp::new_with_nneg(ctx, value, byte_ty, false);
+        rewriter.insert_operation(ctx, zext.get_operation());
+        return Ok(zext.get_operation().deref(ctx).get_result(0));
+    }
+    let Some(twin) = llvm_byte_faithful_twin(ctx, ty) else {
+        return pliron::input_err_noloc!(
+            "enum construction: bool storage in this value's shape cannot be canonicalized"
+        );
+    };
+    let element_count = {
+        let ty_ref = ty.deref(ctx);
+        if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+            struct_ty.fields().count() as u64
+        } else if let Some(array_ty) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+            array_ty.size()
+        } else {
+            return pliron::input_err_noloc!(
+                "enum construction: unexpected container for bool storage canonicalization"
+            );
+        }
+    };
+    let undef_op = llvm::UndefOp::new(ctx, twin);
+    rewriter.insert_operation(ctx, undef_op.get_operation());
+    let mut current = undef_op.get_operation().deref(ctx).get_result(0);
+    for index in 0..element_count {
+        let extract_op = llvm::ExtractValueOp::new(ctx, value, vec![index as u32])?;
+        rewriter.insert_operation(ctx, extract_op.get_operation());
+        let element = extract_op.get_operation().deref(ctx).get_result(0);
+        let converted = canonicalize_bool_value_bytes(ctx, rewriter, element)?;
+        let insert_op = llvm::InsertValueOp::new(ctx, current, converted, vec![index as u32]);
+        rewriter.insert_operation(ctx, insert_op.get_operation());
+        current = insert_op.get_operation().deref(ctx).get_result(0);
+    }
+    Ok(current)
 }
 
 /// Convert `mir.construct_enum` (e.g. `E::A(x)`) to LLVM operations.
@@ -951,24 +1006,11 @@ pub(crate) fn convert_construct_enum(
     for (flat, operand) in deferred {
         let field_ptr = enum_byte_gep(ctx, rewriter, slot_ptr, slot_map.field_offsets[flat]);
         // `bool` is an LLVM i1 as a value but occupies one full byte in
-        // Rust memory. When that byte is also an enum's i8 niche carrier
-        // (Option<bool>), storing i1 and reloading i8 would leave the upper
-        // carrier bits implicit. Materialize the exact physical byte so the
-        // constructed carrier is unambiguously 0 or 1.
-        let stored_operand = if enum_ty.all_field_sizes[flat] == 1
-            && operand
-                .get_type(ctx)
-                .deref(ctx)
-                .downcast_ref::<IntegerType>()
-                .is_some_and(|integer| integer.width() == 1)
-        {
-            let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-            let zext = llvm::ZExtOp::new_with_nneg(ctx, operand, byte_ty, false);
-            rewriter.insert_operation(ctx, zext.get_operation());
-            zext.get_operation().deref(ctx).get_result(0)
-        } else {
-            operand
-        };
+        // Rust memory. Enum storage claims the byte-faithful twin of every
+        // bool-bearing payload (scalar i8 byte, or an aggregate with each
+        // i1 leaf widened to i8), so canonicalize the stored value to that
+        // twin: every physical bool byte becomes an unambiguous 0 or 1.
+        let stored_operand = canonicalize_bool_value_bytes(ctx, rewriter, operand)?;
         let store_op = llvm::StoreOp::new(ctx, stored_operand, field_ptr);
         rewriter.insert_operation(ctx, store_op.get_operation());
     }
@@ -1105,7 +1147,7 @@ pub(crate) fn convert_get_discriminant(
         })?;
 
     let result = match enum_ty.layout_kind {
-        enum_layout_kind::DIRECT => {
+        EnumLayoutKind::Direct => {
             let slot = slot_map.carrier_slot.ok_or_else(|| {
                 pliron::input_error_noloc!("Direct enum has no physical carrier slot")
             })?;
@@ -1113,7 +1155,7 @@ pub(crate) fn convert_get_discriminant(
             rewriter.insert_operation(ctx, extract.get_operation());
             extract.get_operation().deref(ctx).get_result(0)
         }
-        enum_layout_kind::SINGLE => {
+        EnumLayoutKind::Single => {
             if enum_ty.variant_is_inhabited(enum_ty.single_variant as usize) != Some(true) {
                 return pliron::input_err_noloc!(
                     "Cannot read discriminant of an uninhabited single-variant enum"
@@ -1127,7 +1169,7 @@ pub(crate) fn convert_get_discriminant(
                 })?;
             emit_integer_constant(ctx, rewriter, logical_width, u128::from(value))
         }
-        enum_layout_kind::NICHE => {
+        EnumLayoutKind::Niche => {
             let slot = slot_map.carrier_slot.ok_or_else(|| {
                 pliron::input_error_noloc!("Niche enum has no physical carrier slot")
             })?;
@@ -1136,7 +1178,7 @@ pub(crate) fn convert_get_discriminant(
             let carrier = extract.get_operation().deref(ctx).get_result(0);
             let carrier_int_ty: TypeHandle =
                 IntegerType::get(ctx, enum_ty.carrier_width, Signedness::Signless).into();
-            let carrier_int = if enum_ty.carrier_kind == enum_carrier_kind::POINTER {
+            let carrier_int = if enum_ty.carrier_kind == EnumCarrierKind::Pointer {
                 let cast = llvm::PtrToIntOp::new(ctx, carrier, carrier_int_ty);
                 rewriter.insert_operation(ctx, cast.get_operation());
                 cast.get_operation().deref(ctx).get_result(0)
@@ -1212,7 +1254,7 @@ pub(crate) fn convert_get_discriminant(
             rewriter.insert_operation(ctx, select);
             select.deref(ctx).get_result(0)
         }
-        enum_layout_kind::EMPTY => {
+        EnumLayoutKind::Empty => {
             return pliron::input_err_noloc!("Cannot read discriminant of uninhabited enum");
         }
         _ => {
@@ -1469,7 +1511,9 @@ mod tests {
     use crate::convert::ops::test_util::*;
     use dialect_mir::attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr};
     use dialect_mir::ops as mir;
-    use dialect_mir::types::{EnumVariant, MirPtrType, MirSliceType, MirStructType, MirTupleType};
+    use dialect_mir::types::{
+        EnumEncoding, EnumVariant, MirPtrType, MirSliceType, MirStructType, MirTupleType,
+    };
     use llvm_export::types as llvm_types;
     use pliron::builtin::attributes::IntegerAttr;
     use pliron::common_traits::Verify;
@@ -1794,20 +1838,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![tuple_ty], vec![0], vec![16]),
             ],
-            8,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 8,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
@@ -2013,7 +2054,7 @@ mod tests {
 
     fn unit_niche_enum(
         ctx: &mut Context,
-        carrier: (u8, u32, u32),
+        carrier: (EnumCarrierKind, u32, u32),
         niche_start: u128,
         niche_range: std::ops::RangeInclusive<u32>,
         untagged_variant: u32,
@@ -2039,20 +2080,21 @@ mod tests {
             logical_ty,
             discriminants,
             variants,
-            0,
-            carrier_size,
-            carrier_align,
-            enum_layout_kind::NICHE,
-            carrier_kind,
-            carrier_width,
-            carrier_address_space,
-            niche_start as u64,
-            (niche_start >> 64) as u64,
-            *niche_range.start(),
-            *niche_range.end(),
-            untagged_variant,
-            0,
-            inhabited,
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: carrier_size,
+                abi_align: carrier_align,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind,
+                carrier_width,
+                carrier_address_space,
+                niche_start,
+                niche_variant_start: *niche_range.start(),
+                niche_variant_end: *niche_range.end(),
+                untagged_variant,
+                variant_inhabited: inhabited,
+                ..EnumEncoding::default()
+            },
         )
         .into()
     }
@@ -2062,7 +2104,7 @@ mod tests {
         let mut ctx = make_ctx();
         let inside = unit_niche_enum(
             &mut ctx,
-            (enum_carrier_kind::INTEGER, 8, 0),
+            (EnumCarrierKind::Integer, 8, 0),
             42,
             0..=1,
             1,
@@ -2080,7 +2122,7 @@ mod tests {
 
         let wrapping = unit_niche_enum(
             &mut ctx,
-            (enum_carrier_kind::INTEGER, 128, 0),
+            (EnumCarrierKind::Integer, 128, 0),
             u128::MAX,
             0..=1,
             0,
@@ -2101,7 +2143,7 @@ mod tests {
             let mut ctx = make_ctx();
             let enum_ty = unit_niche_enum(
                 &mut ctx,
-                (enum_carrier_kind::INTEGER, 8, 0),
+                (EnumCarrierKind::Integer, 8, 0),
                 0,
                 0..=0,
                 1,
@@ -2135,7 +2177,7 @@ mod tests {
         let mut ctx = make_ctx();
         let enum_ty = unit_niche_enum(
             &mut ctx,
-            (enum_carrier_kind::POINTER, 64, 3),
+            (EnumCarrierKind::Pointer, 64, 3),
             0,
             0..=0,
             1,
@@ -2164,20 +2206,18 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![bool_ty], vec![0], vec![1]),
             ],
-            0,
-            1,
-            1,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::INTEGER,
-            8,
-            0,
-            2,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 1,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 8,
+                niche_start: 2,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
@@ -2354,20 +2394,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![wrapper], vec![0], vec![8]),
             ],
-            4,
-            8,
-            4,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::INTEGER,
-            32,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 4,
+                total_size: 8,
+                abi_align: 4,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
@@ -2411,7 +2448,7 @@ mod tests {
         let mut ctx = make_ctx();
         let enum_ty = unit_niche_enum(
             &mut ctx,
-            (enum_carrier_kind::INTEGER, 8, 0),
+            (EnumCarrierKind::Integer, 8, 0),
             0,
             298..=299,
             0,
@@ -2529,20 +2566,14 @@ mod tests {
                 logical,
                 vec![bits],
                 vec![EnumVariant::unit("Only".into())],
-                0,
-                0,
-                1,
-                enum_layout_kind::SINGLE,
-                enum_carrier_kind::NONE,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                vec![1],
+                EnumEncoding {
+                    tag_offset: 0,
+                    total_size: 0,
+                    abi_align: 1,
+                    layout_kind: EnumLayoutKind::Single,
+                    variant_inhabited: vec![1],
+                    ..EnumEncoding::default()
+                },
             )
             .into();
             let (module, block) = build_kernel(&mut ctx, vec![], vec![destination]);

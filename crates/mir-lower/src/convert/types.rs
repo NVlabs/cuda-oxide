@@ -99,8 +99,8 @@
 //! This matches the C ABI for GPU kernels.
 
 use dialect_mir::types::{
-    MirDisjointSliceType, MirEnumType, MirSliceType, MirStructType, MirTupleType, MirUnionType,
-    enum_carrier_kind, enum_layout_kind,
+    EnumCarrierKind, EnumLayoutKind, MirDisjointSliceType, MirEnumType, MirSliceType,
+    MirStructType, MirTupleType, MirUnionType,
 };
 use llvm_export::types as llvm_types;
 use llvm_export::types::PointerTypeExt;
@@ -865,12 +865,12 @@ pub(crate) fn llvm_type_contains_pointer_in_address_space(
 /// Whether this is an aggregate/vector that contains LLVM `i1` storage.
 ///
 /// Rust `bool` is an SSA `i1`, but its memory representation is one complete
-/// byte whose only valid values are 0 and 1. A top-level scalar bool can be
-/// canonicalized through an explicit i8 storage slot. Doing the same inside
-/// an aggregate would require a recursive value conversion, so enum storage
-/// rejects that case instead of exposing LLVM's unspecified upper seven bits
-/// to Rust memory.
-fn llvm_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
+/// byte whose only valid values are 0 and 1. Enum storage never uses `i1` as
+/// a physical type: scalar bools claim an explicit i8 byte, and aggregates
+/// containing bools claim their byte-faithful twin (see
+/// [`llvm_byte_faithful_twin`]), with construction canonicalizing the value
+/// before the store.
+pub(crate) fn llvm_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
     let ty_ref = ty.deref(ctx);
     if let Some(integer) = ty_ref.downcast_ref::<IntegerType>() {
         return integer.width() == 1;
@@ -887,6 +887,59 @@ fn llvm_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
             .any(|field| llvm_type_contains_i1(ctx, field));
     }
     false
+}
+
+/// The byte-faithful storage twin of an LLVM type: every `i1` leaf becomes
+/// its canonical `i8` memory byte, recursively through structs and arrays.
+///
+/// Rust guarantees a bool occupies one full byte holding exactly 0 or 1, so
+/// storing the twin (with each bool zero-extended) writes the same bytes the
+/// host writes, while re-loading the original type from those canonical
+/// bytes remains well-defined. Sizes and alignments are unchanged because an
+/// `i1` already occupies one byte of storage.
+///
+/// Returns `None` for shapes with a different memory story (`i1` vectors are
+/// bit-packed masks) or unknown containers; callers must fail closed.
+pub(crate) fn llvm_byte_faithful_twin(ctx: &mut Context, ty: TypeHandle) -> Option<TypeHandle> {
+    if !llvm_type_contains_i1(ctx, ty) {
+        return Some(ty);
+    }
+    enum Shape {
+        Bool,
+        Array(TypeHandle, u64),
+        Struct(Vec<TypeHandle>),
+        Other,
+    }
+    let shape = {
+        let ty_ref = ty.deref(ctx);
+        if ty_ref
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 1)
+        {
+            Shape::Bool
+        } else if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+            Shape::Array(array.elem_type(), array.size())
+        } else if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+            Shape::Struct(struct_ty.fields().collect())
+        } else {
+            Shape::Other
+        }
+    };
+    match shape {
+        Shape::Bool => Some(IntegerType::get(ctx, 8, Signedness::Signless).into()),
+        Shape::Array(elem, count) => {
+            let twin = llvm_byte_faithful_twin(ctx, elem)?;
+            Some(llvm_types::ArrayType::get(ctx, twin, count).into())
+        }
+        Shape::Struct(fields) => {
+            let twins = fields
+                .into_iter()
+                .map(|field| llvm_byte_faithful_twin(ctx, field))
+                .collect::<Option<Vec<_>>>()?;
+            Some(llvm_types::StructType::get_unnamed(ctx, twins).into())
+        }
+        Shape::Other => None,
+    }
 }
 
 /// Whether a MIR aggregate contains a semantic Rust bool value.
@@ -1216,13 +1269,13 @@ pub(crate) fn build_enum_slot_map(
         )
     };
 
-    if layout_kind == enum_layout_kind::UNKNOWN {
+    if layout_kind == EnumLayoutKind::Unknown {
         return Err(anyhow::anyhow!(
             "enum slot map: `{}` has unknown physical layout; refusing to guess its bytes",
             name
         ));
     }
-    if carrier_kind == enum_carrier_kind::POINTER
+    if carrier_kind == EnumCarrierKind::Pointer
         && carrier_address_space == llvm_types::address_space::SHARED
     {
         return Err(anyhow::anyhow!(
@@ -1230,7 +1283,7 @@ pub(crate) fn build_enum_slot_map(
             name
         ));
     }
-    if carrier_kind == enum_carrier_kind::INTEGER && !carrier_width.is_multiple_of(8) {
+    if carrier_kind == EnumCarrierKind::Integer && !carrier_width.is_multiple_of(8) {
         return Err(anyhow::anyhow!(
             "enum slot map: `{}` integer carrier width {} is not a whole number of bytes; refusing physical storage with unspecified upper byte bits",
             name,
@@ -1239,8 +1292,8 @@ pub(crate) fn build_enum_slot_map(
     }
 
     let carrier_ty: Option<TypeHandle> = match carrier_kind {
-        enum_carrier_kind::NONE => None,
-        enum_carrier_kind::INTEGER if layout_kind == enum_layout_kind::DIRECT => {
+        EnumCarrierKind::None => None,
+        EnumCarrierKind::Integer if layout_kind == EnumLayoutKind::Direct => {
             let converted = convert_type(ctx, discriminant_ty)?;
             let width = converted
                 .deref(ctx)
@@ -1254,18 +1307,11 @@ pub(crate) fn build_enum_slot_map(
             }
             Some(converted)
         }
-        enum_carrier_kind::INTEGER => {
+        EnumCarrierKind::Integer => {
             Some(IntegerType::get(ctx, carrier_width, Signedness::Signless).into())
         }
-        enum_carrier_kind::POINTER => {
+        EnumCarrierKind::Pointer => {
             Some(llvm_types::PointerType::get(ctx, carrier_address_space).into())
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "enum slot map: `{}` has invalid carrier kind {}",
-                name,
-                carrier_kind
-            ));
         }
     };
     let mut field_llvm_types = Vec::with_capacity(all_field_types.len());
@@ -1401,12 +1447,16 @@ pub(crate) fn build_enum_slot_map(
             .deref(ctx)
             .downcast_ref::<IntegerType>()
             .is_some_and(|integer| integer.width() == 1);
+        // A bool the MIR type promises but the LLVM lowering hides (a union
+        // whose storage is a raw byte blob) cannot be canonicalized here:
+        // its bytes were written by the union's own stores, not by this
+        // enum's construction.
         if !is_scalar_i1
-            && (mir_type_contains_i1(ctx, all_field_types[flat])
-                || llvm_type_contains_i1(ctx, llvm_ty))
+            && mir_type_contains_i1(ctx, all_field_types[flat])
+            && !llvm_type_contains_i1(ctx, llvm_ty)
         {
             return Err(anyhow::anyhow!(
-                "enum slot map: `{}` field {} contains nested bool/i1 storage; cuda-oxide cannot yet recursively canonicalize each Rust bool memory byte",
+                "enum slot map: `{}` field {} contains bool storage hidden behind a union; cuda-oxide cannot prove those bytes are canonical",
                 name,
                 flat
             ));
@@ -1446,14 +1496,34 @@ pub(crate) fn build_enum_slot_map(
             ));
         }
 
-        // Another variant already placed the same type at the same
-        // position? Then both fields can simply use that slot: variants
+        // Aggregates containing bool claim their byte-faithful twin (every
+        // i1 leaf becomes its canonical i8 memory byte) and stay slotless:
+        // construction canonicalizes the value and writes it at its byte
+        // offset; extraction re-loads the original type from the canonical
+        // bytes, exactly like the scalar-bool path above.
+        let storage_ty = if llvm_type_contains_i1(ctx, llvm_ty) {
+            llvm_byte_faithful_twin(ctx, llvm_ty).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "enum slot map: `{}` field {} contains bool storage in a shape (e.g. an i1 vector) whose memory bytes cannot be canonicalized",
+                    name,
+                    flat
+                )
+            })?
+        } else {
+            llvm_ty
+        };
+        let field_gets_slot = storage_ty == llvm_ty;
+
+        // Another variant already placed the same storage type at the same
+        // position? Then both fields can simply use that claim: variants
         // share bytes, and here they even agree on the type.
         if let Some(ci) = claims
             .iter()
-            .position(|&(o, _, t)| o == offset && t == llvm_ty)
+            .position(|&(o, _, t)| o == offset && t == storage_ty)
         {
-            claim_of_field[flat] = Some(ci);
+            if field_gets_slot {
+                claim_of_field[flat] = Some(ci);
+            }
             continue;
         }
         // The bytes are taken by a different type. Pointer-free values can
@@ -1468,12 +1538,12 @@ pub(crate) fn build_enum_slot_map(
             .filter(|&&(o, s, _)| offset < o + s && o < offset + size)
             .collect::<Vec<_>>();
         if !colliding_claims.is_empty() {
-            let has_pointer_overlap = llvm_type_contains_pointer(ctx, llvm_ty)
+            let has_pointer_overlap = llvm_type_contains_pointer(ctx, storage_ty)
                 || colliding_claims
                     .iter()
                     .any(|&&(_, _, claim_ty)| llvm_type_contains_pointer(ctx, claim_ty));
             if has_pointer_overlap
-                && !pointer_storage_matches_claims(ctx, offset, size, llvm_ty, &colliding_claims)
+                && !pointer_storage_matches_claims(ctx, offset, size, storage_ty, &colliding_claims)
             {
                 return Err(anyhow::anyhow!(
                     "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
@@ -1481,21 +1551,23 @@ pub(crate) fn build_enum_slot_map(
                     offset
                 ));
             }
-            let incoming_is_byte_faithful = llvm_type_is_byte_faithful(ctx, llvm_ty);
+            let incoming_is_byte_faithful = llvm_type_is_byte_faithful(ctx, storage_ty);
             let claims_are_byte_faithful = colliding_claims
                 .iter()
                 .all(|&&(_, _, claim_ty)| llvm_type_is_byte_faithful(ctx, claim_ty));
             if !incoming_is_byte_faithful || !claims_are_byte_faithful {
                 return Err(anyhow::anyhow!(
-                    "enum slot map: `{}` field {} overlaps non-identical storage but its lowered type is not byte-faithful (for example, it may contain bool/i1 or implicit padding); refusing a type-punned store",
+                    "enum slot map: `{}` field {} overlaps non-identical storage but its lowered type is not byte-faithful (for example, it may contain implicit padding); refusing a type-punned store",
                     name,
                     flat
                 ));
             }
             continue;
         }
-        claims.push((offset, size, llvm_ty));
-        claim_of_field[flat] = Some(claims.len() - 1);
+        claims.push((offset, size, storage_ty));
+        if field_gets_slot {
+            claim_of_field[flat] = Some(claims.len() - 1);
+        }
     }
 
     // Phase 2: lay the slots down in byte order, filling every gap (and
@@ -1533,13 +1605,27 @@ pub(crate) fn build_enum_slot_map(
             total_size
         ));
     }
-    if natural_align != abi_align.max(1) {
+    let required_align = abi_align.max(1);
+    if natural_align > required_align {
         return Err(anyhow::anyhow!(
             "enum slot map: `{}` lowered with alignment {} but rustc requires {}; explicit over-aligned enum storage is not yet supported",
             name,
             natural_align,
             abi_align
         ));
+    }
+    if natural_align < required_align {
+        // The byte claims alone can under-align the storage, e.g. when the
+        // only claim is an i8 niche carrier inside a 4-aligned enum. Raise
+        // the struct's alignment with a zero-length anchor field, the same
+        // mechanism union storage uses; it occupies no bytes, so every slot
+        // index simply shifts by one.
+        let anchor_int = IntegerType::get(ctx, (required_align * 8) as u32, Signedness::Signless);
+        let anchor: TypeHandle = llvm_types::ArrayType::get(ctx, anchor_int.into(), 0).into();
+        llvm_fields.insert(0, anchor);
+        for slot in &mut slot_of_claim {
+            *slot += 1;
+        }
     }
 
     let field_slots = claim_of_field
@@ -1575,7 +1661,7 @@ pub(crate) fn convert_enum_to_llvm(
 pub(crate) fn enum_unmodeled_in_memory(ctx: &Context, ty: TypeHandle) -> Option<String> {
     let ty_ref = ty.deref(ctx);
     let enum_ty = ty_ref.downcast_ref::<MirEnumType>()?;
-    (enum_ty.layout_kind == enum_layout_kind::UNKNOWN).then(|| enum_ty.name().to_string())
+    (enum_ty.layout_kind == EnumLayoutKind::Unknown).then(|| enum_ty.name().to_string())
 }
 
 /// Search a kernel parameter's type for an enum the host and device
@@ -1991,8 +2077,8 @@ mod tests {
 
     use super::*;
     use dialect_mir::types::{
-        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
-        MirUnionType,
+        EnumEncoding, EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType,
+        MirTupleType, MirUnionType,
     };
 
     fn make_ctx() -> Context {
@@ -2114,20 +2200,16 @@ mod tests {
             partial_discriminant,
             vec![0, 1],
             vec![EnumVariant::unit("A".into()), EnumVariant::unit("B".into())],
-            0,
-            1,
-            1,
-            enum_layout_kind::DIRECT,
-            enum_carrier_kind::INTEGER,
-            7,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 1,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 7,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let error = build_enum_slot_map(&mut ctx, direct)
@@ -2149,20 +2231,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![1]),
             ],
-            0,
-            1,
-            1,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::INTEGER,
-            7,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 1,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 7,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let error = build_enum_slot_map(&mut ctx, niche)
@@ -2299,10 +2378,26 @@ mod tests {
         )
         .into();
 
-        let error = build_enum_slot_map(&mut ctx, enum_ty)
-            .err()
-            .expect("nested bool storage must fail closed even without an overlap");
-        assert!(error.to_string().contains("nested bool/i1"), "{error}");
+        // The wrapper claims its byte-faithful twin ({i8}) and stays
+        // slotless: construction canonicalizes the bool byte, extraction
+        // re-loads the original {i1} shape from the canonical byte.
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("nested bool storage canonicalizes through its byte-faithful twin");
+        assert_eq!(map.field_slots, vec![None]);
+        assert_eq!(llvm_type_size_align(&ctx, map.llvm_struct_ty), Some((8, 4)));
+        let struct_fields: Vec<_> = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .unwrap()
+            .fields()
+            .collect();
+        assert!(
+            struct_fields
+                .iter()
+                .all(|field| !llvm_type_contains_i1(&ctx, *field)),
+            "enum storage must never contain physical i1"
+        );
     }
 
     #[test]
@@ -2343,7 +2438,10 @@ mod tests {
         let error = build_enum_slot_map(&mut ctx, enum_ty)
             .err()
             .expect("a bool hidden by union byte storage must still fail closed");
-        assert!(error.to_string().contains("nested bool/i1"), "{error}");
+        assert!(
+            error.to_string().contains("hidden behind a union"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2403,20 +2501,16 @@ mod tests {
                         vec![8],
                     ),
                 ],
-                0,
-                16,
-                8,
-                enum_layout_kind::DIRECT,
-                enum_carrier_kind::INTEGER,
-                32,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                vec![1, 1],
+                EnumEncoding {
+                    tag_offset: 0,
+                    total_size: 16,
+                    abi_align: 8,
+                    layout_kind: EnumLayoutKind::Direct,
+                    carrier_kind: EnumCarrierKind::Integer,
+                    carrier_width: 32,
+                    variant_inhabited: vec![1, 1],
+                    ..EnumEncoding::default()
+                },
             )
             .into();
             let error = build_enum_slot_map(&mut ctx, enum_ty)
@@ -2430,7 +2524,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_overlapping_bool_wrapper_storage() {
+    fn enum_slot_map_canonicalizes_overlapping_bool_wrapper_storage() {
         let mut ctx = make_ctx();
         let logical = mir_uint(&mut ctx, 8);
         let boolean: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
@@ -2454,34 +2548,36 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![wrapper], vec![0], vec![1]),
             ],
-            0,
-            1,
-            1,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::INTEGER,
-            8,
-            0,
-            2,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 1,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 8,
+                niche_start: 2,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
 
-        let error = build_enum_slot_map(&mut ctx, enum_ty)
-            .err()
-            .expect("a nested bool cannot be type-punned through the i8 carrier");
+        // Option<Wrapper(bool)>: the wrapper's byte-faithful twin ({i8})
+        // shares the single canonical byte with the i8 niche carrier. The
+        // wrapper stays slotless; construction zero-extends its bool.
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a bool wrapper shares its canonical byte with the i8 carrier");
+        assert_eq!(map.field_slots, vec![None]);
+        assert_eq!(llvm_type_size_align(&ctx, map.llvm_struct_ty), Some((1, 1)));
         assert!(
-            error.to_string().contains("nested bool/i1"),
-            "unexpected diagnostic: {error}"
+            !llvm_type_contains_i1(&ctx, map.llvm_struct_ty),
+            "enum storage must never contain physical i1"
         );
     }
 
     #[test]
-    fn enum_slot_map_rejects_bool_wrapper_overlap_in_either_variant_order() {
+    fn enum_slot_map_canonicalizes_bool_wrapper_overlap_in_either_variant_order() {
         for wrapper_first in [false, true] {
             let mut ctx = make_ctx();
             let tag = mir_uint(&mut ctx, 32);
@@ -2512,30 +2608,31 @@ mod tests {
                     EnumVariant::new_with_layout("First".into(), vec![first], vec![4], vec![1]),
                     EnumVariant::new_with_layout("Second".into(), vec![second], vec![4], vec![1]),
                 ],
-                0,
-                8,
-                4,
-                enum_layout_kind::DIRECT,
-                enum_carrier_kind::INTEGER,
-                32,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                vec![1, 1],
+                EnumEncoding {
+                    tag_offset: 0,
+                    total_size: 8,
+                    abi_align: 4,
+                    layout_kind: EnumLayoutKind::Direct,
+                    carrier_kind: EnumCarrierKind::Integer,
+                    carrier_width: 32,
+                    variant_inhabited: vec![1, 1],
+                    ..EnumEncoding::default()
+                },
             )
             .into();
 
-            let error = build_enum_slot_map(&mut ctx, enum_ty)
-                .err()
-                .expect("nested bool overlap must reject in either declaration order");
+            // The wrapper's canonical twin ({i8}) and the plain u8 variant
+            // share one byte-faithful byte, independent of declaration
+            // order; the wrapper stays slotless either way.
+            let map = build_enum_slot_map(&mut ctx, enum_ty)
+                .expect("canonical bool bytes may share storage with a u8 variant");
+            assert_eq!(llvm_type_size_align(&ctx, map.llvm_struct_ty), Some((8, 4)));
             assert!(
-                error.to_string().contains("nested bool/i1"),
-                "wrapper_first={wrapper_first}: {error}"
+                !llvm_type_contains_i1(&ctx, map.llvm_struct_ty),
+                "wrapper_first={wrapper_first}: enum storage must never contain physical i1"
             );
+            let wrapper_flat = if wrapper_first { 0 } else { 1 };
+            assert_eq!(map.field_slots[wrapper_flat], None);
         }
     }
 
@@ -2565,20 +2662,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
             ],
-            8,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::INTEGER,
-            32,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 8,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let error = build_enum_slot_map(&mut ctx, enum_ty)
@@ -2602,20 +2696,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![pointer], vec![0], vec![8]),
             ],
-            0,
-            8,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
@@ -2652,20 +2743,17 @@ mod tests {
                     EnumVariant::unit("None".into()),
                     EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
                 ],
-                tag_offset,
-                16,
-                8,
-                enum_layout_kind::NICHE,
-                enum_carrier_kind::POINTER,
-                64,
-                0,
-                0,
-                0,
-                0,
-                0,
-                1,
-                0,
-                vec![1, 1],
+                EnumEncoding {
+                    tag_offset,
+                    total_size: 16,
+                    abi_align: 8,
+                    layout_kind: EnumLayoutKind::Niche,
+                    carrier_kind: EnumCarrierKind::Pointer,
+                    carrier_width: 64,
+                    untagged_variant: 1,
+                    variant_inhabited: vec![1, 1],
+                    ..EnumEncoding::default()
+                },
             )
             .into();
 
@@ -2713,20 +2801,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
             ],
-            8,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 8,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
 
@@ -2766,20 +2851,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
             ],
-            0,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
 
@@ -2817,20 +2899,17 @@ mod tests {
                     vec![16],
                 ),
             ],
-            0,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let error = build_enum_slot_map(&mut ctx, enum_ty)
@@ -2856,20 +2935,17 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
             ],
-            0,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            0,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
 
@@ -2896,20 +2972,18 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
             ],
-            0,
-            16,
-            8,
-            enum_layout_kind::NICHE,
-            enum_carrier_kind::POINTER,
-            64,
-            llvm_types::address_space::GLOBAL,
-            0,
-            0,
-            0,
-            0,
-            1,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                carrier_address_space: llvm_types::address_space::GLOBAL,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
 
@@ -2934,20 +3008,16 @@ mod tests {
                 EnumVariant::unit("Unit".into()),
                 EnumVariant::new_with_layout("Ptr".into(), vec![shared], vec![8], vec![8]),
             ],
-            0,
-            16,
-            8,
-            enum_layout_kind::DIRECT,
-            enum_carrier_kind::INTEGER,
-            32,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            vec![1, 1],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
         )
         .into();
         let error = build_enum_slot_map(&mut ctx, enum_ty)

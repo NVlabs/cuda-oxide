@@ -1501,16 +1501,16 @@ mod tests {
             "repr(usize) tag"
         );
 
-        // A trailing byte pad can match size but cannot raise the LLVM type's
-        // natural alignment. Reject repr(align(8)) until the type system can
-        // express that contract; accepting size 8 / alignment 1 would make
-        // arrays and by-value ABI uses unsound.
+        // repr(align(8)) with an i8 tag: the byte claims alone would give
+        // alignment 1, so the slot map raises the storage alignment with a
+        // zero-length anchor field. Size and alignment must both match
+        // rustc, or arrays and by-value ABI uses would be unsound.
         let padded = make_enum_ty(&mut ctx, "Padded", 8, unit_variants(2), 8, 8);
-        let error = convert_type(&mut ctx, padded).expect_err("over-aligned enum must reject");
-        assert!(
-            error
-                .to_string()
-                .contains("alignment 1 but rustc requires 8")
+        let conv = convert_type(&mut ctx, padded).unwrap();
+        assert_eq!(
+            llvm_type_size_align(&ctx, conv),
+            Some((8, 8)),
+            "repr(align(8)) i8 tag"
         );
 
         // u8 tag + i64 payload, rustc size 16: the slot map places the
