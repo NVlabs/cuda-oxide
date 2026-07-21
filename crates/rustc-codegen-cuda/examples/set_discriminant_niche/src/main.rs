@@ -121,7 +121,7 @@ fn force_boolean_none(value: &mut Option<bool>) {
 }
 
 #[custom_mir(dialect = "runtime", phase = "optimized")]
-fn force_pointer_none<'a>(value: &mut Option<&'a u32>) {
+fn force_pointer_none(value: &mut Option<&u32>) {
     mir!({
         SetDiscriminant(*value, 0);
         Return()
@@ -132,6 +132,9 @@ fn force_pointer_none<'a>(value: &mut Option<&'a u32>) {
 mod kernels {
     use super::*;
 
+    // Each buffer is a separate host/device ABI case. Bundling them would
+    // change the kernel parameter shapes this regression is meant to test.
+    #[allow(clippy::too_many_arguments)]
     #[kernel]
     pub fn niche_roundtrip(
         mut basic: DisjointSlice<Basic>,

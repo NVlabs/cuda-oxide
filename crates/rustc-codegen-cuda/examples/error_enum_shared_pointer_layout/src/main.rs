@@ -21,7 +21,8 @@ fn pointer_bits(value: Option<&'static SharedArray<u32, 1>>) -> u64 {
 /// access from another thread.
 #[kernel]
 pub unsafe fn shared_pointer_enum(out: *mut u64) {
-    let shared: &'static SharedArray<u32, 1> = unsafe { &*(&raw const SHARED) };
+    let shared_ptr: *const SharedArray<u32, 1> = &raw const SHARED;
+    let shared: &'static SharedArray<u32, 1> = unsafe { &*shared_ptr };
     unsafe {
         *out = pointer_bits(Some(shared));
     }

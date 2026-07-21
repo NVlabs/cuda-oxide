@@ -25,7 +25,7 @@
 //! # Enum Representation
 //!
 //! Enums use rustc's physical layout, not a cuda-oxide-only tagged struct.
-//! [`build_enum_slot_map`] places the direct tag or niche carrier and every
+//! `build_enum_slot_map` places the direct tag or niche carrier and every
 //! payload at rustc's byte offsets, reuses identical overlapping storage, and
 //! routes differently typed overlaps through byte-addressed memory. `Single`
 //! and `Empty` layouts have no carrier at all.
