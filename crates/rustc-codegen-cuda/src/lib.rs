@@ -406,7 +406,7 @@ impl CudaCodegenConfig {
                 .ok()
                 .map(std::path::PathBuf::from),
             device_codegen_crates: parse_device_codegen_crates(
-                std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE")
+                std::env::var(reserved_oxide_symbols::DEVICE_CODEGEN_CRATE_ENV)
                     .ok()
                     .as_deref(),
             ),
@@ -441,6 +441,13 @@ fn should_codegen_device_crate(
     contains_device_code: bool,
 ) -> bool {
     contains_device_code && config.allows_device_codegen_for(crate_name)
+}
+
+fn reject_unsupported_codegen_protocol(
+    scoped_fingerprint_present: bool,
+    unsupported_root_present: bool,
+) -> bool {
+    scoped_fingerprint_present && unsupported_root_present
 }
 
 impl CodegenBackend for CudaCodegenBackend {
@@ -514,6 +521,19 @@ impl CodegenBackend for CudaCodegenBackend {
             let kernel_count = collector::count_kernels_in_cgus(tcx, mono_partitions.codegen_units);
             let device_fn_count =
                 collector::count_device_fns_in_cgus(tcx, mono_partitions.codegen_units);
+            let unsupported_protocol_root = collector::unsupported_codegen_protocol_root_in_cgus(
+                tcx,
+                mono_partitions.codegen_units,
+            );
+            if reject_unsupported_codegen_protocol(
+                std::env::var_os(reserved_oxide_symbols::CODEGEN_FINGERPRINT_ENV).is_some(),
+                unsupported_protocol_root.is_some(),
+            ) {
+                let root = unsupported_protocol_root.expect("presence checked above");
+                tcx.dcx().fatal(format!(
+                    "[rustc_codegen_cuda] Device-code root `{root}` was emitted by a cuda-macros version that predates the scoped Cargo cache protocol. Rebuild the source with cuda-macros from the same cuda-oxide revision; older macro expansions, including pre-expanded output from before this protocol, cannot be cached safely across output and architecture changes."
+                ));
+            }
             let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
             let owner_selected = self.config.allows_device_codegen_for(crate_name.as_str());
             let contains_device_code = kernel_count > 0 || device_fn_count > 0;
@@ -568,15 +588,8 @@ impl CodegenBackend for CudaCodegenBackend {
 
             // Step 2: If device code exists, compile via cuda-oxide
             let _device_result = if has_device_code {
-                let wrapper_provenance = tcx.sess.psess.config.iter().find_map(|(name, value)| {
-                    if name.as_str() == materialize::WRAPPER_PROVENANCE_CFG {
-                        value.as_ref().map(|value| value.as_str())
-                    } else {
-                        None
-                    }
-                });
-                let materialization_request = materialize::request_from_env(wrapper_provenance)
-                    .unwrap_or_else(|error| {
+                let materialization_request =
+                    materialize::request_from_env().unwrap_or_else(|error| {
                         tcx.dcx().fatal(format!(
                             "[rustc_codegen_cuda] Invalid cubin materialization request: {error}"
                         ))
@@ -1119,6 +1132,23 @@ mod tests {
             ..CudaCodegenConfig::default()
         };
         assert!(config.allows_device_codegen_for("gpu_kernels"));
+    }
+
+    #[test]
+    fn scoped_cache_protocol_rejects_old_roots_even_when_codegen_would_be_filtered() {
+        assert!(reject_unsupported_codegen_protocol(true, true));
+        assert!(!reject_unsupported_codegen_protocol(false, true));
+        assert!(!reject_unsupported_codegen_protocol(true, false));
+
+        let config = CudaCodegenConfig {
+            device_codegen_crates: parse_device_codegen_crates(Some("some_other_crate")),
+            ..CudaCodegenConfig::default()
+        };
+        assert!(!config.allows_device_codegen_for("legacy_kernel_crate"));
+        // Protocol validation is intentionally independent of owner selection:
+        // filtered legacy output must not become fresh forever when the filter
+        // later selects the crate.
+        assert!(reject_unsupported_codegen_protocol(true, true));
     }
 
     #[test]

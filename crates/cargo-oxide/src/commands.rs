@@ -14,10 +14,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::backend;
+use sha2::Digest as _;
 
-const MATERIALIZE_ENV: &str = "CUDA_OXIDE_MATERIALIZE_CUBIN";
-const EXPECTED_PROVENANCE_ENV: &str = "CUDA_OXIDE_INTERNAL_MATERIALIZER_PROVENANCE";
-const MATERIALIZER_PROVENANCE_CFG: &str = "cuda_oxide_internal_materializer_provenance";
+const MATERIALIZE_ENV: &str = reserved_oxide_symbols::MATERIALIZE_CUBIN_ENV;
+const EXPECTED_PROVENANCE_ENV: &str = reserved_oxide_symbols::MATERIALIZER_PROVENANCE_ENV;
+const CODEGEN_FINGERPRINT_ENV: &str = reserved_oxide_symbols::CODEGEN_FINGERPRINT_ENV;
+const DEVICE_CODEGEN_CRATE_ENV: &str = reserved_oxide_symbols::DEVICE_CODEGEN_CRATE_ENV;
+const BACKEND_IDENTITY_CFG: &str = "cuda_oxide_internal_backend_identity";
+const LEGACY_CODEGEN_FINGERPRINT_CFG: &str = "cuda_oxide_internal_codegen_env";
+const LEGACY_MATERIALIZER_PROVENANCE_CFG: &str = "cuda_oxide_internal_materializer_provenance";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MaterializationMode {
@@ -38,20 +43,6 @@ impl MaterializationMode {
                 .env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
         }
     }
-}
-
-fn fingerprinted_codegen_cfgs(
-    base_fingerprint: String,
-    materialization: &MaterializationMode,
-) -> Vec<String> {
-    let mut cfgs = vec![base_fingerprint];
-    if let Some(provenance) = &materialization.provenance {
-        // Keep the complete SHA-256 in rustc's command line. The ordinary
-        // environment fingerprint also hashes it, but this full value avoids
-        // reducing exact tool identity to that hash's 64-bit collision space.
-        cfgs.push(format!("{MATERIALIZER_PROVENANCE_CFG}=\"{provenance}\""));
-    }
-    cfgs
 }
 
 fn prepare_materialization(
@@ -424,7 +415,7 @@ pub fn codegen_run(
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
-    let fingerprint = standard_codegen_fingerprint_cfg(
+    let fingerprint = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
@@ -433,12 +424,12 @@ pub fn codegen_run(
         detected_device_arch.as_deref(),
         &materialization,
     );
-    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
-    apply_codegen_rustflags(
+    apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLike,
-        &fingerprinted_cfgs,
+        &[],
+        &fingerprint,
     );
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
@@ -757,7 +748,7 @@ fn build_interop_device_crate(
         .current_dir(device_dir);
 
     apply_interop_device_codegen_options(&mut cmd, ctx, verbose, options);
-    let fingerprint = interop_codegen_fingerprint_cfg(
+    let fingerprint = interop_codegen_fingerprint(
         ctx,
         verbose,
         options.no_fmad,
@@ -767,12 +758,12 @@ fn build_interop_device_crate(
         options.sanitizer_line_tables,
         materialization,
     );
-    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, materialization);
-    apply_codegen_rustflags(
+    apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLike,
-        &fingerprinted_cfgs,
+        &[],
+        &fingerprint,
     );
     // This is an internal artifact contract, so it must override a project
     // `[env]` default for the same variable.
@@ -876,7 +867,7 @@ fn codegen_build_host_binary(
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
     apply_default_sanitizer_line_tables(&mut cmd, ctx);
-    let fingerprint = sanitize_codegen_fingerprint_cfg(
+    let fingerprint = sanitize_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
@@ -885,12 +876,12 @@ fn codegen_build_host_binary(
         None,
         materialization,
     );
-    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, materialization);
-    apply_codegen_rustflags(
+    apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLike,
-        &fingerprinted_cfgs,
+        &[],
+        &fingerprint,
     );
     apply_output_mode(&mut cmd, false, arch, materialization);
     apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
@@ -1492,7 +1483,7 @@ pub fn codegen_build(
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
-    let fingerprint = standard_codegen_fingerprint_cfg(
+    let fingerprint = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
@@ -1501,12 +1492,12 @@ pub fn codegen_build(
         None,
         &materialization,
     );
-    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
-    apply_codegen_rustflags(
+    apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLike,
-        &fingerprinted_cfgs,
+        &[],
+        &fingerprint,
     );
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
 
@@ -1804,11 +1795,11 @@ fn configured_device_codegen_crates(
     ctx: &Context,
     explicit: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let inherited = std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE").ok();
+    let inherited = std::env::var(DEVICE_CODEGEN_CRATE_ENV).ok();
     resolve_device_codegen_crates(
         explicit,
         inherited.as_deref(),
-        project_config_env(ctx, "CUDA_OXIDE_DEVICE_CODEGEN_CRATE"),
+        project_config_env(ctx, DEVICE_CODEGEN_CRATE_ENV),
     )
 }
 
@@ -1861,10 +1852,6 @@ fn passthrough_codegen_fingerprint_with_env(
     inherited_env: &BTreeMap<String, Vec<u8>>,
 ) -> String {
     let mut effective_env = BTreeMap::new();
-    effective_env.insert(
-        "__CUDA_OXIDE_BACKEND_ARTIFACT".to_string(),
-        backend_artifact_identity(&ctx.backend_so).into_bytes(),
-    );
 
     // Project-configured CUDA_OXIDE_* variables are defaults. Mirror the same
     // parent override rule as `apply_config_env` so changes that can affect
@@ -1884,12 +1871,18 @@ fn passthrough_codegen_fingerprint_with_env(
     }
     // Capture backend settings inherited outside project config, including
     // current and future CUDA_OXIDE_* switches.
-    for (key, value) in inherited_env
-        .iter()
-        .filter(|(key, _)| key.starts_with("CUDA_OXIDE_"))
-    {
+    for (key, value) in inherited_env.iter().filter(|(key, _)| {
+        key.starts_with("CUDA_OXIDE_") && key.as_str() != CODEGEN_FINGERPRINT_ENV
+    }) {
         effective_env.insert(key.clone(), value.clone());
     }
+
+    // These are wrapper-owned semantic values. Normalize away inherited
+    // false/stale handshakes before inserting the effective materialization
+    // state below, so no-op values do not create distinct Cargo identities.
+    effective_env.remove(CODEGEN_FINGERPRINT_ENV);
+    effective_env.remove(MATERIALIZE_ENV);
+    effective_env.remove(EXPECTED_PROVENANCE_ENV);
 
     if opts.verbose {
         effective_env.insert("CUDA_OXIDE_VERBOSE".to_string(), b"1".to_vec());
@@ -1915,33 +1908,39 @@ fn passthrough_codegen_fingerprint_with_env(
     }
     if let Some(owner_filter) = owner_filter {
         effective_env.insert(
-            "CUDA_OXIDE_DEVICE_CODEGEN_CRATE".to_string(),
+            DEVICE_CODEGEN_CRATE_ENV.to_string(),
             owner_filter.as_bytes().to_vec(),
         );
     }
 
-    // Stable FNV-1a over length-delimited key/value pairs. The cfg carries
-    // only the digest, so backend settings are not included verbatim in rustc
-    // command lines or diagnostics.
-    let mut hash = 0xcbf29ce484222325_u64;
+    // SHA-256 over length-delimited key/value pairs. The complete digest is
+    // tracked by device-owning procedural macros, so settings are neither
+    // exposed verbatim in diagnostics nor reduced to a small collision space.
+    let mut hash = sha2::Sha256::new();
     for (key, value) in effective_env {
         update_codegen_fingerprint_hash(&mut hash, key.as_bytes());
         update_codegen_fingerprint_hash(&mut hash, &value);
     }
-    format!("{hash:016x}")
+    finish_codegen_fingerprint(hash)
 }
 
-fn update_codegen_fingerprint_hash(hash: &mut u64, bytes: &[u8]) {
-    for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes) {
-        *hash ^= u64::from(*byte);
-        *hash = hash.wrapping_mul(0x100000001b3);
-    }
+fn update_codegen_fingerprint_hash(hash: &mut sha2::Sha256, bytes: &[u8]) {
+    use sha2::Digest as _;
+
+    hash.update((bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
 }
 
-/// Put sanitizer-only output settings into an otherwise-unused cfg so Cargo
-/// recompiles every selected Rust target, including `src/bin/*` and virtual
-/// workspace members. Cargo does not fingerprint arbitrary backend env vars.
-fn sanitize_codegen_fingerprint_cfg(
+fn finish_codegen_fingerprint(hash: sha2::Sha256) -> String {
+    use sha2::Digest as _;
+
+    let digest: [u8; 32] = hash.finalize().into();
+    digest_hex(&digest)
+}
+
+/// Track sanitizer-only device output settings in crates that declare device
+/// code, without invalidating their host-only dependency graph.
+fn sanitize_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
     no_fmad: bool,
@@ -1962,7 +1961,7 @@ fn sanitize_codegen_fingerprint_cfg(
         materialize_cubin: materialization.enabled(),
     };
     let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
-    let mut hash = 0xcbf29ce484222325_u64;
+    let mut hash = sha2::Sha256::new();
     for bytes in [
         "sanitize-line-tables-v1".as_bytes(),
         base.as_bytes(),
@@ -1973,10 +1972,10 @@ fn sanitize_codegen_fingerprint_cfg(
     if let Some(ptx_dir) = ptx_dir {
         update_codegen_fingerprint_hash(&mut hash, ptx_dir.as_os_str().as_encoded_bytes());
     }
-    format!("cuda_oxide_internal_codegen_env=\"{hash:016x}\"")
+    finish_codegen_fingerprint(hash)
 }
 
-fn standard_codegen_fingerprint_cfg(
+fn standard_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
     no_fmad: bool,
@@ -1997,7 +1996,7 @@ fn standard_codegen_fingerprint_cfg(
         materialize_cubin: materialization.enabled(),
     };
     let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
-    let mut hash = 0xcbf29ce484222325_u64;
+    let mut hash = sha2::Sha256::new();
     for bytes in [
         "standard-codegen-v1".as_bytes(),
         base.as_bytes(),
@@ -2005,11 +2004,39 @@ fn standard_codegen_fingerprint_cfg(
     ] {
         update_codegen_fingerprint_hash(&mut hash, bytes);
     }
-    format!("cuda_oxide_internal_codegen_env=\"{hash:016x}\"")
+    finish_codegen_fingerprint(hash)
+}
+
+fn pipeline_codegen_fingerprint(
+    ctx: &Context,
+    no_fmad: bool,
+    emit_nvvm_ir: bool,
+    target_arch: Option<&str>,
+    materialization: &MaterializationMode,
+) -> String {
+    let base = standard_codegen_fingerprint(
+        ctx,
+        true,
+        no_fmad,
+        emit_nvvm_ir,
+        target_arch,
+        None,
+        materialization,
+    );
+    let mut hash = sha2::Sha256::new();
+    for value in [
+        base.as_str(),
+        "CUDA_OXIDE_SHOW_RUSTC_MIR=1",
+        "CUDA_OXIDE_DUMP_MIR=1",
+        "CUDA_OXIDE_DUMP_LLVM=1",
+    ] {
+        update_codegen_fingerprint_hash(&mut hash, value.as_bytes());
+    }
+    finish_codegen_fingerprint(hash)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn interop_codegen_fingerprint_cfg(
+fn interop_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
     no_fmad: bool,
@@ -2019,7 +2046,7 @@ fn interop_codegen_fingerprint_cfg(
     sanitizer_line_tables: bool,
     materialization: &MaterializationMode,
 ) -> String {
-    let base = standard_codegen_fingerprint_cfg(
+    let base = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
@@ -2028,7 +2055,7 @@ fn interop_codegen_fingerprint_cfg(
         detected_device_arch,
         materialization,
     );
-    let mut hash = 0xcbf29ce484222325_u64;
+    let mut hash = sha2::Sha256::new();
     for bytes in [
         "interop-codegen-v1".as_bytes(),
         base.as_bytes(),
@@ -2041,31 +2068,45 @@ fn interop_codegen_fingerprint_cfg(
     ] {
         update_codegen_fingerprint_hash(&mut hash, bytes);
     }
-    format!("cuda_oxide_internal_codegen_env=\"{hash:016x}\"")
+    finish_codegen_fingerprint(hash)
 }
 
-fn backend_artifact_identity(path: &Path) -> String {
+fn backend_artifact_digest(path: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
 
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let path = canonical.to_string_lossy();
-    let Ok(mut file) = std::fs::File::open(&canonical) else {
-        return format!("{path}|unreadable");
-    };
+    let mut hasher = Sha256::new();
+    if path == Path::new("llvm") {
+        hasher.update(b"rustc built-in LLVM backend");
+        let digest: [u8; 32] = hasher.finalize().into();
+        return Ok(digest_hex(&digest));
+    }
+
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("could not resolve backend {}: {error}", path.display()))?;
+    let mut file = std::fs::File::open(&canonical).map_err(|error| {
+        format!(
+            "could not open backend {} for fingerprinting: {error}",
+            canonical.display()
+        )
+    })?;
     let mut hasher = Sha256::new();
     let mut chunk = [0_u8; 64 * 1024];
     loop {
-        let Ok(read) = file.read(&mut chunk) else {
-            return format!("{path}|unreadable");
-        };
+        let read = file.read(&mut chunk).map_err(|error| {
+            format!(
+                "could not read backend {} for fingerprinting: {error}",
+                canonical.display()
+            )
+        })?;
         if read == 0 {
             break;
         }
         hasher.update(&chunk[..read]);
     }
     let digest: [u8; 32] = hasher.finalize().into();
-    format!("{path}|sha256={}", digest_hex(&digest))
+    Ok(digest_hex(&digest))
 }
 
 fn cargo_passthrough_command(
@@ -2078,11 +2119,8 @@ fn cargo_passthrough_command(
     let materialization =
         prepare_materialization(ctx, opts.materialize_cubin, opts.arch, opts.emit_nvvm_ir);
     let owner_filter = configured_device_codegen_crates(ctx, opts.device_codegen_crate)?;
-    let mut fingerprinted_device_cfgs = opts.device_cfgs.to_vec();
-    // Cargo does not fingerprint arbitrary child environment variables. An
-    // otherwise-unused cfg makes every effective codegen setting part of the
-    // rustc command line, so changing target/output/FMA/filter settings reruns
-    // the backend instead of silently reusing stale PTX or NVVM IR.
+    // Device-owning macros track this identity in their crate dep-info. Keep it
+    // out of global rustflags so host-only dependencies retain one cache key.
     let fingerprint = passthrough_codegen_fingerprint(
         ctx,
         opts,
@@ -2090,10 +2128,6 @@ fn cargo_passthrough_command(
         target_arch,
         &materialization,
     );
-    fingerprinted_device_cfgs.push(format!("cuda_oxide_internal_codegen_env=\"{fingerprint}\""));
-    if let Some(provenance) = &materialization.provenance {
-        fingerprinted_device_cfgs.push(format!("{MATERIALIZER_PROVENANCE_CFG}=\"{provenance}\""));
-    }
     let mut cmd = Command::new("cargo");
     cmd.arg(cargo_subcommand.as_str());
     if let Some(features) = opts.features {
@@ -2104,18 +2138,19 @@ fn cargo_passthrough_command(
     // Project configuration provides defaults. Explicit wrapper flags and
     // internal compiler requirements are applied afterward and therefore win.
     apply_common_codegen_env(&mut cmd, ctx, opts.verbose, opts.no_fmad);
-    apply_codegen_rustflags(
+    apply_codegen_configuration(
         &mut cmd,
         ctx,
         cargo_subcommand.codegen_profile(),
-        &fingerprinted_device_cfgs,
-    );
+        opts.device_cfgs,
+        &fingerprint,
+    )?;
 
     if let Some(cargo_target_dir) = opts.cargo_target_dir {
         cmd.env("CARGO_TARGET_DIR", cargo_target_dir);
     }
     if let Some(owner_filter) = owner_filter {
-        cmd.env("CUDA_OXIDE_DEVICE_CODEGEN_CRATE", owner_filter);
+        cmd.env(DEVICE_CODEGEN_CRATE_ENV, owner_filter);
     }
     apply_output_mode(&mut cmd, opts.emit_nvvm_ir, target_arch, &materialization);
     Ok(cmd)
@@ -2248,21 +2283,14 @@ pub fn codegen_show_pipeline(
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
     apply_config_env(&mut cmd, ctx);
-    let fingerprint = standard_codegen_fingerprint_cfg(
-        ctx,
-        true,
-        no_fmad,
-        emit_nvvm_ir,
-        target_arch,
-        None,
-        &materialization,
-    );
-    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
-    apply_codegen_rustflags(
+    let fingerprint =
+        pipeline_codegen_fingerprint(ctx, no_fmad, emit_nvvm_ir, target_arch, &materialization);
+    apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLike,
-        &fingerprinted_cfgs,
+        &[],
+        &fingerprint,
     );
     cmd.env("CUDA_OXIDE_VERBOSE", "1");
     cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
@@ -2375,7 +2403,7 @@ pub fn codegen_debug(
     }
 
     apply_config_env(&mut cmd, ctx);
-    let fingerprint = standard_codegen_fingerprint_cfg(
+    let fingerprint = standard_codegen_fingerprint(
         ctx,
         false,
         false,
@@ -2384,12 +2412,12 @@ pub fn codegen_debug(
         detected_device_arch.as_deref(),
         &materialization,
     );
-    let fingerprinted_cfgs = fingerprinted_codegen_cfgs(fingerprint, &materialization);
-    apply_codegen_rustflags(
+    apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
         CodegenProfilePolicy::ReleaseLikeWithDebugInfo,
-        &fingerprinted_cfgs,
+        &[],
+        &fingerprint,
     );
     cmd.env("CARGO_PROFILE_RELEASE_DEBUG", "2");
     apply_output_mode(&mut cmd, false, target_arch, &materialization);
@@ -3296,6 +3324,7 @@ fn build_encoded_rustflags_with_existing(
         flags.extend(existing.split_whitespace().map(str::to_string));
     }
     flags.extend(explicit_rustflags.iter().cloned());
+    strip_wrapper_owned_codegen_cfgs(&mut flags);
     flags.push(format!("-Zcodegen-backend={}", backend_so.display()));
     if matches!(
         profile,
@@ -3316,6 +3345,45 @@ fn build_encoded_rustflags_with_existing(
     flags.join(&ENCODED_RUSTFLAGS_SEPARATOR.to_string())
 }
 
+fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
+    fn is_wrapper_owned_cfg(value: &str) -> bool {
+        [
+            LEGACY_CODEGEN_FINGERPRINT_CFG,
+            LEGACY_MATERIALIZER_PROVENANCE_CFG,
+        ]
+        .iter()
+        .any(|name| {
+            value
+                .strip_prefix(name)
+                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('='))
+        })
+    }
+
+    let mut retained = Vec::with_capacity(flags.len());
+    let mut index = 0;
+    while index < flags.len() {
+        let flag = &flags[index];
+        if flag == "--cfg"
+            && flags
+                .get(index + 1)
+                .is_some_and(|value| is_wrapper_owned_cfg(value))
+        {
+            index += 2;
+            continue;
+        }
+        if flag
+            .strip_prefix("--cfg=")
+            .is_some_and(is_wrapper_owned_cfg)
+        {
+            index += 1;
+            continue;
+        }
+        retained.push(flag.clone());
+        index += 1;
+    }
+    *flags = retained;
+}
+
 fn apply_codegen_rustflags(
     cmd: &mut Command,
     ctx: &Context,
@@ -3327,6 +3395,42 @@ fn apply_codegen_rustflags(
         build_encoded_rustflags(ctx, profile, device_cfgs),
     )
     .env_remove("RUSTFLAGS");
+}
+
+/// Apply the two deliberately different Cargo cache boundaries:
+///
+/// - the exact backend binary is global because it compiles every crate;
+/// - mode/architecture/tool settings are an env dependency recorded only by
+///   CUDA macros in crates that can own or instantiate device code.
+fn apply_codegen_configuration(
+    cmd: &mut Command,
+    ctx: &Context,
+    profile: CodegenProfilePolicy,
+    user_device_cfgs: &[String],
+    codegen_fingerprint: &str,
+) -> Result<(), String> {
+    let backend_digest = backend_artifact_digest(&ctx.backend_so)?;
+    let mut global_cfgs = Vec::with_capacity(user_device_cfgs.len() + 1);
+    global_cfgs.push(format!("{BACKEND_IDENTITY_CFG}=\"{backend_digest}\""));
+    global_cfgs.extend(user_device_cfgs.iter().cloned());
+
+    apply_codegen_rustflags(cmd, ctx, profile, &global_cfgs);
+    cmd.env(CODEGEN_FINGERPRINT_ENV, codegen_fingerprint);
+    Ok(())
+}
+
+fn apply_codegen_configuration_or_exit(
+    cmd: &mut Command,
+    ctx: &Context,
+    profile: CodegenProfilePolicy,
+    user_device_cfgs: &[String],
+    codegen_fingerprint: &str,
+) {
+    apply_codegen_configuration(cmd, ctx, profile, user_device_cfgs, codegen_fingerprint)
+        .unwrap_or_else(|error| {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        });
 }
 
 /// Set environment variables for the codegen backend.
@@ -4004,12 +4108,59 @@ mod tests {
         encoded.split(ENCODED_RUSTFLAGS_SEPARATOR).collect()
     }
 
-    fn has_codegen_env_fingerprint(flags: &[&str]) -> bool {
+    fn has_backend_identity_cfg(flags: &[&str]) -> bool {
         flags.windows(2).any(|pair| {
             pair[0] == "--cfg"
-                && pair[1].starts_with("cuda_oxide_internal_codegen_env=\"")
+                && pair[1].starts_with("cuda_oxide_internal_backend_identity=\"")
                 && pair[1].ends_with('"')
         })
+    }
+
+    fn is_sha256(value: &str) -> bool {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    }
+
+    fn cargo_artifact_freshness(
+        ctx: &Context,
+        opts: &CargoPassthroughOptions<'_>,
+        materializer_provenance: Option<&str>,
+    ) -> BTreeMap<String, bool> {
+        let mut cmd = cargo_passthrough_command(
+            ctx,
+            CargoPassthroughSubcommand::Build,
+            opts,
+            &["--message-format=json-render-diagnostics".to_string()],
+        )
+        .unwrap();
+        if let Some(provenance) = materializer_provenance {
+            // Exercise a non-canonical spelling accepted by the backend. The
+            // macro must still track exact provenance rather than keying that
+            // dependency on the wrapper's canonical `1` spelling.
+            cmd.env(MATERIALIZE_ENV, "true");
+            cmd.env(EXPECTED_PROVENANCE_ENV, provenance);
+        }
+        let output = cmd.output().expect("failed to run Cargo cache probe");
+        assert!(
+            output.status.success(),
+            "Cargo cache probe failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        String::from_utf8(output.stdout)
+            .expect("Cargo JSON must be UTF-8")
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|message| message["reason"] == "compiler-artifact")
+            .filter_map(|message| {
+                Some((
+                    message["target"]["name"].as_str()?.to_string(),
+                    message["fresh"].as_bool()?,
+                ))
+            })
+            .collect()
     }
 
     fn test_context(config: OxideConfig) -> Context {
@@ -4017,7 +4168,7 @@ mod tests {
             workspace_root: PathBuf::from("/tmp/cargo-oxide-test-workspace"),
             codegen_crate: PathBuf::from("/tmp/cargo-oxide-test-codegen"),
             examples_dir: PathBuf::from("/tmp/cargo-oxide-test-examples"),
-            backend_so: PathBuf::from("/tmp/backend path/librustc_codegen_cuda.so"),
+            backend_so: PathBuf::from("llvm"),
             is_workspace: false,
             config,
         }
@@ -4734,7 +4885,7 @@ path = "src/other.rs"
             Some("line-tables")
         );
 
-        let fingerprint = sanitize_codegen_fingerprint_cfg(
+        let fingerprint = sanitize_codegen_fingerprint(
             &ctx,
             false,
             true,
@@ -4743,14 +4894,20 @@ path = "src/other.rs"
             Some(Path::new("/tmp/generated-ptx")),
             &MaterializationMode::default(),
         );
-        apply_codegen_rustflags(
+        apply_codegen_configuration(
             &mut cmd,
             &ctx,
             CodegenProfilePolicy::ReleaseLike,
-            &[fingerprint],
-        );
+            &[],
+            &fingerprint,
+        )
+        .unwrap();
         let encoded = command_env(&cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
-        assert!(has_codegen_env_fingerprint(&decoded_rustflags(&encoded)));
+        assert!(has_backend_identity_cfg(&decoded_rustflags(&encoded)));
+        assert_eq!(
+            command_env(&cmd, CODEGEN_FINGERPRINT_ENV).as_deref(),
+            Some(fingerprint.as_str())
+        );
     }
 
     #[test]
@@ -4772,7 +4929,7 @@ path = "src/other.rs"
     #[test]
     fn sanitize_fingerprint_tracks_output_affecting_settings() {
         let ctx = test_context(OxideConfig::default());
-        let base = sanitize_codegen_fingerprint_cfg(
+        let base = sanitize_codegen_fingerprint(
             &ctx,
             false,
             false,
@@ -4783,7 +4940,7 @@ path = "src/other.rs"
         );
 
         for changed in [
-            sanitize_codegen_fingerprint_cfg(
+            sanitize_codegen_fingerprint(
                 &ctx,
                 false,
                 true,
@@ -4792,7 +4949,7 @@ path = "src/other.rs"
                 None,
                 &MaterializationMode::default(),
             ),
-            sanitize_codegen_fingerprint_cfg(
+            sanitize_codegen_fingerprint(
                 &ctx,
                 false,
                 false,
@@ -4801,7 +4958,7 @@ path = "src/other.rs"
                 None,
                 &MaterializationMode::default(),
             ),
-            sanitize_codegen_fingerprint_cfg(
+            sanitize_codegen_fingerprint(
                 &ctx,
                 false,
                 false,
@@ -4810,7 +4967,7 @@ path = "src/other.rs"
                 None,
                 &MaterializationMode::default(),
             ),
-            sanitize_codegen_fingerprint_cfg(
+            sanitize_codegen_fingerprint(
                 &ctx,
                 false,
                 false,
@@ -4822,6 +4979,25 @@ path = "src/other.rs"
         ] {
             assert_ne!(base, changed);
         }
+    }
+
+    #[test]
+    fn pipeline_diagnostics_have_a_distinct_device_fingerprint() {
+        let ctx = test_context(OxideConfig::default());
+        let materialization = MaterializationMode::default();
+        let standard = standard_codegen_fingerprint(
+            &ctx,
+            true,
+            false,
+            false,
+            Some("sm_86"),
+            None,
+            &materialization,
+        );
+        let pipeline =
+            pipeline_codegen_fingerprint(&ctx, false, false, Some("sm_86"), &materialization);
+
+        assert_ne!(standard, pipeline);
     }
 
     #[test]
@@ -4972,6 +5148,45 @@ path = "src/other.rs"
     }
 
     #[test]
+    fn encoded_rustflags_remove_legacy_global_codegen_fingerprints() {
+        let encoded = [
+            "--cfg",
+            "cuda_oxide_internal_codegen_env=\"inherited\"",
+            "--cfg=cuda_oxide_internal_materializer_provenance=\"inherited\"",
+            "--cfg",
+            "keep_inherited",
+        ]
+        .join(&ENCODED_RUSTFLAGS_SEPARATOR.to_string());
+        let rustflags = build_encoded_rustflags_with_existing(
+            Path::new("/tmp/librustc_codegen_cuda.so"),
+            CodegenProfilePolicy::ReleaseLike,
+            &[
+                "--cfg".to_string(),
+                "cuda_oxide_internal_codegen_env=\"configured\"".to_string(),
+                "--cfg".to_string(),
+                "keep_configured".to_string(),
+            ],
+            &[
+                "--cfg".to_string(),
+                "cuda_oxide_internal_materializer_provenance=\"explicit\"".to_string(),
+                "--cfg".to_string(),
+                "keep_explicit".to_string(),
+            ],
+            Some(&encoded),
+            None,
+        );
+        let flags = decoded_rustflags(&rustflags);
+
+        assert!(!flags.iter().any(|flag| {
+            flag.contains(LEGACY_CODEGEN_FINGERPRINT_CFG)
+                || flag.contains(LEGACY_MATERIALIZER_PROVENANCE_CFG)
+        }));
+        for retained in ["keep_configured", "keep_inherited", "keep_explicit"] {
+            assert!(flags.contains(&retained));
+        }
+    }
+
+    #[test]
     fn debug_profile_retains_release_defaults_and_adds_debuginfo() {
         let rustflags = build_encoded_rustflags_with_existing(
             Path::new("/tmp/librustc_codegen_cuda.so"),
@@ -5111,7 +5326,14 @@ MY_BUILD_FLAG = "configured"
                 .windows(2)
                 .any(|pair| pair == ["--cfg", "model=\"alpha beta\""])
         );
-        assert!(has_codegen_env_fingerprint(&flags));
+        assert!(has_backend_identity_cfg(&flags));
+        assert!(!flags.iter().any(|flag| {
+            flag.contains("cuda_oxide_internal_codegen_env")
+                || flag.contains("cuda_oxide_internal_materializer_provenance")
+        }));
+        assert!(is_sha256(
+            &command_env(&cmd, CODEGEN_FINGERPRINT_ENV).unwrap()
+        ));
         assert!(
             cmd.get_envs()
                 .any(|(key, value)| key == OsStr::new("RUSTFLAGS") && value.is_none())
@@ -5141,6 +5363,227 @@ MY_BUILD_FLAG = "configured"
                 .collect::<Vec<_>>(),
             ["test"]
         );
+    }
+
+    #[test]
+    fn architecture_and_output_mode_do_not_change_global_rustflags() {
+        let ctx = test_context(OxideConfig::default());
+        let base = CargoPassthroughOptions {
+            verbose: false,
+            emit_nvvm_ir: false,
+            arch: Some("sm_80"),
+            features: None,
+            cargo_target_dir: None,
+            device_codegen_crate: None,
+            device_cfgs: &[],
+            no_fmad: false,
+            materialize_cubin: false,
+        };
+        let base_cmd =
+            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Build, &base, &[]).unwrap();
+        let different_mode = CargoPassthroughOptions {
+            emit_nvvm_ir: true,
+            arch: Some("sm_90"),
+            ..base
+        };
+        let different_cmd = cargo_passthrough_command(
+            &ctx,
+            CargoPassthroughSubcommand::Build,
+            &different_mode,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            command_env(&base_cmd, "CARGO_ENCODED_RUSTFLAGS"),
+            command_env(&different_cmd, "CARGO_ENCODED_RUSTFLAGS"),
+            "architecture/output switches must not invalidate every dependency"
+        );
+        assert_ne!(
+            command_env(&base_cmd, CODEGEN_FINGERPRINT_ENV),
+            command_env(&different_cmd, CODEGEN_FINGERPRINT_ENV),
+            "device owners still need a distinct Cargo identity"
+        );
+    }
+
+    #[test]
+    fn codegen_mode_changes_rebuild_only_the_tracked_device_owner() {
+        let root = unique_temp_dir("cargo_oxide_scoped_codegen_fingerprint");
+        let target = root.join("target");
+        for path in [
+            root.join("shared-dep/src"),
+            root.join("tracked-macro/src"),
+            root.join("device-owner/src"),
+            root.join("device-consumer/src"),
+        ] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+resolver = "3"
+members = ["shared-dep", "tracked-macro", "device-owner", "device-consumer"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("shared-dep/Cargo.toml"),
+            r#"[package]
+name = "shared-dep"
+version = "0.0.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("shared-dep/src/lib.rs"),
+            "pub fn shared_value() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("tracked-macro/Cargo.toml"),
+            r#"[package]
+name = "tracked-macro"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("tracked-macro/src/lib.rs"),
+            format!(
+                r#"#![feature(proc_macro_tracked_env)]
+extern crate proc_macro;
+
+#[proc_macro]
+pub fn track_codegen(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {{
+    let _ = proc_macro::tracked::env_var({CODEGEN_FINGERPRINT_ENV:?});
+    let _ = proc_macro::tracked::env_var({MATERIALIZE_ENV:?});
+    let _ = proc_macro::tracked::env_var({EXPECTED_PROVENANCE_ENV:?});
+    "()".parse().unwrap()
+}}
+"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("device-owner/Cargo.toml"),
+            r#"[package]
+name = "device-owner"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+shared-dep = { path = "../shared-dep" }
+tracked-macro = { path = "../tracked-macro" }
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("device-owner/src/lib.rs"),
+            "const _: () = tracked_macro::track_codegen!();\npub fn device_value() -> u32 { shared_dep::shared_value() }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("device-consumer/Cargo.toml"),
+            r#"[package]
+name = "device-consumer"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+device-owner = { path = "../device-owner" }
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("device-consumer/src/main.rs"),
+            "fn main() { assert_eq!(device_owner::device_value(), 42); }\n",
+        )
+        .unwrap();
+
+        let ctx = Context {
+            workspace_root: root.clone(),
+            codegen_crate: root.join("unused-codegen-source"),
+            examples_dir: root.join("unused-examples"),
+            backend_so: PathBuf::from("llvm"),
+            is_workspace: false,
+            config: OxideConfig::default(),
+        };
+        let base = CargoPassthroughOptions {
+            verbose: false,
+            emit_nvvm_ir: false,
+            arch: Some("sm_80"),
+            features: None,
+            cargo_target_dir: Some(&target),
+            device_codegen_crate: None,
+            device_cfgs: &[],
+            no_fmad: false,
+            materialize_cubin: false,
+        };
+
+        let cold = cargo_artifact_freshness(&ctx, &base, None);
+        assert_eq!(cold.get("shared_dep"), Some(&false));
+        assert_eq!(cold.get("tracked_macro"), Some(&false));
+        assert_eq!(cold.get("device_owner"), Some(&false));
+        assert_eq!(cold.get("device-consumer"), Some(&false));
+
+        let warm = cargo_artifact_freshness(&ctx, &base, None);
+        assert_eq!(warm.get("shared_dep"), Some(&true));
+        assert_eq!(warm.get("tracked_macro"), Some(&true));
+        assert_eq!(warm.get("device_owner"), Some(&true));
+        assert_eq!(warm.get("device-consumer"), Some(&true));
+
+        let different_arch = CargoPassthroughOptions {
+            arch: Some("sm_90"),
+            ..base
+        };
+        let arch_switch = cargo_artifact_freshness(&ctx, &different_arch, None);
+        assert_eq!(arch_switch.get("shared_dep"), Some(&true));
+        assert_eq!(arch_switch.get("tracked_macro"), Some(&true));
+        assert_eq!(arch_switch.get("device_owner"), Some(&false));
+        assert_eq!(arch_switch.get("device-consumer"), Some(&false));
+
+        let different_output = CargoPassthroughOptions {
+            emit_nvvm_ir: true,
+            ..different_arch
+        };
+        let output_switch = cargo_artifact_freshness(&ctx, &different_output, None);
+        assert_eq!(output_switch.get("shared_dep"), Some(&true));
+        assert_eq!(output_switch.get("tracked_macro"), Some(&true));
+        assert_eq!(output_switch.get("device_owner"), Some(&false));
+        assert_eq!(output_switch.get("device-consumer"), Some(&false));
+
+        let repeated_output = cargo_artifact_freshness(&ctx, &different_output, None);
+        assert_eq!(repeated_output.get("shared_dep"), Some(&true));
+        assert_eq!(repeated_output.get("tracked_macro"), Some(&true));
+        assert_eq!(repeated_output.get("device_owner"), Some(&true));
+        assert_eq!(repeated_output.get("device-consumer"), Some(&true));
+
+        let provenance_switch = cargo_artifact_freshness(
+            &ctx,
+            &different_output,
+            Some("11d91fbe164094f6242d44103d0fb01968b96c6d8f48f124eac8fa73a307a657"),
+        );
+        assert_eq!(provenance_switch.get("shared_dep"), Some(&true));
+        assert_eq!(provenance_switch.get("tracked_macro"), Some(&true));
+        assert_eq!(provenance_switch.get("device_owner"), Some(&false));
+        assert_eq!(provenance_switch.get("device-consumer"), Some(&false));
+
+        let changed_provenance = cargo_artifact_freshness(
+            &ctx,
+            &different_output,
+            Some("5b11618c2e44027877d0cd4d0cfd10afed5ef262876791e483ec58f4c5569139"),
+        );
+        assert_eq!(changed_provenance.get("shared_dep"), Some(&true));
+        assert_eq!(changed_provenance.get("tracked_macro"), Some(&true));
+        assert_eq!(changed_provenance.get("device_owner"), Some(&false));
+        assert_eq!(changed_provenance.get("device-consumer"), Some(&false));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -5312,7 +5755,7 @@ MY_BUILD_FLAG = "configured"
     }
 
     #[test]
-    fn passthrough_fingerprint_tracks_backend_rebuild_at_same_path() {
+    fn global_backend_identity_tracks_rebuild_at_same_path() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time before unix epoch")
@@ -5330,26 +5773,17 @@ MY_BUILD_FLAG = "configured"
 
         let mut ctx = test_context(OxideConfig::default());
         ctx.backend_so = backend.clone();
-        let opts = CargoPassthroughOptions {
-            verbose: false,
-            emit_nvvm_ir: false,
-            arch: None,
-            features: None,
-            cargo_target_dir: None,
-            device_codegen_crate: None,
-            device_cfgs: &[],
-            no_fmad: false,
-            materialize_cubin: false,
-        };
-        let inherited_env = BTreeMap::new();
-        let before = passthrough_codegen_fingerprint_with_env(
+        let fingerprint = "42".repeat(32);
+        let mut before_cmd = Command::new("cargo");
+        apply_codegen_configuration(
+            &mut before_cmd,
             &ctx,
-            &opts,
-            None,
-            None,
-            &MaterializationMode::default(),
-            &inherited_env,
-        );
+            CodegenProfilePolicy::ReleaseLike,
+            &[],
+            &fingerprint,
+        )
+        .unwrap();
+        let before = command_env(&before_cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
         // Preserve the weak metadata identity that used to be fingerprinted:
         // only the bytes differ.
         std::fs::write(&backend, b"other").unwrap();
@@ -5362,16 +5796,22 @@ MY_BUILD_FLAG = "configured"
         let replacement = std::fs::metadata(&backend).unwrap();
         assert_eq!(replacement.len(), original.len());
         assert_eq!(replacement.modified().unwrap(), original_modified);
-        let after = passthrough_codegen_fingerprint_with_env(
+        let mut after_cmd = Command::new("cargo");
+        apply_codegen_configuration(
+            &mut after_cmd,
             &ctx,
-            &opts,
-            None,
-            None,
-            &MaterializationMode::default(),
-            &inherited_env,
-        );
+            CodegenProfilePolicy::ReleaseLike,
+            &[],
+            &fingerprint,
+        )
+        .unwrap();
+        let after = command_env(&after_cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
 
         assert_ne!(before, after);
+        assert_eq!(
+            command_env(&before_cmd, CODEGEN_FINGERPRINT_ENV),
+            command_env(&after_cmd, CODEGEN_FINGERPRINT_ENV)
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -5504,14 +5944,6 @@ MY_BUILD_FLAG = "configured"
         assert_eq!(
             command_env(&cmd, EXPECTED_PROVENANCE_ENV).as_deref(),
             Some("4242424242424242424242424242424242424242424242424242424242424242")
-        );
-        assert_eq!(
-            fingerprinted_codegen_cfgs("base=\"hash\"".to_string(), &materialization),
-            [
-                "base=\"hash\"".to_string(),
-                "cuda_oxide_internal_materializer_provenance=\"4242424242424242424242424242424242424242424242424242424242424242\""
-                    .to_string(),
-            ]
         );
     }
 

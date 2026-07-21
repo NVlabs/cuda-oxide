@@ -6,9 +6,9 @@
 //! Strict, opt-in build-time finalization of embedded device artifacts.
 //!
 //! `cargo oxide --materialize-cubin` discovers and fingerprints the exact
-//! libNVVM, nvJitLink, and libdevice inputs before invoking Cargo. The digest
-//! is part of Cargo's rustc fingerprint and is passed here through an internal
-//! environment variable. We rediscover the tools and compare their bytes
+//! libNVVM, nvJitLink, and libdevice inputs before invoking Cargo. Device
+//! macros record the complete codegen identity and exact provenance as Cargo
+//! environment dependencies. We rediscover the tools and compare their bytes
 //! before compiling. Setting the internal opt-in around raw Cargo is
 //! unsupported: Cargo can reuse an existing artifact without invoking this
 //! backend, and when the backend does run it rejects a missing handshake.
@@ -19,9 +19,10 @@ use cuda_artifact_finalizer::{
 };
 use thiserror::Error;
 
-pub(crate) const MATERIALIZE_ENV: &str = "CUDA_OXIDE_MATERIALIZE_CUBIN";
-pub(crate) const EXPECTED_PROVENANCE_ENV: &str = "CUDA_OXIDE_INTERNAL_MATERIALIZER_PROVENANCE";
-pub(crate) const WRAPPER_PROVENANCE_CFG: &str = "cuda_oxide_internal_materializer_provenance";
+pub(crate) const MATERIALIZE_ENV: &str = reserved_oxide_symbols::MATERIALIZE_CUBIN_ENV;
+pub(crate) const EXPECTED_PROVENANCE_ENV: &str =
+    reserved_oxide_symbols::MATERIALIZER_PROVENANCE_ENV;
+pub(crate) const CODEGEN_FINGERPRINT_ENV: &str = reserved_oxide_symbols::CODEGEN_FINGERPRINT_ENV;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MaterializationRequest {
@@ -45,19 +46,14 @@ pub(crate) enum MaterializeError {
     MissingExpectedProvenance,
 
     #[error(
-        "{MATERIALIZE_ENV}=true is missing cargo-oxide's rustc fingerprint; use `cargo oxide build --materialize-cubin` instead of invoking raw Cargo"
+        "{MATERIALIZE_ENV}=true is missing cargo-oxide's tracked codegen fingerprint; use `cargo oxide build --materialize-cubin` instead of invoking raw Cargo"
     )]
     MissingCargoFingerprint,
 
     #[error(
-        "cargo-oxide's materializer provenance cfg must be exactly 64 lowercase hexadecimal characters, got {value:?}"
+        "cargo-oxide's tracked codegen fingerprint must be exactly 64 lowercase hexadecimal characters, got {value:?}"
     )]
-    InvalidCargoProvenance { value: String },
-
-    #[error(
-        "cargo-oxide's materializer provenance cfg does not match {EXPECTED_PROVENANCE_ENV}; refusing an unfingerprinted materialization build"
-    )]
-    CargoProvenanceMismatch,
+    InvalidCargoFingerprint { value: String },
 
     #[error(
         "{EXPECTED_PROVENANCE_ENV} must be exactly 64 lowercase hexadecimal characters, got {value:?}"
@@ -103,9 +99,7 @@ pub(crate) enum MaterializeError {
 
 /// Parse the strict opt-in and its wrapper-generated provenance handshake.
 /// No CUDA library is loaded here.
-pub(crate) fn request_from_env(
-    wrapper_provenance: Option<&str>,
-) -> Result<Option<MaterializationRequest>, MaterializeError> {
+pub(crate) fn request_from_env() -> Result<Option<MaterializationRequest>, MaterializeError> {
     let enabled = match std::env::var(MATERIALIZE_ENV) {
         Ok(value) => parse_bool(&value)?,
         Err(std::env::VarError::NotPresent) => false,
@@ -119,7 +113,7 @@ pub(crate) fn request_from_env(
     let value = std::env::var(EXPECTED_PROVENANCE_ENV)
         .map_err(|_| MaterializeError::MissingExpectedProvenance)?;
     let expected_provenance = parse_digest(&value)?;
-    validate_wrapper_provenance(wrapper_provenance, &expected_provenance)?;
+    validate_codegen_fingerprint()?;
     Ok(Some(MaterializationRequest {
         expected_provenance,
     }))
@@ -209,19 +203,18 @@ fn parse_bool(value: &str) -> Result<bool, MaterializeError> {
     }
 }
 
-fn validate_wrapper_provenance(
-    value: Option<&str>,
-    expected: &[u8; 32],
-) -> Result<(), MaterializeError> {
+fn validate_codegen_fingerprint() -> Result<(), MaterializeError> {
+    let value = std::env::var(CODEGEN_FINGERPRINT_ENV).ok();
+    validate_codegen_fingerprint_value(value.as_deref())
+}
+
+fn validate_codegen_fingerprint_value(value: Option<&str>) -> Result<(), MaterializeError> {
     let value = value.ok_or(MaterializeError::MissingCargoFingerprint)?;
-    let wrapper = parse_digest(value).map_err(|_| MaterializeError::InvalidCargoProvenance {
-        value: value.to_string(),
-    })?;
-    if &wrapper == expected {
-        Ok(())
-    } else {
-        Err(MaterializeError::CargoProvenanceMismatch)
-    }
+    parse_digest(value)
+        .map(|_| ())
+        .map_err(|_| MaterializeError::InvalidCargoFingerprint {
+            value: value.to_string(),
+        })
 }
 
 fn parse_digest(value: &str) -> Result<[u8; 32], MaterializeError> {
@@ -304,15 +297,14 @@ mod tests {
 
     #[test]
     fn backend_invocation_rejects_raw_cargo_materialization_without_fingerprint() {
-        let expected = [0; 32];
         assert!(matches!(
-            validate_wrapper_provenance(None, &expected),
+            validate_codegen_fingerprint_value(None),
             Err(MaterializeError::MissingCargoFingerprint)
         ));
-        assert!(validate_wrapper_provenance(Some(&"00".repeat(32)), &expected).is_ok());
+        assert!(validate_codegen_fingerprint_value(Some(&"00".repeat(32))).is_ok());
         assert!(matches!(
-            validate_wrapper_provenance(Some(&"11".repeat(32)), &expected),
-            Err(MaterializeError::CargoProvenanceMismatch)
+            validate_codegen_fingerprint_value(Some("not-a-digest")),
+            Err(MaterializeError::InvalidCargoFingerprint { .. })
         ));
     }
 }

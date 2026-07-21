@@ -34,10 +34,11 @@ pub fn generated_storage_name_is_hygienic(cuda_oxide_kernel_scope_246e25db_stora
 }
 
 fn entry_abis_do_not_contain_the_launch_context() {
-    let _: fn(u32) = cuda_oxide_kernel_246e25db_simple;
-    let _: fn(u32) = cuda_oxide_kernel_246e25db_generic::<4>;
-    let _: fn(u32) = cuda_oxide_kernel_246e25db_explicit_u32;
-    let _: fn(u32) = cuda_oxide_kernel_246e25db_generated_storage_name_is_hygienic;
+    let _: fn(u32) = cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_simple;
+    let _: fn(u32) = cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_generic::<4>;
+    let _: fn(u32) = cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_explicit_u32;
+    let _: fn(u32) =
+        cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_generated_storage_name_is_hygienic;
 }
 
 fn main() {}

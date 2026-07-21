@@ -190,10 +190,12 @@ package with several targets, embedded bundles still use the package name, so
 an excluded target's loader could otherwise find a selected sibling target's
 bundle.
 
-Passthrough builds include the effective codegen settings and backend build in
-Cargo's rustc fingerprint. Changing the target, output mode, FMA policy, owner
-list, configured codegen environment, or backend `.so` therefore regenerates
-device artifacts instead of reusing a stale Cargo result.
+Passthrough builds use two Cargo cache boundaries. The exact backend `.so`
+identity is global because that backend compiles every crate. CUDA procedural
+macros track target, output mode, FMA policy, owner list, materializer
+provenance, and configured codegen environment only in crates that can own or
+instantiate device code. Changing those settings therefore regenerates device
+artifacts without recompiling unrelated host-only dependencies.
 
 ### `cargo oxide emit-ltoir <crate>`
 

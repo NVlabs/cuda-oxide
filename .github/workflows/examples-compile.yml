@@ -18,7 +18,7 @@ jobs:
   examples-compile:
     name: compile all examples (device pipeline, GPU-less)
     runs-on: ubuntu-latest
-    # 141 example crates as of the generated-intrinsics vertical slice:
+    # 145 example crates as of the scoped-cache repair:
     # backend build + shared dep tree + per-example
     # device codegen. Typically well under an hour with the shared
     # CARGO_TARGET_DIR; the timeout leaves headroom for cold runners.
@@ -89,7 +89,7 @@ jobs:
 
           scripts/smoketest.sh --compile-only --no-color
 
-      - name: Default PTX and opt-in cubin artifacts are distinct
+      - name: Artifact modes keep shared Cargo dependencies fresh
         timeout-minutes: 10
         env:
           CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
@@ -127,19 +127,75 @@ jobs:
             fi
           }
 
-          cargo oxide build vecadd --arch sm_86
+          assert_only_expected_rebuilt() {
+            local log="$1"
+            local allowed="$2"
+            shift 2
+            local unexpected
+            unexpected="$(
+              sed -nE 's/^[[:space:]]*Compiling ([^[:space:]]+).*/\1/p' "${log}" \
+                | sort -u \
+                | grep -Ev "${allowed}" \
+                || true
+            )"
+            if [ -n "${unexpected}" ]; then
+              echo "Codegen mode change rebuilt shared dependencies:" >&2
+              echo "${unexpected}" >&2
+              return 1
+            fi
+            local package
+            for package in "$@"; do
+              if ! grep -Eq "^[[:space:]]*Compiling ${package}([[:space:]]|$)" "${log}"; then
+                echo "Expected ${package} to rebuild, but it stayed fresh" >&2
+                return 1
+              fi
+            done
+          }
+
+          cargo oxide build vecadd --arch sm_86 2>&1 \
+            | tee "${RUNNER_TEMP}/vecadd-ptx-build.log"
+          assert_only_expected_rebuilt \
+            "${RUNNER_TEMP}/vecadd-ptx-build.log" '^vecadd$' vecadd
           assert_embedded_artifact "${CARGO_TARGET_DIR}/release/vecadd" 1 256 sm_86
 
-          cargo oxide build vecadd --materialize-cubin --arch sm_86
+          cargo oxide build vecadd --materialize-cubin --arch sm_86 2>&1 \
+            | tee "${RUNNER_TEMP}/vecadd-cubin-build.log"
+          assert_only_expected_rebuilt \
+            "${RUNNER_TEMP}/vecadd-cubin-build.log" '^vecadd$' vecadd
           # Default compile policy remains wire-compatible artifact v1; the
           # payload kind is what must change from PTX (256) to cubin (512).
           assert_embedded_artifact "${CARGO_TARGET_DIR}/release/vecadd" 1 512 sm_86
+
+          # Switching back must invalidate vecadd's device artifact without
+          # throwing away the shared host dependency cache.
+          cargo oxide build vecadd --arch sm_86 2>&1 \
+            | tee "${RUNNER_TEMP}/vecadd-ptx-return-build.log"
+          assert_only_expected_rebuilt \
+            "${RUNNER_TEMP}/vecadd-ptx-return-build.log" '^vecadd$' vecadd
+          assert_embedded_artifact "${CARGO_TARGET_DIR}/release/vecadd" 1 256 sm_86
+
+          # A kernel-producing path dependency must be invalidated too, while
+          # ordinary CUDA/host dependencies remain reusable.
+          cargo oxide build cross_crate_kernel --arch sm_86 2>&1 \
+            | tee "${RUNNER_TEMP}/cross-crate-sm86-build.log"
+          assert_only_expected_rebuilt \
+            "${RUNNER_TEMP}/cross-crate-sm86-build.log" \
+            '^(kernel-lib|cross_crate_kernel)$' kernel-lib cross_crate_kernel
+
+          cargo oxide build cross_crate_kernel --arch sm_90 2>&1 \
+            | tee "${RUNNER_TEMP}/cross-crate-sm90-build.log"
+          assert_only_expected_rebuilt \
+            "${RUNNER_TEMP}/cross-crate-sm90-build.log" \
+            '^(kernel-lib|cross_crate_kernel)$' kernel-lib cross_crate_kernel
 
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: smoketest-compile-logs
-          path: ${{ runner.temp }}/smoketest-logs/
+          path: |
+            ${{ runner.temp }}/smoketest-logs/
+            ${{ runner.temp }}/vecadd-*-build.log
+            ${{ runner.temp }}/cross-crate-*-build.log
           if-no-files-found: ignore
           retention-days: 7

@@ -204,6 +204,7 @@ dependencies = [
  "libnvvm-sys",
  "nvjitlink-sys",
  "oxide-artifacts",
+ "reserved-oxide-symbols",
  "serde_json",
  "sha2",
  "toml",

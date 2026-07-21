@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#![feature(proc_macro_def_site)]
+#![feature(proc_macro_def_site, proc_macro_tracked_env)]
 
 mod device_copy;
 mod printf;
@@ -104,9 +104,10 @@ pub fn device_copy(input: TokenStream) -> TokenStream {
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{
-    DEVICE_EXTERN_PREFIX, DEVICE_PREFIX, INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL,
-    RESERVED_ROOT, artifact_anchor_symbol, artifact_anchor_symbol_v2, constant_symbol,
-    ptx_merge_required_marker,
+    CODEGEN_FINGERPRINT_ENV, DEVICE_CODEGEN_CRATE_ENV, DEVICE_EXTERN_PREFIX, DEVICE_PREFIX,
+    INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL, MATERIALIZE_CUBIN_ENV,
+    MATERIALIZER_PROVENANCE_ENV, RESERVED_ROOT, artifact_anchor_symbol, artifact_anchor_symbol_v2,
+    constant_symbol, ptx_merge_required_marker,
 };
 use syn::{
     Expr, ExprCall, ExprMethodCall, ExprPath, FnArg, ForeignItem, GenericArgument, GenericParam,
@@ -119,6 +120,15 @@ use syn::{
     visit::{self, Visit},
     visit_mut::{self, VisitMut},
 };
+
+/// Record cuda-oxide's exact device-codegen identity in the consuming crate's
+/// dep-info. Cargo then rebuilds only crates that can own or instantiate device
+/// code when output mode, architecture, policy, or tool provenance changes.
+fn track_codegen_environment() {
+    let _ = proc_macro::tracked::env_var(CODEGEN_FINGERPRINT_ENV);
+    let _ = proc_macro::tracked::env_var(MATERIALIZE_CUBIN_ENV);
+    let _ = proc_macro::tracked::env_var(MATERIALIZER_PROVENANCE_ENV);
+}
 
 /// Build a private identifier that cannot capture, or be captured by, a name
 /// written in the user's kernel signature.
@@ -407,6 +417,7 @@ fn scope_parameter_collision(input: &ItemFn, scope: &Ident) -> Option<Ident> {
 /// when the source kernel itself is safe.
 #[proc_macro_attribute]
 pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     if !attr.is_empty() {
         return syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -1398,7 +1409,7 @@ fn cuda_module_artifact_anchor_statements(
         return Ok(TokenStream2::new());
     };
 
-    let owner_filter = std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE").ok();
+    let owner_filter = proc_macro::tracked::env_var(DEVICE_CODEGEN_CRATE_ENV).ok();
     let owner_selection = device_codegen_owner_selection(owner_filter.as_deref(), &crate_name);
     if owner_selection == Some(false) {
         // The backend deliberately omits this crate's artifact. Omitting the
@@ -3350,6 +3361,7 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// and are not unrolled.
 #[proc_macro_attribute]
 pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let args = parse_macro_input!(attr as KernelArgs);
     let mut input = parse_macro_input!(item as ItemFn);
 
@@ -3534,6 +3546,7 @@ impl Parse for ConstantArgs {
 /// ```
 #[proc_macro_attribute]
 pub fn constant(attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let args = parse_macro_input!(attr as ConstantArgs);
     let input = parse_macro_input!(item as syn::ItemStatic);
 
@@ -5436,6 +5449,7 @@ pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn device(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     // Try parsing as a function definition first
     if let Ok(input) = syn::parse::<ItemFn>(item.clone()) {
         return generate_device_function(input);
@@ -6056,6 +6070,7 @@ impl Parse for CudaLaunchInput {
 /// `stream.synchronize()` to wait for completion.
 #[proc_macro]
 pub fn cuda_launch(input: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let input = parse_macro_input!(input as CudaLaunchInput);
 
     let stream = &input.stream;
@@ -6470,6 +6485,7 @@ impl Parse for CudaLaunchAsyncInput {
 /// ```
 #[proc_macro]
 pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let input = parse_macro_input!(input as CudaLaunchAsyncInput);
     expand_cuda_launch_async(input).into()
 }

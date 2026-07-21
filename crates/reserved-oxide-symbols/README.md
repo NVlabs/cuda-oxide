@@ -12,15 +12,15 @@ The `cuda_oxide_*` symbol namespace that `#[kernel]` and `#[device]`
 mangle user functions into, and that the codegen backend, MIR-lowering,
 and LLVM-export passes look for.
 
-Every prefix here ends with the magic suffix `246e25db_`, which is
+Every prefix here contains the magic component `246e25db_`, which is
 `sha256("cuda_oxide_ + rust")` truncated to 8 hex chars. The hash
 exists purely to make accidental collisions impossible — a user is
-never going to write `fn cuda_oxide_kernel_246e25db_foo()` by accident.
+never going to write `fn cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_foo()` by accident.
 
 | Constant                | Value                                  |
 |-------------------------|----------------------------------------|
-| `KERNEL_PREFIX`         | `cuda_oxide_kernel_246e25db_`          |
-| `DEVICE_PREFIX`         | `cuda_oxide_device_246e25db_`          |
+| `KERNEL_PREFIX`         | `cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_` |
+| `DEVICE_PREFIX`         | `cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_` |
 | `DEVICE_EXTERN_PREFIX`  | `cuda_oxide_device_extern_246e25db_`   |
 | `INSTANTIATE_PREFIX`    | `cuda_oxide_instantiate_246e25db_`     |
 
