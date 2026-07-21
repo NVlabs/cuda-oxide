@@ -79,6 +79,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("atomic.rs", "NvvmAtomicCmpxchgOp"),
         ("cluster.rs", "ReadPtxSregClusterIdxOp"),
         ("cluster.rs", "ReadPtxSregNclusterIdOp"),
+        ("debug.rs", "AssertFailOp"),
         ("debug.rs", "VprintfOp"),
         ("grid.rs", "GridSyncOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),

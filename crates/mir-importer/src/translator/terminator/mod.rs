@@ -2421,6 +2421,18 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)
         // =================================================================
+        "cuda_device::debug::__gpu_assertfail" => Ok(Some(intrinsics::debug::emit_assertfail(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         "cuda_device::debug::__gpu_vprintf" => Ok(Some(intrinsics::debug::emit_vprintf(
             ctx,
             body,

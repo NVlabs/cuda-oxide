@@ -36,9 +36,9 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
-    ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp, VprintfOp, WgmmaMakeSmemDescOp,
-    WgmmaMmaM64N64K16F32Bf16Op,
+    AssertFailOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp,
+    NvvmAtomicStoreOp, ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp, VprintfOp,
+    WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -895,6 +895,23 @@ impl MirToLlvmConversion for InlinePtxOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::asm::convert_inline_ptx(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for AssertFailOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::debug::convert_assertfail(
             ctx,
             rewriter,
             self.get_operation(),
