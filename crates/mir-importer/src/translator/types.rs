@@ -576,7 +576,41 @@ pub fn translate_type(
             for subtype in subtypes.iter() {
                 translated_subtypes.push(translate_type(ctx, subtype)?);
             }
-            Ok(MirTupleType::get(ctx, translated_subtypes).into())
+            if translated_subtypes.is_empty() {
+                // The unit tuple is zero-sized: keep it layout-less so the
+                // synthetic unit tuples built for `!`, intrinsic results,
+                // and unit returns unify with it.
+                return Ok(MirTupleType::get(ctx, vec![]).into());
+            }
+            // rustc may reorder tuple fields in memory exactly like
+            // `#[repr(Rust)]` struct fields. Record the layout it chose,
+            // harvested the same way as the struct/union/closure arms, so
+            // byte-observing lowerings (enum slot maps, initialized
+            // globals) see the real field placement.
+            let (mem_to_decl, field_offsets, total_size, abi_align) =
+                if let Ok(layout) = rust_ty.layout() {
+                    let shape = layout.shape();
+                    let mem_order = shape.fields.fields_by_offset_order();
+                    let offsets: Vec<u64> = match &shape.fields {
+                        rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
+                            offsets.iter().map(|s| s.bytes() as u64).collect()
+                        }
+                        _ => vec![],
+                    };
+                    let size: u64 = shape.size.bytes() as u64;
+                    (mem_order, offsets, size, shape.abi_align)
+                } else {
+                    (vec![], vec![], 0u64, 0u64)
+                };
+            Ok(MirTupleType::get_with_layout(
+                ctx,
+                translated_subtypes,
+                mem_to_decl,
+                field_offsets,
+                total_size,
+                abi_align,
+            )
+            .into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Array(elem_ty, len_const)) => {
             // Translate the element type

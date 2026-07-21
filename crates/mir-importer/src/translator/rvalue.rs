@@ -623,12 +623,17 @@ pub fn translate_rvalue(
                         loc.clone(),
                     )?;
 
-                    // Get the result type: tuple(operand_type, bool)
-                    // The first element matches the operand type (could be i32, usize, etc.)
-                    let operand_type = left_val.get_type(ctx);
-                    let bool_type = types::get_bool_type(ctx).into();
-                    let tuple_type = types::MirTupleType::get(ctx, vec![operand_type, bool_type]);
-                    let result_type_ptr = tuple_type.to_handle();
+                    // The result type is the MIR-level `(T, bool)` tuple.
+                    // Translate it from the rvalue's rustc type so it is the
+                    // same uniqued, layout-carrying tuple type the rest of
+                    // the body (locals, places) uses.
+                    let rust_tuple_ty = rvalue.ty(body.locals()).map_err(|e| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Failed to query checked-arithmetic result type: {:?}",
+                            e
+                        )))
+                    })?;
+                    let result_type_ptr = types::translate_type(ctx, &rust_tuple_ty)?;
 
                     // Create a checked operation based on the binary operator
                     let op_id = match bin_op {
@@ -1069,7 +1074,6 @@ pub fn translate_rvalue(
 
                     // Translate all element operands
                     let mut element_values = Vec::with_capacity(operands.len());
-                    let mut element_types = Vec::with_capacity(operands.len());
                     let mut current_prev_op = prev_op;
 
                     for operand in operands {
@@ -1083,12 +1087,19 @@ pub fn translate_rvalue(
                             loc.clone(),
                         )?;
                         element_values.push(val);
-                        element_types.push(val.get_type(ctx));
                         current_prev_op = new_prev_op;
                     }
 
-                    // Create the tuple type
-                    let tuple_ty = dialect_mir::types::MirTupleType::get(ctx, element_types);
+                    // Translate the tuple type from the rvalue's rustc type
+                    // so it carries rustc's layout and uniques with the
+                    // tuple type of the destination place.
+                    let rust_tuple_ty = rvalue.ty(body.locals()).map_err(|e| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Failed to query tuple aggregate type: {:?}",
+                            e
+                        )))
+                    })?;
+                    let tuple_ty = types::translate_type(ctx, &rust_tuple_ty)?;
 
                     // Create mir.construct_tuple operation
                     use dialect_mir::ops::MirConstructTupleOp;
@@ -1096,7 +1107,7 @@ pub fn translate_rvalue(
                     let op = Operation::new(
                         ctx,
                         MirConstructTupleOp::get_concrete_op_info(),
-                        vec![tuple_ty.into()],
+                        vec![tuple_ty],
                         element_values,
                         vec![],
                         0,

@@ -29,35 +29,155 @@ impl FloatTypeInterface for MirFP16Type {
 /// A tuple type.
 ///
 /// Represents a fixed-size collection of heterogeneous types.
-/// Syntax: `mir.tuple <type1, type2, ...>`
+/// Syntax: `mir.tuple <[type1, type2, ...], [mem_to_decl], [field_offsets], total_size, abi_align>`
+///
+/// Like `#[repr(Rust)]` structs, rustc may reorder tuple fields in memory for
+/// better packing. Tuples translated from a rustc `Ty` carry the exact layout
+/// rustc chose (offsets in declaration order, memory order, size, alignment)
+/// so host and device agree byte-for-byte; see [MirStructType] for the
+/// meaning of each field. Synthetic tuples built without a rustc type in
+/// scope (only the zero-sized unit tuple) carry no layout.
 ///
 /// # Verification
-/// * Structural validity is ensured by `def_type` macro and parser.
+/// * Layout vectors, when present, must be parallel to `types`.
 /// * Inner types must be valid.
-#[pliron_type(name = "mir.tuple", format = "`<` vec($types, CharSpace(`,`)) `>`")]
+#[pliron_type(
+    name = "mir.tuple",
+    format = "`<` `[` vec($types, CharSpace(`,`)) `]` `,` `[` vec($mem_to_decl, CharSpace(`,`)) `]` `,` `[` vec($field_offsets, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `>`"
+)]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirTupleType {
     pub types: Vec<TypeHandle>,
+    /// Memory order mapping: `mem_to_decl[mem_idx] = decl_idx`.
+    /// Empty means identity (no reordering).
+    pub mem_to_decl: Vec<usize>,
+    /// Byte offset of each field in declaration order (bytes).
+    /// Empty means offsets are not known.
+    pub field_offsets: Vec<u64>,
+    /// Total tuple size in bytes (including trailing padding). 0 = unknown.
+    pub total_size: u64,
+    /// ABI alignment in bytes, from rustc layout. 0 means unknown.
+    pub abi_align: u64,
 }
 
 impl MirTupleType {
+    /// Create a tuple type with no recorded layout.
+    ///
+    /// Only appropriate for the unit tuple `()` and for tests; every tuple
+    /// that originates from a rustc type must be built with
+    /// [Self::get_with_layout] so byte-observing lowerings (enum slot maps,
+    /// initialized globals) see rustc's real field placement.
     pub fn get(ctx: &mut Context, types: Vec<TypeHandle>) -> TypedHandle<Self> {
-        Type::register_instance(MirTupleType { types }, ctx)
+        Self::get_with_layout(ctx, types, vec![], vec![], 0, 0)
+    }
+
+    /// Create a tuple type carrying rustc's exact layout.
+    ///
+    /// * `mem_to_decl` - Memory order mapping (empty = identity)
+    /// * `field_offsets` - Byte offset of each field in declaration order
+    /// * `total_size` - Total size in bytes (including trailing padding)
+    /// * `abi_align` - ABI alignment in bytes
+    pub fn get_with_layout(
+        ctx: &mut Context,
+        types: Vec<TypeHandle>,
+        mem_to_decl: Vec<usize>,
+        field_offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+    ) -> TypedHandle<Self> {
+        Type::register_instance(
+            MirTupleType {
+                types,
+                mem_to_decl,
+                field_offsets,
+                total_size,
+                abi_align,
+            },
+            ctx,
+        )
     }
 
     pub fn get_existing(ctx: &Context, types: Vec<TypeHandle>) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirTupleType { types }, ctx)
+        Type::get_instance(
+            MirTupleType {
+                types,
+                mem_to_decl: vec![],
+                field_offsets: vec![],
+                total_size: 0,
+                abi_align: 0,
+            },
+            ctx,
+        )
     }
 
     pub fn get_types(&self) -> &[TypeHandle] {
         &self.types
     }
+
+    /// Get the memory order mapping.
+    /// Returns identity order if no explicit mapping is stored.
+    pub fn memory_order(&self) -> Vec<usize> {
+        if self.mem_to_decl.is_empty() {
+            (0..self.types.len()).collect()
+        } else {
+            self.mem_to_decl.clone()
+        }
+    }
+
+    /// Get field offsets in declaration order (bytes).
+    /// Returns empty if offsets are not known.
+    pub fn field_offsets(&self) -> &[u64] {
+        &self.field_offsets
+    }
+
+    /// Get total tuple size in bytes. Returns 0 if size is not known.
+    pub fn total_size(&self) -> u64 {
+        self.total_size
+    }
+
+    /// ABI alignment in bytes. Returns 0 if unknown.
+    pub fn abi_align(&self) -> u64 {
+        self.abi_align
+    }
+
+    /// Check if we have explicit layout information from rustc.
+    ///
+    /// The unit tuple never has (nor needs) recorded layout; every non-empty
+    /// tuple translated from a rustc type does.
+    pub fn has_explicit_layout(&self) -> bool {
+        !self.field_offsets.is_empty() && self.total_size > 0
+    }
 }
 
 impl Verify for MirTupleType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
-        // Tuple types are valid if their contained types are valid.
-        // Structural validity is ensured by the parser/builder.
+        // Inner-type validity is ensured by the parser/builder. Check that
+        // recorded layout vectors are parallel to the element types so the
+        // lowering can index them fearlessly.
+        if !self.field_offsets.is_empty() && self.field_offsets.len() != self.types.len() {
+            return verify_err!(
+                Location::Unknown,
+                "MirTupleType field offset count must match field count"
+            );
+        }
+        if !self.mem_to_decl.is_empty() {
+            if self.mem_to_decl.len() != self.types.len() {
+                return verify_err!(
+                    Location::Unknown,
+                    "MirTupleType memory order count must match field count"
+                );
+            }
+            let mut seen = vec![false; self.types.len()];
+            for &decl in &self.mem_to_decl {
+                if decl >= self.types.len() || seen[decl] {
+                    return verify_err!(
+                        Location::Unknown,
+                        "MirTupleType memory order must be a permutation of field indices"
+                    );
+                }
+                seen[decl] = true;
+            }
+        }
         Ok(())
     }
 }

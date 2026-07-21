@@ -419,15 +419,19 @@ impl StructLayoutInfo {
         }
     }
 
-    /// Layout facts of a `MirTupleType`: identity order, no rustc layout.
+    /// Layout facts of a `MirTupleType`.
+    ///
+    /// Tuples translated from a rustc type carry rustc's exact layout
+    /// (offsets, memory order, size), which is consumed here identically to
+    /// structs, so reordered tuples like `(u32, &T)` lower byte-correctly.
+    /// Only synthetic layout-less tuples (the unit tuple, hand-built test
+    /// types) fall back to LLVM natural layout.
     pub(crate) fn of_tuple(t: &MirTupleType) -> Self {
-        let field_types = t.get_types().to_vec();
-        let mem_to_decl = (0..field_types.len()).collect();
         StructLayoutInfo {
-            field_types,
-            mem_to_decl,
-            field_offsets: vec![],
-            total_size: 0,
+            field_types: t.get_types().to_vec(),
+            mem_to_decl: t.memory_order(),
+            field_offsets: t.field_offsets().to_vec(),
+            total_size: t.total_size(),
         }
     }
 }
@@ -923,130 +927,6 @@ fn mir_type_contains_i1(ctx: &Context, ty: TypeHandle) -> bool {
             .any(|field| mir_type_contains_i1(ctx, field));
     }
     false
-}
-
-/// Whether a stored MIR value contains a non-empty tuple whose rustc field
-/// offsets are not represented in `MirTupleType`.
-///
-/// Pointees are deliberately not inspected: their bytes are outside the value
-/// being laid out. Nested enums validate their own payloads when converted.
-fn mir_type_contains_unmodeled_tuple(ctx: &Context, ty: TypeHandle) -> bool {
-    let ty_ref = ty.deref(ctx);
-    if let Some(tuple) = ty_ref.downcast_ref::<MirTupleType>() {
-        return !tuple.get_types().is_empty();
-    }
-    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
-        return struct_ty
-            .field_types()
-            .iter()
-            .copied()
-            .any(|field| mir_type_contains_unmodeled_tuple(ctx, field));
-    }
-    if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
-        return mir_type_contains_unmodeled_tuple(ctx, array_ty.element_ty);
-    }
-    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
-        return union_ty
-            .field_types()
-            .iter()
-            .copied()
-            .any(|field| mir_type_contains_unmodeled_tuple(ctx, field));
-    }
-    false
-}
-
-/// Whether `ty` has enough MIR-level layout information to use as one word of
-/// the narrowly proven tuple-niche shape below.
-fn mir_type_has_recorded_word_layout(ctx: &Context, ty: TypeHandle) -> bool {
-    let ty_ref = ty.deref(ctx);
-    if ty_ref.is::<IntegerType>()
-        || ty_ref.is::<FP32Type>()
-        || ty_ref.is::<FP64Type>()
-        || ty_ref.is::<llvm_types::HalfType>()
-        || ty_ref.is::<dialect_mir::types::MirPtrType>()
-    {
-        return true;
-    }
-    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
-        if struct_ty.field_types().is_empty() {
-            return true;
-        }
-        return struct_ty.total_size() > 0
-            && struct_ty.abi_align > 0
-            && struct_ty.field_offsets().len() == struct_ty.field_types().len()
-            && struct_ty
-                .field_types()
-                .iter()
-                .copied()
-                .all(|field| mir_type_has_recorded_word_layout(ctx, field));
-    }
-    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
-        return tuple_ty.get_types().is_empty();
-    }
-    if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
-        return mir_type_has_recorded_word_layout(ctx, array_ty.element_ty);
-    }
-    false
-}
-
-/// Prove the only non-empty tuple payload shape accepted without general
-/// tuple-offset metadata.
-///
-/// For a two-word pointer niche, rustc's carrier offset identifies the exact
-/// pointer word. If both tuple elements are independently byte-faithful
-/// eight-byte values, the other element must occupy the remaining word. The
-/// pointer-region comparison later still checks the actual offset and address
-/// space; this helper only establishes that no third or partially modeled
-/// tuple field can hide in the payload.
-#[allow(clippy::too_many_arguments)]
-fn is_proven_two_word_pointer_niche_tuple(
-    ctx: &mut Context,
-    mir_ty: TypeHandle,
-    llvm_ty: TypeHandle,
-    rustc_size: u64,
-    layout_kind: u8,
-    carrier_kind: u8,
-    carrier_width: u32,
-) -> bool {
-    if layout_kind != enum_layout_kind::NICHE
-        || carrier_kind != enum_carrier_kind::POINTER
-        || carrier_width != 64
-        || rustc_size != 16
-        || llvm_type_size_align(ctx, llvm_ty) != Some((16, 8))
-        || !llvm_type_is_byte_faithful(ctx, llvm_ty)
-    {
-        return false;
-    }
-
-    let fields = {
-        let ty_ref = mir_ty.deref(ctx);
-        let Some(tuple) = ty_ref.downcast_ref::<MirTupleType>() else {
-            return false;
-        };
-        tuple.get_types().to_vec()
-    };
-    if fields.len() != 2 {
-        return false;
-    }
-
-    let mut direct_pointer_fields = 0usize;
-    for field in fields {
-        if !mir_type_has_recorded_word_layout(ctx, field) {
-            return false;
-        }
-        let is_direct_pointer = field.deref(ctx).is::<dialect_mir::types::MirPtrType>();
-        direct_pointer_fields += usize::from(is_direct_pointer);
-        let Ok(converted) = convert_type(ctx, field) else {
-            return false;
-        };
-        if llvm_type_size_align(ctx, converted).is_none_or(|(size, _)| size != 8)
-            || !llvm_type_is_byte_faithful(ctx, converted)
-            || (!is_direct_pointer && llvm_type_contains_pointer(ctx, converted))
-        {
-            return false;
-        }
-    }
-    direct_pointer_fields == 1
 }
 
 /// Whether loading and storing this LLVM value preserves every byte in its
@@ -1592,38 +1472,14 @@ pub(crate) fn build_enum_slot_map(
                 || colliding_claims
                     .iter()
                     .any(|&&(_, _, claim_ty)| llvm_type_contains_pointer(ctx, claim_ty));
-            if has_pointer_overlap {
-                // MirTupleType currently records declaration-order field
-                // types but not rustc's physical field offsets. Restrict the
-                // new aggregate-pointer overlap support to the one tuple
-                // shape whose complete layout can be proved without that
-                // metadata: a two-word pointer niche where the carrier pins
-                // the exact pointer word and the other byte-faithful word
-                // occupies the remaining eight bytes.
-                if mir_type_contains_unmodeled_tuple(ctx, all_field_types[flat])
-                    && !is_proven_two_word_pointer_niche_tuple(
-                        ctx,
-                        all_field_types[flat],
-                        llvm_ty,
-                        all_field_sizes[flat],
-                        layout_kind,
-                        carrier_kind,
-                        carrier_width,
-                    )
-                {
-                    return Err(anyhow::anyhow!(
-                        "enum slot map: `{}` field {} contains a non-empty tuple whose rustc field offsets are not preserved; only an exact two-word pointer-niche tuple is currently supported for overlapping pointer storage",
-                        name,
-                        flat
-                    ));
-                }
-                if !pointer_storage_matches_claims(ctx, offset, size, llvm_ty, &colliding_claims) {
-                    return Err(anyhow::anyhow!(
-                        "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
-                        name,
-                        offset
-                    ));
-                }
+            if has_pointer_overlap
+                && !pointer_storage_matches_claims(ctx, offset, size, llvm_ty, &colliding_claims)
+            {
+                return Err(anyhow::anyhow!(
+                    "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
+                    name,
+                    offset
+                ));
             }
             let incoming_is_byte_faithful = llvm_type_is_byte_faithful(ctx, llvm_ty);
             let claims_are_byte_faithful = colliding_claims
@@ -1838,7 +1694,7 @@ fn validate_initialized_global_type(
 
     enum Kind {
         Struct(MirStructType),
-        Tuple(Vec<TypeHandle>),
+        Tuple(MirTupleType),
         Enum(MirEnumType),
         Array(TypeHandle),
         Leaf,
@@ -1849,7 +1705,7 @@ fn validate_initialized_global_type(
         if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
             Kind::Struct(struct_ty.clone())
         } else if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
-            Kind::Tuple(tuple_ty.get_types().to_vec())
+            Kind::Tuple(tuple_ty.clone())
         } else if let Some(enum_ty) = ty_ref.downcast_ref::<MirEnumType>() {
             Kind::Enum(enum_ty.clone())
         } else if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
@@ -1866,14 +1722,23 @@ fn validate_initialized_global_type(
                 validate_initialized_global_type(ctx, field_ty, visited)?;
             }
         }
-        Kind::Tuple(field_types) => {
-            if !field_types.is_empty() {
-                // MirTupleType currently carries field types only. rustc is
-                // free to reorder tuple fields (and does), so declaration-order
-                // LLVM GEPs cannot be proven to address the evaluated bytes.
-                return Err(anyhow::anyhow!(
-                    "initialized globals containing non-empty tuples are not yet supported because tuple field offsets are not preserved in dialect-mir"
-                ));
+        Kind::Tuple(tuple_ty) => {
+            if !tuple_ty.get_types().is_empty() {
+                // Tuples carry rustc's field offsets exactly like structs;
+                // prove the lowered aggregate reproduces them byte-for-byte.
+                let layout = StructLayoutInfo::of_tuple(&tuple_ty);
+                validate_initialized_aggregate_layout(
+                    ctx,
+                    mir_ty,
+                    "tuple",
+                    "tuple",
+                    &layout,
+                    tuple_ty.abi_align(),
+                    tuple_ty.has_explicit_layout(),
+                )?;
+            }
+            for field_ty in tuple_ty.get_types().iter().copied() {
+                validate_initialized_global_type(ctx, field_ty, visited)?;
             }
         }
         Kind::Enum(enum_ty) => {
@@ -1915,37 +1780,68 @@ fn validate_initialized_struct_layout(
     mir_ty: TypeHandle,
     struct_ty: &MirStructType,
 ) -> Result<(), anyhow::Error> {
-    if struct_ty.total_size == 0 {
+    let has_layout = struct_ty.has_explicit_layout();
+    let layout = StructLayoutInfo::of_struct(struct_ty);
+    let name = struct_ty.name().to_string();
+    validate_initialized_aggregate_layout(
+        ctx,
+        mir_ty,
+        "struct",
+        &name,
+        &layout,
+        struct_ty.abi_align,
+        has_layout,
+    )
+}
+
+/// Shared byte-layout validation for initialized-global structs and tuples.
+///
+/// Proves that the lowered LLVM aggregate places every field at exactly the
+/// byte offset rustc chose and matches rustc's total size, so a constant
+/// initializer written slot-by-slot reproduces the host bytes.
+#[allow(clippy::too_many_arguments)]
+fn validate_initialized_aggregate_layout(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+    kind_noun: &str,
+    name: &str,
+    layout: &StructLayoutInfo,
+    abi_align: u64,
+    has_explicit_layout: bool,
+) -> Result<(), anyhow::Error> {
+    if layout.total_size == 0 {
         let llvm_ty = convert_type(ctx, mir_ty)?;
         let (llvm_size, _) = llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
             anyhow::anyhow!(
-                "initialized struct `{}` has unsupported LLVM size/alignment",
-                struct_ty.name()
+                "initialized {} `{}` has unsupported LLVM size/alignment",
+                kind_noun,
+                name
             )
         })?;
         if llvm_size == 0 {
             return Ok(());
         }
         return Err(anyhow::anyhow!(
-            "initialized struct `{}` has no stored size but lowers to {} bytes",
-            struct_ty.name(),
+            "initialized {} `{}` has no stored size but lowers to {} bytes",
+            kind_noun,
+            name,
             llvm_size
         ));
     }
-    if !struct_ty.has_explicit_layout() {
+    if !has_explicit_layout {
         return Err(anyhow::anyhow!(
-            "initialized struct `{}` has no rustc field-offset metadata",
-            struct_ty.name()
+            "initialized {} `{}` has no rustc field-offset metadata",
+            kind_noun,
+            name
         ));
     }
 
-    let layout = StructLayoutInfo::of_struct(struct_ty);
-    let slots = build_struct_slot_map(ctx, &layout)?;
+    let slots = build_struct_slot_map(ctx, layout)?;
     let llvm_fields: Vec<_> = slots
         .llvm_struct_ty
         .deref(ctx)
         .downcast_ref::<llvm_types::StructType>()
-        .expect("struct slot map must produce an LLVM struct")
+        .expect("aggregate slot map must produce an LLVM struct")
         .fields()
         .collect();
 
@@ -1955,8 +1851,9 @@ fn validate_initialized_struct_layout(
         let (field_size, field_align) =
             llvm_type_size_align(ctx, *llvm_field).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "initialized struct `{}` field has unsupported LLVM size/alignment",
-                    struct_ty.name()
+                    "initialized {} `{}` field has unsupported LLVM size/alignment",
+                    kind_noun,
+                    name
                 )
             })?;
         current_offset = current_offset.div_ceil(field_align.max(1)) * field_align.max(1);
@@ -1969,11 +1866,12 @@ fn validate_initialized_struct_layout(
             continue;
         };
         let actual_offset = slot_offsets[*slot as usize];
-        let expected_offset = struct_ty.field_offsets()[decl_index];
+        let expected_offset = layout.field_offsets[decl_index];
         if actual_offset != expected_offset {
             return Err(anyhow::anyhow!(
-                "initialized struct `{}` field {} lowers at byte {}, but rustc placed it at byte {}; packed and overlapping field layouts are not yet supported",
-                struct_ty.name(),
+                "initialized {} `{}` field {} lowers at byte {}, but rustc placed it at byte {}; packed and overlapping field layouts are not yet supported",
+                kind_noun,
+                name,
                 decl_index,
                 actual_offset,
                 expected_offset
@@ -1984,18 +1882,20 @@ fn validate_initialized_struct_layout(
     let (llvm_size, llvm_align) =
         llvm_type_size_align(ctx, slots.llvm_struct_ty).ok_or_else(|| {
             anyhow::anyhow!(
-                "initialized struct `{}` has unsupported LLVM size/alignment",
-                struct_ty.name()
+                "initialized {} `{}` has unsupported LLVM size/alignment",
+                kind_noun,
+                name
             )
         })?;
-    if llvm_size != struct_ty.total_size || llvm_align > struct_ty.abi_align {
+    if llvm_size != layout.total_size || llvm_align > abi_align {
         return Err(anyhow::anyhow!(
-            "initialized struct `{}` lowers to size/alignment {}/{}, but rustc requires {}/{}",
-            struct_ty.name(),
+            "initialized {} `{}` lowers to size/alignment {}/{}, but rustc requires {}/{}",
+            kind_noun,
+            name,
             llvm_size,
             llvm_align,
-            struct_ty.total_size,
-            struct_ty.abi_align
+            layout.total_size,
+            abi_align
         ));
     }
 
@@ -2837,14 +2737,26 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_three_field_tuple_even_when_pointer_slot_matches() {
+    fn enum_slot_map_three_field_tuple_follows_recorded_offsets() {
+        // rustc lays out `(u32, f32, &T)` with the pointer first in memory:
+        // ptr @ 0, u32 @ 8, f32 @ 12, size 16. With those offsets recorded on
+        // the tuple, the pointer leaf coincides exactly with the niche
+        // carrier at byte 0 and the payload is accepted.
         let mut ctx = make_ctx();
         let logical = mir_uint(&mut ctx, 64);
         let word = mir_uint(&mut ctx, 32);
         let float: TypeHandle = FP32Type::get(&ctx).into();
         let pointee = mir_uint(&mut ctx, 32);
         let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
-        let payload: TypeHandle = MirTupleType::get(&mut ctx, vec![word, float, pointer]).into();
+        let payload: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![word, float, pointer],
+            vec![2, 0, 1],
+            vec![8, 12, 0],
+            16,
+            8,
+        )
+        .into();
         let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
             &mut ctx,
             "MaybeMixedTuple".into(),
@@ -2854,7 +2766,7 @@ mod tests {
                 EnumVariant::unit("None".into()),
                 EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![16]),
             ],
-            8,
+            0,
             16,
             8,
             enum_layout_kind::NICHE,
@@ -2871,15 +2783,60 @@ mod tests {
         )
         .into();
 
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("recorded tuple offsets prove the pointer word matches the carrier");
+        assert_eq!(map.carrier_slot, Some(0));
+        assert_eq!(
+            llvm_type_size_align(&ctx, map.llvm_struct_ty),
+            Some((16, 8))
+        );
+
+        // The same tuple with offsets that put the u32 over the pointer
+        // carrier (ptr @ 8 instead) must still fail closed: integer bytes
+        // may not alias pointer storage.
+        let mismatched_payload: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![word, float, pointer],
+            vec![0, 1, 2],
+            vec![0, 4, 8],
+            16,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybeMixedTupleShifted".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout(
+                    "Some".into(),
+                    vec![mismatched_payload],
+                    vec![0],
+                    vec![16],
+                ),
+            ],
+            0,
+            16,
+            8,
+            enum_layout_kind::NICHE,
+            enum_carrier_kind::POINTER,
+            64,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            vec![1, 1],
+        )
+        .into();
         let error = build_enum_slot_map(&mut ctx, enum_ty)
             .err()
-            .expect("matching the pointer word alone must not prove other tuple field offsets");
-        assert!(
-            error
-                .to_string()
-                .contains("non-empty tuple whose rustc field offsets are not preserved"),
-            "{error}"
-        );
+            .expect("a non-pointer word over the pointer carrier must fail closed");
+        assert!(error.to_string().contains("pointer provenance"), "{error}");
     }
 
     #[test]
@@ -3428,11 +3385,30 @@ mod tests {
         let err = validate_initialized_global_layout(&mut ctx, union_as_struct, 4, 4).unwrap_err();
         assert!(err.to_string().contains("field 1 lowers at byte 4"));
 
+        // A tuple without recorded rustc layout cannot prove its bytes.
         let byte = mir_uint(&mut ctx, 8);
         let wide = mir_uint(&mut ctx, 64);
         let tuple: TypeHandle = MirTupleType::get(&mut ctx, vec![byte, wide]).into();
         let err = validate_initialized_global_layout(&mut ctx, tuple, 16, 8).unwrap_err();
-        assert!(err.to_string().contains("tuple field offsets"));
+        assert!(
+            err.to_string()
+                .contains("no stored size but lowers to 16 bytes"),
+            "{err}"
+        );
+
+        // The same tuple carrying rustc's real (reordered) layout validates:
+        // memory order is (wide @ 0, byte @ 8), total size 16.
+        let laid_out_tuple: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![byte, wide],
+            vec![1, 0],
+            vec![8, 0],
+            16,
+            8,
+        )
+        .into();
+        validate_initialized_global_layout(&mut ctx, laid_out_tuple, 16, 8)
+            .expect("tuples with recorded rustc offsets are provable initialized-global storage");
     }
 
     #[test]

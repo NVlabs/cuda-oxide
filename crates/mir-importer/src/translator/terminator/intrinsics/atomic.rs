@@ -73,15 +73,15 @@ use dialect_nvvm::ops::atomic::{
 };
 
 use dialect_mir::ops::{MirConstructTupleOp, MirEqOp, MirNegOp};
-use dialect_mir::types::{MirFP16Type, MirTupleType};
+use dialect_mir::types::MirFP16Type;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
-use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
+use pliron::{input_err, input_error_noloc};
 use rustc_public::mir;
 use rustc_public::ty::{GenericArgKind, RigidTy, TyConst, TyConstKind, TyKind};
 // =============================================================================
@@ -1342,11 +1342,20 @@ fn emit_core_atomic_cmpxchg(
     success_op.insert_after(ctx, op_ptr);
 
     let success_value = success_op.deref(ctx).get_result(0);
-    let tuple_ty = MirTupleType::get(ctx, vec![result_ty, bool_ty]);
+    // The destination place is typed `(T, bool)` in MIR; translate that
+    // rustc type so the constructed tuple uniques with the destination's
+    // layout-carrying tuple type.
+    let dest_tuple_ty = destination.ty(body.locals()).map_err(|e| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "Failed to query atomic cmpxchg destination type: {:?}",
+            e
+        )))
+    })?;
+    let tuple_ty = crate::translator::types::translate_type(ctx, &dest_tuple_ty)?;
     let tuple_op = Operation::new(
         ctx,
         MirConstructTupleOp::get_concrete_op_info(),
-        vec![tuple_ty.into()],
+        vec![tuple_ty],
         vec![result_value, success_value],
         vec![],
         0,

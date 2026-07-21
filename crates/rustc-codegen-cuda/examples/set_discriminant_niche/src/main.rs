@@ -128,6 +128,14 @@ fn force_pointer_none(value: &mut Option<&u32>) {
     })
 }
 
+#[custom_mir(dialect = "runtime", phase = "optimized")]
+fn force_tuple_pointer_none(value: &mut Option<(u32, u32, &u32)>) {
+    mir!({
+        SetDiscriminant(*value, 0);
+        Return()
+    })
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -147,6 +155,7 @@ mod kernels {
         mut constructed_interior_boolean: DisjointSlice<InteriorBoolean>,
         mut observed_interior_boolean: DisjointSlice<u8>,
         mut pointer_niche_cleared: DisjointSlice<u8>,
+        mut tuple_niche_checked: DisjointSlice<u8>,
         mut nested: DisjointSlice<MaybeWrapper>,
         mut negative: DisjointSlice<Negative>,
         mut observed: DisjointSlice<u32>,
@@ -188,6 +197,9 @@ mod kernels {
             return;
         };
         let Some(pointer_niche_cleared) = pointer_niche_cleared.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let Some(tuple_niche_checked) = tuple_niche_checked.get_mut(thread::index_1d()) else {
             return;
         };
         let Some(negative) = negative.get_mut(thread::index_1d()) else {
@@ -251,6 +263,21 @@ mod kernels {
         force_pointer_none(&mut pointer_niche);
         *pointer_niche_cleared = pointer_niche.is_none() as u8;
 
+        // A multi-field tuple payload whose pointer field is the niche
+        // carrier. rustc reorders the tuple (pointer first in memory) and
+        // the recorded tuple field offsets carry that placement to the
+        // device, so construction, payload reads, and a niche
+        // SetDiscriminant all use rustc's real layout.
+        let referent = 0x1111_2222u32;
+        let mut tuple_niche: Option<(u32, u32, &u32)> = Some((5, 7, &referent));
+        let tuple_sum = match tuple_niche {
+            Some((a, b, r)) => a + b + *r,
+            None => 0,
+        };
+        force_tuple_pointer_none(&mut tuple_niche);
+        *tuple_niche_checked =
+            u8::from(tuple_sum == 0x1111_2222 + 12) | (u8::from(tuple_niche.is_none()) << 1);
+
         force_basic_none(&mut basic.0);
         force_boolean_none(&mut boolean.0);
         force_nested_none(nested);
@@ -274,6 +301,9 @@ fn main() {
     assert_eq!(std::mem::size_of::<InteriorBoolean>(), 1);
     assert_eq!(std::mem::size_of::<Wrapper>(), 8);
     assert_eq!(std::mem::size_of::<MaybeWrapper>(), 8);
+    // Three-field tuple payload with a pointer niche: the pointer is the
+    // carrier and rustc reorders it to byte 0.
+    assert_eq!(std::mem::size_of::<Option<(u32, u32, &u32)>>(), 16);
 
     // On this pinned rustc, `B(false)`/`B(true)` keep the valid bool carrier
     // bytes 0/1. `A` starts the niche range at 2; `B`'s position would be 3,
@@ -408,6 +438,7 @@ fn main() {
     let mut constructed_interior_boolean_device = DeviceBuffer::zeroed(&stream, N).unwrap();
     let mut observed_interior_boolean_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
     let mut pointer_niche_cleared_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
+    let mut tuple_niche_checked_device = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
     let mut nested_device = DeviceBuffer::from_host(&stream, &nested_host).unwrap();
     let mut negative_device = DeviceBuffer::from_host(&stream, &negative_host).unwrap();
     let mut observed_device = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
@@ -427,6 +458,7 @@ fn main() {
                 &mut constructed_interior_boolean_device,
                 &mut observed_interior_boolean_device,
                 &mut pointer_niche_cleared_device,
+                &mut tuple_niche_checked_device,
                 &mut nested_device,
                 &mut negative_device,
                 &mut observed_device,
@@ -449,6 +481,7 @@ fn main() {
         .to_host_vec(&stream)
         .unwrap();
     let pointer_niche_cleared = pointer_niche_cleared_device.to_host_vec(&stream).unwrap();
+    let tuple_niche_checked = tuple_niche_checked_device.to_host_vec(&stream).unwrap();
     let nested_after = nested_device.to_host_vec(&stream).unwrap();
     assert_eq!(
         observed, expected,
@@ -473,6 +506,10 @@ fn main() {
         "device constructions must preserve A/B(false)/B(true)/C"
     );
     assert!(pointer_niche_cleared.iter().all(|value| *value == 1));
+    assert!(
+        tuple_niche_checked.iter().all(|value| *value == 3),
+        "tuple pointer-niche payload reads and SetDiscriminant(None) must both succeed on device"
+    );
     assert!(
         nested_after
             .iter()
