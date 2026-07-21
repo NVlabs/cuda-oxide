@@ -35,7 +35,7 @@ pub struct ExecResults {
 }
 
 impl ExecResults {
-    fn from_exec_results<'a>(map: impl Iterator<Item = (String, ExecResult)>) -> Self {
+    fn from_exec_results(map: impl Iterator<Item = (String, ExecResult)>) -> Self {
         //TODO: optimisation here to check if all results are equal directly, since most should be
 
         // Split execution results into equivalent classes
