@@ -12,6 +12,7 @@ use syn::{
 };
 
 const MAX_PTX_ASM_INPUTS: usize = 16;
+const MAX_PTX_ASM_OUTPUTS: usize = 8;
 const REGISTER_ONLY_OPTION: &str = "register_only";
 const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
@@ -119,7 +120,7 @@ pub fn ptx_asm_impl(input: PtxAsmInput) -> TokenStream2 {
 }
 
 fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
-    let mut output: Option<(LitStr, Expr)> = None;
+    let mut outputs: Vec<(LitStr, Expr)> = Vec::new();
     let mut inputs: Vec<(LitStr, Expr)> = Vec::new();
     let mut clobbers: Vec<LitStr> = Vec::new();
     let mut options = PtxAsmOptions::default();
@@ -134,14 +135,8 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
                         "`out` operands must appear before `in` operands",
                     ));
                 }
-                if output.is_some() {
-                    return Err(syn::Error::new(
-                        constraint.span(),
-                        "ptx_asm! currently supports at most one `out` operand",
-                    ));
-                }
                 validate_output_constraint(&constraint)?;
-                output = Some((constraint, place));
+                outputs.push((constraint, place));
             }
             PtxAsmOperand::In { constraint, expr } => {
                 validate_input_constraint(&constraint)?;
@@ -186,7 +181,14 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
         }
     }
 
-    if options.register_only && output.is_none() {
+    if outputs.len() > MAX_PTX_ASM_OUTPUTS {
+        return Err(syn::Error::new(
+            input.template.span(),
+            format!("ptx_asm! supports at most {MAX_PTX_ASM_OUTPUTS} output operands"),
+        ));
+    }
+
+    if options.register_only && outputs.is_empty() {
         return Err(syn::Error::new(
             input.template.span(),
             "`options(register_only)` requires an `out` operand",
@@ -212,12 +214,13 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let operand_count = usize::from(output.is_some()) + inputs.len();
+    let operand_count = outputs.len() + inputs.len();
     let converted_template = convert_cuda_template(&input.template, operand_count)?;
     let template_lit = syn::LitByteStr::new(converted_template.as_bytes(), input.template.span());
 
+    // Build constraint string: output constraints first, then input constraints, then clobbers.
     let mut constraints = Vec::new();
-    if let Some((constraint, _)) = &output {
+    for (constraint, _) in &outputs {
         constraints.push(constraint.value());
     }
     constraints.extend(inputs.iter().map(|(constraint, _)| constraint.value()));
@@ -238,16 +241,42 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
     let input_exprs: Vec<&Expr> = inputs.iter().map(|(_, expr)| expr).collect();
     let arity = input_exprs.len();
 
-    if let Some((_, place)) = output {
+    if !outputs.is_empty() {
         let fn_ident = format_ident!("__ptx_asm_out_{arity}");
-        Ok(quote! {{
-            #place = cuda_device::ptx::#fn_ident(
-                #template_lit,
-                #constraints_lit,
-                #options_lit,
-                #(#input_exprs),*
-            );
-        }})
+
+        if outputs.len() == 1 {
+            // Single output: assign directly (backward compatible).
+            let place = &outputs[0].1;
+            Ok(quote! {{
+                #place = cuda_device::ptx::#fn_ident(
+                    #template_lit,
+                    #constraints_lit,
+                    #options_lit,
+                    #(#input_exprs),*
+                );
+            }})
+        } else {
+            // Multi-output: result is a tuple, destructure into output places.
+            let output_places: Vec<&Expr> = outputs.iter().map(|(_, place)| place).collect();
+            let tuple_vars: Vec<syn::Ident> = (0..outputs.len())
+                .map(|i| format_ident!("__ptx_out_{}", i))
+                .collect();
+            let assignments = output_places
+                .iter()
+                .zip(tuple_vars.iter())
+                .map(|(place, var)| {
+                    quote! { #place = #var; }
+                });
+            Ok(quote! {{
+                let ( #(#tuple_vars),* ) = cuda_device::ptx::#fn_ident(
+                    #template_lit,
+                    #constraints_lit,
+                    #options_lit,
+                    #(#input_exprs),*
+                );
+                #(#assignments)*
+            }})
+        }
     } else {
         let fn_ident = format_ident!("__ptx_asm_void_{arity}");
         Ok(quote! {{
@@ -488,5 +517,18 @@ mod tests {
                 "unexpected error for `{constraint}`: {err}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_too_many_outputs() {
+        let input: PtxAsmInput = syn::parse_str(
+            r#""nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("=r") i"#,
+        )
+        .unwrap();
+        let err = build_ptx_asm(input).unwrap_err();
+        assert!(
+            err.to_string().contains("at most 8 output operands"),
+            "unexpected error: {err}"
+        );
     }
 }

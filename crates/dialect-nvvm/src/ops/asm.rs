@@ -23,6 +23,9 @@ use pliron_derive::pliron_op;
 ///
 /// This operation is produced by the MIR importer for `cuda_device::ptx_asm!`
 /// marker calls and lowered to LLVM inline assembly.
+///
+/// Supports zero or more results for multi-output PTX instructions
+/// (e.g. MMA, vectorized loads).
 #[pliron_op(
     name = "nvvm.inline_ptx",
     format,
@@ -41,7 +44,7 @@ impl InlinePtxOp {
         InlinePtxOp { op }
     }
 
-    /// Build an inline PTX operation with zero or one result.
+    /// Build an inline PTX operation with zero or more results.
     pub fn build(
         ctx: &mut Context,
         result_tys: Vec<TypeHandle>,
@@ -91,9 +94,6 @@ impl Verify for InlinePtxOp {
                 op.loc(),
                 "nvvm.inline_ptx requires ptx_convergent attribute"
             );
-        }
-        if op.get_num_results() > 1 {
-            return verify_err!(op.loc(), "nvvm.inline_ptx supports at most one result");
         }
         Ok(())
     }
