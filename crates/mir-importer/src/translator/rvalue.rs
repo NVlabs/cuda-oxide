@@ -1018,6 +1018,26 @@ pub fn translate_rvalue(
                             // (e.g., enum Foo { A = 0, B = 2, C = 6 } has indices 0,1,2 but discriminants 0,2,6)
                             let variant_index_val: usize = variant_idx.to_index();
 
+                            // A value inhabiting this variant cannot exist,
+                            // so this construction sits on a dynamically dead
+                            // path rustc keeps in MIR (e.g. building
+                            // `ControlFlow::Break(NeverShortCircuitResidual)`
+                            // inside `array::try_from_fn`).
+                            // `mir.construct_enum` refuses uninhabited
+                            // variants by verification, so keep the dead path
+                            // representable with a typed undef instead.
+                            let variant_is_uninhabited = adt_ty
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirEnumType>()
+                                .and_then(|enum_ty| enum_ty.variant_is_inhabited(variant_index_val))
+                                .is_some_and(|inhabited| !inhabited);
+                            if variant_is_uninhabited {
+                                let undef = MirUndefOp::new(ctx, adt_ty).get_operation();
+                                undef.deref_mut(ctx).set_loc(loc);
+                                let result = undef.deref(ctx).get_result(0);
+                                return Ok((Some(undef), result, current_prev_op));
+                            }
+
                             // Cast field values to expected types (address space normalization)
                             // This handles cases where field values have specific address spaces
                             // (e.g., addrspace:3 for shared memory) but the enum type expects
@@ -1457,10 +1477,14 @@ pub fn translate_rvalue(
                 translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
 
             let enum_ty = enum_val.get_type(ctx);
-            let native_tag_ty = {
+            let (native_tag_ty, enum_is_uninhabited) = {
                 let enum_ty_obj = enum_ty.deref(ctx);
                 if let Some(enum_type) = enum_ty_obj.downcast_ref::<MirEnumType>() {
-                    enum_type.discriminant_type()
+                    let uninhabited = !enum_type
+                        .variant_inhabited
+                        .iter()
+                        .any(|inhabited| *inhabited != 0);
+                    (enum_type.discriminant_type(), uninhabited)
                 } else {
                     return input_err!(
                         loc,
@@ -1471,6 +1495,28 @@ pub fn translate_rvalue(
                     );
                 }
             };
+
+            // No value of an uninhabited enum can exist, so this read sits
+            // on a dynamically dead path rustc keeps in MIR (e.g. matching
+            // the residual `ControlFlow<Infallible, NeverShortCircuitResidual>`
+            // inside `array::try_from_fn`). `mir.get_discriminant` refuses
+            // uninhabited enums by verification, so keep the dead path
+            // representable with a typed undef of the declared discriminant
+            // type instead.
+            if enum_is_uninhabited {
+                let declared_discr_ty = place
+                    .ty(body.locals())
+                    .ok()
+                    .and_then(|place_ty| place_ty.kind().discriminant_ty());
+                let undef_ty = match declared_discr_ty {
+                    Some(ty) => super::types::translate_type(ctx, &ty)?,
+                    None => native_tag_ty,
+                };
+                let undef = MirUndefOp::new(ctx, undef_ty).get_operation();
+                undef.deref_mut(ctx).set_loc(loc);
+                let result = undef.deref(ctx).get_result(0);
+                return Ok((Some(undef), result, prev_op_after));
+            }
 
             let get_disc_op = Operation::new(
                 ctx,
@@ -3617,6 +3663,48 @@ fn apply_enum_field_projection(
 
     let field_type = types::translate_type(ctx, field_ty)?;
 
+    // Get the variant index
+    // NOTE: variant_idx IS the index (0, 1, 2, ...), NOT the discriminant!
+    // We just need to validate it's an ADT type, then use the index directly.
+    let variant_idx_val: usize = match enum_rust_ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_adt_def, _)) => {
+            variant_idx.to_index()
+        }
+        _ => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Downcast on non-ADT type: {:?}",
+                    enum_rust_ty
+                ))
+            );
+        }
+    };
+
+    // A value inhabiting this variant cannot exist, so the read sits on a
+    // dynamically dead path that rustc nevertheless keeps in MIR (e.g. the
+    // `ControlFlow::Break(NeverShortCircuitResidual)` arm inside
+    // `array::try_from_fn`). `mir.enum_payload` refuses uninhabited
+    // variants by verification, so keep the dead path representable with a
+    // typed undef instead — the same treatment `[T; 0]` extraction gets.
+    let variant_is_uninhabited = {
+        let enum_ty = enum_value.get_type(ctx);
+        enum_ty
+            .deref(ctx)
+            .downcast_ref::<dialect_mir::types::MirEnumType>()
+            .and_then(|enum_ty| enum_ty.variant_is_inhabited(variant_idx_val))
+            .is_some_and(|inhabited| !inhabited)
+    };
+    if variant_is_uninhabited {
+        let undef = MirUndefOp::new(ctx, field_type).get_operation();
+        undef.deref_mut(ctx).set_loc(loc);
+        match prev_op {
+            Some(prev) => undef.insert_after(ctx, prev),
+            None => undef.insert_at_front(block_ptr, ctx),
+        }
+        return Ok((undef.deref(ctx).get_result(0), Some(undef)));
+    }
+
     let op = Operation::new(
         ctx,
         MirEnumPayloadOp::get_concrete_op_info(),
@@ -3628,24 +3716,6 @@ fn apply_enum_field_projection(
     op.deref_mut(ctx).set_loc(loc.clone());
 
     let payload_op = MirEnumPayloadOp::new(op);
-
-    // Get the variant index
-    // NOTE: variant_idx IS the index (0, 1, 2, ...), NOT the discriminant!
-    // We just need to validate it's an ADT type, then use the index directly.
-    let variant_idx_val: usize = match enum_rust_ty.kind() {
-        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_adt_def, _)) => {
-            variant_idx.to_index()
-        }
-        _ => {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "Downcast on non-ADT type: {:?}",
-                    enum_rust_ty
-                ))
-            );
-        }
-    };
 
     payload_op.set_attr_payload_variant_index(
         ctx,
