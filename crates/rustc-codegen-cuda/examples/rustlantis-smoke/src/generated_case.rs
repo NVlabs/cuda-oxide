@@ -7,7 +7,12 @@
 // rustlantis seed: 162
 // Adapted dump calls update the fuzzer crate's global trace state.
 
+// Machine-generated MIR-shaped code is lint-hostile by design
+// (explicit casts, redundant temps); clippy findings carry no
+// signal here, and checked-in cases sit inside the example's
+// `cargo clippy -- -D warnings` CI gate.
 #![allow(unused_assignments, unused_parens, overflowing_literals)]
+#![allow(clippy::all)]
 
 use core::intrinsics::mir::*;
 use fuzzer::{dump_var, trace_finish, trace_reset};
