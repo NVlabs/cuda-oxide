@@ -326,7 +326,7 @@ fn constant_operand_bits(operand: &mir::Operand) -> Option<u128> {
             };
             alloc.read_uint().ok()
         }
-        mir::Operand::RuntimeChecks(_) => Some(0),
+        mir::Operand::RuntimeChecks(_) => Some(super::DEVICE_RUNTIME_CHECKS as u128),
         _ => None,
     }
 }
@@ -1177,6 +1177,28 @@ mod tests {
         op::Op,
         operation::Operation,
     };
+
+    /// The reachability fold and the collector's dead-edge pruning both key
+    /// off [`DEVICE_RUNTIME_CHECKS`]; a fold that stopped consulting it (or a
+    /// device value that silently became session-dependent) would let the
+    /// collector and importer choose different `SwitchInt` edges.
+    #[test]
+    fn runtime_checks_fold_to_the_shared_device_value() {
+        for check in [
+            mir::RuntimeChecks::UbChecks,
+            mir::RuntimeChecks::ContractChecks,
+            mir::RuntimeChecks::OverflowChecks,
+        ] {
+            assert_eq!(
+                constant_operand_bits(&mir::Operand::RuntimeChecks(check)),
+                Some(crate::translator::DEVICE_RUNTIME_CHECKS as u128),
+            );
+        }
+        assert!(
+            !crate::translator::DEVICE_RUNTIME_CHECKS,
+            "device PTX never enables runtime safety checks",
+        );
+    }
 
     #[test]
     fn inline_always_flag_reaches_llvm_func_attr_before_export() {

@@ -2490,7 +2490,10 @@ pub fn translate_operand(
         }
         mir::Operand::RuntimeChecks(_) => {
             // RuntimeChecks variants (UbChecks, ContractChecks, OverflowChecks)
-            // evaluate to `false` on GPU -- runtime safety checks are disabled.
+            // evaluate to the shared device value on GPU -- runtime safety
+            // checks are disabled. The reachability walks fold `switchInt`
+            // edges with the same constant, so translation and edge pruning
+            // can never disagree about which branch is live.
             //
             // Emits a `mir.constant false : i1` and inserts it into the current
             // block. The op *must* be linked before returning; callers use the
@@ -2501,7 +2504,10 @@ pub fn translate_operand(
             use pliron::utils::apint::APInt;
 
             let bool_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-            let false_val = APInt::from_u64(0, std::num::NonZeroUsize::new(1).unwrap());
+            let false_val = APInt::from_u64(
+                crate::translator::DEVICE_RUNTIME_CHECKS as u64,
+                std::num::NonZeroUsize::new(1).unwrap(),
+            );
             let const_attr =
                 IntegerAttr::new(IntegerType::get(ctx, 1, Signedness::Signless), false_val);
 

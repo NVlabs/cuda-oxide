@@ -127,7 +127,9 @@
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{BasicBlock, ConstOperand, ConstValue, Location, START_BLOCK, TerminatorKind};
+use rustc_middle::mir::{
+    BasicBlock, ConstOperand, ConstValue, Location, START_BLOCK, TerminatorKind,
+};
 use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1033,10 +1035,9 @@ impl<'tcx> DeviceCollector<'tcx> {
                 continue;
             };
             let constant_target = match &terminator.kind {
-                TerminatorKind::SwitchInt { discr, targets } => {
-                    self.constant_operand_bits_in_block(mir, bb, discr, instance)
-                        .map(|value| targets.target_for_value(value))
-                }
+                TerminatorKind::SwitchInt { discr, targets } => self
+                    .constant_operand_bits_in_block(mir, bb, discr, instance)
+                    .map(|value| targets.target_for_value(value)),
                 _ => None,
             };
             let successors: Vec<_> = match constant_target {
@@ -1056,6 +1057,19 @@ impl<'tcx> DeviceCollector<'tcx> {
         reachable
     }
 
+    /// Fold a `SwitchInt` discriminant to constant bits, mirroring the
+    /// mir-importer's reachability fold exactly.
+    ///
+    /// Pruning here is only safe if the importer provably takes the same
+    /// edge: any block the importer translates must have had its calls
+    /// collected. The importer folds `ConstantKind::Allocated` scalars from
+    /// the rustc_public body, and rustc_public's `BodyBuilder` eagerly
+    /// evaluates every MIR constant (`visit_const_operand` rewrites each
+    /// evaluatable constant to `Const::Val`), so the instantiate+`eval`
+    /// below folds precisely the constants the importer folds: both succeed
+    /// exactly when const-eval yields a scalar, and both fail together when
+    /// it does not. `RuntimeChecks` flags fold to the shared device value on
+    /// both sides.
     fn constant_operand_bits_in_block(
         &self,
         mir: &rustc_middle::mir::Body<'tcx>,
@@ -1075,19 +1089,30 @@ impl<'tcx> DeviceCollector<'tcx> {
         };
         let local = match operand {
             rustc_middle::mir::Operand::Constant(constant) => return eval(constant),
-            rustc_middle::mir::Operand::RuntimeChecks(check) => {
-                return Some(check.value(self.tcx.sess) as u128);
+            // The DEVICE value, never `check.value(self.tcx.sess)`: the
+            // importer translates every RuntimeChecks flag to the shared
+            // constant, so pruning with the session value (checks stay on in
+            // dev-profile device builds) would drop a SwitchInt edge the
+            // importer still translates, leaving calls to functions this
+            // collector never gathered.
+            rustc_middle::mir::Operand::RuntimeChecks(_) => {
+                return Some(mir_importer::DEVICE_RUNTIME_CHECKS as u128);
             }
-            rustc_middle::mir::Operand::Copy(place)
-            | rustc_middle::mir::Operand::Move(place) => place.as_local()?,
+            rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
+                place.as_local()?
+            }
         };
-        let statement = mir.basic_blocks[bb].statements.iter().rev().find(|statement| {
-            !matches!(
-                statement.kind,
-                rustc_middle::mir::StatementKind::StorageLive(_)
-                    | rustc_middle::mir::StatementKind::StorageDead(_)
-            )
-        })?;
+        let statement = mir.basic_blocks[bb]
+            .statements
+            .iter()
+            .rev()
+            .find(|statement| {
+                !matches!(
+                    statement.kind,
+                    rustc_middle::mir::StatementKind::StorageLive(_)
+                        | rustc_middle::mir::StatementKind::StorageDead(_)
+                )
+            })?;
         let (destination, rvalue) = statement.kind.as_assign()?;
         if destination.as_local() != Some(local) {
             return None;
@@ -1095,6 +1120,12 @@ impl<'tcx> DeviceCollector<'tcx> {
         match rvalue {
             rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::Constant(constant)) => {
                 eval(constant)
+            }
+            // The importer's lookback folds a RuntimeChecks assignment source
+            // too; fold it here (to the same device value) so both walks keep
+            // selecting the same edge for `_x = RuntimeChecks; switchInt(_x)`.
+            rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::RuntimeChecks(_)) => {
+                Some(mir_importer::DEVICE_RUNTIME_CHECKS as u128)
             }
             _ => None,
         }

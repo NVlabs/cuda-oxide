@@ -63,6 +63,33 @@ mod kernels {
         }
     }
 
+    trait LaneCount {
+        const LANES: usize;
+    }
+
+    struct TwoLanes;
+
+    impl LaneCount for TwoLanes {
+        const LANES: usize = 2;
+    }
+
+    /// The issue-384 shape: a generic helper switching on an associated
+    /// const. Collector dead-edge pruning and importer translation must fold
+    /// `L::LANES` to the same `switchInt` edge, or the dead `panic!` arm gets
+    /// pulled into device codegen by one of them. The live arm goes through
+    /// `get_unchecked`, whose ub-checks precondition adds a
+    /// `RuntimeChecks`-guarded edge that both walks must also fold
+    /// identically (to the device value, never the host session's).
+    fn lane_sum<L: LaneCount>(values: &[u32; 4]) -> u32 {
+        match L::LANES {
+            2 => {
+                // SAFETY: indices 0 and 1 are in bounds of a `[u32; 4]`.
+                unsafe { *values.get_unchecked(0) + *values.get_unchecked(1) }
+            }
+            _ => panic!("unsupported lane count"),
+        }
+    }
+
     /// Sum a by-value `[u32; 4]` with a `for` loop (the issue-138 shape).
     #[kernel]
     pub fn sum_u32_array(mut out: DisjointSlice<u32>) {
@@ -185,6 +212,18 @@ mod kernels {
             *out_elem = select_grid_field(&grid, index % 3);
         }
     }
+
+    /// Associated-const switch with a dead panic arm (issue-384 shape) must
+    /// compile and take the instantiated edge on the device.
+    #[kernel]
+    pub fn associated_const_lane_sum(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let t = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let values = [t, t + 1, t + 2, t + 3];
+            *out_elem = lane_sum::<TwoLanes>(&values);
+        }
+    }
 }
 
 fn kernel_body<'a>(ptx: &'a str, kernel_prefix: &str) -> &'a str {
@@ -274,6 +313,13 @@ fn main() {
         .expect("launch runtime_borrowed_array_field");
     let got_borrowed_field = d_borrowed_field.to_host_vec(&stream).unwrap();
 
+    let mut d_lane_sum = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: the 32-thread 1D block matches the kernel's indexing model and
+    // the 32-element output allocation.
+    unsafe { module.associated_const_lane_sum(stream.as_ref(), cfg, &mut d_lane_sum) }
+        .expect("launch associated_const_lane_sum");
+    let got_lane_sum = d_lane_sum.to_host_vec(&stream).unwrap();
+
     let ptx = std::fs::read_to_string(ptx_path).expect("read generated PTX");
     for kernel in [
         "runtime_aggregate_array_read",
@@ -343,6 +389,15 @@ fn main() {
             println!(
                 "FAIL tid={tid}: runtime_borrowed_array_field={} expected={want_borrowed_field}",
                 got_borrowed_field[tid]
+            );
+            failures += 1;
+        }
+        // lane_sum::<TwoLanes> adds elements 0 and 1: t + (t + 1)
+        let want_lane_sum = 2 * tid as u32 + 1;
+        if got_lane_sum[tid] != want_lane_sum {
+            println!(
+                "FAIL tid={tid}: associated_const_lane_sum={} expected={want_lane_sum}",
+                got_lane_sum[tid]
             );
             failures += 1;
         }
