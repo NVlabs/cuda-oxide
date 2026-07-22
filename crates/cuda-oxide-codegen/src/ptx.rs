@@ -134,6 +134,16 @@ fn optimize_ll(
     // unrollers inside every `default<O2>` run as well, and `loop-unroll`
     // has no `threshold=` per-pass parameter in LLVM 21/22
     // (`opt -print-passes`), so the default threshold applies.
+    //
+    // The trailing `default<O2>` cleans up after the unroll (folds the now
+    // constant-index select chains, lets SROA scalarize the arrays). It is
+    // deliberately a full O2 rather than a minimal
+    // `sroa,early-cse,instcombine,simplifycfg` set: standalone `instcombine`
+    // in a `-passes` string enforces single-iteration fixpoint verification
+    // and hard-errors on real kernels (observed on gemm_sol with LLVM 21/22)
+    // unless verification is suppressed, while the measured cost of the full
+    // second run is ~0.05 s on the heaviest example -- under 0.5% of its
+    // end-to-end compile.
     let optimization_args = [
         "-passes=default<O2>,function(loop-unroll<O3;full-unroll-max=16;no-partial;no-peeling;no-runtime>),default<O2>",
     ];
