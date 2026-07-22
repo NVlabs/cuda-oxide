@@ -669,16 +669,22 @@ fn is_local_array_address(ctx: &Context, ptr: Value) -> bool {
     })
 }
 
-/// Whether `ptr` is a read-only array field projected from an aggregate.
+/// Whether `ptr` is a read-only array field projected from a stack-resident
+/// aggregate.
 ///
 /// Small runtime indexing through a shared aggregate reference is safe to
 /// express as constant-address candidate loads: Rust guarantees every array
 /// element behind the shared reference is initialized and cannot be mutated
 /// concurrently outside interior mutability. Exposing those constant field
 /// addresses also lets SROA eliminate caller-owned aggregate copies after an
-/// `#[inline(always)]` helper is inlined. Keep direct external arrays and all
-/// mutable projections as a single dynamic GEP so ordinary global-memory
-/// access does not fan out into speculative loads.
+/// `#[inline(always)]` helper is inlined.
+///
+/// The base must be alloca-rooted: for an aggregate genuinely resident in
+/// global memory (a `&BigStruct` kernel param), turning one dynamic load
+/// into up to [`MAX_SSA_ARRAY_ELEMENTS`] speculative global loads plus
+/// selects is a fan-out SROA can never delete. Function-local aggregates
+/// are the only bases where the candidate loads collapse back into
+/// registers. Mutable projections likewise keep the single dynamic GEP.
 fn is_readonly_aggregate_array_address(
     ctx: &Context,
     ptr: Value,
@@ -695,6 +701,7 @@ fn is_readonly_aggregate_array_address(
         gep.src_elem_type(ctx)
             .deref(ctx)
             .is::<llvm_export::types::StructType>()
+            && is_local_array_address(ctx, gep.get_operation().deref(ctx).get_operand(0))
     })
 }
 
@@ -1849,6 +1856,7 @@ mod tests {
         ctx: &mut Context,
         array_size: u64,
         mutable: bool,
+        local: bool,
     ) -> Ptr<Operation> {
         let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
         let usize_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Unsigned).into();
@@ -1865,9 +1873,32 @@ mod tests {
         let array_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, array_ty, mutable).into();
         let element_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, i32_ty, mutable).into();
 
-        let (module_ptr, block) = build_kernel(ctx, vec![aggregate_ptr_ty, usize_ty], vec![i32_ty]);
-        let aggregate_ptr = block.deref(ctx).get_argument(0);
-        let index = block.deref(ctx).get_argument(1);
+        let arg_tys = if local {
+            vec![usize_ty]
+        } else {
+            vec![aggregate_ptr_ty, usize_ty]
+        };
+        let (module_ptr, block) = build_kernel(ctx, arg_tys, vec![i32_ty]);
+        let (aggregate_ptr, index) = if local {
+            let alloca = Operation::new(
+                ctx,
+                mir::MirAllocaOp::get_concrete_op_info(),
+                vec![aggregate_ptr_ty],
+                vec![],
+                vec![],
+                0,
+            );
+            alloca.insert_at_back(block, ctx);
+            (
+                alloca.deref(ctx).get_result(0),
+                block.deref(ctx).get_argument(0),
+            )
+        } else {
+            (
+                block.deref(ctx).get_argument(0),
+                block.deref(ctx).get_argument(1),
+            )
+        };
 
         let field_address = Operation::new(
             ctx,
@@ -2048,9 +2079,9 @@ mod tests {
     }
 
     #[test]
-    fn small_readonly_aggregate_array_address_uses_constant_pointer_selection() {
+    fn small_readonly_local_aggregate_array_address_uses_constant_pointer_selection() {
         let mut ctx = make_ctx();
-        let module_ptr = build_aggregate_array_element_addr_read(&mut ctx, 3, false);
+        let module_ptr = build_aggregate_array_element_addr_read(&mut ctx, 3, false, true);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
         let body = kernel_blocks(&ctx, module_ptr);
@@ -2062,9 +2093,26 @@ mod tests {
     }
 
     #[test]
+    fn small_readonly_external_aggregate_array_address_keeps_single_dynamic_gep() {
+        // A shared aggregate reference whose base is NOT alloca-rooted (a
+        // kernel param living in global memory) must not fan one dynamic
+        // load out into speculative candidate loads.
+        let mut ctx = make_ctx();
+        let module_ptr = build_aggregate_array_element_addr_read(&mut ctx, 3, false, false);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module_ptr);
+
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 2);
+        assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
+    }
+
+    #[test]
     fn small_mutable_aggregate_array_address_keeps_single_dynamic_gep() {
         let mut ctx = make_ctx();
-        let module_ptr = build_aggregate_array_element_addr_read(&mut ctx, 3, true);
+        let module_ptr = build_aggregate_array_element_addr_read(&mut ctx, 3, true, false);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
         let body = kernel_blocks(&ctx, module_ptr);
