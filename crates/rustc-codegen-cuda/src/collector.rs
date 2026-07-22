@@ -125,7 +125,7 @@
 //! with human-readable base names derived from the `#[kernel]` macro.
 
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
-use rustc_index::bit_set::DenseBitSet;
+use rustc_index::{Idx, bit_set::DenseBitSet};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
@@ -156,23 +156,64 @@ fn device_mono_reachable_as_bitset<'tcx>(
             continue;
         }
 
-        let data = &body.basic_blocks[bb];
-        if let TerminatorKind::SwitchInt {
-            discr: rustc_middle::mir::Operand::RuntimeChecks(_),
-            targets,
-        } = &data.terminator().kind
-        {
-            worklist.push(device_runtime_checks_target(targets));
-        } else {
-            worklist.extend(data.mono_successors(tcx, instance));
-        }
+        worklist.extend(device_mono_successors(
+            &body.basic_blocks[bb],
+            tcx,
+            instance,
+        ));
     }
 
     reachable
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct DeviceMonoReachability {
+    pub(crate) block_count: usize,
+    pub(crate) successors: Vec<Vec<usize>>,
+}
+
+fn device_mono_successors<'tcx>(
+    block: &rustc_middle::mir::BasicBlockData<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+) -> Vec<BasicBlock> {
+    if let TerminatorKind::SwitchInt {
+        discr: rustc_middle::mir::Operand::RuntimeChecks(_),
+        targets,
+    } = &block.terminator().kind
+    {
+        vec![device_runtime_checks_target(targets)]
+    } else {
+        block.mono_successors(tcx, instance).collect()
+    }
+}
+
+/// Compute the exact per-block successor edges that collection used, for the
+/// MIR importer. `rustc_public_bridge::BodyBuilder` monomorphizes the same body
+/// in place, so block indices must remain stable; the importer also receives
+/// and verifies `block_count` and every edge before trusting them.
+pub(crate) fn device_mono_reachability<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+) -> DeviceMonoReachability {
+    let body = tcx.instance_mir(instance.def);
+    DeviceMonoReachability {
+        block_count: body.basic_blocks.len(),
+        successors: body
+            .basic_blocks
+            .iter()
+            .map(|block| {
+                device_mono_successors(block, tcx, instance)
+                    .into_iter()
+                    .map(Idx::index)
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
 fn device_runtime_checks_target(targets: &rustc_middle::mir::SwitchTargets) -> BasicBlock {
-    targets.target_for_value(0)
+    targets.target_for_value(u128::from(mir_importer::DEVICE_RUNTIME_CHECKS_VALUE))
 }
 
 /// Result of checking if a function should be collected for device compilation.
@@ -1029,9 +1070,10 @@ impl<'tcx> DeviceCollector<'tcx> {
                 // (see `Body::mono_successors`), so dead-arm callees are never
                 // instantiated anywhere else; collecting them here would
                 // demand symbols that can never resolve, and reject panic-only
-                // hooks that are never actually called. The MIR importer
-                // prunes the same blocks (`prune_const_switch_targets` in
-                // mir-importer), so collection and translation stay in sync.
+                // hooks that are never actually called. This exact set is
+                // also carried across the rustc_public bridge to the MIR
+                // importer, so collection and translation have one semantic
+                // owner instead of two constant evaluators.
                 let reachable = device_mono_reachable_as_bitset(mir, self.tcx, func.instance);
 
                 // Fail fast with an actionable diagnostic when this body

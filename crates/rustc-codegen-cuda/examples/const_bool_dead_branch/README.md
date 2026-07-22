@@ -9,7 +9,9 @@ MIR import. Otherwise a statically dead hook may be rejected as panic-only or
 left as an unresolved device symbol.
 
 The example covers explicit and default trait hooks. Each has one live
-instantiation and one instantiation where the hook is const-dead.
+instantiation and one instantiation where the hook is const-dead. A dynamic
+control keeps both successors reachable and proves that an unknown
+discriminant still collects and emits its hook.
 
 ```bash
 cargo oxide run const_bool_dead_branch
@@ -25,5 +27,5 @@ absent in every available stage.
 Expected final line:
 
 ```text
-const_bool_dead_branch: PASS (4 values, four generic instantiations)
+const_bool_dead_branch: PASS (4 values, five generic instantiations)
 ```

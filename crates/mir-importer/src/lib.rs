@@ -78,6 +78,12 @@ extern crate rustc_public;
 extern crate rustc_public_bridge;
 extern crate rustc_span;
 
+/// Value used for every rustc `Operand::RuntimeChecks` query in device MIR.
+///
+/// Collection imports this same constant when choosing monomorphized switch
+/// successors, so call discovery and emitted control flow cannot disagree.
+pub const DEVICE_RUNTIME_CHECKS_VALUE: bool = false;
+
 pub mod error;
 pub mod pipeline;
 pub mod translator;

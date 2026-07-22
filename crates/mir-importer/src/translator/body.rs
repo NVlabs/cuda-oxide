@@ -249,111 +249,18 @@ fn detect_dynamic_shared_alignment(body: &mir::Body) -> Option<DynamicSharedAlig
     None
 }
 
-/// Try to resolve a block's `SwitchInt` discriminant to a compile-time
-/// constant.
-///
-/// This is the `rustc_public` analogue of rustc's
-/// `Body::try_const_mono_switchint`, which the mono collector uses to walk
-/// only mono-reachable blocks: in a *generic* fn, `if S::CONST_FLAG { .. }`
-/// survives to monomorphized MIR as a `SwitchInt` whose discriminant only
-/// becomes constant after substitution, and rustc never instantiates the
-/// dead arm's callees. `Instance::body()` (via `rustc_public_bridge`'s
-/// `BodyBuilder`) has already monomorphized the body, so the associated-const
-/// discriminants covered here arrive as allocations we can read directly.
-///
-/// The discriminant is either a const operand on the terminator itself, or
-/// (the shape rustc handles) a `Move`/`Copy` of a place assigned a constant
-/// by the last non-storage-marker statement of the same block.
-fn try_const_switch_discr(block: &mir::BasicBlock) -> Option<u128> {
-    use rustc_public::ty::TyConstKind;
-
-    let mir::TerminatorKind::SwitchInt { discr, .. } = &block.terminator.kind else {
-        return None;
-    };
-
-    let const_op = match discr {
-        mir::Operand::Constant(c) => Some(&c.const_),
-        mir::Operand::Move(place) | mir::Operand::Copy(place) => block
-            .statements
-            .iter()
-            .rev()
-            .find(|stmt| {
-                !matches!(
-                    stmt.kind,
-                    mir::StatementKind::StorageLive(_) | mir::StatementKind::StorageDead(_)
-                )
-            })
-            .and_then(|stmt| match &stmt.kind {
-                mir::StatementKind::Assign(lhs, mir::Rvalue::Use(mir::Operand::Constant(c)))
-                    if lhs == place =>
-                {
-                    Some(&c.const_)
-                }
-                _ => None,
-            }),
-        // Device runtime-check queries are emitted as false. Reachability must
-        // select that same edge so the importer never follows an uncollected
-        // branch.
-        mir::Operand::RuntimeChecks(check) => return device_runtime_checks_value(check),
-    }?;
-
-    match const_op.kind() {
-        ConstantKind::Allocated(alloc) => alloc.read_uint().ok(),
-        ConstantKind::Ty(tc) => match tc.kind() {
-            TyConstKind::Value(_, alloc) => alloc.read_uint().ok(),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Device MIR lowers every rustc runtime-check query to `false`.
-fn device_runtime_checks_value(_check: &mir::RuntimeChecks) -> Option<u128> {
-    // `translate_operand` defines the same device policy. Keep reachability
-    // synchronized with the value that will be emitted into device MIR.
-    Some(0)
-}
-
-fn switch_target_for_bits(targets: &mir::SwitchTargets, bits: u128) -> usize {
-    targets
-        .branches()
-        .find(|(value, _)| *value == bits)
-        .map(|(_, target)| target)
-        .unwrap_or_else(|| targets.otherwise())
-}
-
-/// If a block ends in a `SwitchInt` over a compile-time constant, return the
-/// single successor that branch actually takes.
-///
-/// Blocks only reachable through pruned arms never enter the reachable set,
-/// so their statements are never translated — matching rustc's collector,
-/// which never instantiates the dead arms' callees (translating them would
-/// demand symbols that cannot resolve; see [`try_const_switch_discr`]). The
-/// codegen collector applies the same rule via
-/// `device_mono_reachable_as_bitset` in `collector.rs`.
-fn prune_const_switch_targets(block: &mir::BasicBlock) -> Option<Vec<usize>> {
-    let mir::TerminatorKind::SwitchInt { targets, .. } = &block.terminator.kind else {
-        return None;
-    };
-    let bits = try_const_switch_discr(block)?;
-    let target = switch_target_for_bits(targets, bits);
-    Some(vec![target])
-}
-
 /// Return the non-unwind successors of a block's terminator.
 ///
 /// [`mir::Terminator::successors`] includes unwind cleanup blocks alongside
 /// "normal" control-flow targets. The CUDA toolchain does not support stack
 /// unwinding (hardware could, but `nvcc`/`ptxas` never wire it up), so the
 /// translator treats unwind cleanups as dead code. This helper strips them
-/// out so the worklist only visits blocks that matter on GPU. `SwitchInt`s
-/// over compile-time constants are likewise narrowed to the arm actually
-/// taken (see [`prune_const_switch_targets`]).
+/// out so the worklist only visits blocks that matter on GPU. Monomorphized
+/// branch reachability is supplied separately by rustc's collector; the
+/// importer must not reconstruct a second constant-evaluation model from the
+/// converted public MIR.
 fn non_unwind_successors(block: &mir::BasicBlock) -> Vec<usize> {
     use mir::TerminatorKind::*;
-    if let Some(pruned) = prune_const_switch_targets(block) {
-        return pruned;
-    }
     match &block.terminator.kind {
         Goto { target } => vec![*target],
         SwitchInt { targets, .. } => targets.all_targets(),
@@ -364,20 +271,82 @@ fn non_unwind_successors(block: &mir::BasicBlock) -> Vec<usize> {
     }
 }
 
-/// BFS from the entry block (index 0) following non-unwind successors.
+fn validate_monomorphized_successor_shape(
+    body_block_count: usize,
+    rustc_mir_block_count: usize,
+    rustc_mono_successors: &[Vec<usize>],
+) -> Result<(), String> {
+    if body_block_count != rustc_mir_block_count {
+        return Err(format!(
+            "rustc/public MIR CFG mismatch: collector recorded {rustc_mir_block_count} blocks but importer received {body_block_count}"
+        ));
+    }
+    if rustc_mono_successors.len() != body_block_count {
+        return Err(format!(
+            "rustc collector supplied successor lists for {} blocks but the public MIR body has {body_block_count}",
+            rustc_mono_successors.len()
+        ));
+    }
+    for (source, successors) in rustc_mono_successors.iter().enumerate() {
+        if let Some(target) = successors
+            .iter()
+            .copied()
+            .find(|target| *target >= body_block_count)
+        {
+            return Err(format!(
+                "rustc collector edge {source} -> {target} is outside the {body_block_count}-block public MIR body"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_monomorphized_successors(
+    body: &mir::Body,
+    rustc_mir_block_count: usize,
+    rustc_mono_successors: &[Vec<usize>],
+) -> Result<(), String> {
+    validate_monomorphized_successor_shape(
+        body.blocks.len(),
+        rustc_mir_block_count,
+        rustc_mono_successors,
+    )?;
+    for (source, successors) in rustc_mono_successors.iter().enumerate() {
+        let public_successors = body.blocks[source].terminator.successors();
+        if let Some(target) = successors
+            .iter()
+            .copied()
+            .find(|target| !public_successors.contains(target))
+        {
+            return Err(format!(
+                "rustc collector edge {source} -> {target} does not exist in the converted public MIR CFG"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// BFS from the entry block following rustc's exact per-block monomorphized
+/// successors, intersected with the importer's existing non-unwind policy.
 ///
 /// The result is a sorted set of reachable-on-GPU block indices; unwind-only
 /// cleanup blocks end up outside this set and are filled in with
 /// `mir.unreachable` by [`translate_body`] so pliron verification still
-/// passes.
-fn compute_reachable_blocks(body: &mir::Body) -> std::collections::BTreeSet<usize> {
+/// passes. Constant switches and device runtime-check switches are never
+/// re-evaluated here: the collector's edges are the semantic source of truth.
+fn compute_reachable_blocks(
+    body: &mir::Body,
+    rustc_mono_successors: &[Vec<usize>],
+) -> std::collections::BTreeSet<usize> {
     let mut reachable = std::collections::BTreeSet::new();
     let mut frontier: Vec<usize> = vec![0];
     reachable.insert(0);
     while let Some(idx) = frontier.pop() {
-        let successors = non_unwind_successors(&body.blocks[idx]);
-        for succ in successors {
-            if reachable.insert(succ) {
+        let non_unwind: std::collections::BTreeSet<_> = non_unwind_successors(&body.blocks[idx])
+            .into_iter()
+            .collect();
+        for &succ in &rustc_mono_successors[idx] {
+            if non_unwind.contains(&succ) && reachable.insert(succ) {
                 frontier.push(succ);
             }
         }
@@ -799,6 +768,10 @@ fn emit_entry_allocas(
 /// * `ctx` - Pliron IR context
 /// * `body` - MIR function body
 /// * `instance` - Monomorphized instance (with concrete generic args)
+/// * `rustc_mir_block_count` - Block count recorded from the rustc MIR body
+///   before conversion to public MIR
+/// * `rustc_mono_successors` - Exact per-block successor edges computed by
+///   rustc's monomorphization rules under the device runtime-check policy
 /// * `is_kernel` - Add `gpu_kernel` attribute for kernel entry points
 /// * `is_inline_always` - Add `alwaysinline` attribute (non-kernel functions
 ///   marked `#[inline(always)]` in rustc)
@@ -807,6 +780,8 @@ pub fn translate_body(
     ctx: &mut Context,
     body: &mir::Body,
     instance: &mono::Instance,
+    rustc_mir_block_count: usize,
+    rustc_mono_successors: &[Vec<usize>],
     is_kernel: bool,
     is_inline_always: bool,
     override_name: Option<&str>,
@@ -1133,7 +1108,12 @@ pub fn translate_body(
     // ordering dependency and can be translated in a single index-order pass.
     // Unwind-only cleanup blocks are skipped here (see
     // [`non_unwind_successors`]) and patched with `mir.unreachable` below.
-    let reachable: std::collections::BTreeSet<usize> = compute_reachable_blocks(body);
+    if let Err(error) =
+        validate_monomorphized_successors(body, rustc_mir_block_count, rustc_mono_successors)
+    {
+        return input_err_noloc!(TranslationErr::invalid_op(error));
+    }
+    let reachable = compute_reachable_blocks(body, rustc_mono_successors);
 
     let mut blocks_processed: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
@@ -1149,6 +1129,7 @@ pub fn translate_body(
             block_ptr,
             &mut value_map,
             &block_map,
+            &rustc_mono_successors[idx],
             legaliser,
             entry_prev_op,
         )?;
@@ -1212,21 +1193,15 @@ mod tests {
     };
 
     #[test]
-    fn device_runtime_checks_take_the_false_switch_edge() {
-        for check in [
-            mir::RuntimeChecks::UbChecks,
-            mir::RuntimeChecks::ContractChecks,
-            mir::RuntimeChecks::OverflowChecks,
-        ] {
-            assert_eq!(device_runtime_checks_value(&check), Some(0));
-        }
-    }
-
-    #[test]
-    fn constant_switch_selects_explicit_and_otherwise_targets() {
-        let targets = mir::SwitchTargets::new(vec![(0, 3), (7, 5)], 9);
-        assert_eq!(switch_target_for_bits(&targets, 7), 5);
-        assert_eq!(switch_target_for_bits(&targets, 99), 9);
+    fn collector_reachability_requires_the_same_public_mir_cfg() {
+        let valid = [vec![2], vec![], vec![3], vec![]];
+        assert!(validate_monomorphized_successor_shape(4, 4, &valid).is_ok());
+        assert!(validate_monomorphized_successor_shape(4, 5, &valid).is_err());
+        assert!(validate_monomorphized_successor_shape(4, 4, &valid[..3]).is_err());
+        assert!(
+            validate_monomorphized_successor_shape(4, 4, &[vec![4], vec![], vec![], vec![]])
+                .is_err()
+        );
     }
 
     #[test]

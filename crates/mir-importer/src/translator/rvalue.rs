@@ -2489,9 +2489,12 @@ pub fn translate_operand(
             use pliron::utils::apint::APInt;
 
             let bool_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-            let false_val = APInt::from_u64(0, std::num::NonZeroUsize::new(1).unwrap());
+            let value = APInt::from_u64(
+                u64::from(crate::DEVICE_RUNTIME_CHECKS_VALUE),
+                std::num::NonZeroUsize::new(1).unwrap(),
+            );
             let const_attr =
-                IntegerAttr::new(IntegerType::get(ctx, 1, Signedness::Signless), false_val);
+                IntegerAttr::new(IntegerType::get(ctx, 1, Signedness::Signless), value);
 
             let op = Operation::new(
                 ctx,

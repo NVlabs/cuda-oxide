@@ -100,6 +100,19 @@ impl DefaultMode for DefaultOff {
     const ENABLED: bool = false;
 }
 
+trait DynamicMode: Sized + 'static {
+    fn hook(value: u32) -> u32;
+}
+
+struct Dynamic;
+
+impl DynamicMode for Dynamic {
+    #[inline(never)]
+    fn hook(value: u32) -> u32 {
+        value + 100
+    }
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -112,6 +125,11 @@ mod kernels {
     #[inline(never)]
     fn select_default<M: DefaultMode>(value: u32) -> u32 {
         if M::ENABLED { M::hook(value) } else { value }
+    }
+
+    #[inline(never)]
+    fn select_dynamic<M: DynamicMode>(enabled: bool, value: u32) -> u32 {
+        if enabled { M::hook(value) } else { value }
     }
 
     #[kernel]
@@ -133,6 +151,18 @@ mod kernels {
         let index = thread::index_1d();
         if let (Some(value), Some(slot)) = (input.get(index.get()), output.get_mut(index)) {
             *slot = Tagged::new(select_default::<M>(value.value));
+        }
+    }
+
+    #[kernel]
+    pub fn dynamic<M: DynamicMode>(
+        input: &[Tagged<u32, M>],
+        mut output: DisjointSlice<Tagged<u32, M>>,
+    ) {
+        let index = thread::index_1d();
+        if let (Some(value), Some(slot)) = (input.get(index.get()), output.get_mut(index)) {
+            let enabled = value.value & 1 == 1;
+            *slot = Tagged::new(select_dynamic::<M>(enabled, value.value));
         }
     }
 }
@@ -169,6 +199,7 @@ fn main() {
     let input = [1, 2, 3, 4];
     let tripled = [3, 6, 9, 12];
     let incremented = [12, 13, 14, 15];
+    let dynamically_selected = [101, 2, 103, 4];
 
     let mut passed = true;
     passed &= check(
@@ -227,9 +258,23 @@ fn main() {
             }
         },
     );
+    passed &= check(
+        "dynamic conservative arms",
+        &stream,
+        &tagged::<Dynamic>(&input),
+        &tagged::<Dynamic>(&dynamically_selected),
+        |config, device_input, device_output| {
+            // SAFETY: the launch covers the output and the kernel bounds-checks it.
+            unsafe {
+                module
+                    .dynamic::<Dynamic>(&stream, config, device_input, device_output)
+                    .expect("launch")
+            }
+        },
+    );
 
     if passed {
-        println!("const_bool_dead_branch: PASS ({N} values, four generic instantiations)");
+        println!("const_bool_dead_branch: PASS ({N} values, five generic instantiations)");
     } else {
         std::process::exit(1);
     }

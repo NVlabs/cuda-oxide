@@ -100,10 +100,20 @@ pub fn translate_function(
     // don't have access to rustc's CodegenFnAttrs, so `is_inline_always` is
     // always false here. The real pipeline call (in `pipeline.rs`) threads
     // the flag through from `rustc-codegen-cuda`.
+    // This utility does not participate in rustc-codegen-cuda's collector,
+    // so it deliberately translates every block. The production pipeline
+    // passes rustc's exact per-instance reachability instead.
+    let all_successors: Vec<Vec<usize>> = body
+        .blocks
+        .iter()
+        .map(|block| block.terminator.successors())
+        .collect();
     let func_op = body::translate_body(
         ctx,
         body,
         instance,
+        body.blocks.len(),
+        &all_successors,
         is_kernel,
         /* is_inline_always */ false,
         None,

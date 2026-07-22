@@ -664,6 +664,10 @@ pub fn generate_device_code<'tcx>(
             )
         })
         .collect();
+    let device_mono_reachability: Vec<crate::collector::DeviceMonoReachability> = functions
+        .iter()
+        .map(|func| crate::collector::device_mono_reachability(tcx, func.instance))
+        .collect();
 
     let result = rustc_internal::run(tcx, || {
         // Convert internal Instance<'tcx> to stable_mir Instance.
@@ -681,8 +685,12 @@ pub fn generate_device_code<'tcx>(
             .zip(export_names.iter())
             .zip(debug_scope_maps.iter())
             .zip(inline_always_flags.iter())
+            .zip(device_mono_reachability.iter())
             .filter_map(
-                |(((func, (export_name, is_kernel)), debug_source_scopes), is_inline_always)| {
+                |(
+                    (((func, (export_name, is_kernel)), debug_source_scopes), is_inline_always),
+                    reachability,
+                )| {
                     // Use rustc_internal::stable() to convert the Instance.
                     // This is the key bridge between rustc_middle and rustc_public types.
                     let stable_instance = rustc_internal::stable(func.instance);
@@ -700,6 +708,8 @@ pub fn generate_device_code<'tcx>(
 
                     Some(mir_importer::CollectedFunction {
                         instance: stable_instance,
+                        rustc_mir_block_count: reachability.block_count,
+                        rustc_mono_successors: reachability.successors.clone(),
                         is_kernel: *is_kernel,
                         export_name: export_name.clone(),
                         debug_source_scopes: Some(debug_source_scopes.clone()),

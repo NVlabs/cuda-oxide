@@ -106,6 +106,7 @@ pub fn translate_terminator(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     block_map: &[Ptr<BasicBlock>],
+    rustc_mono_successors: &[usize],
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
     let loc = span_to_location(ctx, term.span);
@@ -152,9 +153,21 @@ pub fn translate_terminator(
             legaliser,
         ),
 
-        mir::TerminatorKind::SwitchInt { discr, targets } => translate_switch(
-            ctx, body, discr, targets, block_ptr, prev_op, value_map, block_map, loc,
-        ),
+        mir::TerminatorKind::SwitchInt { discr, targets } => match rustc_mono_successors {
+            // rustc evaluated this switch for the concrete instance. Emit
+            // that exact edge instead of evaluating the converted public MIR
+            // a second time.
+            [target] => translate_goto(ctx, *target, block_ptr, prev_op, block_map, loc),
+            [] => input_err!(
+                loc,
+                TranslationErr::invalid_op(
+                    "rustc supplied no successor for a reachable SwitchInt".to_string()
+                )
+            ),
+            _ => translate_switch(
+                ctx, body, discr, targets, block_ptr, prev_op, value_map, block_map, loc,
+            ),
+        },
 
         mir::TerminatorKind::Drop {
             place,
