@@ -54,7 +54,7 @@
 //!   - `tma`: Tensor memory access
 //!   - `memory`: SharedArray indexing, stmatrix
 
-mod drop_glue;
+pub mod drop_glue;
 pub mod helpers;
 pub mod intrinsics;
 
@@ -161,7 +161,8 @@ pub fn translate_terminator(
             target,
             unwind,
         } => translate_drop(
-            ctx, body, place, *target, unwind, block_ptr, prev_op, block_map, loc,
+            ctx, body, place, *target, unwind, block_ptr, prev_op, value_map, block_map, legaliser,
+            loc,
         ),
 
         mir::TerminatorKind::Unreachable => {
@@ -777,30 +778,29 @@ fn translate_switch(
 /// Translates a MIR `Drop` terminator.
 ///
 /// rustc emits `TerminatorKind::Drop` only for places whose type has drop
-/// glue. cuda-oxide does not yet emit device-side `drop_in_place` calls,
-/// so a destructor that actually does something cannot run on the device.
+/// glue. Two cases:
 ///
-/// Two cases:
-///
-/// 1. **Provably no-op glue**: when the monomorphized drop glue does
-///    nothing observable (checked by [`drop_glue::drop_glue_is_noop`]),
+/// 1. **Provably no-op glue** (fast path): when the monomorphized drop glue
+///    does nothing observable (checked by [`drop_glue::drop_glue_is_noop`]),
 ///    the terminator lowers to a plain branch to its target block.
 ///    The common source pattern is `for x in arr` over a by-value
 ///    array: the loop's `core::array::IntoIter<T, N>` has an
 ///    `impl Drop`, but for element types without drop glue that
-///    destructor folds to nothing.
+///    destructor folds to nothing. This avoids the overhead of emitting
+///    a function call for drops that are statically proven to do nothing.
 ///
-/// 2. **Genuinely effectful glue**: we surface a hard error with the
-///    dropped place's type so the user can diagnose and restructure
-///    the kernel. Lowering to a goto here would silently skip the
-///    destructor and miscompile.
+/// 2. **Effectful glue** (fallback): when the no-op proof fails, the type
+///    has a genuine destructor. We emit a device-side call to the
+///    monomorphized `drop_in_place::<T>` function, which the collector has
+///    already gathered and translated as a regular device function.
 ///
 /// Suppressing drop glue on a Copy-shaped value (e.g. wrapping in
 /// `core::mem::ManuallyDrop`) prevents the Drop terminator from being
-/// emitted in the first place and lets the kernel compile.
+/// emitted in the first place and lets the kernel compile without any
+/// drop overhead.
 ///
-/// The unwind action is ignored: device code is panic=abort, and for the
-/// no-op case there is nothing that could unwind anyway.
+/// The unwind action is ignored: device code is panic=abort, so there is
+/// nothing that could unwind.
 #[allow(clippy::too_many_arguments)]
 fn translate_drop(
     ctx: &mut Context,
@@ -810,7 +810,9 @@ fn translate_drop(
     _unwind: &mir::UnwindAction,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
+    legaliser: &mut Legaliser,
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     let dropped_ty = place.ty(body.locals()).map_err(|e| {
@@ -821,19 +823,16 @@ fn translate_drop(
             ))
         )
     })?;
+
+    // Fast path: if the drop is provably a no-op, emit a plain branch.
     if drop_glue::drop_glue_is_noop(dropped_ty) {
         return translate_goto(ctx, target, block_ptr, prev_op, block_map, loc);
     }
-    input_err!(
+
+    // Fallback: emit a device-side call to drop_in_place::<T>(ptr).
+    drop_glue::emit_drop_glue(
+        ctx, body, place, dropped_ty, target, block_ptr, prev_op, value_map, block_map, legaliser,
         loc,
-        TranslationErr::unsupported(format!(
-            "drop of `{:?}` is not supported on the device; its destructor \
-             does observable work and cuda-oxide does not yet emit \
-             device-side `drop_in_place` calls. Restructure the kernel to \
-             use only `Copy` types, or wrap the value in \
-             `core::mem::ManuallyDrop` to suppress drop glue.",
-            dropped_ty.kind()
-        ))
     )
 }
 

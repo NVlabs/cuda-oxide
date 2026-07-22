@@ -14,7 +14,6 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | Example                               | Kind                | Fails at                            |
 | :------------------------------------ | :------------------ | :---------------------------------- |
 | `error`                               | diagnostics-fixture | `core::fmt` reachable from device   |
-| `error_drop_glue`                     | support-gap         | `TerminatorKind::Drop` (effectful)  |
 | `error_enum_constant_provenance`      | support-gap         | Enum constant pointer relocation    |
 | `error_enum_pointer_overlap`          | support-gap         | Overlaid pointer/integer payload    |
 | `error_enum_shared_pointer_layout`    | support-gap         | Mode-dependent AS3 pointer width    |
@@ -28,10 +27,18 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | `error_static_initializer_provenance` | support-gap         | Device-global pointer relocation    |
 | `error_wgmma_mma_unimplemented`       | support-gap         | WGMMA MMA lowering                  |
 
-`error_drop_glue` only fails for destructors that do observable work.
 Drops whose monomorphized glue is provably a no-op (e.g. the
 `core::array::IntoIter` behind `for x in arr` with Copy elements) lower
-to a plain branch since issue #138.
+to a plain branch since issue #138. When the no-op proof fails, the drop
+lowers to a device-side call to the monomorphized `drop_in_place::<T>`
+shim, which the collector gathers and the pipeline compiles like any
+other device function; see the `drop_glue` example. This covers direct
+`impl Drop` types reachable from kernels. The shim and every
+`Drop::drop` body it reaches go through the same device pipeline, so
+drop glue whose MIR uses constructs the pipeline cannot yet translate
+(e.g. slice/`Vec` element drops, panic formatting) still fails
+compilation with a diagnostic. Destructors are never silently skipped:
+a drop is either proven unobservable or its call is emitted.
 
 The enum storage fixtures deliberately fail closed. Enum constants with
 relocations cannot be flattened to bytes without replacing an address with
