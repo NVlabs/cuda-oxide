@@ -16,24 +16,19 @@ mod kernels {
 
     #[kernel]
     pub fn atomic_add(
-        counter_f32: &mut [f32],
-        counter_f64: &mut [f64],
-        mut completed: DisjointSlice<u32>,
+        counter_f32: &[DeviceAtomicF32],
+        counter_f64: &[DeviceAtomicF64],
+        mut old_values: DisjointSlice<(f32, f64)>,
     ) {
         let index = thread::index_1d();
         if index.get() >= N {
             return;
         }
 
-        // SAFETY: both buffers contain one correctly aligned scalar. The
-        // atomic wrappers provide interior mutability for concurrent updates.
-        let counter_f32 = unsafe { DeviceAtomicF32::from_ptr(counter_f32.as_mut_ptr()) };
-        let counter_f64 = unsafe { DeviceAtomicF64::from_ptr(counter_f64.as_mut_ptr()) };
-        counter_f32.fetch_add(1.0, AtomicOrdering::Relaxed);
-        counter_f64.fetch_add(1.0, AtomicOrdering::Relaxed);
-
-        if let Some(slot) = completed.get_mut(index) {
-            *slot = 1;
+        let old_f32 = counter_f32[0].fetch_add(1.0, AtomicOrdering::Relaxed);
+        let old_f64 = counter_f64[0].fetch_add(1.0, AtomicOrdering::Relaxed);
+        if let Some(slot) = old_values.get_mut(index) {
+            *slot = (old_f32, old_f64);
         }
     }
 }
@@ -42,30 +37,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = CudaContext::new(0)?;
     let stream = context.default_stream();
     let module = kernels::load(&context)?;
-    let mut counter_f32 = DeviceBuffer::<f32>::zeroed(&stream, 1)?;
-    let mut counter_f64 = DeviceBuffer::<f64>::zeroed(&stream, 1)?;
-    let mut completed = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+    let counter_f32 = DeviceBuffer::<f32>::zeroed(&stream, 1)?.cast_elem::<DeviceAtomicF32>();
+    let counter_f64 = DeviceBuffer::<f64>::zeroed(&stream, 1)?.cast_elem::<DeviceAtomicF64>();
+    let mut old_values = DeviceBuffer::<(f32, f64)>::zeroed(&stream, N)?;
 
-    // SAFETY: the launch covers N threads; both counters contain one scalar,
-    // and the completion buffer contains N elements.
+    // SAFETY: the launch covers exactly N unique 1D indices, `old_values` has
+    // N elements, and the one-element counters use atomic wrapper pointees so
+    // every shared update is atomic rather than an aliased `&mut` access.
     unsafe {
         module.atomic_add(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
-            &mut counter_f32,
-            &mut counter_f64,
-            &mut completed,
+            &counter_f32,
+            &counter_f64,
+            &mut old_values,
         )?;
     }
     stream.synchronize()?;
 
-    let got_f32 = counter_f32.to_host_vec(&stream)?[0];
-    let got_f64 = counter_f64.to_host_vec(&stream)?[0];
-    let completed = completed.to_host_vec(&stream)?;
-    if got_f32 != N as f32 || got_f64 != N as f64 || completed.iter().any(|&value| value != 1) {
+    let got_f32 = counter_f32.cast_elem::<f32>().to_host_vec(&stream)?[0];
+    let got_f64 = counter_f64.cast_elem::<f64>().to_host_vec(&stream)?[0];
+    let old_values = old_values.to_host_vec(&stream)?;
+    let mut old_f32 = old_values.iter().map(|&(value, _)| value).collect::<Vec<_>>();
+    let mut old_f64 = old_values.iter().map(|&(_, value)| value).collect::<Vec<_>>();
+    old_f32.sort_by(f32::total_cmp);
+    old_f64.sort_by(f64::total_cmp);
+    let old_f32_is_permutation = old_f32
+        .iter()
+        .enumerate()
+        .all(|(index, &value)| value == index as f32);
+    let old_f64_is_permutation = old_f64
+        .iter()
+        .enumerate()
+        .all(|(index, &value)| value == index as f64);
+    if got_f32 != N as f32
+        || got_f64 != N as f64
+        || !old_f32_is_permutation
+        || !old_f64_is_permutation
+    {
         return Err(format!(
-            "legacy atomic add mismatch: f32={got_f32}, f64={got_f64}, completed={}",
-            completed.iter().filter(|&&value| value == 1).count()
+            "legacy atomic add mismatch: f32={got_f32}, f64={got_f64}, old_f32_permutation={old_f32_is_permutation}, old_f64_permutation={old_f64_is_permutation}"
         )
         .into());
     }

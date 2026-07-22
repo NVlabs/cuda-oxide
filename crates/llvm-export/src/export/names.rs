@@ -48,6 +48,21 @@ pub(super) fn decode_intrinsic_identifier(name: &str) -> String {
     output
 }
 
+/// Return `(floating-point width, address space)` for the six legacy NVVM
+/// floating-point atomic-add intrinsics whose pointer pointee is part of the
+/// LLVM 7 ABI.
+pub(super) fn legacy_nvvm_atomic_add_signature(name: &str) -> Option<(u32, u32)> {
+    match name {
+        "llvm.nvvm.atomic.load.add.f32.p0f32" => Some((32, 0)),
+        "llvm.nvvm.atomic.load.add.f32.p1f32" => Some((32, 1)),
+        "llvm.nvvm.atomic.load.add.f32.p3f32" => Some((32, 3)),
+        "llvm.nvvm.atomic.load.add.f64.p0f64" => Some((64, 0)),
+        "llvm.nvvm.atomic.load.add.f64.p1f64" => Some((64, 1)),
+        "llvm.nvvm.atomic.load.add.f64.p3f64" => Some((64, 3)),
+        _ => None,
+    }
+}
+
 /// Returns true if `name` is a device function (definition, not extern).
 pub(super) fn has_device_prefix(name: &str) -> bool {
     is_device_symbol(name)
@@ -70,7 +85,7 @@ pub(super) fn strip_device_prefix(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_intrinsic_identifier;
+    use super::{decode_intrinsic_identifier, legacy_nvvm_atomic_add_signature};
 
     #[test]
     fn intrinsic_identifier_decoding_preserves_dots_and_literal_underscores() {
@@ -88,5 +103,26 @@ mod tests {
             ),
             "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3"
         );
+    }
+
+    #[test]
+    fn legacy_atomic_add_signature_matches_only_the_documented_six() {
+        for width in [32, 64] {
+            for address_space in [0, 1, 3] {
+                let name = format!("llvm.nvvm.atomic.load.add.f{width}.p{address_space}f{width}");
+                assert_eq!(
+                    legacy_nvvm_atomic_add_signature(&name),
+                    Some((width, address_space))
+                );
+            }
+        }
+        for unsupported in [
+            "llvm.nvvm.atomic.load.add.f16.p1f16",
+            "llvm.nvvm.atomic.load.add.f32.p2f32",
+            "llvm.nvvm.atomic.load.add.f32.p1f64",
+            "llvm.nvvm.atomic.load.max.f32.p1f32",
+        ] {
+            assert_eq!(legacy_nvvm_atomic_add_signature(unsupported), None);
+        }
     }
 }

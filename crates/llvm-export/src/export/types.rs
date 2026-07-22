@@ -20,6 +20,45 @@ use crate::types::{FuncType, HalfType, PointerType, StructType, VoidType};
 use super::state::ModuleExportState;
 
 impl<'a> ModuleExportState<'a> {
+    /// Recover the typed-pointer ABI carried by the name of a legacy NVVM
+    /// floating-point atomic-add intrinsic. The internal IR intentionally uses
+    /// opaque pointers, so declaration and call emission share this validation
+    /// before restoring the scalar pointee required by LLVM 7.
+    pub(super) fn legacy_nvvm_atomic_add_signature(
+        &self,
+        name: &str,
+        function_type: &FuncType,
+    ) -> Result<Option<(TypeHandle, u32)>, String> {
+        if !self.legacy_typed_pointers() {
+            return Ok(None);
+        }
+        let Some((width, address_space)) = super::names::legacy_nvvm_atomic_add_signature(name)
+        else {
+            return Ok(None);
+        };
+
+        let arguments = function_type.arg_types();
+        let shape_matches = arguments.len() == 2
+            && !function_type.is_var_arg()
+            && function_type.result_type() == arguments[1]
+            && arguments[0]
+                .deref(self.ctx)
+                .downcast_ref::<PointerType>()
+                .is_some_and(|pointer| pointer.address_space() == address_space)
+            && match width {
+                32 => arguments[1].deref(self.ctx).is::<FP32Type>(),
+                64 => arguments[1].deref(self.ctx).is::<FP64Type>(),
+                _ => false,
+            };
+        if !shape_matches {
+            return Err(format!(
+                "legacy NVVM atomic-add intrinsic `@{name}` has an incompatible erased signature"
+            ));
+        }
+
+        Ok(Some((arguments[1], address_space)))
+    }
+
     pub(super) fn export_type(&self, ty: TypeHandle, output: &mut String) -> Result<(), String> {
         let ty_ref = ty.deref(self.ctx);
         if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {

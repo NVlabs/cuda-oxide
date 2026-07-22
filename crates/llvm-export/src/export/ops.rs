@@ -1201,20 +1201,29 @@ impl<'a> ModuleExportState<'a> {
         let ret_ty = llvm_func_ty.result_type();
         let is_void = ret_ty.deref(self.ctx).is::<VoidType>();
 
-        // Device externs keep their pointer types outside the opaque-pointer
-        // module. Clone the declaration before updating exporter state.
-        let device_extern = match &callee {
+        let direct_callee_name = match &callee {
             CallOpCallable::Direct(identifier) => {
                 let name = identifier.to_string();
-                let fixed = if name.starts_with("llvm_") {
+                Some(if name.starts_with("llvm_") {
                     super::names::decode_intrinsic_identifier(&name)
                 } else {
                     super::names::strip_device_prefix(&name)
-                };
-                self.device_extern(&fixed).cloned()
+                })
             }
             CallOpCallable::Indirect(_) => None,
         };
+        let legacy_atomic_add = if let Some(name) = &direct_callee_name {
+            self.legacy_nvvm_atomic_add_signature(name, llvm_func_ty)?
+        } else {
+            None
+        };
+
+        // Device externs keep their pointer types outside the opaque-pointer
+        // module. Clone the declaration before updating exporter state.
+        let device_extern = direct_callee_name
+            .as_deref()
+            .and_then(|name| self.device_extern(name))
+            .cloned();
 
         let indirect_callee = match callee {
             CallOpCallable::Indirect(value) => Some(value),
@@ -1254,6 +1263,20 @@ impl<'a> ModuleExportState<'a> {
 
         let argument_offset = usize::from(indirect_callee.is_some());
         let arguments: Vec<Value> = op_ref.operands().skip(argument_offset).collect();
+        let legacy_atomic_pointer_argument = if let Some((pointee, _)) = legacy_atomic_add {
+            let pointer = arguments.first().copied().ok_or_else(|| {
+                "legacy NVVM atomic-add call is missing its pointer argument".to_string()
+            })?;
+            Some(self.typed_pointer_operand(
+                pointer,
+                pointee,
+                value_names,
+                next_value_id,
+                output,
+            )?)
+        } else {
+            None
+        };
         let adapted_arguments = if let Some(decl) = &device_extern {
             if arguments.len() != decl.param_types.len() {
                 return Err(format!(
@@ -1327,15 +1350,8 @@ impl<'a> ModuleExportState<'a> {
         }
 
         match callee {
-            CallOpCallable::Direct(identifier) => {
-                let name = identifier.to_string();
-                // LLVM intrinsics use dots in IR; Pliron IR identifiers use underscores.
-                let fixed = if name.starts_with("llvm_") {
-                    super::names::decode_intrinsic_identifier(&name)
-                } else {
-                    super::names::strip_device_prefix(&name)
-                };
-                write!(output, " @{fixed}(").unwrap();
+            CallOpCallable::Direct(_) => {
+                write!(output, " @{}(", direct_callee_name.as_deref().unwrap()).unwrap();
             }
             CallOpCallable::Indirect(val) => {
                 write!(output, " ").unwrap();
@@ -1354,12 +1370,20 @@ impl<'a> ModuleExportState<'a> {
             }
             if let Some(decl) = &device_extern {
                 decl.param_types[i].write_llvm_with_attr(output, self.legacy_typed_pointers())?;
+            } else if i == 0
+                && let Some((pointee, address_space)) = legacy_atomic_add
+            {
+                self.export_pointer_to(pointee, address_space, output)?;
             } else {
                 self.export_type(arg.get_type(self.ctx), output)?;
             }
             write!(output, " ").unwrap();
             if let Some(adapted) = &adapted_arguments {
                 write!(output, "{}", adapted[i]).unwrap();
+            } else if i == 0
+                && let Some(adapted) = &legacy_atomic_pointer_argument
+            {
+                write!(output, "{adapted}").unwrap();
             } else {
                 self.export_value(arg, value_names, output)?;
             }

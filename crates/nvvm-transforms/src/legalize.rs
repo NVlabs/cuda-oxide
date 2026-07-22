@@ -33,7 +33,7 @@ use pliron::{
     identifier::Identifier,
     linked_list::ContainsLinkedList,
     location::Located,
-    op::Op,
+    op::{Op, op_cast},
     operation::Operation,
     result::Result,
     r#type::{TypeHandle, Typed},
@@ -378,11 +378,24 @@ fn validate_float_atomic_add(ctx: &Context, op: Ptr<Operation>) -> Result<Option
         .next()
         .ok_or_else(|| pliron::input_error!(op.deref(ctx).loc(), "atomic RMW module is empty"))?;
     for existing_op in module_block.deref(ctx).iter(ctx) {
-        let Some(existing) = Operation::get_op::<llvm::FuncOp>(existing_op, ctx) else {
+        let existing_dyn = Operation::get_op_dyn(existing_op, ctx);
+        let Some(existing_symbol) = op_cast::<dyn SymbolOpInterface>(existing_dyn.as_ref()) else {
             continue;
         };
-        if existing.get_symbol_name(ctx).to_string() != intrinsic {
+        if existing_symbol.get_symbol_name(ctx).to_string() != intrinsic {
             continue;
+        }
+        let Some(existing) = Operation::get_op::<llvm::FuncOp>(existing_op, ctx) else {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM atomic intrinsic `{intrinsic}` conflicts with an existing non-function symbol"
+            );
+        };
+        if existing.get_operation().deref(ctx).regions().count() != 0 {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM atomic intrinsic `{intrinsic}` conflicts with an existing function definition; an intrinsic must be a declaration"
+            );
         }
         let existing_ty = existing.get_type(ctx);
         let existing_ref = existing_ty.deref(ctx);
@@ -1907,9 +1920,10 @@ mod tests {
             (32, TypeHandle::from(FP32Type::get(&ctx))),
             (64, TypeHandle::from(FP64Type::get(&ctx))),
         ];
+        let mut functions = Vec::new();
         for (width, value_ty) in value_types {
             for address_space in [0, 1, 3] {
-                atomic_add_function(
+                let function = atomic_add_function(
                     &mut ctx,
                     &module,
                     &format!("atomic_add_f{width}_p{address_space}"),
@@ -1918,6 +1932,7 @@ mod tests {
                     AtomicOrderingAttr::Monotonic,
                     Some("device".to_string()),
                 );
+                functions.push(function);
             }
         }
 
@@ -1948,6 +1963,23 @@ mod tests {
         calls.sort();
         expected_calls.sort();
         assert_eq!(calls, expected_calls);
+        for function in functions {
+            let entry = function.get_entry_block(&ctx).unwrap();
+            let operations = entry.deref(&ctx).iter(&ctx).collect::<Vec<_>>();
+            let call = operations
+                .iter()
+                .find_map(|operation| Operation::get_op::<llvm::CallOp>(*operation, &ctx))
+                .expect("legalized function contains the NVVM intrinsic call");
+            let return_op = operations
+                .iter()
+                .find_map(|operation| Operation::get_op::<llvm::ReturnOp>(*operation, &ctx))
+                .expect("atomic helper returns its old value");
+            assert_eq!(
+                return_op.get_operation().deref(&ctx).get_operand(0),
+                call.get_operation().deref(&ctx).get_result(0),
+                "the atomicrmw result must be replaced with the intrinsic's returned old value"
+            );
+        }
         module.get_operation().deref(&ctx).verify(&ctx).unwrap();
         let ir = export_module_to_string_with_config(
             &ctx,
@@ -1958,7 +1990,23 @@ mod tests {
         for width in [32, 64] {
             for address_space in [0, 1, 3] {
                 let name = format!("llvm.nvvm.atomic.load.add.f{width}.p{address_space}f{width}");
-                assert!(ir.contains(&name), "missing `{name}`:\n{ir}");
+                let scalar = if width == 32 { "float" } else { "double" };
+                let pointer = if address_space == 0 {
+                    format!("{scalar}*")
+                } else {
+                    format!("{scalar} addrspace({address_space})*")
+                };
+                let declaration = format!("declare {scalar} @{name}({pointer}, {scalar})");
+                assert!(
+                    ir.contains(&declaration),
+                    "missing exact `{declaration}`:\n{ir}"
+                );
+                let call = format!("call {scalar} @{name}({pointer} ");
+                assert_eq!(
+                    ir.matches(&call).count(),
+                    1,
+                    "expected one exact typed call beginning `{call}`:\n{ir}"
+                );
             }
         }
         assert!(!ir.contains("atomicrmw fadd"), "{ir}");
@@ -2057,6 +2105,90 @@ mod tests {
                 .deref(&ctx)
                 .iter(&ctx)
                 .any(|op| { Operation::get_op::<llvm::AtomicRmwOp>(op, &ctx).is_some() })
+        );
+    }
+
+    #[test]
+    fn legacy_float_atomic_add_rejects_intrinsic_definition_before_mutation() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "atomic_add".try_into().unwrap());
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let ptr_ty: TypeHandle = PointerType::get(&ctx, 1).into();
+        let (_definition, entry) = function(
+            &mut ctx,
+            &module,
+            "llvm_nvvm_atomic_load_add_f32_p1f32",
+            f32_ty,
+            vec![ptr_ty, f32_ty],
+        );
+        let passthrough = entry.deref(&ctx).get_argument(1);
+        llvm::ReturnOp::new(&mut ctx, Some(passthrough))
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        let function = atomic_add_function(
+            &mut ctx,
+            &module,
+            "atomic_add_f32",
+            1,
+            f32_ty,
+            AtomicOrderingAttr::Monotonic,
+            Some("device".to_string()),
+        );
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        assert!(
+            error.disp(&ctx).to_string().contains("function definition"),
+            "{error}"
+        );
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+        let entry = function.get_entry_block(&ctx).unwrap();
+        assert!(
+            entry
+                .deref(&ctx)
+                .iter(&ctx)
+                .any(|op| Operation::get_op::<llvm::AtomicRmwOp>(op, &ctx).is_some())
+        );
+    }
+
+    #[test]
+    fn legacy_float_atomic_add_rejects_non_function_symbol_collision_before_mutation() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "atomic_add".try_into().unwrap());
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        llvm::GlobalOp::new(
+            &mut ctx,
+            "llvm_nvvm_atomic_load_add_f32_p1f32".try_into().unwrap(),
+            f32_ty,
+        )
+        .get_operation()
+        .insert_at_back(module_block(&ctx, &module), &ctx);
+        let function = atomic_add_function(
+            &mut ctx,
+            &module,
+            "atomic_add_f32",
+            1,
+            f32_ty,
+            AtomicOrderingAttr::Monotonic,
+            Some("device".to_string()),
+        );
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        assert!(
+            error
+                .disp(&ctx)
+                .to_string()
+                .contains("existing non-function symbol"),
+            "{error}"
+        );
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+        let entry = function.get_entry_block(&ctx).unwrap();
+        assert!(
+            entry
+                .deref(&ctx)
+                .iter(&ctx)
+                .any(|op| Operation::get_op::<llvm::AtomicRmwOp>(op, &ctx).is_some())
         );
     }
 
