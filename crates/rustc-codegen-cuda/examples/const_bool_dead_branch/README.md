@@ -11,7 +11,10 @@ left as an unresolved device symbol.
 The example covers explicit and default trait hooks. Each has one live
 instantiation and one instantiation where the hook is const-dead. A dynamic
 control keeps both successors reachable and proves that an unknown
-discriminant still collects and emits its hook.
+discriminant still collects and emits its hook. A pointer case additionally
+proves that a const-dead dynamic-shared arm cannot contaminate the address
+space inferred for the live global-pointer arm. A runtime-controlled version
+proves that two live, disagreeing pointer spaces remain generic.
 
 ```bash
 cargo oxide run const_bool_dead_branch
@@ -27,5 +30,5 @@ absent in every available stage.
 Expected final line:
 
 ```text
-const_bool_dead_branch: PASS (4 values, five generic instantiations)
+const_bool_dead_branch: PASS (4 values, seven generic instantiations)
 ```

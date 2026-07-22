@@ -4,7 +4,7 @@
 
 use core::marker::PhantomData;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, DeviceCopy, LaunchConfig};
-use cuda_device::{DisjointSlice, kernel, thread};
+use cuda_device::{DisjointSlice, DynamicSharedArray, kernel, thread};
 use cuda_host::cuda_module;
 use std::sync::Arc;
 
@@ -113,6 +113,16 @@ impl DynamicMode for Dynamic {
     }
 }
 
+trait PointerMode: Sized + 'static {
+    const USE_SHARED: bool;
+}
+
+struct GlobalPointerOnly;
+
+impl PointerMode for GlobalPointerOnly {
+    const USE_SHARED: bool = false;
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -130,6 +140,38 @@ mod kernels {
     #[inline(never)]
     fn select_dynamic<M: DynamicMode>(enabled: bool, value: u32) -> u32 {
         if enabled { M::hook(value) } else { value }
+    }
+
+    #[inline(never)]
+    fn write_pointer<M: PointerMode>(global: *mut u32) {
+        let selected: *mut u32;
+        if M::USE_SHARED {
+            selected = DynamicSharedArray::<u32>::get();
+        } else {
+            selected = global;
+        }
+        // SAFETY: the live `GlobalPointerOnly` arm receives a pointer to the
+        // caller's in-bounds output element. The shared-memory arm is
+        // monomorphization-dead for that instance.
+        unsafe {
+            selected.write(7);
+        }
+    }
+
+    #[inline(never)]
+    fn write_pointer_dynamic(use_shared: bool, global: *mut u32) {
+        let selected: *mut u32;
+        if use_shared {
+            selected = DynamicSharedArray::<u32>::get();
+        } else {
+            selected = global;
+        }
+        // SAFETY: both branch results are valid device pointers when their
+        // corresponding storage is supplied. The regression executes the
+        // global arm and checks that the shared arm does not narrow its slot.
+        unsafe {
+            selected.write(11);
+        }
     }
 
     #[kernel]
@@ -163,6 +205,29 @@ mod kernels {
         if let (Some(value), Some(slot)) = (input.get(index.get()), output.get_mut(index)) {
             let enabled = value.value & 1 == 1;
             *slot = Tagged::new(select_dynamic::<M>(enabled, value.value));
+        }
+    }
+
+    #[kernel]
+    pub fn dead_shared_pointer<M: PointerMode>(
+        input: &[Tagged<u32, M>],
+        mut output: DisjointSlice<Tagged<u32, M>>,
+    ) {
+        let index = thread::index_1d();
+        if let (Some(_), Some(slot)) = (input.get(index.get()), output.get_mut(index)) {
+            write_pointer::<M>(&mut slot.value as *mut u32);
+        }
+    }
+
+    #[kernel]
+    pub fn dynamic_shared_or_global<M: PointerMode>(
+        input: &[Tagged<u32, M>],
+        mut output: DisjointSlice<Tagged<u32, M>>,
+    ) {
+        let index = thread::index_1d();
+        if let (Some(value), Some(slot)) = (input.get(index.get()), output.get_mut(index)) {
+            let use_shared = value.value == u32::MAX;
+            write_pointer_dynamic(use_shared, &mut slot.value as *mut u32);
         }
     }
 }
@@ -200,6 +265,8 @@ fn main() {
     let tripled = [3, 6, 9, 12];
     let incremented = [12, 13, 14, 15];
     let dynamically_selected = [101, 2, 103, 4];
+    let pointer_written = [7, 7, 7, 7];
+    let dynamically_pointer_written = [11, 11, 11, 11];
 
     let mut passed = true;
     passed &= check(
@@ -272,9 +339,48 @@ fn main() {
             }
         },
     );
+    passed &= check(
+        "const-dead shared-pointer arm",
+        &stream,
+        &tagged::<GlobalPointerOnly>(&input),
+        &tagged::<GlobalPointerOnly>(&pointer_written),
+        |config, device_input, device_output| {
+            // SAFETY: the launch covers the output and the kernel bounds-checks it.
+            unsafe {
+                module
+                    .dead_shared_pointer::<GlobalPointerOnly>(
+                        &stream,
+                        config,
+                        device_input,
+                        device_output,
+                    )
+                    .expect("launch")
+            }
+        },
+    );
+    passed &= check(
+        "runtime-dynamic shared/global pointer arms",
+        &stream,
+        &tagged::<GlobalPointerOnly>(&input),
+        &tagged::<GlobalPointerOnly>(&dynamically_pointer_written),
+        |config, device_input, device_output| {
+            // SAFETY: every input value selects the global arm, the launch
+            // covers the output, and the kernel bounds-checks it.
+            unsafe {
+                module
+                    .dynamic_shared_or_global::<GlobalPointerOnly>(
+                        &stream,
+                        config,
+                        device_input,
+                        device_output,
+                    )
+                    .expect("launch")
+            }
+        },
+    );
 
     if passed {
-        println!("const_bool_dead_branch: PASS ({N} values, five generic instantiations)");
+        println!("const_bool_dead_branch: PASS ({N} values, seven generic instantiations)");
     } else {
         std::process::exit(1);
     }
