@@ -1171,7 +1171,15 @@ fn translate_call(
 
     // Handle diverging calls (calls that never return, like unwrap_failed, panic, etc.)
     // These have no target block because the function never returns.
-    // We emit trap + unreachable terminator since panics can't actually execute but reachable.
+    //
+    // The callee is dropped and replaced by an immediate trap. That applies
+    // to every `-> !` callee reaching this point, including a user
+    // `#[device]` fn that legitimately diverges (e.g. `loop {}`); full Rust
+    // fidelity would emit the call for resolvable callees the way
+    // `translate_function_item_call` does. Dropping the call is a
+    // pre-existing semantic: the trap only makes it safe, where the bare
+    // `unreachable` previously emitted here was UB that let `opt` delete
+    // the whole panic path.
     if target_usize.is_none() {
         // This is a diverging call (returns !) - emit trap + unreachable
         // Examples: unwrap_failed(), panic!(), abort()
