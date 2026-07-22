@@ -1339,7 +1339,15 @@ impl<'tcx> DeviceCollector<'tcx> {
     fn drop_glue_is_noop(&self, instance: Instance<'tcx>) -> bool {
         use rustc_public::rustc_internal;
         rustc_internal::run(self.tcx, || {
-            mir_importer::drop_instance_is_noop(&rustc_internal::stable(instance))
+            // Consult the type-level wrapper when the dropped type is at
+            // hand: it applies the same reductions (e.g. `array::Drain`
+            // to its element type) that the importer's `translate_drop`
+            // uses, keeping collection and emission in lockstep.
+            if let InstanceKind::DropGlue(_, Some(dropped_ty)) = instance.def {
+                mir_importer::drop_glue_is_noop(rustc_internal::stable(dropped_ty))
+            } else {
+                mir_importer::drop_instance_is_noop(&rustc_internal::stable(instance))
+            }
         })
         .unwrap_or(false)
     }
