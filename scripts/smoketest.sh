@@ -538,12 +538,19 @@ verdict_compile() {
 
 # ---- Runner --------------------------------------------------------------
 
-# Run `cargo oxide "$@"`, prepending EXTRA_RUSTFLAGS (set per-example by run_cargo)
-# to any inherited RUSTFLAGS
+# Run `cargo oxide "$@"`, appending EXTRA_RUSTFLAGS (set per-example by
+# run_cargo) to the inherited Cargo flag source. rustc resolves repeated -Z
+# options last-one-wins, and Cargo prefers CARGO_ENCODED_RUSTFLAGS over
+# RUSTFLAGS when both are present.
 EXTRA_RUSTFLAGS=""
 invoke_cargo_oxide() {
     if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
-        RUSTFLAGS="${EXTRA_RUSTFLAGS}${RUSTFLAGS:+ ${RUSTFLAGS}}" cargo oxide "$@"
+        if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
+            CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS}"$'\x1f'"${EXTRA_RUSTFLAGS}" \
+                cargo oxide "$@"
+        else
+            RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${EXTRA_RUSTFLAGS}" cargo oxide "$@"
+        fi
     else
         cargo oxide "$@"
     fi
@@ -1254,6 +1261,22 @@ run_cargo() {
             || ! grep -qF '.visible .entry vecadd_with_helper(' "${ptx}" \
             || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${ptx}"; then
             printf 'helper_fn expected one kernel entry and two canonically mangled nested_identity device functions, with no helper _TID_ exports\n' >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "disjoint_slice_len" ]]; then
+        local llvm_ir="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local loaded_slice shape_found=0
+        while IFS= read -r loaded_slice; do
+            if grep -Fq "extractvalue { ptr, i64 } ${loaded_slice}, 1" "${llvm_ir}"; then
+                shape_found=1
+                break
+            fi
+        done < <(
+            sed -nE 's/^[[:space:]]*(%[^ ]+) = load \{ ptr, i64 \}, ptr .*/\1/p' "${llvm_ir}" 2>/dev/null
+        )
+        if [[ ! -s "${llvm_ir}" || ${shape_found} -ne 1 ]]; then
+            printf 'disjoint_slice_len must load the &DisjointSlice receiver before extracting field 1; the no-inline regression path was bypassed\n' >>"${log}"
             CARGO_EC=1
         fi
     fi
