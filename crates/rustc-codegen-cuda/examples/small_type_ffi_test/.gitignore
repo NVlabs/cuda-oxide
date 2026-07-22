@@ -1,0 +1,23 @@
+# Generated binary files - rebuild with ./build_ltoir.sh
+*.o
+*.ltoir
+*.cubin
+
+# nvcc intermediate files
+*.ii
+*.cudafe*
+*.fatbin
+*.fatbin.c
+*.module_id
+
+# cuda-oxide generated files (keep for inspection)
+# *.ll  # Keep LLVM IR for debugging
+# *.ptx # Keep PTX for debugging
+
+# Tools binaries (rebuild with tools/build_tools.sh)
+tools/compile_ltoir
+tools/link_ltoir
+tools/launch_cubin
+
+# Cargo build artifacts
+target/

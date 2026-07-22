@@ -24,6 +24,12 @@
 #                   with exit 0 (e.g. mathdx_ffi_test when MATHDX_ROOT is
 #                   unset), in which case we require the cuda-oxide
 #                   NVVM IR (`.ll`) to have been generated.
+#   ltoir-modern -- like ltoir, but the example needs the modern NVVM path
+#                   (small scalar externs are rejected by the legacy CUDA 12
+#                   LLVM 7 dialect by design). Uses the host arch on
+#                   Blackwell+ (CC >= 10.0) and requires full execution
+#                   there; elsewhere compiles for the sm_100 floor and
+#                   requires the NVVM IR (`.ll`) plus its `.target` sidecar.
 #   auto-nvvm    -- runs without NVVM or architecture flags to check automatic
 #                   libdevice and target selection. Compile-only CI supplies a
 #                   target because no GPU is available.
@@ -45,6 +51,7 @@ set -uo pipefail
 TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
+LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
@@ -55,6 +62,7 @@ classify() {
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
     for cat in "${WGMMA_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo wgmma;       return; }; done
     for cat in "${LTOIR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo ltoir;       return; }; done
+    for cat in "${LTOIR_MODERN_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo ltoir-modern; return; }; done
     for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
     for cat in "${BLACKWELL_COMPILE_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo blackwell-compile; return; }; done
     for cat in "${ERROR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo error;       return; }; done
@@ -233,9 +241,21 @@ else
     LTOIR_ARCH="sm_90"
 fi
 
+# ltoir-modern examples need the modern NVVM path (sm_100+). On a Blackwell+
+# host (CC >= 10.0) target the host arch so the cubin loads and the example
+# executes; elsewhere compile for the sm_100 floor and expect the verdict to
+# fall back to compile-only semantics.
+LTOIR_MODERN_EXEC=0
+if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge 10 ]]; then
+    LTOIR_MODERN_ARCH="${LTOIR_ARCH}"
+    LTOIR_MODERN_EXEC=1
+else
+    LTOIR_MODERN_ARCH="sm_100"
+fi
+
 printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_BOLD}" "${git_head}" "${C_RESET}" "${git_branch}"
 printf "GPU: %s\n" "${gpu_info}"
-printf "LTOIR arch: %s\n" "${LTOIR_ARCH}"
+printf "LTOIR arch: %s (modern: %s)\n" "${LTOIR_ARCH}" "${LTOIR_MODERN_ARCH}"
 if [[ ${COMPILE_ONLY} -eq 1 ]]; then
     printf "Mode: compile-only (device artifacts only; nothing is executed)\n"
 fi
@@ -464,6 +484,37 @@ verdict_ltoir() {
         return 0
     fi
     echo "FAIL (LTOIR, no success marker)"
+    return 1
+}
+
+verdict_ltoir_modern() {
+    local ex="$1" log="$2" ec="$3"
+    local ex_dir="crates/rustc-codegen-cuda/examples/${ex}"
+    local artifact="${ex//-/_}"
+    if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+    if [[ ${LTOIR_MODERN_EXEC} -eq 1 ]]; then
+        # Blackwell+ host: the cubin targets the host arch, so the example
+        # must execute end to end like any other ltoir example.
+        if [[ ${ec} -ne 0 ]]; then echo "FAIL (LTOIR modern, exit=${ec})"; return 1; fi
+        if grep_failure_markers "${log}"; then
+            echo "FAIL (LTOIR modern, failure marker in output)"
+            return 1
+        fi
+        if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then
+            echo "PASS (LTOIR modern, executed)"
+            return 0
+        fi
+        echo "FAIL (LTOIR modern, no success marker)"
+        return 1
+    fi
+    # Pre-Blackwell or GPU-less host: the sm_100-floor cubin cannot load, so
+    # require the compile half only -- fresh NVVM IR plus its .target sidecar
+    # (mirrors verdict_compile's NVVM-IR artifact rule).
+    if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.target" ]]; then
+        echo "PASS (LTOIR modern, NVVM IR compiled for ${LTOIR_MODERN_ARCH})"
+        return 0
+    fi
+    echo "FAIL (LTOIR modern, no NVVM IR for the ${LTOIR_MODERN_ARCH} floor)"
     return 1
 }
 
@@ -1219,6 +1270,9 @@ run_cargo() {
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
+    if [[ "${cat}" == "ltoir-modern" ]]; then
+        args+=("--emit-nvvm-ir" "--arch=${LTOIR_MODERN_ARCH}")
+    fi
     if [[ ${VERBOSE} -eq 1 ]]; then
         cargo oxide "${args[@]}" 2>&1 | tee "${log}"
         CARGO_EC=${PIPESTATUS[0]}
@@ -1331,6 +1385,7 @@ for ex in "${selected[@]}"; do
             tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
             wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             standard)    verdict="$(verdict_standard    "${log}" "${ec}")"        && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;
