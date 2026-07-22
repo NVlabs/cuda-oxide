@@ -599,12 +599,45 @@ fn auto_fetch_and_build() -> PathBuf {
     let codegen_crate = src_dir.join("crates/rustc-codegen-cuda");
     let built_so = build_backend_from_source(&codegen_crate);
     if built_so.exists() {
-        std::fs::copy(&built_so, &so_path).expect("Failed to copy backend to cache");
-        write_toolchain_fingerprint(&cache_dir);
+        install_backend_into(&cache_dir, &built_so).expect("Failed to copy backend to cache");
         eprintln!("✓ Backend cached at {}", so_path.display());
     }
 
     so_path
+}
+
+/// Copies a freshly built backend into `cache_dir` and records the toolchain
+/// fingerprint beside it.
+///
+/// The fingerprint must be written whenever the `.so` is. A `.so` installed
+/// without one falls back to the mtime checks, which cannot see a toolchain
+/// swap, so the next lookup would load a backend linked against the wrong
+/// `librustc_driver`.
+///
+/// Takes the directory explicitly so it can be exercised without touching
+/// `CARGO_HOME`.
+fn install_backend_into(cache_dir: &Path, built_so: &Path) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(cache_dir)?;
+    let so_path = cache_dir.join("librustc_codegen_cuda.so");
+    std::fs::copy(built_so, &so_path)?;
+    write_toolchain_fingerprint(cache_dir);
+    Ok(so_path)
+}
+
+/// Publishes a freshly built backend to the shared cache at
+/// `~/.cargo/cuda-oxide/`.
+///
+/// That path is what step 4 of the discovery order resolves to, and it is the
+/// only one a project outside this repository can reach: `find_workspace_root`
+/// walks up from the current directory looking for `crates/rustc-codegen-cuda`
+/// and finds nothing from an unrelated crate.
+///
+/// Returns `None` when the cache directory cannot be determined or the copy
+/// fails. Callers treat this as best effort: a failure leaves the in-repo build
+/// usable and costs external projects only a rebuild.
+pub fn publish_to_cache(built_so: &Path) -> Option<PathBuf> {
+    let cache_dir = cache_directory()?;
+    install_backend_into(&cache_dir, built_so).ok()
 }
 
 /// Returns the active rustc sysroot path (e.g., `~/.rustup/toolchains/nightly-...`).
@@ -888,6 +921,63 @@ mod tests {
             cached_backend_status(&so, Some(&dir)),
             CacheStatus::StaleVsBinary,
             "binary staleness must win over source staleness"
+        );
+    }
+
+    /// Installing must leave both the `.so` and the toolchain fingerprint in
+    /// the cache. A `.so` written without a fingerprint defers to the mtime
+    /// checks, which cannot see a toolchain swap, so the next lookup would
+    /// load a backend linked against a `librustc_driver` that no longer
+    /// resolves.
+    #[test]
+    fn installing_writes_both_the_backend_and_its_fingerprint() {
+        let dir = tempdir();
+        let source = dir.join("built.so");
+        std::fs::write(&source, b"built").unwrap();
+
+        let cache = dir.join("cache");
+        let installed = install_backend_into(&cache, &source).expect("install must succeed");
+
+        assert_eq!(
+            installed,
+            cache.join("librustc_codegen_cuda.so"),
+            "the backend must land under the cache directory"
+        );
+        assert_eq!(
+            std::fs::read(&installed).unwrap(),
+            b"built",
+            "the installed backend must be the one that was built"
+        );
+
+        // Only assert the fingerprint when a rustc is present to produce one;
+        // `write_toolchain_fingerprint` is best effort by design.
+        if current_toolchain_fingerprint().is_some() {
+            assert!(
+                cache.join(TOOLCHAIN_FINGERPRINT_FILE).exists(),
+                "installing must record the toolchain fingerprint"
+            );
+        }
+    }
+
+    /// Installing into a cache that already holds an older backend must
+    /// replace it. This is the case `cargo oxide setup` hits on every run
+    /// after the first.
+    #[test]
+    fn installing_replaces_an_existing_cached_backend() {
+        let dir = tempdir();
+        let cache = dir.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("librustc_codegen_cuda.so"), b"stale").unwrap();
+
+        let source = dir.join("built.so");
+        std::fs::write(&source, b"fresh").unwrap();
+
+        let installed = install_backend_into(&cache, &source).expect("install must succeed");
+
+        assert_eq!(
+            std::fs::read(&installed).unwrap(),
+            b"fresh",
+            "an existing cached backend must be overwritten, not kept"
         );
     }
 
