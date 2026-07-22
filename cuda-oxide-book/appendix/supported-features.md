@@ -102,7 +102,7 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 
 | Feature | Status | Description |
 |:--------|:-------|:------------|
-| `ptx_asm!` Macro | **Partial** | CUDA inline PTX with `%0` operands, `in`, zero or one `out`, up to 16 inputs, CUDA register constraints `h`, `r`, `l`, `q`, `f`, and `d`, immediate integer constraint `n`, `clobber("memory")`, and `options(register_only)` for pure register snippets. By default, snippets are treated as side-effecting and stay inside their current control flow. Use `options(register_only, may_diverge)` only for pure snippets that are safe to move across divergent control flow; **never** use it for `.sync` instructions or collectives. Multiple outputs, read-write operands, and the `"C"` constraint are not implemented yet. |
+| `ptx_asm!` Macro | **Partial** | CUDA inline PTX with `%0` operands, `in`, up to 8 `out` operands (each with an `=`-prefixed constraint; two or more `out`s return a tuple destructured into the output places in declaration order), up to 16 inputs, CUDA register constraints `h`, `r`, `l`, `q`, `f`, and `d`, immediate integer constraint `n`, `clobber("memory")`, and `options(register_only)` for pure register snippets. By default, snippets are treated as side-effecting and stay inside their current control flow. Use `options(register_only, may_diverge)` only for pure snippets that are safe to move across divergent control flow; **never** use it for `.sync` instructions or collectives. More than 8 outputs, read-write operands, and the `"C"` constraint are not implemented yet. |
 
 ---
 

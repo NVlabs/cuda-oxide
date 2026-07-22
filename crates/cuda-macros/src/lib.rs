@@ -74,9 +74,25 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 /// Literal PTX registers that begin with `%` must be escaped as `%%`, matching
 /// CUDA C++ inline PTX. Literal `$` labels can be written normally.
 ///
-/// The initial surface supports zero or one `out`, up to 16 `in` operands,
-/// `clobber("memory")`, `options(register_only)`, and the explicit
-/// `options(register_only, may_diverge)` opt-in.
+/// The surface supports up to 8 `out` operands (each constraint prefixed
+/// with `=`, e.g. `"=r"`), up to 16 `in` operands, `clobber("memory")`,
+/// `options(register_only)`, and the explicit
+/// `options(register_only, may_diverge)` opt-in. With two or more `out`
+/// operands the snippet returns a tuple under the hood, destructured into
+/// the output places in declaration order:
+///
+/// ```ignore
+/// let (sum, prod): (u32, u32);
+/// unsafe {
+///     ptx_asm!(
+///         "add.u32 %0, %2, %3; mul.lo.u32 %1, %2, %3;",
+///         out("=r") sum,
+///         out("=r") prod,
+///         in("r") x,
+///         in("r") y,
+///     );
+/// }
+/// ```
 ///
 /// By default, snippets are treated as side-effecting and stay inside their
 /// current control flow. Use `options(register_only)` only for snippets that

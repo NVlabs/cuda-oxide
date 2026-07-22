@@ -2526,6 +2526,92 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
 }
 
 #[test]
+fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Result<(), anyhow::Error>
+{
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+    let input = entry.deref(&ctx).get_argument(0);
+
+    let inline_ptx = nvvm::InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into(), i32_ty.into()],
+        vec![input],
+        "add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;",
+        "=r,=r,r",
+        true,
+        false,
+    );
+    inline_ptx.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut asm_result = None;
+    let mut extract_indices = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+            assert_eq!(
+                inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|s| String::from((*s).clone()))
+                    .as_deref(),
+                Some("add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;")
+            );
+            assert_eq!(
+                inline_asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|s| String::from((*s).clone()))
+                    .as_deref(),
+                Some("=r,=r,r")
+            );
+            let result = inline_asm.get_operation().deref(&ctx).get_result(0);
+            let result_ty = result.get_type(&ctx);
+            let result_ty = result_ty.deref(&ctx);
+            let struct_ty = result_ty
+                .downcast_ref::<llvm_types::StructType>()
+                .expect("multi-output inline PTX must return an LLVM struct");
+            assert_eq!(struct_ty.num_fields(), 2);
+            for index in 0..2 {
+                assert_eq!(
+                    struct_ty
+                        .field_type(index)
+                        .deref(&ctx)
+                        .downcast_ref::<IntegerType>()
+                        .expect("multi-output inline PTX struct field must stay i32")
+                        .width(),
+                    32
+                );
+            }
+            asm_result = Some(result);
+        } else if let Some(extract) = Operation::get_op::<llvm::ExtractValueOp>(op, &ctx) {
+            let aggregate = extract.get_operation().deref(&ctx).get_operand(0);
+            assert_eq!(
+                Some(aggregate),
+                asm_result,
+                "extractvalue must consume the struct-returning asm result"
+            );
+            extract_indices.push(extract.indices(&ctx));
+        }
+    }
+
+    assert!(
+        asm_result.is_some(),
+        "Expected struct-returning inline PTX asm op"
+    );
+    assert_eq!(
+        extract_indices,
+        vec![vec![0], vec![1]],
+        "each output must be extracted once, in constraint order"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 

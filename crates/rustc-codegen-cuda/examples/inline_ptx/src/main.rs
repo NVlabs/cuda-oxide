@@ -33,6 +33,40 @@ mod kernels {
             *slot = rust_after;
         }
     }
+
+    /// Multi-output `ptx_asm!`: one asm block yields both the sum and the
+    /// product of two thread-dependent values. The asymmetric data flow
+    /// (sum != product) catches swapped register binding between the two
+    /// `=r` outputs.
+    #[kernel]
+    pub fn inline_ptx_multi_out_kernel(
+        mut sums: DisjointSlice<u32>,
+        mut prods: DisjointSlice<u32>,
+    ) {
+        if let Some((sum_slot, idx)) = sums.get_mut_indexed()
+            && let Some((prod_slot, _)) = prods.get_mut_indexed()
+        {
+            let i = idx.get() as u32;
+            let x = i.wrapping_add(1);
+            let y = i.wrapping_add(2);
+            let sum: u32;
+            let prod: u32;
+
+            unsafe {
+                ptx_asm!(
+                    "add.u32 %0, %2, %3; mul.lo.u32 %1, %2, %3;",
+                    out("=r") sum,
+                    out("=r") prod,
+                    in("r") x,
+                    in("r") y,
+                    options(register_only),
+                );
+            }
+
+            *sum_slot = sum;
+            *prod_slot = prod;
+        }
+    }
 }
 
 fn main() {
@@ -56,6 +90,36 @@ fn main() {
         let expected = (i as u32 * 2) + 3 + (i as u32 % 32);
         if got != expected {
             eprintln!("Mismatch at {i}: expected {expected}, got {got}");
+            std::process::exit(1);
+        }
+    }
+
+    let mut sums_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    let mut prods_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.inline_ptx_multi_out_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &mut sums_dev,
+            &mut prods_dev,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let sums = sums_dev.to_host_vec(&stream).unwrap();
+    let prods = prods_dev.to_host_vec(&stream).unwrap();
+    for i in 0..N {
+        let x = (i as u32).wrapping_add(1);
+        let y = (i as u32).wrapping_add(2);
+        let (got_sum, got_prod) = (sums[i], prods[i]);
+        let (want_sum, want_prod) = (x.wrapping_add(y), x.wrapping_mul(y));
+        if got_sum != want_sum || got_prod != want_prod {
+            eprintln!(
+                "Multi-output mismatch at {i}: expected ({want_sum}, {want_prod}), \
+                 got ({got_sum}, {got_prod})"
+            );
             std::process::exit(1);
         }
     }
