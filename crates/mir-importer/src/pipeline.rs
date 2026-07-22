@@ -425,6 +425,7 @@ fn stale_compilation_artifact_paths(
 ) -> Vec<std::path::PathBuf> {
     [
         "ll",
+        "linked.ll",
         "ptx",
         "target",
         "options",
@@ -470,6 +471,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         for suffix in [
             "ll",
+            "linked.ll",
             "ptx",
             "target",
             "options",
@@ -500,7 +502,7 @@ mod tests {
 
         assert_eq!(result.artifact_kind, CompilationArtifactKind::NvvmIr);
         assert_ne!(fs::read(&result.ll_path).unwrap(), b"stale");
-        for suffix in ["ptx", "ltoir", "cubin", "cubin.target"] {
+        for suffix in ["linked.ll", "ptx", "ltoir", "cubin", "cubin.target"] {
             assert!(!root.join(format!("kernel.{suffix}")).exists(), "{suffix}");
         }
         assert_ne!(fs::read(root.join("kernel.target")).unwrap(), b"stale");

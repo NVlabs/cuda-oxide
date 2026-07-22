@@ -393,9 +393,11 @@ pub struct Toolchain {
 impl Toolchain {
     /// Discover LLVM 21+ tools from the Rust sysroot and `PATH`.
     ///
-    /// Discovery is explicit and does not read cuda-oxide environment knobs.
-    /// It may return a toolchain without `opt`; that toolchain can compile only
-    /// with [`Optimization::None`].
+    /// Discovery is explicit and does not read cuda-oxide environment knobs,
+    /// with one exception: `llvm-link` (used for IR-level libdevice linking)
+    /// honors `CUDA_OXIDE_LLVM_LINK` and otherwise must share the chosen
+    /// `llc`'s LLVM major. It may return a toolchain without `opt`; that
+    /// toolchain can compile only with [`Optimization::None`].
     pub fn discover() -> Result<Self, CompileError> {
         let opts = BackendOptions::default();
         let inner = LlvmToolchain::resolve(&opts).ok_or_else(|| CompileError::Toolchain {
@@ -413,6 +415,12 @@ impl Toolchain {
     }
 
     /// Use explicit LLVM tools, verifying that they run and share one major.
+    ///
+    /// `llvm-link` is not an explicit parameter: it is taken from
+    /// `CUDA_OXIDE_LLVM_LINK` when set, otherwise discovered next to `llc`,
+    /// in the Rust sysroot, or on `PATH`, requiring the same LLVM major as
+    /// `llc`. It stays unset (disabling IR-level libdevice linking) when
+    /// nothing resolves.
     pub fn from_paths(llc: impl Into<PathBuf>, opt: Option<PathBuf>) -> Result<Self, CompileError> {
         let llc = llc.into();
         let llc_text = llc.to_string_lossy().into_owned();

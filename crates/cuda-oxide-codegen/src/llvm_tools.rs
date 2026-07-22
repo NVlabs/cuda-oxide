@@ -93,7 +93,7 @@ impl LlvmToolchain {
                 let major = probe_runnable(&path).and_then(|t| t.major);
                 OptTool { path, major }
             });
-            let sibling = sibling_opt_candidates(&llc_path)
+            let sibling = sibling_tool_candidates(&llc_path, "opt")
                 .into_iter()
                 .find_map(|c| probe_runnable(&c));
             let mut others: Vec<OptTool> = Vec::new();
@@ -279,38 +279,11 @@ pub(crate) fn parse_llvm_major(version_output: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// `opt` paths co-located with `llc_path`, most specific first: the
-/// version-suffixed twin (`/usr/bin/llc-21` -> `/usr/bin/opt-21`), then the
-/// plain `opt` in the same directory. A bare `llc` name (resolved through
-/// `PATH`) yields bare `opt` names.
-pub(crate) fn sibling_opt_candidates(llc_path: &str) -> Vec<String> {
-    let p = Path::new(llc_path);
-    let dir = p.parent().filter(|d| !d.as_os_str().is_empty());
-
-    let mut names: Vec<String> = Vec::new();
-    if let Some(suffix) = p
-        .file_name()
-        .and_then(|b| b.to_str())
-        .and_then(|b| b.strip_prefix("llc"))
-        && !suffix.is_empty()
-    {
-        names.push(format!("opt{suffix}"));
-    }
-    names.push("opt".to_string());
-
-    names
-        .into_iter()
-        .map(|n| match dir {
-            Some(d) => d.join(&n).to_string_lossy().into_owned(),
-            None => n,
-        })
-        .collect()
-}
-
 /// Paths co-located with `llc_path` for a given tool name, most specific
 /// first: the version-suffixed twin (`/usr/bin/llc-21` ->
-/// `/usr/bin/<tool>-21`), then the plain name in the same directory.
-fn sibling_tool_candidates(llc_path: &str, tool: &str) -> Vec<String> {
+/// `/usr/bin/<tool>-21`), then the plain name in the same directory. A bare
+/// `llc` name (resolved through `PATH`) yields bare tool names.
+pub(crate) fn sibling_tool_candidates(llc_path: &str, tool: &str) -> Vec<String> {
     let p = Path::new(llc_path);
     let dir = p.parent().filter(|d| !d.as_os_str().is_empty());
 
@@ -463,16 +436,16 @@ mod tests {
     #[test]
     fn sibling_candidates_mirror_the_llc_name() {
         assert_eq!(
-            sibling_opt_candidates("/usr/bin/llc-21"),
+            sibling_tool_candidates("/usr/bin/llc-21", "opt"),
             ["/usr/bin/opt-21", "/usr/bin/opt"]
         );
         assert_eq!(
-            sibling_opt_candidates("/usr/lib/llvm/21/bin/llc"),
+            sibling_tool_candidates("/usr/lib/llvm/21/bin/llc", "opt"),
             ["/usr/lib/llvm/21/bin/opt"]
         );
         // Bare PATH names stay bare so they resolve through PATH.
-        assert_eq!(sibling_opt_candidates("llc-22"), ["opt-22", "opt"]);
-        assert_eq!(sibling_opt_candidates("llc"), ["opt"]);
+        assert_eq!(sibling_tool_candidates("llc-22", "opt"), ["opt-22", "opt"]);
+        assert_eq!(sibling_tool_candidates("llc", "opt"), ["opt"]);
     }
 
     #[test]

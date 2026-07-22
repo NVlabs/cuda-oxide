@@ -29,9 +29,10 @@ pub struct BackendOptions {
 }
 
 impl BackendOptions {
-    /// Reads the historical `CUDA_OXIDE_*` variables. The ONLY env access in
-    /// this crate outside this crate's own tests; called by rustc-pipeline
-    /// hosts, never by the backend itself.
+    /// Reads the historical `CUDA_OXIDE_*` variables; called by rustc-pipeline
+    /// hosts, never by the backend itself. The only other env access in this
+    /// crate is `CUDA_OXIDE_LLVM_LINK` in `llvm_tools::resolve_sibling_tool`
+    /// (a per-toolchain tool override, not a compile option).
     pub fn from_env() -> Self {
         Self {
             target_arch: std::env::var("CUDA_OXIDE_TARGET").ok(),
