@@ -1854,7 +1854,7 @@ mod tests {
     fn oversized_small_array_extract_uses_bounded_memory_lowering() {
         let mut ctx = make_ctx();
         let element_ty = wide_element_ty(&mut ctx);
-        let usize_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let array_ty: TypeHandle = MirArrayType::get(&mut ctx, element_ty, 8).into();
         let mut arg_tys = vec![element_ty; 8];
         arg_tys.push(usize_ty);
@@ -1898,7 +1898,7 @@ mod tests {
     fn oversized_small_array_address_keeps_single_dynamic_gep() {
         let mut ctx = make_ctx();
         let element_ty = wide_element_ty(&mut ctx);
-        let usize_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let array_ty: TypeHandle = MirArrayType::get(&mut ctx, element_ty, 8).into();
         let array_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, array_ty, true).into();
         let element_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, element_ty, true).into();

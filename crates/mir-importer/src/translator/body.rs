@@ -1182,6 +1182,9 @@ mod tests {
     /// off [`DEVICE_RUNTIME_CHECKS`]; a fold that stopped consulting it (or a
     /// device value that silently became session-dependent) would let the
     /// collector and importer choose different `SwitchInt` edges.
+    /// Compile-time pin: device PTX never enables runtime safety checks.
+    const _: () = assert!(!crate::translator::DEVICE_RUNTIME_CHECKS);
+
     #[test]
     fn runtime_checks_fold_to_the_shared_device_value() {
         for check in [
@@ -1194,10 +1197,6 @@ mod tests {
                 Some(crate::translator::DEVICE_RUNTIME_CHECKS as u128),
             );
         }
-        assert!(
-            !crate::translator::DEVICE_RUNTIME_CHECKS,
-            "device PTX never enables runtime safety checks",
-        );
     }
 
     #[test]
