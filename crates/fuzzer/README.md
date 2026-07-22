@@ -41,8 +41,10 @@ For each accepted seed:
 4. The CPU and GPU traces are compared as `u64` hashes.
 
 `dump_var` hashes intermediate values, not just the final return value. A seed
-can have one dump site or several dump sites. Seed `192` is the current checked
-in example because it has two dump sites:
+can have one dump site or several dump sites. Seed `162` is the current checked
+in example, because its device code calls libdevice (`fmaf64`) and so covers the
+artifact path that a PTX-only loader cannot serve. Seed `192` is a smaller case
+with two dump sites:
 
 ```rust
 __rl_dump0 = (Move(_1), Move(_2), Move(_3), Move(_4));
@@ -65,23 +67,49 @@ Call(_9 = dump_var(Move(__rl_dump1)), ReturnTo(bb5), UnwindUnreachable())
 - `UNSUPPORTED [adapter]`: rustlantis generated a MIR program, but our Python
   adapter refused to turn it into a cuda-oxide smoke case.
 
-For example, seed `0` currently reports:
+For example, seed `0` dumps a `u128`, which the adapter once refused; the
+trace API has since widened and the seed currently reports:
 
 ```text
-UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: u128
+seed 0: PASS
+
+results:
+  seed 0: PASS [run] CPU/GPU traces matched
+summary: PASS=1
 ```
 
-That means rustlantis successfully generated a program, but a generated
-`dump_var(...)` call included a `u128`. Our current trace API only hashes:
+The typical `UNSUPPORTED [adapter]` cause is a generated `dump_var(...)` call
+or function signature that uses a type the adapter cannot rewrite. The trace
+API hashes:
 
 ```text
-bool, i8, i16, i32, i64, u8, u16, u32, u64
+bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char
 ```
 
-It does not yet hash `u128`, `i128`, `usize`, `isize`, or `char`. In many
-`UNSUPPORTED [adapter]` cases, the MIR can probably be patched by widening the
-adapter and trace API. The adapter stops because it does not yet know how to
-rewrite/hash that dumped type safely.
+It does not hash `f32` or `f64`. In many `UNSUPPORTED [adapter]` cases, the MIR
+can probably be patched by widening the adapter and trace API. The adapter stops
+because it does not yet know how to rewrite/hash that dumped type safely.
+
+## Floating point and libdevice seeds
+
+The comparison is exact `u64` hash equality, so it assumes the CPU and the GPU
+agree bit for bit. Floats are never hashed directly, since the trace API has no
+`f32` or `f64` arm and the adapter refuses a bare float dump. A float can still
+reach the hash indirectly, through an `as` cast to an integer, through a
+comparison that yields a `bool`, or through rustlantis' `transmute_place`.
+
+Where that happens on a seed whose device code calls libdevice, a mismatch is
+not on its own evidence of a backend bug. Only a few libdevice entry points are
+specified as single correctly-rounded operations, `fma` among them. The
+transcendentals (`sin`, `cos`, `exp`, `log`, `pow`, `atan2` and the rest) are not
+required to be bit-identical to the host's libm, and the repository compares them
+within a tolerance elsewhere: see the 2-ULP comparison in
+`examples/math_atan/src/main.rs` and `ulp_distance` in
+`examples/libdevice_math/src/main.rs`.
+
+So triage a `MISMATCH` on a float-influenced seed by hand before filing it. Check
+whether the differing value derives from a transcendental, and compare the two
+results in ULPs before treating the difference as a miscompile.
 
 ## Artifacts
 
@@ -114,11 +142,12 @@ crates/fuzzer/artifacts/summary.jsonl
 `run_seed.py` clears `crates/fuzzer/artifacts/` at the start of every
 invocation, so the logs and `summary.jsonl` always describe only the latest run.
 
-The terminal also prints a full per-seed summary, for example:
+The terminal also prints a full per-seed summary; entries that wrote a log
+append its path. For example, `--start 0 --count 2` currently prints:
 
 ```text
 results:
-  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: u128 (...)
-  seed 1: COMPILE_FAIL [backend] Unsupported construct: Type translation not yet implemented for: RigidTy(Char) (...)
-summary: COMPILE_FAIL=1, UNSUPPORTED=1
+  seed 0: PASS [run] CPU/GPU traces matched
+  seed 1: PASS [run] CPU/GPU traces matched
+summary: PASS=2
 ```
