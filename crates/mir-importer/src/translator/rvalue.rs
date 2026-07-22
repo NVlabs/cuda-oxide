@@ -4751,7 +4751,7 @@ fn translate_ptr_to_array_constant(
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let expected_size = array_constant_type_byte_size(ctx, array_ty, loc.clone())?;
+    let expected_size = rust_type_layout_size(rust_array_ty, loc.clone())?;
     let (bytes, alignment) =
         promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
     let initializer_hex = bytes_to_hex(&bytes);
@@ -4795,10 +4795,9 @@ fn translate_ptr_to_array_constant(
 }
 
 /// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
-/// [..]` indexed by runtime value) to a `MirConstructArrayOp` whose operands
-/// are typed scalar `MirFloatConstantOp` / `MirConstantOp`s. Mirrors
-/// `translate_ptr_to_array_constant` but skips the final `MirRefOp` wrap,
-/// since the caller wants the array by value.
+/// [..]` indexed by runtime value) to a `MirConstructArrayOp`. Element stride
+/// and aggregate field offsets come from rustc layout; pointer relocations are
+/// rejected before their placeholder bytes can be mistaken for pointer bits.
 fn translate_array_value_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -4819,87 +4818,68 @@ fn translate_array_value_constant(
             );
         }
     }
-    let has_pointer_provenance = match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => !alloc.provenance.ptrs.is_empty(),
+    let relocation_count = match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
         ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            rustc_public::ty::TyConstKind::Value(_, alloc) => !alloc.provenance.ptrs.is_empty(),
-            _ => false,
+            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
+            _ => 0,
         },
-        _ => false,
+        _ => 0,
     };
-    if has_pointer_provenance {
+    if relocation_count != 0 {
         return input_err!(
             loc,
-            TranslationErr::unsupported(
-                "Array value constants containing pointer provenance are not yet supported"
-            )
+            TranslationErr::unsupported(format!(
+                "Array value constant contains {relocation_count} pointer relocation(s); cuda-oxide cannot yet preserve array pointer provenance"
+            ))
         );
     }
     translate_array_value_constant_inner(
         ctx,
         constant,
         const_ty_ptr,
-        Some(constant.const_.ty()),
+        constant.const_.ty(),
         block_ptr,
         prev_op,
         loc,
     )
 }
 
-fn rust_type_layout_size(ty: rustc_public::ty::Ty) -> Option<usize> {
-    ty.layout().ok().map(|layout| layout.shape().size.bytes())
-}
-
-fn rust_array_element_ty(ty: rustc_public::ty::Ty) -> Option<rustc_public::ty::Ty> {
-    match ty.kind() {
-        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Array(element_ty, _)) => {
-            Some(element_ty)
-        }
-        _ => None,
-    }
-}
-
-/// Recursively compute the byte size of a pliron type that is permitted to
-/// appear inside an array-of-primitives or array-of-array-of-... constant.
-/// Unsupported types are rejected here so the diagnostic points at the array
-/// constant rule instead of falling through to a generic byte-lowering error.
-fn array_constant_type_byte_size(
-    ctx: &Context,
-    ty: TypeHandle,
-    loc: Location,
-) -> TranslationResult<usize> {
-    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
-    let ty_obj = ty.deref(ctx);
-    if let Some(int_ty) = ty_obj.downcast_ref::<IntegerType>() {
-        Ok((int_ty.width() as usize).div_ceil(8))
-    } else if ty_obj.is::<MirFP16Type>() {
-        Ok(2)
-    } else if ty_obj.is::<FP32Type>() {
-        Ok(4)
-    } else if ty_obj.is::<FP64Type>() {
-        Ok(8)
-    } else if let Some(arr_ty) = ty_obj.downcast_ref::<dialect_mir::types::MirArrayType>() {
-        let elem_ty = arr_ty.element_type();
-        let count = arr_ty.size() as usize;
-        // Avoid holding the borrow across the recursive call.
-        drop(ty_obj);
-        let elem_size = array_constant_type_byte_size(ctx, elem_ty, loc.clone())?;
-        elem_size.checked_mul(count).ok_or_else(|| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "Array constant element byte size overflowed: {} elements x {} bytes",
-                count, elem_size
-            )))
+fn rust_type_layout_size(ty: rustc_public::ty::Ty, loc: Location) -> TranslationResult<usize> {
+    ty.layout()
+        .map(|layout| layout.shape().size.bytes())
+        .map_err(|error| {
+            input_error!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Failed to query rustc layout for constant type {ty:?}: {error:?}"
+                ))
+            )
         })
-    } else {
-        input_err!(
+}
+
+fn rust_array_type_info(
+    ty: rustc_public::ty::Ty,
+    loc: Location,
+) -> TranslationResult<(rustc_public::ty::Ty, u64)> {
+    match ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Array(element_ty, count)) => {
+            let count = count.eval_target_usize().map_err(|error| {
+                input_error!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Failed to evaluate array constant length: {error:?}"
+                    ))
+                )
+            })?;
+            Ok((element_ty, count))
+        }
+        other => input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "Array constant element type is not supported: {:?}. Supported array constants \
-                 are primitive scalar elements (integers, f16, f32, f64) or nested arrays of \
-                 those.",
-                ty_obj
+                "Array constant expected a Rust array type, got {other:?}"
             ))
-        )
+        ),
     }
 }
 
@@ -4910,7 +4890,7 @@ fn array_constant_type_byte_size(
 fn build_array_op_from_bytes(
     ctx: &mut Context,
     array_ty: TypeHandle,
-    rust_array_ty: Option<rustc_public::ty::Ty>,
+    rust_array_ty: rustc_public::ty::Ty,
     bytes: &[u8],
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -4931,13 +4911,22 @@ fn build_array_op_from_bytes(
         (arr_ty.element_type(), arr_ty.size())
     };
 
-    let rust_element_ty = rust_array_ty.and_then(rust_array_element_ty);
-    let element_byte_size = match rust_element_ty.and_then(rust_type_layout_size) {
-        Some(size) => size,
-        None => array_constant_type_byte_size(ctx, element_ty_ptr, loc.clone())?,
-    };
+    let (rust_element_ty, rust_element_count) = rust_array_type_info(rust_array_ty, loc.clone())?;
+    if rust_element_count != element_count {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Array constant length mismatch: Rust type has {rust_element_count} elements, dialect type has {element_count}"
+            ))
+        );
+    }
+    let element_byte_size = rust_type_layout_size(rust_element_ty, loc.clone())?;
 
-    let element_count_usize = element_count as usize;
+    let element_count_usize = usize::try_from(element_count).map_err(|_| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "Array constant element count {element_count} does not fit usize"
+        )))
+    })?;
     let expected_bytes = element_count_usize
         .checked_mul(element_byte_size)
         .ok_or_else(|| {
@@ -4946,11 +4935,11 @@ fn build_array_op_from_bytes(
                 element_count, element_byte_size
             )))
         })?;
-    if bytes.len() < expected_bytes {
+    if bytes.len() != expected_bytes {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "Array constant has {} bytes but expected {} ({} elements x {} bytes each)",
+                "Array constant has {} bytes but requires exactly {} ({} elements x {} bytes each)",
                 bytes.len(),
                 expected_bytes,
                 element_count,
@@ -5136,22 +5125,15 @@ fn build_array_op_from_bytes(
                 last_op,
                 loc.clone(),
             )?,
-            ElemKind::Tuple => {
-                let rust_element_ty = rust_element_ty.ok_or_else(|| {
-                    input_error_noloc!(TranslationErr::unsupported(
-                        "Tuple array constant is missing its Rust element type"
-                    ))
-                })?;
-                translate_constant_value_from_bytes(
-                    ctx,
-                    &rust_element_ty,
-                    element_ty_ptr,
-                    chunk,
-                    block_ptr,
-                    last_op,
-                    loc.clone(),
-                )?
-            }
+            ElemKind::Tuple => translate_constant_value_from_bytes(
+                ctx,
+                &rust_element_ty,
+                element_ty_ptr,
+                chunk,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?,
         };
 
         element_values.push(elem_val);
@@ -5180,16 +5162,13 @@ fn build_array_op_from_bytes(
     Ok((array_val, last_op))
 }
 
-/// Shared body for both `translate_ptr_to_array_constant` (which then wraps
-/// in `MirRefOp`) and `translate_array_value_constant` (which returns the
-/// value directly). Extracts raw bytes from the constant's allocation, then
-/// delegates to `build_array_op_from_bytes` to recursively build a
-/// `MirConstructArrayOp` for the (possibly nested) array.
+/// Extract the raw allocation bytes for a bare array value, then recursively
+/// build the corresponding `MirConstructArrayOp`.
 fn translate_array_value_constant_inner(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
     array_ty: TypeHandle,
-    rust_array_ty: Option<rustc_public::ty::Ty>,
+    rust_array_ty: rustc_public::ty::Ty,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -5681,17 +5660,22 @@ fn translate_tuple_constant_from_bytes(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let field_types = {
+    let (field_types, mir_field_offsets, mir_memory_order, mir_total_size, mir_abi_align) = {
         let ty_ref = const_ty_ptr.deref(ctx);
-        ty_ref
+        let tuple_ty = ty_ref
             .downcast_ref::<dialect_mir::types::MirTupleType>()
             .ok_or_else(|| {
                 input_error_noloc!(TranslationErr::unsupported(
                     "translate_tuple_constant called on non-tuple type"
                 ))
-            })?
-            .get_types()
-            .to_vec()
+            })?;
+        (
+            tuple_ty.get_types().to_vec(),
+            tuple_ty.field_offsets().to_vec(),
+            tuple_ty.memory_order(),
+            tuple_ty.total_size(),
+            tuple_ty.abi_align(),
+        )
     };
 
     let rust_field_types = match rust_ty.kind() {
@@ -5728,7 +5712,19 @@ fn translate_tuple_constant_from_bytes(
             ))
         )
     })?;
-    let field_offsets = match &layout.shape().fields {
+    let shape = layout.shape();
+    let tuple_size = shape.size.bytes();
+    if bytes.len() != tuple_size {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Tuple constant has {} bytes but rustc layout requires exactly {tuple_size}",
+                bytes.len()
+            ))
+        );
+    }
+
+    let field_offsets = match &shape.fields {
         rustc_public::abi::FieldsShape::Primitive if field_types.is_empty() => vec![],
         rustc_public::abi::FieldsShape::Arbitrary { offsets } => offsets
             .iter()
@@ -5753,6 +5749,33 @@ fn translate_tuple_constant_from_bytes(
             ))
         );
     }
+    if !field_types.is_empty() {
+        let rust_field_offsets = field_offsets
+            .iter()
+            .map(|offset| *offset as u64)
+            .collect::<Vec<_>>();
+        let rust_memory_order = shape.fields.fields_by_offset_order();
+        if mir_field_offsets != rust_field_offsets
+            || mir_memory_order != rust_memory_order
+            || mir_total_size != tuple_size as u64
+            || mir_abi_align != shape.abi_align
+        {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Tuple constant layout disagrees between rustc and dialect-mir: rustc offsets/order/size/alignment {:?}/{:?}/{}/{}, dialect {:?}/{:?}/{}/{}",
+                    rust_field_offsets,
+                    rust_memory_order,
+                    tuple_size,
+                    shape.abi_align,
+                    mir_field_offsets,
+                    mir_memory_order,
+                    mir_total_size,
+                    mir_abi_align
+                ))
+            );
+        }
+    }
 
     let mut values = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
@@ -5764,14 +5787,7 @@ fn translate_tuple_constant_from_bytes(
         .enumerate()
     {
         let byte_offset = field_offsets[field_idx];
-        let byte_size = rust_type_layout_size(*rust_field_ty).ok_or_else(|| {
-            input_error!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "Tuple constant field {field_idx} has no available Rust layout"
-                ))
-            )
-        })?;
+        let byte_size = rust_type_layout_size(*rust_field_ty, loc.clone())?;
 
         let field_end = byte_offset.checked_add(byte_size).ok_or_else(|| {
             input_error!(
@@ -6423,12 +6439,14 @@ fn translate_constant_value_from_bytes(
         );
     }
 
-    let is_zst = rust_ty
-        .layout()
-        .map(|layout| layout.shape().is_1zst())
-        .unwrap_or(false);
-    if is_zst || types::is_zst_type(ctx, ty_ptr) {
-        return translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc);
+    // Aggregate decoders own their complete field model, including non-empty
+    // aggregates whose every field is zero-sized. Dispatch them before the
+    // generic ZST synthesizer, which only has the translated type and cannot
+    // recover a Rust aggregate's active variant or field metadata.
+    if ty_ptr.deref(ctx).is::<dialect_mir::types::MirTupleType>() {
+        return translate_tuple_constant_from_bytes(
+            ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc,
+        );
     }
 
     // Struct-typed constants (e.g. `NonZero<T>` wrappers inside enum payloads)
@@ -6443,10 +6461,19 @@ fn translate_constant_value_from_bytes(
         );
     }
 
-    if ty_ptr.deref(ctx).is::<dialect_mir::types::MirTupleType>() {
-        return translate_tuple_constant_from_bytes(
-            ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc,
-        );
+    let is_zst = rust_ty
+        .layout()
+        .map(|layout| layout.shape().is_1zst())
+        .map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to query layout for aggregate constant field {rust_ty:?}: {error:?}"
+                ))
+            )
+        })?;
+    if is_zst || types::is_zst_type(ctx, ty_ptr) {
+        return translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc);
     }
 
     enum ValueKind {

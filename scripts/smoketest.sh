@@ -370,6 +370,12 @@ verdict_error() {
                 return 1
             fi
             ;;
+        error_tuple_array_provenance)
+            if ! grep -Fq 'Array value constant contains 2 pointer relocation(s); cuda-oxide cannot yet preserve array pointer provenance' "${log}"; then
+                echo "FAIL (missing tuple-array pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
         error_generated_intrinsic_abi)
             if ! grep -Fq 'cuda-intrinsics ABI mismatch' "${log}" \
                 || ! grep -Fq '__cuda_oxide_intrinsic_abi_v2::i0001' "${log}"; then
