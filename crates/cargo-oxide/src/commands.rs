@@ -2637,6 +2637,29 @@ pub fn doctor(ctx: &Context) {
         println!("- not built yet (run `cargo oxide setup`)");
     }
 
+    // 3b. Shared cache. The check above reports the backend this context
+    // resolves to, which inside the repository is the local build. A project
+    // outside the repository resolves to the cache instead, so the two can
+    // disagree while every other check passes.
+    print!("Shared cache (external projects)... ");
+    match backend::cached_backend_path() {
+        Some(cached) => match backend::compare_cache_to_local(&cached, &ctx.backend_so) {
+            backend::CacheReport::Absent => {
+                println!("- empty; external projects build on first use");
+            }
+            backend::CacheReport::UpToDate => {
+                println!("✓ {}", cached.display());
+            }
+            backend::CacheReport::OlderThanLocal => {
+                println!("⚠ {}", cached.display());
+                println!("  Older than the backend built here, so projects outside this");
+                println!("  repository would load a different one. Run `cargo oxide setup`");
+                println!("  to publish, or set CUDA_OXIDE_BACKEND to pin an explicit path.");
+            }
+        },
+        None => println!("- cache directory unknown (set CARGO_HOME or HOME)"),
+    }
+
     // 4. CUDA headers (cuda.h). The host `cuda-bindings` crate cannot build
     // without them; cargo-oxide itself deliberately can, which is what makes
     // this check reachable on a toolkit-less machine instead of dying inside

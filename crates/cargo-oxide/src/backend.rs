@@ -541,6 +541,52 @@ fn backend_artifact_from_cargo_output(
     }
 }
 
+/// How the shared cache compares to a backend built in this checkout.
+///
+/// `doctor` reports the backend the current context resolves to, which inside
+/// the repository is the local build. Projects outside the repository resolve
+/// to the cache instead, so the two can disagree without either check failing.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CacheReport {
+    /// No cached backend. External projects will fetch and build on first use.
+    Absent,
+    /// The cache is at least as new as the local build.
+    UpToDate,
+    /// The cache predates the local build, so external projects would load an
+    /// older backend than this checkout produces.
+    OlderThanLocal,
+}
+
+/// Path of the cached backend, whether or not it exists.
+///
+/// Exposed so `doctor` can report the backend external projects resolve to,
+/// which is not the one the in-repo context uses.
+pub fn cached_backend_path() -> Option<PathBuf> {
+    cache_directory().map(|dir| dir.join("librustc_codegen_cuda.so"))
+}
+
+/// Compares a cached backend against one built locally.
+///
+/// Ordering is by mtime, matching the staleness checks elsewhere in this
+/// module. An unreadable mtime on either side reports [`CacheReport::UpToDate`]
+/// rather than warning: `doctor` should not raise an alarm it cannot
+/// substantiate.
+pub fn compare_cache_to_local(cached_so: &Path, local_so: &Path) -> CacheReport {
+    if !cached_so.exists() {
+        return CacheReport::Absent;
+    }
+    if !local_so.exists() {
+        // Nothing built here to be newer than the cache.
+        return CacheReport::UpToDate;
+    }
+
+    let mtime = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    match (mtime(cached_so), mtime(local_so)) {
+        (Some(cached), Some(local)) if cached < local => CacheReport::OlderThanLocal,
+        _ => CacheReport::UpToDate,
+    }
+}
+
 /// Returns the cache directory for cuda-oxide artifacts: `~/.cargo/cuda-oxide/`.
 fn cache_directory() -> Option<PathBuf> {
     dirs_path().map(|d| d.join("cuda-oxide"))
@@ -888,6 +934,68 @@ mod tests {
             cached_backend_status(&so, Some(&dir)),
             CacheStatus::StaleVsBinary,
             "binary staleness must win over source staleness"
+        );
+    }
+
+    /// With no cached backend, `doctor` must say so rather than warn: an
+    /// external project simply fetches and builds on first use.
+    #[test]
+    fn cache_report_is_absent_when_nothing_is_cached() {
+        let dir = tempdir();
+        let local = dir.join("local.so");
+        std::fs::write(&local, b"built").unwrap();
+
+        assert_eq!(
+            compare_cache_to_local(&dir.join("missing.so"), &local),
+            CacheReport::Absent
+        );
+    }
+
+    /// A cache older than the local build is the case this reporting exists
+    /// for: in-repo commands use the local build and external projects load
+    /// the older cached one, with nothing else flagging the difference.
+    #[test]
+    fn cache_report_is_older_when_the_local_build_is_newer() {
+        let dir = tempdir();
+        let base = SystemTime::now() - Duration::from_secs(365 * 24 * 60 * 60);
+        let cached = dir.join("cached.so");
+        let local = dir.join("local.so");
+        write_with_mtime(&cached, b"old", base);
+        write_with_mtime(&local, b"new", base + Duration::from_secs(60));
+
+        assert_eq!(
+            compare_cache_to_local(&cached, &local),
+            CacheReport::OlderThanLocal
+        );
+    }
+
+    /// A cache at least as new as the local build needs no warning.
+    #[test]
+    fn cache_report_is_up_to_date_when_the_cache_is_newer() {
+        let dir = tempdir();
+        let base = SystemTime::now() - Duration::from_secs(365 * 24 * 60 * 60);
+        let cached = dir.join("cached.so");
+        let local = dir.join("local.so");
+        write_with_mtime(&local, b"old", base);
+        write_with_mtime(&cached, b"new", base + Duration::from_secs(60));
+
+        assert_eq!(
+            compare_cache_to_local(&cached, &local),
+            CacheReport::UpToDate
+        );
+    }
+
+    /// Nothing built locally means there is no newer backend to compare
+    /// against, so the cache is not stale relative to this checkout.
+    #[test]
+    fn cache_report_is_up_to_date_when_nothing_is_built_locally() {
+        let dir = tempdir();
+        let cached = dir.join("cached.so");
+        std::fs::write(&cached, b"cached").unwrap();
+
+        assert_eq!(
+            compare_cache_to_local(&cached, &dir.join("absent.so")),
+            CacheReport::UpToDate
         );
     }
 
