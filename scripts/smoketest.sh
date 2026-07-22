@@ -1266,16 +1266,26 @@ run_cargo() {
     fi
     if [[ ${CARGO_EC} -eq 0 && "${ex}" == "disjoint_slice_len" ]]; then
         local llvm_ir="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
-        local loaded_slice shape_found=0
-        while IFS= read -r loaded_slice; do
-            if grep -Fq "extractvalue { ptr, i64 } ${loaded_slice}, 1" "${llvm_ir}"; then
-                shape_found=1
-                break
-            fi
-        done < <(
-            sed -nE 's/^[[:space:]]*(%[^ ]+) = load \{ ptr, i64 \}, ptr .*/\1/p' "${llvm_ir}" 2>/dev/null
-        )
-        if [[ ! -s "${llvm_ir}" || ${shape_found} -ne 1 ]]; then
+        local kernel_ir loaded_slice extracted_len
+        kernel_ir="$(
+            awk '
+                /^define ptx_kernel void @write_len\(/ { in_function = 1 }
+                in_function { print }
+                in_function && /^}/ { exit }
+            ' "${llvm_ir}" 2>/dev/null
+        )"
+        loaded_slice="$(
+            sed -nE 's/^[[:space:]]*(%[^ ]+) = load \{ ptr, i64 \}, ptr .*/\1/p' \
+                <<<"${kernel_ir}"
+        )"
+        extracted_len="$(
+            sed -nE 's/^[[:space:]]*%[^ ]+ = extractvalue \{ ptr, i64 \} (%[^,]+), 1$/\1/p' \
+                <<<"${kernel_ir}"
+        )"
+        if [[ ! -s "${llvm_ir}" || -z "${kernel_ir}" \
+            || -z "${loaded_slice}" || -z "${extracted_len}" \
+            || "$(wc -l <<<"${loaded_slice}")" -ne 1 \
+            || "${extracted_len}" != "${loaded_slice}" ]]; then
             printf 'disjoint_slice_len must load the &DisjointSlice receiver before extracting field 1; the no-inline regression path was bypassed\n' >>"${log}"
             CARGO_EC=1
         fi
