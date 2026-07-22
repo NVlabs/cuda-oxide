@@ -34,7 +34,6 @@ use super::super::helpers::{emit_store_result_and_goto, set_generated_intrinsic_
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
-use crate::translator::values;
 use crate::translator::values::ValueMap;
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::{MirAddOp, MirCastOp, MirMulOp};
@@ -292,30 +291,23 @@ pub fn emit_index_2d(
     )
 }
 
-/// Parse `DisjointSlice` to the fat `(ptr, len)` value
+/// Load the `DisjointSlice` value behind a method receiver.
 ///
-/// A pointer operand carries the fat pointee type to load
-/// A fat value passes through unchanged
-///
-/// Returns the fat slice value and the updated last operation
-fn resolve_disjoint_slice_value(
+/// `DisjointSlice::len` has an `&self` receiver, so fully monomorphized MIR
+/// passes a `mir.ptr<mir.disjoint_slice<T>>`. Keep that source-level contract
+/// explicit: accept exactly one pointer layer whose pointee is the compiler's
+/// `MirDisjointSliceType`, and reject every other shape instead of guessing.
+fn load_disjoint_slice_receiver(
     ctx: &mut Context,
-    disjoint_slice_val: Value,
+    receiver: Value,
     block_ptr: Ptr<BasicBlock>,
     last_op: Option<Ptr<Operation>>,
     loc: Location,
-) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let slice_ty = disjoint_slice_val.get_type(ctx);
-
+) -> TranslationResult<(Value, Ptr<Operation>)> {
+    let receiver_ty = receiver.get_type(ctx);
     let pointee = {
-        let slice_ty_obj = slice_ty.deref(ctx);
-        if slice_ty_obj
-            .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
-            .is_some()
-        {
-            return Ok((disjoint_slice_val, last_op));
-        }
-        let pointee = slice_ty_obj
+        let receiver_ty_obj = receiver_ty.deref(ctx);
+        let pointee = receiver_ty_obj
             .downcast_ref::<dialect_mir::types::MirPtrType>()
             .map(|ptr_ty| ptr_ty.pointee);
         match pointee {
@@ -331,8 +323,8 @@ fn resolve_disjoint_slice_value(
                 return input_err!(
                     loc,
                     TranslationErr::type_error(
-                        "DisjointSlice operand must be mir.disjoint_slice or a pointer to it"
-                            .to_string()
+                        "DisjointSlice::len receiver must be a pointer to mir.disjoint_slice"
+                            .to_string(),
                     )
                 );
             }
@@ -343,15 +335,18 @@ fn resolve_disjoint_slice_value(
         ctx,
         dialect_mir::ops::MirLoadOp::get_concrete_op_info(),
         vec![pointee],
-        vec![disjoint_slice_val],
+        vec![receiver],
         vec![],
         0,
     );
     load_op.deref_mut(ctx).set_loc(loc);
-    values::insert_at(ctx, load_op, block_ptr, last_op);
+    match last_op {
+        Some(prev) => load_op.insert_after(ctx, prev),
+        None => load_op.insert_at_front(block_ptr, ctx),
+    }
 
     let loaded_val = load_op.deref(ctx).get_result(0);
-    Ok((loaded_val, Some(load_op)))
+    Ok((loaded_val, load_op))
 }
 
 /// Emits `DisjointSlice::get_thread_local(&self, idx) -> &mut T`.
@@ -440,14 +435,68 @@ pub fn emit_get_thread_local(
 
     // Extract ptr field (field 0) from DisjointSlice
     // DisjointSlice layout: { ptr: *mut T, len: usize, _marker: PhantomData }
-    let (actual_slice_val, mut last_op) =
-        resolve_disjoint_slice_value(ctx, disjoint_slice_val, block_ptr, last_op, loc.clone())?;
-    let element_ty = actual_slice_val
-        .get_type(ctx)
-        .deref(ctx)
-        .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
-        .expect("resolve_disjoint_slice_value returns a mir.disjoint_slice value")
-        .element_type();
+    let slice_ty = disjoint_slice_val.get_type(ctx);
+
+    // Determine if we have a DisjointSlice value or a pointer to one
+    enum SliceKind {
+        Direct {
+            element_ty: pliron::r#type::TypeHandle,
+        },
+        Pointer {
+            pointee: pliron::r#type::TypeHandle,
+            element_ty: pliron::r#type::TypeHandle,
+        },
+    }
+
+    let slice_kind = {
+        let slice_ty_obj = slice_ty.deref(ctx);
+        if let Some(dst) = slice_ty_obj.downcast_ref::<dialect_mir::types::MirDisjointSliceType>() {
+            SliceKind::Direct {
+                element_ty: dst.element_type(),
+            }
+        } else if let Some(ptr_ty) = slice_ty_obj.downcast_ref::<dialect_mir::types::MirPtrType>() {
+            let pointee = ptr_ty.pointee;
+            let element_ty = pointee
+                .deref(ctx)
+                .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
+                .map(|dst| dst.element_type())
+                .unwrap_or_else(|| panic!("Expected pointer to DisjointSliceType"));
+            SliceKind::Pointer {
+                pointee,
+                element_ty,
+            }
+        } else {
+            panic!("Expected DisjointSliceType or pointer to it");
+        }
+    };
+
+    // If we have a pointer to DisjointSlice, we need to load it first
+    let (actual_slice_val, element_ty) = match slice_kind {
+        SliceKind::Direct { element_ty } => (disjoint_slice_val, element_ty),
+        SliceKind::Pointer {
+            pointee,
+            element_ty,
+        } => {
+            let load_op = Operation::new(
+                ctx,
+                dialect_mir::ops::MirLoadOp::get_concrete_op_info(),
+                vec![pointee],
+                vec![disjoint_slice_val],
+                vec![],
+                0,
+            );
+            load_op.deref_mut(ctx).set_loc(loc.clone());
+
+            match last_op {
+                Some(prev) => load_op.insert_after(ctx, prev),
+                None => load_op.insert_at_front(block_ptr, ctx),
+            }
+            last_op = Some(load_op);
+
+            let loaded_val = load_op.deref(ctx).get_result(0);
+            (loaded_val, element_ty)
+        }
+    };
 
     // Use generic address space for DisjointSlice (global memory with per-thread indexing)
     let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, true).into();
@@ -561,8 +610,9 @@ pub fn emit_len(
         }
     };
 
-    let (disjoint_slice_val, mut last_op) =
-        resolve_disjoint_slice_value(ctx, disjoint_slice_val, block_ptr, last_op, loc.clone())?;
+    let (disjoint_slice_val, load_op) =
+        load_disjoint_slice_receiver(ctx, disjoint_slice_val, block_ptr, last_op, loc.clone())?;
+    let mut last_op = Some(load_op);
 
     // Extract len field (field 1) from DisjointSlice
     // DisjointSlice layout: { ptr: *mut T, len: usize, _marker: PhantomData }
@@ -609,8 +659,75 @@ pub fn emit_len(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dialect_mir::ops::MirLoadOp;
+    use dialect_mir::types::{MirDisjointSliceType, MirPtrType, MirSliceType};
     use pliron::builtin::attributes::StringAttr;
+    use pliron::common_traits::Verify;
     use pliron::identifier::Identifier;
+    use pliron::linked_list::ContainsLinkedList;
+
+    #[test]
+    fn disjoint_slice_len_receiver_loads_exactly_one_typed_pointer_layer() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let element_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned).to_handle();
+        let disjoint_ty: pliron::r#type::TypeHandle =
+            MirDisjointSliceType::get(&mut ctx, element_ty).into();
+        let receiver_ty = MirPtrType::get_generic(&mut ctx, disjoint_ty, false);
+        let block = BasicBlock::new(&mut ctx, None, vec![receiver_ty.into()]);
+        let receiver = block.deref(&ctx).get_argument(0);
+
+        let (loaded, load_op) =
+            load_disjoint_slice_receiver(&mut ctx, receiver, block, None, Location::Unknown)
+                .expect("a pointer to MirDisjointSliceType is the len receiver shape");
+
+        assert_eq!(loaded.get_type(&ctx), disjoint_ty);
+        assert_eq!(block.deref(&ctx).iter(&ctx).count(), 1);
+        let load = MirLoadOp::new(load_op);
+        assert_eq!(load.address_opd(&ctx), receiver);
+        assert!(load.verify(&ctx).is_ok());
+    }
+
+    #[test]
+    fn disjoint_slice_len_receiver_rejects_near_miss_shapes() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let element_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned).to_handle();
+        let disjoint_ty: pliron::r#type::TypeHandle =
+            MirDisjointSliceType::get(&mut ctx, element_ty).into();
+        let receiver_ty: pliron::r#type::TypeHandle =
+            MirPtrType::get_generic(&mut ctx, disjoint_ty, false).into();
+
+        // `len(&self)` always supplies one pointer layer. A direct fat value
+        // or another pointer layer indicates a broken caller/translation and
+        // must not be accepted by recursively guessing at the representation.
+        for near_miss_ty in [disjoint_ty, {
+            MirPtrType::get_generic(&mut ctx, receiver_ty, false).into()
+        }] {
+            let block = BasicBlock::new(&mut ctx, None, vec![near_miss_ty]);
+            let receiver = block.deref(&ctx).get_argument(0);
+            assert!(
+                load_disjoint_slice_receiver(&mut ctx, receiver, block, None, Location::Unknown,)
+                    .is_err()
+            );
+            assert_eq!(block.deref(&ctx).iter(&ctx).count(), 0);
+        }
+
+        // An ordinary Rust slice is also a `(ptr, len)` carrier, but it is not
+        // a DisjointSlice receiver and must not pass a shape-only check.
+        let ordinary_slice_ty: pliron::r#type::TypeHandle =
+            MirSliceType::get(&mut ctx, element_ty).into();
+        let ordinary_receiver_ty = MirPtrType::get_generic(&mut ctx, ordinary_slice_ty, false);
+        let block = BasicBlock::new(&mut ctx, None, vec![ordinary_receiver_ty.into()]);
+        let receiver = block.deref(&ctx).get_argument(0);
+        assert!(
+            load_disjoint_slice_receiver(&mut ctx, receiver, block, None, Location::Unknown,)
+                .is_err()
+        );
+        assert_eq!(block.deref(&ctx).iter(&ctx).count(), 0);
+    }
 
     #[test]
     fn index_1d_sreg_ops_carry_their_exact_generated_markers() {

@@ -1,23 +1,23 @@
 # disjoint_slice_len
 
 Regression test for [issue #343](https://github.com/NVlabs/cuda-oxide/issues/343):
-calling `DisjointSlice::len()` (and `is_empty()`) inside a kernel must compile and return the launch-time length.
+calling `DisjointSlice::len()` inside a kernel must compile and return the launch-time length.
 
 ## The bug
 
-`DisjointSlice::len` is intercepted by the mir-importer as an intrinsic (`emit_len`). 
-Because `len(&self)` receives the slice behind a reference, 
-the translated operand is a thin `mir.ptr<mir.disjoint_slice<T>>`, 
-not the fat `(ptr, len)` value. 
-`emit_len` fed that pointer straight into `mir.extract_field`, 
+`DisjointSlice::len` is intercepted by the mir-importer as an intrinsic (`emit_len`).
+Because `len(&self)` receives the slice behind a reference,
+the translated operand is a thin `mir.ptr<mir.disjoint_slice<T>>`,
+not the fat `(ptr, len)` value.
+`emit_len` fed that pointer straight into `mir.extract_field`,
 which only accepts the fat value, so device codegen died in dialect verification:
 
 ```text
 MirExtractFieldOp operand must be tuple, slice, struct, array, or scalar (newtype)
 ```
 
-The fix loads the fat value through the pointer first. 
-Both interceptors now share that logic (`resolve_disjoint_slice_value`).
+The fix validates the `&DisjointSlice<T>` receiver shape and loads the fat
+value through that one pointer layer before extracting its length.
 
 ## Reproducing the original failure
 
@@ -36,9 +36,9 @@ After the fix, it compiles and runs identically to the default build.
 
 ## What the kernel checks
 
-Every in-bounds thread writes `len() + is_empty() as u32` to its slot, 
-so for a 256-element launch every slot must read 256. 
-The host asserts all elements.
+Every in-bounds thread writes `len()` to its slot. The buffer has 257 elements,
+deliberately avoiding a typical block-size multiple so launch geometry cannot
+masquerade as the slice length. The host asserts all 257 results.
 
 ## Run
 
@@ -49,5 +49,5 @@ cargo oxide run disjoint_slice_len
 Expected output:
 
 ```text
-SUCCESS: DisjointSlice::len/is_empty return the launch-time length
+SUCCESS: DisjointSlice::len returns the launch-time length
 ```
