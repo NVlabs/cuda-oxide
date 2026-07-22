@@ -9,14 +9,14 @@ use dialect_nvvm::ops::{
     ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
     CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
     CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
-    ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
-    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp,
-    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op,
-    MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp,
-    MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op,
-    MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op,
-    MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp,
-    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PackedAtomicAddOp,
+    ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr, LdmatrixLayoutAttr,
+    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op,
+    LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp,
+    MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op,
+    MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
+    MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
+    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
+    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PackedAtomicAddOp,
     PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
     PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
     PackedAtomicSubnormalAttr, ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp,
@@ -4378,4 +4378,61 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
                 .is_err()
         );
     }
+}
+
+#[test]
+fn test_inline_ptx_results_must_match_output_constraints() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    let input = block.deref(&ctx).get_argument(0);
+
+    let void = InlinePtxOp::build(&mut ctx, vec![], vec![], "membar.gl;", "", true, false);
+    assert!(verify_op(&InlinePtxOp::new(void), &ctx).is_ok());
+
+    let single = InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into()],
+        vec![input],
+        "add.u32 $0, $1, $1;",
+        "=r,r",
+        false,
+        false,
+    );
+    assert!(verify_op(&InlinePtxOp::new(single), &ctx).is_ok());
+
+    let multi = InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into(), i32_ty.into()],
+        vec![input],
+        "add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;",
+        "=r,=r,r",
+        false,
+        false,
+    );
+    assert!(verify_op(&InlinePtxOp::new(multi), &ctx).is_ok());
+
+    let missing_result = InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into()],
+        vec![input],
+        "add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;",
+        "=r,=r,r",
+        false,
+        false,
+    );
+    assert!(verify_op(&InlinePtxOp::new(missing_result), &ctx).is_err());
+
+    let extra_result = InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into()],
+        vec![input],
+        "prefetch.global.L1 [$0];",
+        "r",
+        true,
+        false,
+    );
+    assert!(verify_op(&InlinePtxOp::new(extra_result), &ctx).is_err());
 }

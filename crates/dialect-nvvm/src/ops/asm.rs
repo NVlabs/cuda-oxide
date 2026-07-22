@@ -77,12 +77,15 @@ impl Verify for InlinePtxOp {
         if self.get_attr_ptx_template(ctx).is_none() {
             return verify_err!(op.loc(), "nvvm.inline_ptx requires ptx_template attribute");
         }
-        if self.get_attr_ptx_constraints(ctx).is_none() {
+        let Some(constraints) = self
+            .get_attr_ptx_constraints(ctx)
+            .map(|attr| String::from((*attr).clone()))
+        else {
             return verify_err!(
                 op.loc(),
                 "nvvm.inline_ptx requires ptx_constraints attribute"
             );
-        }
+        };
         if self.get_attr_ptx_sideeffect(ctx).is_none() {
             return verify_err!(
                 op.loc(),
@@ -93,6 +96,20 @@ impl Verify for InlinePtxOp {
             return verify_err!(
                 op.loc(),
                 "nvvm.inline_ptx requires ptx_convergent attribute"
+            );
+        }
+        // Each result binds to exactly one `=`-prefixed output constraint,
+        // in order; a mismatch would mis-bind PTX registers and is only
+        // diagnosed much later (and worse) by llc.
+        let num_outputs = constraints
+            .split(',')
+            .filter(|constraint| constraint.starts_with('='))
+            .count();
+        let num_results = op.get_num_results();
+        if num_results != num_outputs {
+            return verify_err!(
+                op.loc(),
+                "nvvm.inline_ptx has {num_results} results but {num_outputs} `=` output constraints"
             );
         }
         Ok(())
