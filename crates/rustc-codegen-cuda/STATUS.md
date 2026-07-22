@@ -29,9 +29,16 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 
 Drops whose monomorphized glue is provably a no-op (e.g. the
 `core::array::IntoIter` behind `for x in arr` with Copy elements) lower
-to a plain branch since issue #138. Effectful drop glue (types with
-`impl Drop`) is now fully supported via device-side `drop_in_place`;
-see the `drop_glue` example.
+to a plain branch since issue #138. When the no-op proof fails, the drop
+lowers to a device-side call to the monomorphized `drop_in_place::<T>`
+shim, which the collector gathers and the pipeline compiles like any
+other device function; see the `drop_glue` example. This covers direct
+`impl Drop` types reachable from kernels. The shim and every
+`Drop::drop` body it reaches go through the same device pipeline, so
+drop glue whose MIR uses constructs the pipeline cannot yet translate
+(e.g. slice/`Vec` element drops, panic formatting) still fails
+compilation with a diagnostic. Destructors are never silently skipped:
+a drop is either proven unobservable or its call is emitted.
 
 The enum storage fixtures deliberately fail closed. Enum constants with
 relocations cannot be flattened to bytes without replacing an address with
