@@ -64,6 +64,21 @@ use pliron::operation::Operation;
 use rustc_public::mir;
 use rustc_public::mir::mono;
 
+/// Device-side value of every `Operand::RuntimeChecks` flag (`UbChecks`,
+/// `OverflowChecks`, `ContractChecks`).
+///
+/// Runtime safety checks are never enabled in device PTX, regardless of the
+/// host session's `-C debug-assertions` setting: the operand translator
+/// lowers the flag to this constant, and the reachability walks fold
+/// `switchInt` edges with it. Every consumer that models the device value of
+/// a `RuntimeChecks` operand MUST read this one constant. In particular, the
+/// rustc-codegen-cuda collector's dead-edge pruning must never consult the
+/// session value (`RuntimeChecks::value(sess)`): a dev-profile device build
+/// keeps debug assertions on, so a session-value collector would prune a
+/// different `SwitchInt` edge than the importer translates, leaving calls to
+/// functions that were never collected.
+pub const DEVICE_RUNTIME_CHECKS: bool = false;
+
 /// Registers all dialects needed for translation.
 ///
 /// Registers `dialect-mir` (our MIR modelling dialect), `dialect-nvvm`

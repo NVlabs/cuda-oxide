@@ -16,7 +16,7 @@
 //! | Operation | Index Type | Expected Result          |
 //! |-----------|------------|--------------------------|
 //! | Read      | Constant   | ✓ PASS (extractvalue)    |
-//! | Read      | Runtime    | ✓ PASS (alloca+gep+load) |
+//! | Read      | Runtime    | ✓ PASS (SSA for small arrays) |
 //! | Write     | Constant   | ✗ FAIL (not implemented) |
 //! | Write     | Runtime    | ✗ FAIL (not implemented) |
 //!
@@ -75,11 +75,12 @@ mod kernels {
     // =============================================================================
     // SECTION 2: Runtime Index Reads (SHOULD WORK)
     //
-    // These use ProjectionElem::Index → MirExtractArrayElementOp → alloca+gep+load
+    // These use ProjectionElem::Index → MirExtractArrayElementOp. Small fixed
+    // arrays lower to SSA extracts/selects; larger arrays use memory.
     // =============================================================================
 
     /// Test: Read array element at runtime index
-    /// Expected: PASS (but inefficient - copies whole array per read)
+    /// Expected: PASS
     #[kernel]
     pub fn test_runtime_index_read(index: u32, mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
@@ -105,7 +106,7 @@ mod kernels {
             // Sum using runtime index in loop
             let mut sum: u32 = 0;
             for i in 0..4 {
-                sum += arr[i]; // Each iteration: alloca + store whole array + gep + load
+                sum += arr[i];
             }
 
             *out_elem = sum; // 1 + 2 + 3 + 4 = 10
@@ -125,7 +126,7 @@ mod kernels {
 
             // Runtime index read
             let i = index as usize;
-            let dynamic = arr[i]; // alloca+gep+load
+            let dynamic = arr[i];
 
             *out_elem = first + dynamic;
         }

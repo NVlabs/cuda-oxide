@@ -256,11 +256,23 @@ fn detect_dynamic_shared_alignment(body: &mir::Body) -> Option<DynamicSharedAlig
 /// unwinding (hardware could, but `nvcc`/`ptxas` never wire it up), so the
 /// translator treats unwind cleanups as dead code. This helper strips them
 /// out so the worklist only visits blocks that matter on GPU.
-fn non_unwind_successors(kind: &mir::TerminatorKind) -> Vec<usize> {
+fn non_unwind_successors(body: &mir::Body, block_idx: usize) -> Vec<usize> {
+    let kind = &body.blocks[block_idx].terminator.kind;
     use mir::TerminatorKind::*;
     match kind {
         Goto { target } => vec![*target],
-        SwitchInt { targets, .. } => targets.all_targets(),
+        SwitchInt { discr, targets } => {
+            if let Some(value) = constant_operand_bits_in_block(body, block_idx, discr) {
+                let target = targets
+                    .branches()
+                    .find(|(branch_value, _)| *branch_value == value)
+                    .map(|(_, target)| target)
+                    .unwrap_or_else(|| targets.otherwise());
+                vec![target]
+            } else {
+                targets.all_targets()
+            }
+        }
         Return | Resume | Abort | Unreachable => vec![],
         Drop { target, .. } | Assert { target, .. } => vec![*target],
         Call { target, .. } => target.map(|t| vec![t]).unwrap_or_default(),
@@ -268,7 +280,58 @@ fn non_unwind_successors(kind: &mir::TerminatorKind) -> Vec<usize> {
     }
 }
 
-/// BFS from the entry block (index 0) following non-unwind successors.
+fn constant_operand_bits_in_block(
+    body: &mir::Body,
+    block_idx: usize,
+    operand: &mir::Operand,
+) -> Option<u128> {
+    if let Some(bits) = constant_operand_bits(operand) {
+        return Some(bits);
+    }
+    let place = match operand {
+        mir::Operand::Copy(place) | mir::Operand::Move(place) if place.projection.is_empty() => {
+            place
+        }
+        _ => return None,
+    };
+    let statement = body.blocks[block_idx]
+        .statements
+        .iter()
+        .rev()
+        .find(|statement| {
+            !matches!(
+                statement.kind,
+                mir::StatementKind::StorageLive(_) | mir::StatementKind::StorageDead(_)
+            )
+        })?;
+    let mir::StatementKind::Assign(destination, mir::Rvalue::Use(source)) = &statement.kind else {
+        return None;
+    };
+    (destination.local == place.local && destination.projection.is_empty())
+        .then(|| constant_operand_bits(source))
+        .flatten()
+}
+
+/// Extract a fully evaluated scalar used directly by `switchInt`.
+///
+/// Monomorphized core code frequently leaves type-property branches such as
+/// `T::IS_ZST` in MIR even though their discriminant is a constant. Following
+/// only the selected edge keeps dead panic helpers and unsupported ZST-only
+/// code out of the device translation.
+fn constant_operand_bits(operand: &mir::Operand) -> Option<u128> {
+    match operand {
+        mir::Operand::Constant(const_op) => {
+            let rustc_public::ty::ConstantKind::Allocated(alloc) = const_op.const_.kind() else {
+                return None;
+            };
+            alloc.read_uint().ok()
+        }
+        mir::Operand::RuntimeChecks(_) => Some(super::DEVICE_RUNTIME_CHECKS as u128),
+        _ => None,
+    }
+}
+
+/// BFS from the entry block (index 0) following feasible non-unwind successors.
 ///
 /// The result is a sorted set of reachable-on-GPU block indices; unwind-only
 /// cleanup blocks end up outside this set and are filled in with
@@ -279,7 +342,7 @@ fn compute_reachable_blocks(body: &mir::Body) -> std::collections::BTreeSet<usiz
     let mut frontier: Vec<usize> = vec![0];
     reachable.insert(0);
     while let Some(idx) = frontier.pop() {
-        let successors = non_unwind_successors(&body.blocks[idx].terminator.kind);
+        let successors = non_unwind_successors(body, idx);
         for succ in successors {
             if reachable.insert(succ) {
                 frontier.push(succ);
@@ -1114,6 +1177,27 @@ mod tests {
         op::Op,
         operation::Operation,
     };
+
+    /// The reachability fold and the collector's dead-edge pruning both key
+    /// off [`DEVICE_RUNTIME_CHECKS`]; a fold that stopped consulting it (or a
+    /// device value that silently became session-dependent) would let the
+    /// collector and importer choose different `SwitchInt` edges.
+    /// Compile-time pin: device PTX never enables runtime safety checks.
+    const _: () = assert!(!crate::translator::DEVICE_RUNTIME_CHECKS);
+
+    #[test]
+    fn runtime_checks_fold_to_the_shared_device_value() {
+        for check in [
+            mir::RuntimeChecks::UbChecks,
+            mir::RuntimeChecks::ContractChecks,
+            mir::RuntimeChecks::OverflowChecks,
+        ] {
+            assert_eq!(
+                constant_operand_bits(&mir::Operand::RuntimeChecks(check)),
+                Some(crate::translator::DEVICE_RUNTIME_CHECKS as u128),
+            );
+        }
+    }
 
     #[test]
     fn inline_always_flag_reaches_llvm_func_attr_before_export() {

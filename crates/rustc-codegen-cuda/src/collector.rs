@@ -127,7 +127,9 @@
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{ConstOperand, ConstValue, Location, TerminatorKind};
+use rustc_middle::mir::{
+    BasicBlock, ConstOperand, ConstValue, Location, START_BLOCK, TerminatorKind,
+};
 use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -980,21 +982,27 @@ impl<'tcx> DeviceCollector<'tcx> {
                     );
                 }
 
-                // Fail fast with an actionable diagnostic when this body
-                // contains panic-formatting machinery the device pipeline
-                // cannot compile (issue #76). Skip for drop glue shims:
-                // their MIR is compiler-generated and may contain panic
-                // paths (e.g. for assertion failures) that are unreachable
-                // in practice; the mir-importer handles these via its
-                // existing unreachable-block patching.
+                let reachable = self.reachable_basic_blocks(mir, func.instance);
+
+                // Fail fast with an actionable diagnostic when a feasible
+                // block contains panic-formatting machinery the device
+                // pipeline cannot compile (issue #76). Skip for drop glue
+                // shims: their MIR is compiler-generated and may contain
+                // panic paths (e.g. for assertion failures) that are
+                // unreachable in practice; the mir-importer handles these
+                // via its existing unreachable-block patching.
                 if !matches!(func.instance.def, InstanceKind::DropGlue(..)) {
-                    self.check_panic_machinery(mir, &func, &ctx);
+                    self.check_panic_machinery(mir, &reachable, &func, &ctx);
                 }
 
-                // Walk all basic blocks looking for calls.
+                // Walk feasible basic blocks looking for calls. Monomorphized
+                // core MIR can retain constant type-property branches; their
+                // dead arms must not pull panic/ZST-only helpers into device
+                // codegen.
                 // Pass the caller so we can substitute its args into callees
                 // and attribute diagnostics to the right discovery path.
-                for bb_data in mir.basic_blocks.iter() {
+                for bb in reachable {
+                    let bb_data = &mir.basic_blocks[bb];
                     if let Some(ref terminator) = bb_data.terminator {
                         self.process_terminator(terminator, mir, &func, &ctx);
                     }
@@ -1008,6 +1016,118 @@ impl<'tcx> DeviceCollector<'tcx> {
             functions: self.result,
             device_externs: self.device_externs,
             requires_ptx_bundle_merge: false,
+        }
+    }
+
+    fn reachable_basic_blocks(
+        &self,
+        mir: &rustc_middle::mir::Body<'tcx>,
+        instance: Instance<'tcx>,
+    ) -> Vec<BasicBlock> {
+        let mut reachable = Vec::new();
+        let mut seen = HashSet::new();
+        let mut frontier = VecDeque::from([START_BLOCK]);
+        seen.insert(START_BLOCK);
+
+        while let Some(bb) = frontier.pop_front() {
+            reachable.push(bb);
+            let Some(terminator) = &mir.basic_blocks[bb].terminator else {
+                continue;
+            };
+            let constant_target = match &terminator.kind {
+                TerminatorKind::SwitchInt { discr, targets } => self
+                    .constant_operand_bits_in_block(mir, bb, discr, instance)
+                    .map(|value| targets.target_for_value(value)),
+                _ => None,
+            };
+            let successors: Vec<_> = match constant_target {
+                Some(target) => vec![target],
+                None => terminator.successors().collect(),
+            };
+            for successor in successors {
+                if mir.basic_blocks[successor].is_cleanup {
+                    continue;
+                }
+                if seen.insert(successor) {
+                    frontier.push_back(successor);
+                }
+            }
+        }
+
+        reachable
+    }
+
+    /// Fold a `SwitchInt` discriminant to constant bits, mirroring the
+    /// mir-importer's reachability fold exactly.
+    ///
+    /// Pruning here is only safe if the importer provably takes the same
+    /// edge: any block the importer translates must have had its calls
+    /// collected. The importer folds `ConstantKind::Allocated` scalars from
+    /// the rustc_public body, and rustc_public's `BodyBuilder` eagerly
+    /// evaluates every MIR constant (`visit_const_operand` rewrites each
+    /// evaluatable constant to `Const::Val`), so the instantiate+`eval`
+    /// below folds precisely the constants the importer folds: both succeed
+    /// exactly when const-eval yields a scalar, and both fail together when
+    /// it does not. `RuntimeChecks` flags fold to the shared device value on
+    /// both sides.
+    fn constant_operand_bits_in_block(
+        &self,
+        mir: &rustc_middle::mir::Body<'tcx>,
+        bb: BasicBlock,
+        operand: &rustc_middle::mir::Operand<'tcx>,
+        instance: Instance<'tcx>,
+    ) -> Option<u128> {
+        let eval = |constant: &ConstOperand<'tcx>| {
+            let typing_env = TypingEnv::fully_monomorphized();
+            instance
+                .instantiate_mir_and_normalize_erasing_regions(
+                    self.tcx,
+                    typing_env,
+                    rustc_middle::ty::EarlyBinder::bind(constant.const_),
+                )
+                .try_eval_bits(self.tcx, typing_env)
+        };
+        let local = match operand {
+            rustc_middle::mir::Operand::Constant(constant) => return eval(constant),
+            // The DEVICE value, never `check.value(self.tcx.sess)`: the
+            // importer translates every RuntimeChecks flag to the shared
+            // constant, so pruning with the session value (checks stay on in
+            // dev-profile device builds) would drop a SwitchInt edge the
+            // importer still translates, leaving calls to functions this
+            // collector never gathered.
+            rustc_middle::mir::Operand::RuntimeChecks(_) => {
+                return Some(mir_importer::DEVICE_RUNTIME_CHECKS as u128);
+            }
+            rustc_middle::mir::Operand::Copy(place) | rustc_middle::mir::Operand::Move(place) => {
+                place.as_local()?
+            }
+        };
+        let statement = mir.basic_blocks[bb]
+            .statements
+            .iter()
+            .rev()
+            .find(|statement| {
+                !matches!(
+                    statement.kind,
+                    rustc_middle::mir::StatementKind::StorageLive(_)
+                        | rustc_middle::mir::StatementKind::StorageDead(_)
+                )
+            })?;
+        let (destination, rvalue) = statement.kind.as_assign()?;
+        if destination.as_local() != Some(local) {
+            return None;
+        }
+        match rvalue {
+            rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::Constant(constant)) => {
+                eval(constant)
+            }
+            // The importer's lookback folds a RuntimeChecks assignment source
+            // too; fold it here (to the same device value) so both walks keep
+            // selecting the same edge for `_x = RuntimeChecks; switchInt(_x)`.
+            rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::RuntimeChecks(_)) => {
+                Some(mir_importer::DEVICE_RUNTIME_CHECKS as u128)
+            }
+            _ => None,
         }
     }
 
@@ -1219,7 +1339,15 @@ impl<'tcx> DeviceCollector<'tcx> {
     fn drop_glue_is_noop(&self, instance: Instance<'tcx>) -> bool {
         use rustc_public::rustc_internal;
         rustc_internal::run(self.tcx, || {
-            mir_importer::drop_instance_is_noop(&rustc_internal::stable(instance))
+            // Consult the type-level wrapper when the dropped type is at
+            // hand: it applies the same reductions (e.g. `array::Drain`
+            // to its element type) that the importer's `translate_drop`
+            // uses, keeping collection and emission in lockstep.
+            if let InstanceKind::DropGlue(_, Some(dropped_ty)) = instance.def {
+                mir_importer::drop_glue_is_noop(rustc_internal::stable(dropped_ty))
+            } else {
+                mir_importer::drop_instance_is_noop(&rustc_internal::stable(instance))
+            }
         })
         .unwrap_or(false)
     }
@@ -2182,10 +2310,12 @@ impl<'tcx> DeviceCollector<'tcx> {
     fn check_panic_machinery(
         &self,
         mir: &rustc_middle::mir::Body<'tcx>,
+        reachable: &[BasicBlock],
         func: &CollectedFunction<'tcx>,
         ctx: &DiscoveryCtx,
     ) {
-        for (bb, bb_data) in mir.basic_blocks.iter_enumerated() {
+        for &bb in reachable {
+            let bb_data = &mir.basic_blocks[bb];
             let Some(term) = &bb_data.terminator else {
                 continue;
             };

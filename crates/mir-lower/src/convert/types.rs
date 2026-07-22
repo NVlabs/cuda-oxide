@@ -581,9 +581,10 @@ fn make_padding_type(ctx: &mut Context, size: u64) -> TypeHandle {
 /// alignment without consuming storage. Pointer-bearing fields are preferred
 /// so an ordinary union copy keeps LLVM pointer provenance.
 ///
-/// NVPTX gives scalar integers natural alignments up to 16 bytes. Reject a
-/// more strongly aligned union instead of silently emitting a by-value type
-/// with a weaker ABI alignment.
+/// NVPTX gives scalar integers natural alignments up to 16 bytes. Stronger
+/// Rust alignment is carried explicitly on memory operations because LLVM
+/// aggregate types cannot encode over-alignment; the storage type still keeps
+/// the union's exact size and therefore its array stride.
 pub(crate) fn build_union_storage_type(
     ctx: &mut Context,
     union_ty: &MirUnionType,
@@ -593,13 +594,6 @@ pub(crate) fn build_union_storage_type(
     if align == 0 || !align.is_power_of_two() {
         return Err(anyhow::anyhow!(
             "union `{}` has invalid ABI alignment {}",
-            union_ty.name(),
-            align
-        ));
-    }
-    if align > 16 {
-        return Err(anyhow::anyhow!(
-            "union `{}` requires {}-byte alignment; cuda-oxide currently supports union alignments up to 16 bytes",
             union_ty.name(),
             align
         ));
@@ -658,7 +652,8 @@ pub(crate) fn build_union_storage_type(
         fields.push((llvm_field_ty, field_size, field_align, contains_pointer));
     }
 
-    let anchor_int = IntegerType::get(ctx, (align * 8) as u32, Signedness::Signless);
+    let storage_align = align.min(16);
+    let anchor_int = IntegerType::get(ctx, (storage_align * 8) as u32, Signedness::Signless);
     let anchor: TypeHandle = llvm_types::ArrayType::get(ctx, anchor_int.into(), 0).into();
     let mut storage_fields = vec![anchor];
     if size > 0 {
@@ -695,9 +690,9 @@ pub(crate) fn build_union_storage_type(
             union_ty.name()
         )
     })?;
-    if llvm_size != size || llvm_align != align {
+    if llvm_size != size || llvm_align > align {
         return Err(anyhow::anyhow!(
-            "union `{}` storage lowered to size/alignment {}/{} but rustc requires {}/{}",
+            "union `{}` storage lowered to incompatible size/alignment {}/{} but rustc requires {}/{}",
             union_ty.name(),
             llvm_size,
             llvm_align,
@@ -3137,7 +3132,7 @@ mod tests {
     }
 
     #[test]
-    fn union_storage_rejects_unrepresentable_over_alignment() {
+    fn union_storage_preserves_over_aligned_size_and_stride() {
         let mut ctx = make_ctx();
         let u32_ty = mir_uint(&mut ctx, 32);
         let union_ty = MirUnionType::get(
@@ -3149,8 +3144,40 @@ mod tests {
             32,
         );
         let union_data = union_ty.deref(&ctx).clone();
-        let err = build_union_storage_type(&mut ctx, &union_data).unwrap_err();
-        assert!(err.to_string().contains("up to 16 bytes"));
+        let storage = build_union_storage_type(&mut ctx, &union_data).unwrap();
+        assert_eq!(llvm_type_size_align(&ctx, storage), Some((32, 16)));
+
+        let union_handle: TypeHandle = union_ty.into();
+        let array: TypeHandle = MirArrayType::get(&mut ctx, union_handle, 3).into();
+        let llvm_array = convert_type(&mut ctx, array).unwrap();
+        assert_eq!(llvm_type_size_align(&ctx, llvm_array), Some((96, 16)));
+    }
+
+    #[test]
+    fn uninhabited_enum_lowers_to_zero_sized_storage() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 8);
+        let never: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "Never".into(),
+            discr,
+            vec![],
+            vec![],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 0,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Empty,
+                carrier_kind: EnumCarrierKind::None,
+                variant_inhabited: vec![],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let storage = convert_type(&mut ctx, never).unwrap();
+        assert!(is_zero_sized_type(&ctx, storage));
+        assert_eq!(llvm_type_size_align(&ctx, storage), Some((0, 1)));
     }
 
     #[test]

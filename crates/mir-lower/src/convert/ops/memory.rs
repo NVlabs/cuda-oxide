@@ -102,8 +102,30 @@ pub(crate) fn convert_store(
         }
     };
 
+    let mir_store = dialect_mir::ops::MirStoreOp::new(op);
+    if !mir_store.is_volatile(ctx)
+        && matches!(small_array_pointer_candidate_count(ctx, ptr), Some(1..=64))
+    {
+        let false_value = integer_constant(ctx, rewriter, 1, 0);
+        let true_value = integer_constant(ctx, rewriter, 1, 1);
+        store_through_small_array_pointer_selection(
+            ctx,
+            rewriter,
+            ptr,
+            val,
+            op,
+            &[],
+            StorePredicate {
+                enabled: true_value,
+                false_value,
+            },
+        )?;
+        rewriter.erase_operation(ctx, op);
+        return Ok(());
+    }
+
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
-    if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
+    if mir_store.is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
     }
     copy_alignment(ctx, op, llvm_store.get_operation());
@@ -297,14 +319,249 @@ pub(crate) fn convert_load(
     let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
+    let mir_load = dialect_mir::ops::MirLoadOp::new(op);
+    if !mir_load.is_volatile(ctx)
+        && matches!(small_array_pointer_candidate_count(ctx, ptr), Some(1..=64))
+    {
+        let loaded =
+            load_through_small_array_pointer_selection(ctx, rewriter, ptr, llvm_ty, op, &[])?;
+        rewriter.replace_operation_with_values(ctx, op, vec![loaded]);
+        return Ok(());
+    }
+
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
-    if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
+    if mir_load.is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_load.get_operation(), true);
     }
     copy_alignment(ctx, op, llvm_load.get_operation());
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
+    Ok(())
+}
+
+#[derive(Clone)]
+struct DeferredGep {
+    indices: Vec<llvm::GepIndex>,
+    source_element_type: TypeHandle,
+}
+
+#[derive(Clone, Copy)]
+struct StorePredicate {
+    enabled: pliron::value::Value,
+    false_value: pliron::value::Value,
+}
+
+fn integer_constant(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    width: u32,
+    value: u64,
+) -> pliron::value::Value {
+    let ty = IntegerType::get(ctx, width, Signedness::Signless);
+    let width = std::num::NonZeroUsize::new(width as usize).expect("integer width is nonzero");
+    let attr: AttrObj = IntegerAttr::new(ty, APInt::from_u64(value, width)).into();
+    let constant = llvm::ConstantOp::new(ctx, attr);
+    rewriter.insert_operation(ctx, constant.get_operation());
+    constant.get_operation().deref(ctx).get_result(0)
+}
+
+/// Count the constant-address leaves represented by a small-array pointer
+/// selection. `None` means the expression has no marked selection and should
+/// retain ordinary load lowering.
+fn small_array_pointer_candidate_count(ctx: &Context, ptr: pliron::value::Value) -> Option<u64> {
+    let defining_op = ptr.defining_op()?;
+    if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
+        let true_ptr = defining_op.deref(ctx).get_operand(1);
+        let false_ptr = defining_op.deref(ctx).get_operand(2);
+        let true_count = small_array_pointer_candidate_count(ctx, true_ptr).unwrap_or(1);
+        let false_count = small_array_pointer_candidate_count(ctx, false_ptr).unwrap_or(1);
+        return true_count.checked_add(false_count);
+    }
+    let gep = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx)?;
+    small_array_pointer_candidate_count(ctx, gep.get_operation().deref(ctx).get_operand(0))
+}
+
+/// Load through a tree of marked pointer selections by loading every constant
+/// candidate and selecting values instead of pointers.
+///
+/// LLVM otherwise canonicalizes `select (gep 0), (gep 1)` back into one dynamic
+/// GEP, which prevents SROA from promoting a fixed local array. Nested array
+/// indexing can wrap a marked selection in constant GEPs, so those GEPs are
+/// deferred and cloned onto each constant pointer leaf before the load.
+fn load_through_small_array_pointer_selection(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    ptr: pliron::value::Value,
+    result_ty: TypeHandle,
+    mir_load: Ptr<Operation>,
+    deferred_geps: &[DeferredGep],
+) -> Result<pliron::value::Value> {
+    if let Some(defining_op) = ptr.defining_op() {
+        if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
+            let condition = defining_op.deref(ctx).get_operand(0);
+            let true_ptr = defining_op.deref(ctx).get_operand(1);
+            let false_ptr = defining_op.deref(ctx).get_operand(2);
+            let true_value = load_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                true_ptr,
+                result_ty,
+                mir_load,
+                deferred_geps,
+            )?;
+            let false_value = load_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                false_ptr,
+                result_ty,
+                mir_load,
+                deferred_geps,
+            )?;
+            let select = llvm::SelectOp::new(ctx, condition, true_value, false_value);
+            rewriter.insert_operation(ctx, select.get_operation());
+            return Ok(select.get_operation().deref(ctx).get_result(0));
+        }
+        if let Some(gep) = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx) {
+            let base = gep.get_operation().deref(ctx).get_operand(0);
+            if small_array_pointer_candidate_count(ctx, base).is_some() {
+                let mut nested_geps = deferred_geps.to_vec();
+                nested_geps.push(DeferredGep {
+                    indices: gep.indices(ctx),
+                    source_element_type: gep.src_elem_type(ctx),
+                });
+                return load_through_small_array_pointer_selection(
+                    ctx,
+                    rewriter,
+                    base,
+                    result_ty,
+                    mir_load,
+                    &nested_geps,
+                );
+            }
+        }
+    }
+
+    let mut candidate_ptr = ptr;
+    for gep in deferred_geps.iter().rev() {
+        let cloned = llvm::GetElementPtrOp::new(
+            ctx,
+            candidate_ptr,
+            gep.indices.clone(),
+            gep.source_element_type,
+        );
+        rewriter.insert_operation(ctx, cloned.get_operation());
+        candidate_ptr = cloned.get_operation().deref(ctx).get_result(0);
+    }
+    let load = llvm::LoadOp::new(ctx, candidate_ptr, result_ty);
+    copy_alignment(ctx, mir_load, load.get_operation());
+    rewriter.insert_operation(ctx, load.get_operation());
+    Ok(load.get_operation().deref(ctx).get_result(0))
+}
+
+/// Store through a tree of marked pointer selections by updating every
+/// constant candidate under a mutually exclusive predicate.
+///
+/// Keeping the candidate addresses constant lets SROA promote fixed local
+/// arrays after a small indexing loop is unrolled. Each unselected candidate
+/// is written back unchanged, preserving the semantics of one dynamic store.
+fn store_through_small_array_pointer_selection(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    ptr: pliron::value::Value,
+    value: pliron::value::Value,
+    mir_store: Ptr<Operation>,
+    deferred_geps: &[DeferredGep],
+    predicate: StorePredicate,
+) -> Result<()> {
+    if let Some(defining_op) = ptr.defining_op() {
+        if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
+            let condition = defining_op.deref(ctx).get_operand(0);
+            let true_ptr = defining_op.deref(ctx).get_operand(1);
+            let false_ptr = defining_op.deref(ctx).get_operand(2);
+
+            let true_enabled =
+                llvm::SelectOp::new(ctx, condition, predicate.enabled, predicate.false_value);
+            rewriter.insert_operation(ctx, true_enabled.get_operation());
+            let true_enabled = true_enabled.get_operation().deref(ctx).get_result(0);
+
+            let false_enabled =
+                llvm::SelectOp::new(ctx, condition, predicate.false_value, predicate.enabled);
+            rewriter.insert_operation(ctx, false_enabled.get_operation());
+            let false_enabled = false_enabled.get_operation().deref(ctx).get_result(0);
+
+            store_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                true_ptr,
+                value,
+                mir_store,
+                deferred_geps,
+                StorePredicate {
+                    enabled: true_enabled,
+                    ..predicate
+                },
+            )?;
+            store_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                false_ptr,
+                value,
+                mir_store,
+                deferred_geps,
+                StorePredicate {
+                    enabled: false_enabled,
+                    ..predicate
+                },
+            )?;
+            return Ok(());
+        }
+        if let Some(gep) = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx) {
+            let base = gep.get_operation().deref(ctx).get_operand(0);
+            if small_array_pointer_candidate_count(ctx, base).is_some() {
+                let mut nested_geps = deferred_geps.to_vec();
+                nested_geps.push(DeferredGep {
+                    indices: gep.indices(ctx),
+                    source_element_type: gep.src_elem_type(ctx),
+                });
+                return store_through_small_array_pointer_selection(
+                    ctx,
+                    rewriter,
+                    base,
+                    value,
+                    mir_store,
+                    &nested_geps,
+                    predicate,
+                );
+            }
+        }
+    }
+
+    let mut candidate_ptr = ptr;
+    for gep in deferred_geps.iter().rev() {
+        let cloned = llvm::GetElementPtrOp::new(
+            ctx,
+            candidate_ptr,
+            gep.indices.clone(),
+            gep.source_element_type,
+        );
+        rewriter.insert_operation(ctx, cloned.get_operation());
+        candidate_ptr = cloned.get_operation().deref(ctx).get_result(0);
+    }
+
+    let value_ty = value.get_type(ctx);
+    let old_value = llvm::LoadOp::new(ctx, candidate_ptr, value_ty);
+    copy_alignment(ctx, mir_store, old_value.get_operation());
+    rewriter.insert_operation(ctx, old_value.get_operation());
+    let old_value = old_value.get_operation().deref(ctx).get_result(0);
+
+    let selected = llvm::SelectOp::new(ctx, predicate.enabled, value, old_value);
+    rewriter.insert_operation(ctx, selected.get_operation());
+    let selected = selected.get_operation().deref(ctx).get_result(0);
+
+    let store = llvm::StoreOp::new(ctx, selected, candidate_ptr);
+    copy_alignment(ctx, mir_store, store.get_operation());
+    rewriter.insert_operation(ctx, store.get_operation());
     Ok(())
 }
 

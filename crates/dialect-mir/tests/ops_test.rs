@@ -1333,3 +1333,89 @@ fn test_mir_enum_payload_rejects_uninhabited_variant() {
     payload.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
     assert!(payload.verify(&ctx).is_err());
 }
+
+/// Reachable-but-dead MIR (e.g. the residual arms of `array::try_from_fn`)
+/// can name uninhabited variants. The importer must lower such reads and
+/// constructions to typed undefs; if it ever emits the real ops again, these
+/// verifiers are the loud stop.
+#[test]
+fn test_uninhabited_enum_construct_and_discriminant_fail_verification() {
+    use dialect_mir::types::{EnumCarrierKind, EnumEncoding, EnumLayoutKind};
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+
+    // Constructing an uninhabited variant must fail verification.
+    let partial = MirEnumType::get_with_encoding(
+        &mut ctx,
+        "HasImpossibleVariant".into(),
+        i8_ty.into(),
+        vec![0, 1],
+        vec![
+            EnumVariant::unit("Live".into()),
+            EnumVariant::new_with_layout(
+                "Impossible".into(),
+                vec![i32_ty.into()],
+                vec![0],
+                vec![4],
+            ),
+        ],
+        EnumEncoding {
+            tag_offset: 0,
+            total_size: 8,
+            abi_align: 4,
+            layout_kind: EnumLayoutKind::Direct,
+            carrier_kind: EnumCarrierKind::Integer,
+            carrier_width: 8,
+            variant_inhabited: vec![1, 0],
+            ..EnumEncoding::default()
+        },
+    );
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    let field = block.deref(&ctx).get_argument(0);
+    let construct = Operation::new(
+        &mut ctx,
+        MirConstructEnumOp::get_concrete_op_info(),
+        vec![partial.into()],
+        vec![field],
+        vec![],
+        0,
+    );
+    let construct = MirConstructEnumOp::new(construct);
+    construct.set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(1));
+    assert!(construct.verify(&ctx).is_err());
+
+    // Reading the discriminant of a fully uninhabited enum must fail
+    // verification.
+    let never = MirEnumType::get_with_encoding(
+        &mut ctx,
+        "Never".into(),
+        i8_ty.into(),
+        vec![],
+        vec![],
+        EnumEncoding {
+            tag_offset: 0,
+            total_size: 0,
+            abi_align: 1,
+            layout_kind: EnumLayoutKind::Empty,
+            carrier_kind: EnumCarrierKind::None,
+            variant_inhabited: vec![],
+            ..EnumEncoding::default()
+        },
+    );
+    assert!(never.verify(&ctx).is_ok());
+    let never_block = BasicBlock::new(&mut ctx, None, vec![never.into()]);
+    let never_value = never_block.deref(&ctx).get_argument(0);
+    let get_discriminant = Operation::new(
+        &mut ctx,
+        MirGetDiscriminantOp::get_concrete_op_info(),
+        vec![i8_ty.into()],
+        vec![never_value],
+        vec![],
+        0,
+    );
+    let get_discriminant = MirGetDiscriminantOp::new(get_discriminant);
+    assert!(get_discriminant.verify(&ctx).is_err());
+}

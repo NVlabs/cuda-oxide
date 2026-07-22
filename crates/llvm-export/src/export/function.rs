@@ -416,9 +416,14 @@ impl<'a> ModuleExportState<'a> {
                     let op_obj = Operation::get_op_dyn(op, self.ctx);
                     let op_dyn = op_obj.as_ref();
 
-                    // Skip ops that don't produce named results (UndefOp is handled specially)
+                    // UndefOp is virtual in textual LLVM IR: uses print the
+                    // literal `undef`. Pre-register the name here so CFG
+                    // order cannot break a use in an earlier-printed block
+                    // (e.g. a PHI incoming) when the defining block prints
+                    // later.
                     if op_dyn.downcast_ref::<ops::UndefOp>().is_some() {
-                        // UndefOp result will be named "undef"
+                        let res = op_ref.get_result(0);
+                        value_names.insert(res, "undef".to_string());
                         continue;
                     }
 
