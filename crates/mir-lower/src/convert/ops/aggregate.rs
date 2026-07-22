@@ -641,6 +641,22 @@ pub(crate) fn convert_construct_array(
 /// retain the compact memory-based lowering.
 const MAX_SSA_ARRAY_ELEMENTS: u64 = 16;
 
+/// Total byte budget for the SSA selection-chain lowering.
+///
+/// [`MAX_SSA_ARRAY_ELEMENTS`] alone counts elements: `[BigStruct; 16]` would
+/// flow sixteen whole-aggregate extractvalues plus fifteen aggregate selects
+/// through registers. Cap the array's total size at 128 bytes -- the budget
+/// the element cap already implies for word-sized elements (16 x u64) -- so
+/// oversized aggregates keep the compact memory-based lowering.
+const MAX_SSA_ARRAY_BYTES: u64 = 128;
+
+/// Whether the lowered array type fits [`MAX_SSA_ARRAY_BYTES`]. Unsizeable
+/// layouts conservatively fall back to the memory lowering.
+fn fits_ssa_array_byte_budget(ctx: &Context, llvm_array_ty: TypeHandle) -> bool {
+    crate::convert::types::llvm_type_size_align(ctx, llvm_array_ty)
+        .is_some_and(|(size, _)| size <= MAX_SSA_ARRAY_BYTES)
+}
+
 const SMALL_ARRAY_ADDRESS_SELECT_ATTR: &str = "small_array_address_select";
 
 pub(crate) fn is_small_array_address_select(ctx: &Context, op: Ptr<Operation>) -> bool {
@@ -731,7 +747,9 @@ pub(crate) fn convert_extract_array_element(
     };
 
     let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
-    if array_size <= MAX_SSA_ARRAY_ELEMENTS {
+    let llvm_array_ty = llvm_export::types::ArrayType::get(ctx, llvm_element_ty, array_size);
+    if array_size <= MAX_SSA_ARRAY_ELEMENTS && fits_ssa_array_byte_budget(ctx, llvm_array_ty.into())
+    {
         return convert_small_array_extract(
             ctx,
             rewriter,
@@ -742,8 +760,6 @@ pub(crate) fn convert_extract_array_element(
             array_size,
         );
     }
-
-    let llvm_array_ty = llvm_export::types::ArrayType::get(ctx, llvm_element_ty, array_size);
 
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     let one_val = {
@@ -806,6 +822,10 @@ fn convert_small_array_extract(
     let mut selected = last_extract.get_operation().deref(ctx).get_result(0);
 
     // The final element is the default, so a valid index needs N-1 compares.
+    // This clamps an out-of-bounds UNCHECKED index to the last element
+    // instead of touching wild memory. Both are UB in Rust, but the alloca
+    // lowering faulted loudly where this reads a stale-but-valid value; the
+    // failure mode becomes silent.
     for index in (0..array_size - 1).rev() {
         let llvm_index = u32::try_from(index)
             .map_err(|_| pliron::input_error_noloc!("small array index does not fit u32"))?;
@@ -1654,6 +1674,7 @@ pub(crate) fn convert_array_element_addr(
     let llvm_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
 
     if (1..=MAX_SSA_ARRAY_ELEMENTS).contains(&array_size)
+        && fits_ssa_array_byte_budget(ctx, llvm_array_ty)
         && (is_local_array_address(ctx, arr_ptr)
             || is_readonly_aggregate_array_address(ctx, arr_ptr, pointer_is_mutable))
     {
@@ -1712,6 +1733,10 @@ fn convert_small_array_element_addr(
         Ok(gep.get_operation().deref(ctx).get_result(0))
     };
 
+    // The last element's address is the selection default: an out-of-bounds
+    // UNCHECKED index clamps to it instead of computing a wild address. Both
+    // are UB in Rust, but the dynamic-GEP lowering faulted loudly where this
+    // accesses a stale-but-valid slot; the failure mode becomes silent.
     let mut selected = element_ptr(ctx, rewriter, array_size - 1)?;
     for element_index in (0..array_size - 1).rev() {
         let pointer = element_ptr(ctx, rewriter, element_index)?;
@@ -1816,6 +1841,111 @@ mod tests {
         let extracted = extract.deref(ctx).get_result(0);
         append_mir_return(ctx, block, vec![extracted]);
         (module_ptr, block)
+    }
+
+    /// A 32-byte element: `[4 x i64]`. Eight of them stay under the element
+    /// cap while overflowing [`MAX_SSA_ARRAY_BYTES`].
+    fn wide_element_ty(ctx: &mut Context) -> TypeHandle {
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Unsigned).into();
+        MirArrayType::get(ctx, i64_ty, 4).into()
+    }
+
+    #[test]
+    fn oversized_small_array_extract_uses_bounded_memory_lowering() {
+        let mut ctx = make_ctx();
+        let element_ty = wide_element_ty(&mut ctx);
+        let usize_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let array_ty: TypeHandle = MirArrayType::get(&mut ctx, element_ty, 8).into();
+        let mut arg_tys = vec![element_ty; 8];
+        arg_tys.push(usize_ty);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, arg_tys, vec![element_ty]);
+        let values: Vec<Value> = (0..8).map(|i| block.deref(&ctx).get_argument(i)).collect();
+        let index = block.deref(&ctx).get_argument(8);
+        let construct = Operation::new(
+            &mut ctx,
+            mir::MirConstructArrayOp::get_concrete_op_info(),
+            vec![array_ty],
+            values,
+            vec![],
+            0,
+        );
+        construct.insert_at_back(block, &ctx);
+        let array = construct.deref(&ctx).get_result(0);
+        let extract = Operation::new(
+            &mut ctx,
+            mir::MirExtractArrayElementOp::get_concrete_op_info(),
+            vec![element_ty],
+            vec![array, index],
+            vec![],
+            0,
+        );
+        extract.insert_at_back(block, &ctx);
+        let extracted = extract.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![extracted]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module_ptr);
+
+        // 8 elements <= MAX_SSA_ARRAY_ELEMENTS, but 8 x 32 = 256 bytes blows
+        // MAX_SSA_ARRAY_BYTES: the whole-aggregate select chain must not fire.
+        assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn oversized_small_array_address_keeps_single_dynamic_gep() {
+        let mut ctx = make_ctx();
+        let element_ty = wide_element_ty(&mut ctx);
+        let usize_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let array_ty: TypeHandle = MirArrayType::get(&mut ctx, element_ty, 8).into();
+        let array_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, array_ty, true).into();
+        let element_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, element_ty, true).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![usize_ty], vec![element_ty]);
+        let index = block.deref(&ctx).get_argument(0);
+        let alloca = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![array_ptr_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        alloca.insert_at_back(block, &ctx);
+        let array_ptr = alloca.deref(&ctx).get_result(0);
+        let address = Operation::new(
+            &mut ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![element_ptr_ty],
+            vec![array_ptr, index],
+            vec![],
+            0,
+        );
+        address.insert_at_back(block, &ctx);
+        let element_ptr = address.deref(&ctx).get_result(0);
+        let load = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![element_ty],
+            vec![element_ptr],
+            vec![],
+            0,
+        );
+        load.insert_at_back(block, &ctx);
+        let value = load.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![value]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module_ptr);
+
+        // Alloca-rooted and under the element cap, but over the byte budget:
+        // constant-address candidate selection must not fire.
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
     }
 
     fn build_array_element_addr_read(ctx: &mut Context, array_size: u64) -> Ptr<Operation> {
