@@ -128,9 +128,14 @@ fn optimize_ll(
     };
 
     let opt_ll = ll_path.with_extension("opt.ll");
+    // The post-inline `loop-unroll` run is bounded per-pass (O3 cost model,
+    // full unrolls only, trip count <= 16). It carries NO global
+    // `-unroll-threshold` override: that cl::opt would leak into the
+    // unrollers inside every `default<O2>` run as well, and `loop-unroll`
+    // has no `threshold=` per-pass parameter in LLVM 21/22
+    // (`opt -print-passes`), so the default threshold applies.
     let optimization_args = [
         "-passes=default<O2>,function(loop-unroll<O3;full-unroll-max=16;no-partial;no-peeling;no-runtime>),default<O2>",
-        "-unroll-threshold=512",
     ];
     match std::process::Command::new(&opt.path)
         .args(optimization_args)
