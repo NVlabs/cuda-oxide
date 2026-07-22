@@ -659,6 +659,76 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Whether `c` can appear in a PTX identifier (`followsym`).
+    fn is_ptx_identifier_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_' || c == '$'
+    }
+
+    /// Whether `line` contains `name` as a complete identifier token.
+    ///
+    /// A plain substring check treats `__nv_sin` as present in a line that
+    /// only mentions `__nv_sinf`, so a call to the latter would wrongly mark
+    /// the former as referenced. Require the match to end at a
+    /// non-identifier character (and not to be the tail of a longer
+    /// identifier either).
+    fn contains_identifier_token(line: &str, name: &str) -> bool {
+        let mut search_from = 0;
+        while let Some(pos) = line[search_from..].find(name) {
+            let start = search_from + pos;
+            let end = start + name.len();
+            let before_ok = line[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_ptx_identifier_char(c));
+            let after_ok = line[end..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_ptx_identifier_char(c));
+            if before_ok && after_ok {
+                return true;
+            }
+            search_from = start + 1;
+        }
+        false
+    }
+
+    /// Names of `.visible .func` symbols in `ptx` that start with `__nv_`.
+    ///
+    /// llc prints void-returning definitions as `.visible .func __nv_foo(`
+    /// but value-returning ones as
+    /// `.visible .func  (.param .b32 func_retval0) __nv_clz(`, so a naive
+    /// `.visible .func __nv_` substring check misses everything with a
+    /// return value. Skip past the optional return-parameter clause and
+    /// inspect the declared symbol name itself.
+    fn exported_nv_functions(ptx: &str) -> Vec<String> {
+        let mut exported: Vec<String> = Vec::new();
+        for line in ptx.lines() {
+            let Some(rest) = line.trim_start().strip_prefix(".visible") else {
+                continue;
+            };
+            let Some(idx) = rest.find(".func") else {
+                continue;
+            };
+            let mut rest = rest[idx + ".func".len()..].trim_start();
+            // Skip the `(.param .b32 func_retval0)` clause of
+            // value-returning functions.
+            if let Some(after_open) = rest.strip_prefix('(') {
+                let Some(close) = after_open.find(')') else {
+                    continue;
+                };
+                rest = after_open[close + 1..].trim_start();
+            }
+            let name: String = rest
+                .chars()
+                .take_while(|c| is_ptx_identifier_char(*c))
+                .collect();
+            if name.starts_with("__nv_") {
+                exported.push(name);
+            }
+        }
+        exported
+    }
+
     /// `__nv_*` function definitions in `ptx` that no PTX `call` references.
     ///
     /// A definition line carries `.func`/`.entry` and opens a body (it does
@@ -675,16 +745,46 @@ mod tests {
             if let Some(idx) = trimmed.find("__nv_") {
                 let name: String = trimmed[idx..]
                     .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .take_while(|c| is_ptx_identifier_char(*c))
                     .collect();
                 defined.push(name);
             }
         }
         defined.retain(|name| {
             !ptx.lines()
-                .any(|line| line.contains("call") && line.contains(name.as_str()))
+                .any(|line| line.contains("call") && contains_identifier_token(line, name))
         });
         defined
+    }
+
+    /// Toolchain-free coverage for the PTX detectors used by the libdevice
+    /// link regression test (which skips on machines without llc/opt/
+    /// llvm-link/libdevice).
+    #[test]
+    fn nv_detectors_handle_retval_clauses_and_identifier_boundaries() {
+        let ptx = "\
+.visible .entry kernel(
+.visible .func __nv_void_helper(
+.visible .func  (.param .b32 func_retval0) __nv_clz(
+.func  (.param .b32 func_retval0) __nv_internal_only(
+\tcall.uni (retval0), __nv_sinf, (param0);
+";
+        // Value-returning exports (retval clause between `.func` and the
+        // name) must be caught, internal (non-.visible) ones must not.
+        assert_eq!(exported_nv_functions(ptx), ["__nv_void_helper", "__nv_clz"]);
+
+        // `__nv_sin` is not referenced by a call to `__nv_sinf`.
+        let call_line = "\tcall.uni (retval0), __nv_sinf, (param0);";
+        assert!(contains_identifier_token(call_line, "__nv_sinf"));
+        assert!(!contains_identifier_token(call_line, "__nv_sin"));
+        assert!(!contains_identifier_token("x__nv_sinf(", "__nv_sinf"));
+
+        let defs_and_call = "\
+.visible .func __nv_sin(
+.func  (.param .b32 func_retval0) __nv_sinf(
+\tcall.uni (retval0), __nv_sinf, (param0);
+";
+        assert_eq!(unreferenced_nv_definitions(defs_and_call), ["__nv_sin"]);
     }
 
     /// Regression test for IR-level libdevice linking: without
@@ -747,16 +847,19 @@ mod tests {
             Some(&libdevice),
         )
         .unwrap();
-        assert_eq!(target, "sm_80");
+        assert_eq!(target.target, "sm_80");
 
         let ptx = std::fs::read_to_string(&ptx_path).unwrap();
         assert!(
             ptx.contains(".visible .entry kernel"),
             "the kernel itself must stay exported:\n{ptx}"
         );
+        let exported = exported_nv_functions(&ptx);
         assert!(
-            !ptx.contains(".visible .func __nv_"),
-            "libdevice bodies must be internalized, not exported:\n{ptx}"
+            exported.is_empty(),
+            "libdevice bodies must be internalized, not exported; found {} `.visible .func` \
+             definitions: {exported:?}",
+            exported.len()
         );
         let unreferenced = unreferenced_nv_definitions(&ptx);
         assert!(
