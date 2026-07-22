@@ -1314,8 +1314,13 @@ impl<'a> ModuleExportState<'a> {
         } else {
             write!(output, "  {} = call ", call_result_name.as_deref().unwrap()).unwrap();
             if let Some(decl) = &device_extern {
+                // Return-position attributes precede the type:
+                // `%r = call signext i8 @f()`.
+                if let Some(attr) = decl.return_type.ext_attr() {
+                    write!(output, "{attr} ").unwrap();
+                }
                 decl.return_type
-                    .write_llvm_with_attr(output, self.legacy_typed_pointers())?;
+                    .write_llvm(output, self.legacy_typed_pointers())?;
             } else {
                 self.export_type(ret_ty, output)?;
             }

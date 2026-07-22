@@ -2690,28 +2690,32 @@ fn modern_device_extern_emits_signext_zeroext_for_small_integer_params() {
     let module = ModuleOp::new(&mut ctx, "small_types_extern".try_into().unwrap());
     let module_block = module_top_block(&mut ctx, &module);
 
-    // The extern takes (i32 signext, i32 zeroext, half) and returns void.
-    // In the pliron module, these are all plain i32/half types -- the ABI
-    // extension attributes are only in the DeviceExternType metadata.
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    // The extern takes (i8 signext, i16 zeroext, i1 zeroext, half) and
+    // returns void. The declared IR types stay NARROW (matching cuda-oxide's
+    // own i8/i16/i1 SSA values and the clang-compiled LTOIR definition); the
+    // ABI extension attributes live only in the DeviceExternType metadata.
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i16_ty = IntegerType::get(&ctx, 16, Signedness::Signless);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
     let half_ty = HalfType::get(&ctx);
     let void_ty = VoidType::get(&ctx);
 
     let external_ty = FuncType::get(
         &ctx,
         void_ty.into(),
-        vec![i32_ty.into(), i32_ty.into(), half_ty.into()],
+        vec![i8_ty.into(), i16_ty.into(), i1_ty.into(), half_ty.into()],
         false,
     );
     FuncOp::new(&mut ctx, "small_types_fn".try_into().unwrap(), external_ty)
         .get_operation()
         .insert_at_back(module_block, &ctx);
 
-    // Caller that forwards its own parameters to the extern.
+    // Caller that forwards its own narrow parameters to the extern with no
+    // value conversions.
     let caller_ty = FuncType::get(
         &ctx,
         void_ty.into(),
-        vec![i32_ty.into(), i32_ty.into(), half_ty.into()],
+        vec![i8_ty.into(), i16_ty.into(), i1_ty.into(), half_ty.into()],
         false,
     );
     let caller = FuncOp::new(&mut ctx, "caller".try_into().unwrap(), caller_ty);
@@ -2719,11 +2723,12 @@ fn modern_device_extern_emits_signext_zeroext_for_small_integer_params() {
     let arg0 = entry.deref(&ctx).get_argument(0);
     let arg1 = entry.deref(&ctx).get_argument(1);
     let arg2 = entry.deref(&ctx).get_argument(2);
+    let arg3 = entry.deref(&ctx).get_argument(3);
     CallOp::new(
         &mut ctx,
         CallOpCallable::Direct("small_types_fn".try_into().unwrap()),
         external_ty,
-        vec![arg0, arg1, arg2],
+        vec![arg0, arg1, arg2, arg3],
     )
     .get_operation()
     .insert_at_back(entry, &ctx);
@@ -2735,9 +2740,10 @@ fn modern_device_extern_emits_signext_zeroext_for_small_integer_params() {
     let externs = [DeviceExternDecl {
         export_name: "small_types_fn".to_string(),
         param_types: vec![
-            DeviceExternType::SignExtInteger(32), // i8 sign-extended to i32
-            DeviceExternType::ZeroExtInteger(32), // u8 zero-extended to i32
-            DeviceExternType::Float16,            // f16 as native half
+            DeviceExternType::SignExtInteger(8), // i8, sign-extended by NVPTX
+            DeviceExternType::ZeroExtInteger(16), // u16, zero-extended by NVPTX
+            DeviceExternType::ZeroExtInteger(1), // bool
+            DeviceExternType::Float16,           // f16 as native half
         ],
         return_type: DeviceExternType::Void,
         attrs: DeviceExternAttrs::default(),
@@ -2751,24 +2757,28 @@ fn modern_device_extern_emits_signext_zeroext_for_small_integer_params() {
     )
     .expect("modern extern with small types export succeeds");
 
-    // Check declaration has correct attributes.
+    // Declaration: narrow types with parameter-position attributes.
     assert!(
-        ir.contains("declare void @small_types_fn(i32 signext, i32 zeroext, half)"),
-        "declaration should have signext/zeroext attributes:\n{ir}"
+        ir.contains("declare void @small_types_fn(i8 signext, i16 zeroext, i1 zeroext, half)"),
+        "declaration should keep narrow types with signext/zeroext attributes:\n{ir}"
     );
 
-    // Check call site also uses attributes.
+    // Call site keeps the narrow types and attributes too.
     assert!(
-        ir.contains("i32 signext %v0"),
+        ir.contains("i8 signext %v0"),
         "call should use signext on first arg:\n{ir}"
     );
     assert!(
-        ir.contains("i32 zeroext %v1"),
+        ir.contains("i16 zeroext %v1"),
         "call should use zeroext on second arg:\n{ir}"
     );
     assert!(
-        ir.contains("half %v2"),
-        "call should use half for third arg:\n{ir}"
+        ir.contains("i1 zeroext %v2"),
+        "call should use zeroext on the bool arg:\n{ir}"
+    );
+    assert!(
+        ir.contains("half %v3"),
+        "call should use half for the f16 arg:\n{ir}"
     );
 }
 
@@ -2778,11 +2788,13 @@ fn modern_device_extern_signext_return_type() {
     let module = ModuleOp::new(&mut ctx, "signext_return".try_into().unwrap());
     let module_block = module_top_block(&mut ctx, &module);
 
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
     let void_ty = VoidType::get(&ctx);
 
-    // Extern returns i32 signext (representing an i8 return value promoted to i32).
-    let external_ty = FuncType::get(&ctx, i32_ty.into(), vec![], false);
+    // Extern returns i8 with signext. The declared type stays i8; only the
+    // attribute marks the NVPTX widening, and in return position LLVM's
+    // grammar requires the attribute BEFORE the type.
+    let external_ty = FuncType::get(&ctx, i8_ty.into(), vec![], false);
     FuncOp::new(&mut ctx, "get_small_val".try_into().unwrap(), external_ty)
         .get_operation()
         .insert_at_back(module_block, &ctx);
@@ -2807,7 +2819,7 @@ fn modern_device_extern_signext_return_type() {
     let externs = [DeviceExternDecl {
         export_name: "get_small_val".to_string(),
         param_types: vec![],
-        return_type: DeviceExternType::SignExtInteger(32),
+        return_type: DeviceExternType::SignExtInteger(8),
         attrs: DeviceExternAttrs::default(),
     }];
 
@@ -2819,16 +2831,16 @@ fn modern_device_extern_signext_return_type() {
     )
     .expect("modern extern with signext return export succeeds");
 
-    // Check declaration has signext on return type.
+    // Declaration: attribute precedes the narrow return type.
     assert!(
-        ir.contains("declare i32 signext @get_small_val()"),
-        "declaration should have signext on return type:\n{ir}"
+        ir.contains("declare signext i8 @get_small_val()"),
+        "declaration should have signext BEFORE the return type:\n{ir}"
     );
 
-    // Check call site also uses signext.
+    // Call site uses the same return-position placement.
     assert!(
-        ir.contains("call i32 signext @get_small_val()"),
-        "call should use signext on return type:\n{ir}"
+        ir.contains("call signext i8 @get_small_val()"),
+        "call should have signext BEFORE the return type:\n{ir}"
     );
 }
 
@@ -2885,5 +2897,166 @@ fn plain_integer_device_extern_has_no_extension_attributes() {
     assert!(
         !ir.contains("signext") && !ir.contains("zeroext"),
         "plain i32 should have no extension attributes:\n{ir}"
+    );
+}
+
+#[test]
+fn legacy_device_extern_rejects_small_integers_by_value() {
+    let mut ctx = Context::new();
+    let empty = ModuleOp::new(&mut ctx, "empty".try_into().unwrap());
+    let externs = [DeviceExternDecl {
+        export_name: "takes_small".to_string(),
+        param_types: vec![DeviceExternType::SignExtInteger(8)],
+        return_type: DeviceExternType::ZeroExtInteger(16),
+        attrs: DeviceExternAttrs::default(),
+    }];
+    let err = export_module_with_externs(
+        &ctx,
+        &empty,
+        &externs,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect_err("legacy sub-32-bit by-value externs must fail cleanly");
+    assert!(
+        err.contains("CUDA 12 legacy") && err.contains("sub-32-bit"),
+        "{err}"
+    );
+}
+
+/// Build a module whose externs carry small params AND a small return, in
+/// both declare and call positions, so the emitted attribute placement can
+/// be checked against a real LLVM parser.
+fn small_type_extern_module(ctx: &mut Context) -> (ModuleOp, Vec<DeviceExternDecl>) {
+    let module = ModuleOp::new(ctx, "small_types_parse_gate".try_into().unwrap());
+    let module_block = module_top_block(ctx, &module);
+
+    let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+    let i16_ty = IntegerType::get(ctx, 16, Signedness::Signless);
+    let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+    let half_ty = HalfType::get(ctx);
+    let void_ty = VoidType::get(ctx);
+
+    let take_small_ty = FuncType::get(
+        ctx,
+        void_ty.into(),
+        vec![i8_ty.into(), i16_ty.into(), i1_ty.into(), half_ty.into()],
+        false,
+    );
+    FuncOp::new(ctx, "take_small".try_into().unwrap(), take_small_ty)
+        .get_operation()
+        .insert_at_back(module_block, &*ctx);
+
+    let give_small_ty = FuncType::get(ctx, i8_ty.into(), vec![], false);
+    FuncOp::new(ctx, "give_small".try_into().unwrap(), give_small_ty)
+        .get_operation()
+        .insert_at_back(module_block, &*ctx);
+
+    let caller_ty = FuncType::get(
+        ctx,
+        void_ty.into(),
+        vec![i8_ty.into(), i16_ty.into(), i1_ty.into(), half_ty.into()],
+        false,
+    );
+    let caller = FuncOp::new(ctx, "caller".try_into().unwrap(), caller_ty);
+    let entry = caller.get_or_create_entry_block(ctx);
+    let arg0 = entry.deref(ctx).get_argument(0);
+    let arg1 = entry.deref(ctx).get_argument(1);
+    let arg2 = entry.deref(ctx).get_argument(2);
+    let arg3 = entry.deref(ctx).get_argument(3);
+    CallOp::new(
+        ctx,
+        CallOpCallable::Direct("take_small".try_into().unwrap()),
+        take_small_ty,
+        vec![arg0, arg1, arg2, arg3],
+    )
+    .get_operation()
+    .insert_at_back(entry, &*ctx);
+    CallOp::new(
+        ctx,
+        CallOpCallable::Direct("give_small".try_into().unwrap()),
+        give_small_ty,
+        vec![],
+    )
+    .get_operation()
+    .insert_at_back(entry, &*ctx);
+    ReturnOp::new(ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &*ctx);
+    caller.get_operation().insert_at_back(module_block, &*ctx);
+
+    let externs = vec![
+        DeviceExternDecl {
+            export_name: "take_small".to_string(),
+            param_types: vec![
+                DeviceExternType::SignExtInteger(8),
+                DeviceExternType::ZeroExtInteger(16),
+                DeviceExternType::ZeroExtInteger(1),
+                DeviceExternType::Float16,
+            ],
+            return_type: DeviceExternType::Void,
+            attrs: DeviceExternAttrs::default(),
+        },
+        DeviceExternDecl {
+            export_name: "give_small".to_string(),
+            param_types: vec![],
+            return_type: DeviceExternType::SignExtInteger(8),
+            attrs: DeviceExternAttrs::default(),
+        },
+    ];
+    (module, externs)
+}
+
+/// Parse gate: the emitted attribute placement (`i8 signext` in parameter
+/// position, `signext i8` in return position, for both `declare` and `call`)
+/// must be accepted by a real LLVM parser, not just string-matched.
+#[test]
+fn small_type_extern_module_parses_with_llvm_as() {
+    let mut ctx = Context::new();
+    let (module, externs) = small_type_extern_module(&mut ctx);
+    let ir = export_module_with_externs(
+        &ctx,
+        &module,
+        &externs,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("modern small-type extern export succeeds");
+
+    // Belt-and-braces string checks before the external parse.
+    assert!(
+        ir.contains("declare void @take_small(i8 signext, i16 zeroext, i1 zeroext, half)"),
+        "{ir}"
+    );
+    assert!(ir.contains("declare signext i8 @give_small()"), "{ir}");
+    assert!(ir.contains("call signext i8 @give_small()"), "{ir}");
+
+    let Some(llvm_as) = ["llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .find(|tool| {
+            std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+    else {
+        eprintln!("skipping llvm-as parse gate: no llvm-as-22/llvm-as-21/llvm-as on PATH");
+        return;
+    };
+
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_small_type_parse_gate_{}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, &ir).expect("write temp .ll");
+    let output = std::process::Command::new(llvm_as)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_file(&ll_path);
+    assert!(
+        output.status.success(),
+        "{llvm_as} rejected the emitted module:\n{stderr}\n--- module ---\n{ir}"
     );
 }

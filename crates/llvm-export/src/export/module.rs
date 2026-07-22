@@ -257,6 +257,15 @@ fn validate_device_extern_decl(
             decl.export_name
         ));
     }
+    if legacy_typed_pointers
+        && (decl.return_type.ext_attr().is_some()
+            || decl.param_types.iter().any(|ty| ty.ext_attr().is_some()))
+    {
+        return Err(format!(
+            "device extern `@{}` passes a sub-32-bit integer or `bool` by value, which is not supported by the CUDA 12 legacy LLVM 7 NVVM dialect; use i32/u32 or pass a pointer",
+            decl.export_name
+        ));
+    }
 
     // Render both forms up front. This validates zero-width integers,
     // `void*`, and invalid array element types even if only one dialect is
@@ -421,8 +430,12 @@ pub(super) fn export_module_with_externs_impl(
                 continue;
             }
             write!(&mut output, "declare ").unwrap();
+            // Return-position attributes precede the type: `declare signext i8 @f()`.
+            if let Some(attr) = decl.return_type.ext_attr() {
+                write!(&mut output, "{attr} ").unwrap();
+            }
             decl.return_type
-                .write_llvm_with_attr(&mut output, state.legacy_typed_pointers())?;
+                .write_llvm(&mut output, state.legacy_typed_pointers())?;
             write!(&mut output, " @{}(", decl.export_name).unwrap();
             for (index, param) in decl.param_types.iter().enumerate() {
                 if index != 0 {

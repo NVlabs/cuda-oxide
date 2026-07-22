@@ -117,10 +117,14 @@ enum DeviceExternTypePosition {
 /// Raw-pointer pointees are preserved recursively. Unsupported C ABI types
 /// return an error instead of being treated as an arbitrary pointer.
 ///
-/// The NVPTX calling convention promotes integer types smaller than 32 bits
-/// to `i32` with `signext` (for signed types) or `zeroext` (for unsigned
-/// types and `bool`). `f16` is passed as `half` directly since NVPTX has
-/// native f16 support.
+/// Integer types smaller than 32 bits keep their NARROW IR type (`i8`,
+/// `i16`, `i1` for `bool`) and carry a `signext`/`zeroext` ABI attribute,
+/// exactly like clang's NVPTXABIInfo and rustc's nvptx64 callconv; the NVPTX
+/// backend performs the `.param.b32` widening. This keeps the emitted
+/// `declare` byte-for-byte compatible with clang/nvcc-compiled LTOIR
+/// definitions and lets cuda-oxide's own narrow SSA values flow into the
+/// call with no inserted conversions. `f16` is passed as `half` directly
+/// since NVPTX has native f16 support.
 fn rustc_ty_to_device_extern_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
@@ -138,14 +142,14 @@ fn rustc_ty_to_device_extern_type<'tcx>(
     }
 
     // For pointer pointees, all integer widths are valid without extension.
-    // For by-value parameters/returns, the NVPTX ABI promotes sub-32-bit
-    // integers to i32 with the appropriate sign/zero extension attribute.
+    // For by-value parameters/returns, sub-32-bit integers keep their narrow
+    // type and gain the sign/zero extension ABI attribute at that width.
     let signed_integer = |bits: u32| {
         if position == DeviceExternTypePosition::Pointee || matches!(bits, 32 | 64) {
             Ok(E::Integer(bits))
         } else if matches!(bits, 8 | 16) {
-            // NVPTX ABI: promote to i32 with signext
-            Ok(E::SignExtInteger(32))
+            // NVPTX ABI: narrow type with signext (clang NVPTXABIInfo shape).
+            Ok(E::SignExtInteger(bits))
         } else {
             Err(format!(
                 "`i{bits}` is not supported by value in a device extern; use i32/i64 or pass a pointer"
@@ -157,8 +161,8 @@ fn rustc_ty_to_device_extern_type<'tcx>(
         if position == DeviceExternTypePosition::Pointee || matches!(bits, 32 | 64) {
             Ok(E::Integer(bits))
         } else if matches!(bits, 8 | 16) {
-            // NVPTX ABI: promote to i32 with zeroext
-            Ok(E::ZeroExtInteger(32))
+            // NVPTX ABI: narrow type with zeroext (clang NVPTXABIInfo shape).
+            Ok(E::ZeroExtInteger(bits))
         } else {
             Err(format!(
                 "`u{bits}` is not supported by value in a device extern; use u32/u64 or pass a pointer"
@@ -229,8 +233,9 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 // Behind a pointer, bool is just i8 (Rust's bool is 1 byte).
                 Ok(E::Integer(8))
             } else {
-                // NVPTX ABI: bool (i1) is promoted to i32 with zeroext.
-                Ok(E::ZeroExtInteger(32))
+                // NVPTX ABI: bool stays i1 with zeroext, matching both
+                // clang's `zeroext i1` and cuda-oxide's own i1 SSA values.
+                Ok(E::ZeroExtInteger(1))
             }
         }
         TyKind::Char => Err(
