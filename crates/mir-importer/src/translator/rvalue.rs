@@ -4751,6 +4751,7 @@ fn translate_ptr_to_array_constant(
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
+    validate_ptr_to_array_constant_type(ctx, array_ty, loc.clone())?;
     let expected_size = rust_type_layout_size(rust_array_ty, loc.clone())?;
     let (bytes, alignment) =
         promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
@@ -4794,6 +4795,54 @@ fn translate_ptr_to_array_constant(
     Ok((ptr_val, last_op))
 }
 
+/// Preserve the established pointer-to-array constant boundary: only primitive
+/// scalars and recursively nested arrays of primitive scalars are supported.
+///
+/// Bare array values have a separate lowering path which additionally supports
+/// tuples. Keeping this validation local to the pointer path prevents that new
+/// support from implicitly widening promoted pointer initializers.
+fn validate_ptr_to_array_constant_type(
+    ctx: &Context,
+    ty: TypeHandle,
+    loc: Location,
+) -> TranslationResult<()> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
+
+    let ty_obj = ty.deref(ctx);
+    if ty_obj.is::<IntegerType>()
+        || ty_obj.is::<MirFP16Type>()
+        || ty_obj.is::<FP32Type>()
+        || ty_obj.is::<FP64Type>()
+    {
+        return Ok(());
+    }
+
+    if let Some(array_ty) = ty_obj.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        let element_ty = array_ty.element_type();
+        drop(ty_obj);
+        return validate_ptr_to_array_constant_type(ctx, element_ty, loc);
+    }
+
+    input_err!(
+        loc,
+        TranslationErr::unsupported(format!(
+            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalar elements (integers, f16, f32, f64) or nested arrays of those.",
+            ty_obj
+        ))
+    )
+}
+
+fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
+    match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
 /// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
 /// [..]` indexed by runtime value) to a `MirConstructArrayOp`. Element stride
 /// and aggregate field offsets come from rustc layout; pointer relocations are
@@ -4818,14 +4867,7 @@ fn translate_array_value_constant(
             );
         }
     }
-    let relocation_count = match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
-        ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
-            _ => 0,
-        },
-        _ => 0,
-    };
+    let relocation_count = constant_pointer_relocation_count(constant);
     if relocation_count != 0 {
         return input_err!(
             loc,
@@ -5646,6 +5688,15 @@ fn translate_tuple_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let relocation_count = constant_pointer_relocation_count(constant);
+    if relocation_count != 0 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Tuple constant contains {relocation_count} pointer relocation(s); cuda-oxide cannot yet preserve tuple pointer provenance"
+            ))
+        );
+    }
     let bytes = constant_bytes(constant, "tuple", loc.clone())?;
     translate_tuple_constant_from_bytes(ctx, rust_ty, const_ty_ptr, &bytes, block_ptr, prev_op, loc)
 }
@@ -8119,6 +8170,59 @@ mod enum_niche_decode_tests {
             decode_niche_variant_index(0, u8::MAX.into(), u8::MAX.into(), 3, 4, 1),
             4,
             "u8 carrier value 0 is one step after niche_start 255"
+        );
+    }
+}
+
+#[cfg(test)]
+mod pointer_array_constant_type_tests {
+    use super::validate_ptr_to_array_constant_type;
+    use dialect_mir::types::{MirArrayType, MirStructType, MirTupleType};
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::context::Context;
+    use pliron::location::Location;
+    use pliron::r#type::TypeHandle;
+
+    #[test]
+    fn pointer_array_constant_boundary_keeps_aggregates_out_and_nested_primitives_in() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let primitive_array: TypeHandle = MirArrayType::get(&mut ctx, u32_ty, 3).into();
+        let nested_primitive_array: TypeHandle =
+            MirArrayType::get(&mut ctx, primitive_array, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, nested_primitive_array, Location::Unknown)
+                .is_ok(),
+            "recursively nested primitive arrays remain supported"
+        );
+
+        let struct_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "PointerArrayElement".into(),
+            vec!["value".into()],
+            vec![u32_ty],
+        )
+        .into();
+        let struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, struct_array, Location::Unknown).is_err(),
+            "pointer-to-array constants must not gain struct element support"
+        );
+
+        let nested_struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_array, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, nested_struct_array, Location::Unknown)
+                .is_err(),
+            "nesting must not hide an unsupported struct leaf"
+        );
+
+        let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty]).into();
+        let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, tuple_array, Location::Unknown).is_err(),
+            "bare tuple-array support must not widen pointer-to-array constants"
         );
     }
 }

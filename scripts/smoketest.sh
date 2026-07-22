@@ -55,7 +55,7 @@ LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_tuple_array_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_tuple_array_provenance error_tuple_constant_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 # Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
 NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
@@ -373,6 +373,12 @@ verdict_error() {
         error_tuple_array_provenance)
             if ! grep -Fq 'Array value constant contains 2 pointer relocation(s); cuda-oxide cannot yet preserve array pointer provenance' "${log}"; then
                 echo "FAIL (missing tuple-array pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_tuple_constant_provenance)
+            if ! grep -Fq 'Tuple constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve tuple pointer provenance' "${log}"; then
+                echo "FAIL (missing direct-tuple pointer-relocation diagnostic)"
                 return 1
             fi
             ;;
