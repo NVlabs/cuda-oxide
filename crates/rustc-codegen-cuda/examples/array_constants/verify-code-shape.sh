@@ -5,14 +5,78 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 llvm_ir="${root}/array_constants.ll"
+optimized_llvm_ir="${root}/array_constants.opt.ll"
+ptx="${root}/array_constants.ptx"
 
 test -s "${llvm_ir}"
+test -s "${optimized_llvm_ir}"
+test -s "${ptx}"
 
 require_shape() {
     local description="$1"
     local pattern="$2"
     if ! grep -Eq "${pattern}" "${llvm_ir}"; then
         echo "error: missing ${description} in ${llvm_ir}" >&2
+        exit 1
+    fi
+}
+
+symbol_body() {
+    local artifact="$1"
+    local format="$2"
+    local symbol="$3"
+
+    if [[ "${format}" == "llvm" ]]; then
+        awk -v marker="${symbol}(" '
+            !emit && index($0, marker) && $1 == "define" { emit = 1 }
+            emit { print }
+            emit && $0 == "}" { exit }
+        ' "${artifact}"
+    else
+        # Unoptimized PTX includes forward declarations. Wait for the matching
+        # header to reach `{`; a prototype reaches `;` and is skipped.
+        awk -v marker="${symbol}(" '
+            !emit && !candidate && index($0, marker) && index($0, ".func") {
+                candidate = 1
+            }
+            candidate && $0 ~ /^[[:space:]]*;[[:space:]]*$/ {
+                candidate = 0
+                next
+            }
+            candidate && $0 ~ /^[[:space:]]*\{[[:space:]]*$/ {
+                emit = 1
+                candidate = 0
+            }
+            emit { print }
+            emit && index($0, "End function") != 0 { exit }
+        ' "${artifact}"
+    fi
+}
+
+require_symbol_shape() {
+    local artifact="$1"
+    local format="$2"
+    local symbol="$3"
+    local description="$4"
+    local pattern="$5"
+
+    if ! symbol_body "${artifact}" "${format}" "${symbol}" |
+        grep -E "${pattern}" >/dev/null; then
+        echo "error: missing ${description} in ${artifact}:${symbol}" >&2
+        exit 1
+    fi
+}
+
+reject_symbol_shape() {
+    local artifact="$1"
+    local format="$2"
+    local symbol="$3"
+    local description="$4"
+    local pattern="$5"
+
+    if symbol_body "${artifact}" "${format}" "${symbol}" |
+        grep -E "${pattern}" >/dev/null; then
+        echo "error: found ${description} in ${artifact}:${symbol}" >&2
         exit 1
     fi
 }
@@ -61,5 +125,56 @@ require_shape \
 require_shape \
     "reordered tuple array stride" \
     'insertvalue \[2 x \{ i32, i8, \[3 x i8\], i64 \}\] .* 1'
+
+# `(Align32, u8)` has Rust ABI alignment 32 even though its lowered LLVM
+# struct contains only an i8 plus byte padding and therefore looks align-1 to
+# LLVM. Pin every memory operation in the unoptimized pipeline: `%pair` is a
+# surviving MirAllocaOp, while the array alloca/store/element load are the
+# synthetic spill used for a dynamic array index.
+overaligned_symbol='array_constants__kernels__overaligned_zst_tuple_array_value'
+overaligned_tuple='\{ i8, \[31 x i8\] \}'
+overaligned_array="\\[2 x ${overaligned_tuple}\\]"
+
+require_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 tuple local alloca in unoptimized LLVM" \
+    "alloca ${overaligned_tuple}, align 32"
+require_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 dynamic array spill alloca in unoptimized LLVM" \
+    "alloca ${overaligned_array}, align 32"
+require_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 dynamic array spill store in unoptimized LLVM" \
+    "store ${overaligned_array} .* align 32"
+require_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 dynamic array element load in unoptimized LLVM" \
+    "load ${overaligned_tuple}, .* align 32"
+require_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 tuple local store in unoptimized LLVM" \
+    "store ${overaligned_tuple} .* align 32"
+reject_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
+    "under-aligned memory operation in unoptimized LLVM" \
+    '(^|, )align 1($|[^0-9])'
+
+# Optimization may scalarize the aggregate stores and removes the address
+# low-bit computation once the alloca is provably aligned, but the surviving
+# dynamic spill must remain align 32 throughout.
+require_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 dynamic array spill alloca in optimized LLVM" \
+    "alloca ${overaligned_array}, align 32"
+require_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 scalarized store in optimized LLVM" \
+    'store i8 18, .* align 32'
+require_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+    "align-32 scalarized load in optimized LLVM" \
+    'load i8, .* align 32'
+reject_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+    "under-aligned memory operation in optimized LLVM" \
+    '(^|, )align 1($|[^0-9])'
+
+require_symbol_shape "${ptx}" ptx "${overaligned_symbol}" \
+    "32-byte-aligned PTX local depot" \
+    '\.local \.align 32 \.b8'
+reject_symbol_shape "${ptx}" ptx "${overaligned_symbol}" \
+    "align-1 PTX local depot" \
+    '\.local \.align 1 \.b8'
 
 echo "array_constants code shape: PASS"

@@ -956,7 +956,7 @@ mod tests {
     use super::*;
     use crate::convert::ops::test_util::*;
     use dialect_mir::ops as mir;
-    use dialect_mir::types::MirPtrType;
+    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
     use llvm_export::op_interfaces::PointerTypeResult;
     use llvm_export::ops as llvm;
     use llvm_export::types::{PointerType, address_space as llvm_addr};
@@ -983,6 +983,23 @@ mod tests {
             src: Source::new_from_file(ctx, PathBuf::from(file)),
             pos: combine::stream::position::SourcePosition { line, column },
         }
+    }
+
+    fn over_aligned_tuple_ty(ctx: &mut Context) -> TypeHandle {
+        let byte: TypeHandle = IntegerType::get(ctx, 8, Signedness::Unsigned).into();
+        let marker: TypeHandle = MirStructType::get_with_full_layout(
+            ctx,
+            "Align32".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            32,
+        )
+        .into();
+        MirTupleType::get_with_layout(ctx, vec![marker, byte], vec![0, 1], vec![0, 0], 32, 32)
+            .into()
     }
 
     #[test]
@@ -1016,6 +1033,36 @@ mod tests {
         // Element type should round-trip through convert_type as i32.
         let elem_ty = alloca.result_pointee_type(&ctx);
         assert!(elem_ty.deref(&ctx).is::<IntegerType>());
+    }
+
+    #[test]
+    fn convert_alloca_preserves_nested_array_element_alignment() {
+        let mut ctx = make_ctx();
+        let tuple_ty = over_aligned_tuple_ty(&mut ctx);
+        let inner: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
+        let outer: TypeHandle = MirArrayType::get(&mut ctx, inner, 3).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, outer, true);
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let alloca_op = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        alloca_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).expect("expected llvm.alloca");
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, alloca.get_operation()),
+            Some(32)
+        );
     }
 
     #[test]
@@ -1400,6 +1447,43 @@ mod tests {
             "ref must store the value into the alloca"
         );
         assert_eq!(count_ops::<mir::MirRefOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn convert_ref_preserves_tuple_alignment_on_alloca_and_store() {
+        let mut ctx = make_ctx();
+        let tuple_ty = over_aligned_tuple_ty(&mut ctx);
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, tuple_ty, false);
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, tuple_ty);
+        undef.get_operation().insert_at_back(block, &ctx);
+        let value = undef.get_operation().deref(&ctx).get_result(0);
+        let ref_op = Operation::new(
+            &mut ctx,
+            mir::MirRefOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![value],
+            vec![],
+            0,
+        );
+        mir::MirRefOp::new(ref_op).set_mutable(&mut ctx, false);
+        ref_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).expect("expected llvm.alloca");
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).expect("expected llvm.store");
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, alloca.get_operation()),
+            Some(32)
+        );
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, store.get_operation()),
+            Some(32)
+        );
     }
 
     #[test]

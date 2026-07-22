@@ -12,6 +12,7 @@
 //! - nested tuples with zero-sized fields,
 //! - non-empty all-ZST tuples whose fields have equal offsets,
 //! - tuple arrays whose fields rustc reorders in memory,
+//! - tuple arrays containing an over-aligned zero-sized field,
 //! - direct padded tuple constants,
 //! - pointer-to-array constants (`&[T; N]`), which predate bare-array support.
 //!
@@ -43,6 +44,11 @@ const REORDERED_TUPLE_TABLE: [(u8, u32, u64); 2] = [
     (0xa5, 0x1122_3344, 0x0102_0304_0506_0708),
     (0x5a, 0x99aa_bbcc, 0x8877_6655_4433_2211),
 ];
+#[derive(Clone, Copy)]
+#[repr(align(32))]
+struct Align32;
+
+const OVERALIGNED_ZST_TUPLE_TABLE: [(Align32, u8); 2] = [(Align32, 0x12), (Align32, 0x34)];
 const DIRECT_TUPLE: (u8, u32) = (7, 41);
 
 #[derive(Clone, Copy)]
@@ -108,6 +114,14 @@ mod kernels {
     }
 
     #[inline(never)]
+    fn overaligned_zst_tuple_array_value(i: usize) -> u32 {
+        let pair = OVERALIGNED_ZST_TUPLE_TABLE[i & 1];
+        let address_low_bits = (&pair as *const (Align32, u8) as usize) & 31;
+        let (_, byte) = pair;
+        byte as u32 + address_low_bits as u32
+    }
+
+    #[inline(never)]
     fn direct_tuple_value() -> (u8, u32) {
         DIRECT_TUPLE
     }
@@ -131,6 +145,7 @@ mod kernels {
             let direct = direct_tag as u32 + direct_value;
             let all_zst = all_zst_tuple_array_value(i);
             let reordered = reordered_tuple_array_value(i);
+            let overaligned_zst = overaligned_zst_tuple_array_value(i);
             *slot = nested
                 .wrapping_mul(257)
                 .wrapping_add(pointer)
@@ -143,7 +158,9 @@ mod kernels {
                 .wrapping_mul(257)
                 .wrapping_add(all_zst)
                 .wrapping_mul(257)
-                .wrapping_add(reordered);
+                .wrapping_add(reordered)
+                .wrapping_mul(257)
+                .wrapping_add(overaligned_zst);
         }
     }
 }
@@ -172,6 +189,7 @@ fn expected_u32(i: usize) -> u32 {
         .wrapping_add(wide as u32)
         .wrapping_mul(257)
         .wrapping_add((wide >> 32) as u32);
+    let (_, overaligned_zst) = OVERALIGNED_ZST_TUPLE_TABLE[i & 1];
     nested
         .wrapping_mul(257)
         .wrapping_add(pointer)
@@ -185,6 +203,8 @@ fn expected_u32(i: usize) -> u32 {
         .wrapping_add(all_zst)
         .wrapping_mul(257)
         .wrapping_add(reordered)
+        .wrapping_mul(257)
+        .wrapping_add(overaligned_zst as u32)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -235,7 +255,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, padded/reordered tuple, nested/equal-offset ZST tuple, pointer-to-array constants)"
+            "array_constants: PASS ({N} threads; primitive, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, pointer-to-array constants)"
         );
         Ok(())
     } else {

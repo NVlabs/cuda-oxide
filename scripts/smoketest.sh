@@ -1316,6 +1316,13 @@ run_cargo() {
         invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
     fi
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "array_constants" ]]; then
+        local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+        if ! "${shape_check}" >>"${log}" 2>&1; then
+            printf 'array_constants failed its exact unoptimized LLVM, optimized LLVM, or PTX shape assertions\n' >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "helper_fn" ]]; then
         local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local nested_defs entry_count
