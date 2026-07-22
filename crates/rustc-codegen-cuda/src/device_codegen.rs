@@ -644,6 +644,10 @@ pub fn generate_device_code<'tcx>(
         // branch for them and never references the function, so translating
         // their (potentially complex) shim bodies is both unnecessary and
         // can fail on constructs the device pipeline does not support.
+        // The collector already skips these at discovery time with the
+        // same shared predicate (collector::process_drop_place), so this
+        // filter is a final guard that keeps translation in lockstep with
+        // emission if a future collection path forgets the check.
         let stable_functions: Vec<mir_importer::CollectedFunction> = functions
             .iter()
             .zip(export_names.iter())

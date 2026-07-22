@@ -92,44 +92,38 @@ const MAX_PROOF_DEPTH: usize = 16;
 /// `dropped_ty` must be fully monomorphized (no generic parameters
 /// left), which holds for every body the importer translates.
 ///
-/// Two levels of analysis are attempted:
-///
-/// 1. **Body-level proof**: walks the monomorphized `drop_in_place`
-///    shim MIR and proves every reachable path does nothing observable.
-///    This is the primary (most general) check.
-///
-/// 2. **Type-level fallback**: if the body proof fails (e.g. because
-///    the stdlib shim is too complex), checks whether every field of
-///    the dropped type has trivial drop glue. When no field needs drop,
-///    the `Drop::drop` body can only manipulate data inside the dying
-///    object and cannot trigger any nested destructor, so the entire
-///    drop is unobservable.
+/// This is a thin wrapper over [`drop_instance_is_noop`], the single
+/// no-op predicate shared by every site that must agree on whether a
+/// drop is observable.
 pub fn drop_glue_is_noop(dropped_ty: Ty) -> bool {
-    let instance = Instance::resolve_drop_in_place(dropped_ty);
-    if instance_is_noop(&instance, &mut Vec::new()) {
-        return true;
-    }
-    // Type-level fallback: if every field's drop resolves to an empty
-    // shim, the Drop impl body cannot trigger any real destructor.
-    all_field_drops_are_empty(dropped_ty)
+    drop_instance_is_noop(&Instance::resolve_drop_in_place(dropped_ty))
 }
 
 /// Returns true when the given `drop_in_place` instance is provably a
-/// no-op. This is the instance-level entry point used by the collector
-/// bridge to filter out no-op drop glue before translation.
+/// no-op, by walking the monomorphized shim MIR and proving every
+/// reachable path does nothing observable (body-level proof).
+///
+/// This is THE no-op predicate for drop glue. Three decisions must stay
+/// in exact lockstep, and all three consult this function:
+///
+/// 1. Whether `translate_drop` emits a `drop_in_place` call or a plain
+///    branch (via [`drop_glue_is_noop`]).
+/// 2. Whether the collector gathers the shim for translation
+///    (`rustc-codegen-cuda`'s `collector::process_drop_place`).
+/// 3. Whether device codegen keeps the shim in the translation set
+///    (`rustc-codegen-cuda`'s `device_codegen` no-op filter).
+///
+/// If these drift, emitted calls reference uncollected symbols (or dead
+/// shim bodies get translated and fail on unsupported constructs). Any
+/// widening of this proof must be sound for ALL callers: a `Drop` impl
+/// whose fields are trivially droppable can still be observable (e.g. a
+/// raw-pointer RAII guard whose `drop` writes through the pointer), so
+/// type-level "all fields drop-free" reasoning is NOT a valid fallback.
 ///
 /// Must be called inside a `rustc_internal::run()` context so that
 /// stable MIR queries are available.
 pub fn drop_instance_is_noop(instance: &Instance) -> bool {
-    if instance_is_noop(instance, &mut Vec::new()) {
-        return true;
-    }
-    // Type-level fallback: extract the dropped type from the instance
-    // and check field-level drop triviality.
-    if let Some(ty) = instance.args().0.first().and_then(|arg| arg.ty()) {
-        return all_field_drops_are_empty(*ty);
-    }
-    false
+    instance_is_noop(instance, &mut Vec::new())
 }
 
 /// Emits a device-side call to `drop_in_place::<T>` for the given place.
@@ -395,13 +389,12 @@ fn body_is_noop(body: &mir::Body, in_progress: &mut Vec<String>) -> bool {
                 worklist.push(*target);
             }
 
-            // An assert is a no-op on the success path (it only
-            // panics on failure, but panics are modelled as divergence,
-            // not as observable side-effects). Follow the success edge.
-            mir::TerminatorKind::Assert { target, .. } => worklist.push(*target),
-
-            // Everything else (diverging calls, inline asm,
+            // Everything else (asserts, diverging calls, inline asm,
             // resume/abort) either has an effect or might not return.
+            // Asserts fail the proof deliberately: following only the
+            // success edge would silently delete a would-be device trap.
+            // A failed proof now emits the real drop_in_place call, so
+            // there is no pressure to widen the proof here.
             _ => return false,
         }
     }
@@ -452,35 +445,6 @@ fn place_writes_through_pointer(place: &mir::Place) -> bool {
         .projection
         .iter()
         .any(|elem| matches!(elem, mir::ProjectionElem::Deref))
-}
-
-/// Returns `true` when every field of the ADT `ty` is provably a no-op
-/// to drop (recursively).
-///
-/// For a type with an explicit `Drop` impl whose fields are all
-/// recursively drop-free, the `Drop::drop` body operates exclusively
-/// on data that will never itself be destructed. It can shuffle values
-/// inside the dying object but cannot trigger any nested destructor,
-/// making the entire drop unobservable.
-///
-/// This catches stdlib patterns like `IntoIter<u32, 4>` whose sole
-/// field is `PolymorphicIter<MaybeUninit<u32>, 4>`, which itself has an
-/// `impl Drop` but whose own fields (`MaybeUninit<[MaybeUninit<u32>; 4]>`
-/// and `IndexRange`) are all trivially droppable. The recursion bottoms
-/// out at types whose `drop_in_place` shim is empty.
-fn all_field_drops_are_empty(ty: Ty) -> bool {
-    let TyKind::RigidTy(RigidTy::Adt(adt_def, args)) = ty.kind() else {
-        return false;
-    };
-    for variant in adt_def.variants() {
-        for field in variant.fields() {
-            let field_ty = field.ty_with_args(&args);
-            if !drop_glue_is_noop(field_ty) {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 /// Extracts the raw bit value of a constant operand, e.g. the `false`

@@ -412,25 +412,6 @@ pub fn is_device_function(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// - The generic definition (with T as a type parameter)
 /// - Concrete instantiations (with T = f32, T = i32, etc.)
 ///
-/// Returns `true` when every field of the ADT `ty` has trivial drop glue.
-///
-/// For a type with an explicit `Drop` impl whose fields all have
-/// `needs_drop == false`, the `Drop::drop` body operates exclusively on
-/// data inside the dying object and cannot trigger any nested destructor,
-/// making the entire drop unobservable. The mir-importer's
-/// `drop_glue_is_noop` will lower these as plain branches, so the
-/// collector can safely skip them (and their transitive callees).
-fn drop_fields_have_no_drop<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    let TyKind::Adt(adt_def, args) = ty.kind() else {
-        return false;
-    };
-    let typing_env = TypingEnv::fully_monomorphized();
-    adt_def.all_fields().all(|field| {
-        let field_ty = field.ty(tcx, args);
-        !field_ty.needs_drop(tcx, typing_env)
-    })
-}
-
 /// We only want to process concrete instantiations since we can't generate
 /// PTX for generic code - the device compiler needs concrete types.
 ///
@@ -1149,19 +1130,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         // DropGlue(_, None) is an empty shim for types that need no
         // destructor. The mir-importer's no-op analysis will lower these
         // as plain branches, so there's nothing to collect.
-        //
-        // DropGlue for a type whose fields are all trivially droppable
-        // (no field needs drop) is also a no-op: the Drop::drop body can
-        // only manipulate the dying object's own data and cannot
-        // trigger any nested destructor. The mir-importer's
-        // drop_glue_is_noop will lower these as plain branches, so
-        // there's nothing to collect. Skipping collection also
-        // prevents transitively collecting the Drop::drop body and
-        // its callees, which may reference stdlib functions the
-        // device pipeline does not support.
-        if let InstanceKind::DropGlue(_, maybe_ty) = drop_instance.def
-            && maybe_ty.is_none_or(|ty| drop_fields_have_no_drop(self.tcx, ty))
-        {
+        if let InstanceKind::DropGlue(_, None) = drop_instance.def {
             return;
         }
 
@@ -1177,6 +1146,22 @@ impl<'tcx> DeviceCollector<'tcx> {
                     "[collector] Skipping non-monomorphized drop_in_place: {:?}",
                     place_ty
                 );
+            }
+            return;
+        }
+
+        // Skip drop glue whose shim body is provably a no-op: the
+        // mir-importer's translate_drop lowers such drops to plain
+        // branches and never references the shim, so collecting it would
+        // only translate dead code and transitively pull in stdlib
+        // `Drop::drop` bodies (e.g. `core::array::IntoIter`'s
+        // `PolymorphicIter`) whose MIR the device pipeline cannot
+        // compile. This is the same predicate the importer's emit
+        // decision and the device_codegen translation filter consult,
+        // so the three decisions cannot drift.
+        if self.drop_glue_is_noop(drop_instance) {
+            if self.verbose {
+                eprintln!("[collector] Skipping no-op drop_in_place::<{:?}>", place_ty);
             }
             return;
         }
@@ -1209,6 +1194,29 @@ impl<'tcx> DeviceCollector<'tcx> {
             is_kernel: false,
             export_name,
         });
+    }
+
+    /// Returns true when the drop glue `instance` is provably a no-op.
+    ///
+    /// Delegates to `mir_importer::drop_instance_is_noop`, the single
+    /// shared predicate that also drives the importer's emit decision
+    /// (`translate_drop`) and the `device_codegen` translation filter.
+    /// Sharing one predicate keeps collection, emission, and translation
+    /// in lockstep: everything the importer calls is collected, and
+    /// nothing dead is translated.
+    ///
+    /// The predicate needs stable MIR queries, so a scoped
+    /// `rustc_internal::run` context is set up per query. Collection runs
+    /// before `device_codegen` enters its own context, so this never
+    /// nests; if it ever does, `run` returns an error and we fall back to
+    /// collecting the shim, a safe over-approximation that the
+    /// `device_codegen` filter prunes with the same predicate.
+    fn drop_glue_is_noop(&self, instance: Instance<'tcx>) -> bool {
+        use rustc_public::rustc_internal;
+        rustc_internal::run(self.tcx, || {
+            mir_importer::drop_instance_is_noop(&rustc_internal::stable(instance))
+        })
+        .unwrap_or(false)
     }
 
     /// Process a call operand to extract and add the callee.
@@ -1407,17 +1415,17 @@ impl<'tcx> DeviceCollector<'tcx> {
         // For DropGlue instances discovered via Call terminators (rather
         // than Drop terminators), route them through the same collection
         // logic as process_drop_place to avoid duplicating the enqueue path.
-        if let InstanceKind::DropGlue(_, Some(ty)) = resolved.def {
-            // Skip drop glue whose fields are all trivially droppable;
-            // same logic as in process_drop_place.
-            if drop_fields_have_no_drop(self.tcx, ty) {
-                return;
-            }
+        if let InstanceKind::DropGlue(_, Some(_)) = resolved.def {
             let mangled = self.tcx.symbol_name(resolved).name.to_string();
             if self.seen.contains(&mangled) {
                 return;
             }
             if !is_fully_monomorphized(self.tcx, resolved) {
+                return;
+            }
+            // Skip provably no-op drop glue; same shared predicate as
+            // process_drop_place, for the same lockstep reason.
+            if self.drop_glue_is_noop(resolved) {
                 return;
             }
             let callee_ctx = DiscoveryCtx {
