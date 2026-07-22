@@ -545,8 +545,12 @@ verdict_compile() {
 EXTRA_RUSTFLAGS=""
 invoke_cargo_oxide() {
     if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
-        if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
-            CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS}"$'\x1f'"${EXTRA_RUSTFLAGS}" \
+        if [[ -v CARGO_ENCODED_RUSTFLAGS ]]; then
+            local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
+            if [[ -n "${encoded_flags}" ]]; then
+                encoded_flags+=$'\x1f'
+            fi
+            CARGO_ENCODED_RUSTFLAGS="${encoded_flags}${EXTRA_RUSTFLAGS}" \
                 cargo oxide "$@"
         else
             RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${EXTRA_RUSTFLAGS}" cargo oxide "$@"
