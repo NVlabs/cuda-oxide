@@ -1929,7 +1929,7 @@ mod tests {
             !ops.iter()
                 .any(|op| Operation::get_op::<llvm::AtomicRmwOp>(*op, &ctx).is_some())
         );
-        let calls = ops
+        let mut calls = ops
             .iter()
             .filter_map(|op| Operation::get_op::<llvm::CallOp>(*op, &ctx))
             .filter_map(|call| match call.callee(&ctx) {
@@ -1937,16 +1937,17 @@ mod tests {
                 CallOpCallable::Indirect(_) => None,
             })
             .collect::<Vec<_>>();
+        let mut expected_calls = Vec::new();
         for width in [32, 64] {
             for address_space in [0, 1, 3] {
-                assert!(
-                    calls.contains(&format!(
-                        "llvm_nvvm_atomic_load_add_f{width}_p{address_space}f{width}"
-                    )),
-                    "{calls:?}"
-                );
+                expected_calls.push(format!(
+                    "llvm_nvvm_atomic_load_add_f{width}_p{address_space}f{width}"
+                ));
             }
         }
+        calls.sort();
+        expected_calls.sort();
+        assert_eq!(calls, expected_calls);
         module.get_operation().deref(&ctx).verify(&ctx).unwrap();
         let ir = export_module_to_string_with_config(
             &ctx,
