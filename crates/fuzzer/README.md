@@ -67,15 +67,20 @@ Call(_9 = dump_var(Move(__rl_dump1)), ReturnTo(bb5), UnwindUnreachable())
 - `UNSUPPORTED [adapter]`: rustlantis generated a MIR program, but our Python
   adapter refused to turn it into a cuda-oxide smoke case.
 
-For example, seed `0` currently reports:
+For example, seed `0` dumps a `u128`, which the adapter once refused; the
+trace API has since widened and the seed currently reports:
 
 ```text
-UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: u128
+seed 0: PASS
+
+results:
+  seed 0: PASS [run] CPU/GPU traces matched
+summary: PASS=1
 ```
 
-That means rustlantis successfully generated a program, but a generated
-`dump_var(...)` call included a type the adapter cannot rewrite. The trace API
-hashes:
+The typical `UNSUPPORTED [adapter]` cause is a generated `dump_var(...)` call
+or function signature that uses a type the adapter cannot rewrite. The trace
+API hashes:
 
 ```text
 bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char
@@ -137,11 +142,12 @@ crates/fuzzer/artifacts/summary.jsonl
 `run_seed.py` clears `crates/fuzzer/artifacts/` at the start of every
 invocation, so the logs and `summary.jsonl` always describe only the latest run.
 
-The terminal also prints a full per-seed summary, for example:
+The terminal also prints a full per-seed summary; entries that wrote a log
+append its path. For example, `--start 0 --count 2` currently prints:
 
 ```text
 results:
-  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: u128 (...)
-  seed 1: COMPILE_FAIL [backend] Unsupported construct: Type translation not yet implemented for: RigidTy(Char) (...)
-summary: COMPILE_FAIL=1, UNSUPPORTED=1
+  seed 0: PASS [run] CPU/GPU traces matched
+  seed 1: PASS [run] CPU/GPU traces matched
+summary: PASS=2
 ```
