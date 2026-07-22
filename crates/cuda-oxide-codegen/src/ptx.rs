@@ -23,9 +23,19 @@ use std::path::{Path, PathBuf};
 /// avoids the legacy NVVM IR path (which uses the LLVM 7 dialect and cannot
 /// represent f16 types on pre-Blackwell targets).
 ///
-/// Returns the linked `.ll` path on success, `None` on failure (with a
-/// diagnostic). The caller falls through to the unlinked IR when linking is
-/// unavailable.
+/// `--internalize --only-needed` mirrors clang's
+/// `LinkOnlyNeeded | InternalizeLinkedSymbols`: libdevice bodies have plain
+/// external linkage, so without both flags all ~350 definitions are pulled
+/// in, survive GlobalDCE, and llc exports every one as a `.visible .func
+/// __nv_*` PTX body (a one-call kernel balloons from ~130 to ~22,000 lines
+/// and later cuLink/nvJitLink steps hit duplicate-symbol collisions). With
+/// the flags, only the referenced bodies are imported, as `internal`, and
+/// `opt -O2` inlines or discards them.
+///
+/// Failure is a hard error: the pipeline chooses the PTX path for a
+/// libdevice kernel only after confirming `llvm-link` is resolvable, so a
+/// link failure here must not degrade into PTX with unresolved
+/// `.extern .func __nv_*` that only fails later at cuModuleLoad.
 fn link_libdevice(
     ll_path: &Path,
     libdevice_path: &Path,
@@ -33,12 +43,20 @@ fn link_libdevice(
     diagnostic_sink: Option<fn(&str)>,
     diagnostics: &mut Vec<String>,
     verbose: bool,
-) -> Option<PathBuf> {
-    let llvm_link = toolchain.llvm_link.as_ref()?;
+) -> Result<PathBuf, PipelineError> {
+    let Some(llvm_link) = toolchain.llvm_link.as_ref() else {
+        return Err(PipelineError::PtxGeneration(
+            "libdevice linking is required, but no `llvm-link` matching the selected `llc` \
+             is available; install the matching LLVM tools or set CUDA_OXIDE_LLVM_LINK"
+                .to_string(),
+        ));
+    };
 
     let linked_path = ll_path.with_extension("linked.ll");
     match std::process::Command::new(&llvm_link.path)
         .arg("-S")
+        .arg("--internalize")
+        .arg("--only-needed")
         .arg(ll_path)
         .arg(libdevice_path)
         .arg("-o")
@@ -57,34 +75,20 @@ fn link_libdevice(
                     ),
                 );
             }
-            Some(linked_path)
+            Ok(linked_path)
         }
-        Ok(output) => {
-            record_diagnostic(
-                diagnostics,
-                diagnostic_sink,
-                format!(
-                    "warning: llvm-link ({}) failed with status {}:\n{}\n\
-                     warning: continuing without libdevice; `__nv_*` calls may be unresolved",
-                    llvm_link.path,
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            );
-            None
-        }
-        Err(error) => {
-            record_diagnostic(
-                diagnostics,
-                diagnostic_sink,
-                format!(
-                    "warning: failed to run llvm-link ({}): {error}\n\
-                     warning: continuing without libdevice; `__nv_*` calls may be unresolved",
-                    llvm_link.path
-                ),
-            );
-            None
-        }
+        Ok(output) => Err(PipelineError::PtxGeneration(format!(
+            "llvm-link ({}) failed with status {} while linking libdevice ({}):\n{}",
+            llvm_link.path,
+            output.status,
+            libdevice_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))),
+        Err(error) => Err(PipelineError::PtxGeneration(format!(
+            "failed to run llvm-link ({}) while linking libdevice ({}): {error}",
+            llvm_link.path,
+            libdevice_path.display()
+        ))),
     }
 }
 
@@ -359,16 +363,17 @@ fn generate_ptx_impl(
     // Link libdevice at the IR level when the kernel uses `__nv_*` calls.
     // This resolves (and later inlines) CUDA math functions without forcing
     // the legacy NVVM IR path, which cannot represent f16 on pre-Blackwell.
-    let linked = libdevice_path.and_then(|lp| {
-        link_libdevice(
+    let linked = match libdevice_path {
+        Some(lp) => Some(link_libdevice(
             ll_path,
             lp,
             toolchain,
             diagnostic_sink,
             &mut diagnostics,
             opts.verbose,
-        )
-    });
+        )?),
+        None => None,
+    };
     let post_link_input: &Path = linked.as_deref().unwrap_or(ll_path);
 
     // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
@@ -651,6 +656,118 @@ mod tests {
             "{diagnostics:?}"
         );
         drop(diagnostics);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `__nv_*` function definitions in `ptx` that no PTX `call` references.
+    ///
+    /// A definition line carries `.func`/`.entry` and opens a body (it does
+    /// not end with `;` like the forward declarations llc prints for
+    /// callees). Anything imported from libdevice but never called is bloat
+    /// that `--internalize --only-needed` + `opt` must have eliminated.
+    fn unreferenced_nv_definitions(ptx: &str) -> Vec<String> {
+        let mut defined: Vec<String> = Vec::new();
+        for line in ptx.lines() {
+            let trimmed = line.trim();
+            if !trimmed.contains(".func") || trimmed.ends_with(';') {
+                continue;
+            }
+            if let Some(idx) = trimmed.find("__nv_") {
+                let name: String = trimmed[idx..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                defined.push(name);
+            }
+        }
+        defined.retain(|name| {
+            !ptx.lines()
+                .any(|line| line.contains("call") && line.contains(name.as_str()))
+        });
+        defined
+    }
+
+    /// Regression test for IR-level libdevice linking: without
+    /// `--internalize --only-needed` on the `llvm-link` invocation, all ~350
+    /// libdevice bodies keep external linkage, survive `opt -O2`, and a
+    /// one-call kernel's PTX balloons from ~130 to ~22,000 lines with 349
+    /// exported `.visible .func __nv_*` definitions.
+    #[test]
+    fn linked_libdevice_ptx_has_no_unreferenced_nv_definitions() {
+        // Needs a full toolchain (llc + same-major opt and llvm-link) and a
+        // discoverable libdevice.10.bc; skip quietly on machines without a
+        // CUDA toolkit or LLVM tools.
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            ..BackendOptions::default()
+        };
+        let Some(toolchain) = LlvmToolchain::resolve(&opts) else {
+            return;
+        };
+        if toolchain.opt.is_none() || toolchain.llvm_link.is_none() {
+            return;
+        }
+        let Ok(libdevice) = libnvvm_sys::find_libdevice() else {
+            return;
+        };
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_libdevice_link_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ll_path = root.join("kernel.ll");
+        let ptx_path = root.join("kernel.ptx");
+        std::fs::write(
+            &ll_path,
+            "target datalayout = \"e-i64:64-i128:128-v16:16-v32:32-n16:32:64\"\n\
+             target triple = \"nvptx64-nvidia-cuda\"\n\
+             \n\
+             declare float @__nv_sinf(float)\n\
+             \n\
+             define ptx_kernel void @kernel(ptr %out, float %x) {\n\
+               %s = call float @__nv_sinf(float %x)\n\
+               store float %s, ptr %out\n\
+               ret void\n\
+             }\n",
+        )
+        .unwrap();
+
+        let target = generate_ptx_with_toolchain(
+            &ll_path,
+            &ptx_path,
+            DebugKind::Off,
+            &opts,
+            &toolchain,
+            &GeneratedModuleRequirements::default(),
+            Some(&libdevice),
+        )
+        .unwrap();
+        assert_eq!(target, "sm_80");
+
+        let ptx = std::fs::read_to_string(&ptx_path).unwrap();
+        assert!(
+            ptx.contains(".visible .entry kernel"),
+            "the kernel itself must stay exported:\n{ptx}"
+        );
+        assert!(
+            !ptx.contains(".visible .func __nv_"),
+            "libdevice bodies must be internalized, not exported:\n{ptx}"
+        );
+        let unreferenced = unreferenced_nv_definitions(&ptx);
+        assert!(
+            unreferenced.is_empty(),
+            "linked PTX contains unreferenced __nv_* definitions: {unreferenced:?}"
+        );
+        assert!(
+            ptx.lines().count() < 1_000,
+            "linked PTX for a one-call kernel should be O(100) lines, got {}",
+            ptx.lines().count()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

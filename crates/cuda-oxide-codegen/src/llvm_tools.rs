@@ -65,8 +65,10 @@ pub struct LlvmToolchain {
     /// (either `opts.no_opt` or no same-major `opt` exists).
     pub opt: Option<OptTool>,
     /// The matched `llvm-link` for libdevice linking; `None` when no
-    /// same-major `llvm-link` is available (the caller falls back to the
-    /// NVVM IR path or warns about unresolved `__nv_*` calls).
+    /// same-major `llvm-link` is available. The backend decision probes the
+    /// same discovery ([`libdevice_ir_linking_available`]) and falls back to
+    /// the NVVM IR path, so libdevice kernels never reach `llc` with this
+    /// unset.
     pub llvm_link: Option<OptTool>,
     /// Tool-selection diagnostics for the caller to report or retain.
     pub diagnostics: Vec<String>,
@@ -112,7 +114,8 @@ impl LlvmToolchain {
 
         // Resolve llvm-link for libdevice linking. Same discovery pattern
         // as opt: env var, sibling, sysroot, versioned on PATH. Silently
-        // None when absent (the pipeline falls back to NVVM IR or warns).
+        // None when absent (the backend decision then avoids the PTX path
+        // for libdevice kernels).
         let llvm_link =
             resolve_sibling_tool("llvm-link", "CUDA_OXIDE_LLVM_LINK", &llc_path, llc_major);
 
@@ -376,6 +379,21 @@ pub(crate) fn resolve_sibling_tool(
     } else {
         candidates.into_iter().next()
     }
+}
+
+/// Decision-time capability probe for IR-level libdevice linking.
+///
+/// True only when the `llc` that [`LlvmToolchain::resolve`] would pick is
+/// runnable AND a same-major `llvm-link` resolves for it. The PTX-vs-NVVM
+/// backend decision is made before the toolchain itself is resolved, so it
+/// must probe the same discovery logic: committing to the PTX path on
+/// libdevice file existence alone would later emit PTX with unresolved
+/// `.extern .func __nv_*` whenever `llvm-link` turns out to be missing.
+pub(crate) fn libdevice_ir_linking_available(opts: &BackendOptions) -> bool {
+    let Some((llc_path, llc_major, _)) = resolve_llc(opts) else {
+        return false;
+    };
+    resolve_sibling_tool("llvm-link", "CUDA_OXIDE_LLVM_LINK", &llc_path, llc_major).is_some()
 }
 
 /// Runs `cmd --version` and, on success, returns the tool with its parsed

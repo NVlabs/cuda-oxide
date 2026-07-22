@@ -214,8 +214,20 @@ pub fn compile_translated_module(
     // Discover libdevice.10.bc early so the backend decision can account for
     // IR-level linking. When available, `needs_libdevice` no longer forces the
     // NVVM IR path — the PTX path links libdevice at the LLVM IR level instead.
+    // "Available" requires BOTH the bitcode file and a same-major `llvm-link`
+    // for the `llc` this compilation will use: deciding from file existence
+    // alone would commit to the PTX path and then ship PTX with unresolved
+    // `.extern .func __nv_*` (a cuModuleLoad-time failure) whenever the
+    // linker is missing. Without either piece, libdevice kernels fall back
+    // to the NVVM IR path as they did before IR-level linking existed.
     let libdevice_path = libnvvm_sys::find_libdevice().ok();
-    let can_ir_link_libdevice = libdevice_path.is_some();
+    let can_ir_link_libdevice = libdevice_path.is_some()
+        && match request.toolchain {
+            ToolchainPolicy::Discover => {
+                crate::llvm_tools::libdevice_ir_linking_available(request.backend)
+            }
+            ToolchainPolicy::Explicit(toolchain) => toolchain.llvm_link.is_some(),
+        };
 
     // Choose the intrinsic ABI while calls are still typed MIR. Generated
     // intrinsics may have different LLVM signatures for `llc` and libNVVM, so
@@ -398,7 +410,7 @@ pub fn compile_translated_module(
     if request.trace.verbose {
         request.trace.emit("\n=== Generating PTX ===");
     }
-    let ptx_libdevice = if needs_libdevice {
+    let ptx_libdevice = if needs_libdevice && can_ir_link_libdevice {
         libdevice_path.as_deref()
     } else {
         None
