@@ -402,11 +402,30 @@ unsafe {
 }
 ```
 
-The initial surface supports zero or one `out`, up to 16 `in` operands, and
-`clobber("memory")`. `options(register_only)` requires an `out` operand and
-cannot be combined with clobbers. `options(may_diverge)` must be paired with
-`register_only`. Multiple outputs, read-write operands, and the `"C"`
-constraint are not implemented yet.
+The surface supports up to 8 `out` operands, up to 16 `in` operands, and
+`clobber("memory")`. Every `out` constraint must be `=`-prefixed (e.g.
+`"=r"`); with two or more `out` operands the snippet returns a tuple under
+the hood, destructured into the output places in declaration order:
+
+```rust
+let sum: u32;
+let prod: u32;
+unsafe {
+    ptx_asm!(
+        "add.u32 %0, %2, %3; mul.lo.u32 %1, %2, %3;",
+        out("=r") sum,
+        out("=r") prod,
+        in("r") x,
+        in("r") y,
+        options(register_only),
+    );
+}
+```
+
+`options(register_only)` requires an `out` operand and cannot be combined
+with clobbers. `options(may_diverge)` must be paired with `register_only`.
+More than 8 outputs, read-write operands, and the `"C"` constraint are not
+implemented yet.
 
 ## Source Layout
 
