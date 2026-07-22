@@ -65,16 +65,6 @@ impl InlinePtxCallKind {
     }
 }
 
-/// Count the number of output constraints in a constraint string.
-///
-/// Output constraints are prefixed with `=` (e.g. `=r`, `=f`).
-fn count_output_constraints(constraints: &str) -> usize {
-    constraints
-        .split(',')
-        .filter(|c| c.starts_with('='))
-        .count()
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn emit_inline_ptx(
     ctx: &mut Context,
@@ -145,8 +135,10 @@ pub fn emit_inline_ptx(
         }
     }
 
-    // Output call: determine how many output constraints we have.
-    let num_outputs = count_output_constraints(&constraints);
+    // Output call: determine how many output constraints we have. Use the
+    // op's canonical counting rule so the importer and the `nvvm.inline_ptx`
+    // verifier can never disagree.
+    let num_outputs = InlinePtxOp::count_output_constraints(&constraints);
 
     if num_outputs <= 1 {
         // Single-output (backward-compatible path): the destination type is the result type.
@@ -325,25 +317,5 @@ mod tests {
 
         assert!(!options.sideeffect);
         assert!(!options.convergent);
-    }
-
-    #[test]
-    fn count_output_constraints_single() {
-        assert_eq!(count_output_constraints("=r,r,r"), 1);
-    }
-
-    #[test]
-    fn count_output_constraints_multi() {
-        assert_eq!(count_output_constraints("=r,=r,=f,=d,r,l"), 4);
-    }
-
-    #[test]
-    fn count_output_constraints_none() {
-        assert_eq!(count_output_constraints("r,l,~{memory}"), 0);
-    }
-
-    #[test]
-    fn count_output_constraints_empty() {
-        assert_eq!(count_output_constraints(""), 0);
     }
 }

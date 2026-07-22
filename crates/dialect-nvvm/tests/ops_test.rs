@@ -4436,3 +4436,13 @@ fn test_inline_ptx_results_must_match_output_constraints() {
     );
     assert!(verify_op(&InlinePtxOp::new(extra_result), &ctx).is_err());
 }
+
+#[test]
+fn test_inline_ptx_count_output_constraints() {
+    assert_eq!(InlinePtxOp::count_output_constraints("=r,r,r"), 1);
+    assert_eq!(InlinePtxOp::count_output_constraints("=r,=r,=f,=d,r,l"), 4);
+    assert_eq!(InlinePtxOp::count_output_constraints("r,l,~{memory}"), 0);
+    assert_eq!(InlinePtxOp::count_output_constraints(""), 0);
+    // `=` only counts as an output marker at the start of a token.
+    assert_eq!(InlinePtxOp::count_output_constraints("r,r=f"), 0);
+}
