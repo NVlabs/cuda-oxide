@@ -329,9 +329,7 @@ fn main() {
     ] {
         let body = kernel_body(&ptx, kernel);
         assert!(
-            !body.contains(".local")
-                && !body.contains("ld.local")
-                && !body.contains("st.local"),
+            !body.contains(".local") && !body.contains("ld.local") && !body.contains("st.local"),
             "small runtime aggregate indexing must not use local memory:\n{body}"
         );
     }
