@@ -24,6 +24,12 @@ mod kernels {
             if flag != 0 {
                 // assert_inhabited::<Infallible> panics ("attempted to instantiate uninhabited type")
                 // the kernel must trap
+                //
+                // The invalid `assume_init` is this example's entire point:
+                // rustc's assert_inhabited guard must survive into PTX as a
+                // trap. No Infallible value ever materializes; execution
+                // stops at the guard. Hence the targeted lint allows.
+                #[allow(invalid_value, clippy::uninit_assumed_init)]
                 unsafe {
                     core::mem::MaybeUninit::<core::convert::Infallible>::uninit().assume_init()
                 };
