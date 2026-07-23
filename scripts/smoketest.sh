@@ -1282,13 +1282,19 @@ run_cargo() {
     fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "helper_fn" ]]; then
         local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local llvm="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
         local nested_defs entry_count
-        nested_defs="$(grep -cE '^\.visible \.func .*_RI.*nested_identity' "${ptx}" 2>/dev/null)"
+        # The nested helpers are private, so the middle-end internalizes,
+        # inlines, and deletes them from the optimized PTX. Their canonical
+        # mangling and non-kernel classification (the #358 regression) are
+        # pinned in the pre-opt LLVM IR; the PTX pins the single kernel entry.
+        nested_defs="$(grep -cE '^define .*_RI.*nested_identity' "${llvm}" 2>/dev/null)"
         entry_count="$(grep -cE '^\.visible \.entry ' "${ptx}" 2>/dev/null)"
-        if [[ ! -s "${ptx}" || ${nested_defs} -ne 2 || ${entry_count} -ne 1 ]] \
+        if [[ ! -s "${ptx}" || ! -s "${llvm}" || ${nested_defs} -ne 2 || ${entry_count} -ne 1 ]] \
             || ! grep -qF '.visible .entry vecadd_with_helper(' "${ptx}" \
+            || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${llvm}" \
             || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${ptx}"; then
-            printf 'helper_fn expected one kernel entry and two canonically mangled nested_identity device functions, with no helper _TID_ exports\n' >>"${log}"
+            printf 'helper_fn expected one kernel entry, two canonically mangled nested_identity helpers in the pre-opt LLVM IR, and no _TID_ helper symbols\n' >>"${log}"
             CARGO_EC=1
         fi
     fi
