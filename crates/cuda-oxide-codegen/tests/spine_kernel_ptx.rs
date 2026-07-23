@@ -31,7 +31,9 @@
 //!
 //! The owned module's `mark_kernel_entry` method owns this internal marker spelling.
 
-use cuda_oxide_codegen::experimental::{CodegenModule, CompileOptions, Compiler, Target};
+use cuda_oxide_codegen::experimental::{
+    CodegenModule, CompileOptions, Compiler, Optimization, Target,
+};
 
 use dialect_mir::ops::{
     MirAddOp, MirFuncOp, MirLoadOp, MirMulOp, MirPtrOffsetOp, MirReturnOp, MirStoreOp,
@@ -235,10 +237,45 @@ fn build_add_kernel(module: &mut CodegenModule) {
     module.mark_kernel_entry("add_kernel").unwrap();
 }
 
+fn build_unused_helper(module: &mut CodegenModule) {
+    module.edit(|ctx, module| {
+        let module_region = module.get_operation().deref(ctx).get_region(0);
+        let module_block = module_region
+            .deref(ctx)
+            .iter(ctx)
+            .next()
+            .expect("kernel builder created the module block");
+        let func_type = FunctionType::get(ctx, vec![], vec![]);
+        let op = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let helper = MirFuncOp::new(ctx, op, TypeAttr::new(func_type.into()));
+        helper.set_symbol_name(ctx, "unused_helper".try_into().unwrap());
+        let entry = BasicBlock::new(ctx, None, vec![]);
+        entry.insert_at_back(op.deref(ctx).get_region(0), ctx);
+        Operation::new(
+            ctx,
+            MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, ctx);
+        helper.get_operation().insert_at_back(module_block, ctx);
+    });
+}
+
 #[test]
 fn spine_add_kernel_emits_entry_and_validates() {
     let mut module = CodegenModule::new("spine_module").unwrap();
     build_add_kernel(&mut module);
+    build_unused_helper(&mut module);
     let compiler = Compiler::discover().expect("LLVM 21+ llc/opt are installed");
     let options = CompileOptions::new(Target::parse("sm_120").unwrap());
     let ptx = compiler
@@ -254,6 +291,25 @@ fn spine_add_kernel_emits_entry_and_validates() {
     assert!(
         text.contains(".target sm_120"),
         "PTX targets sm_120:\n{text}"
+    );
+    assert!(text.contains("add_kernel"), "kernel root survives:\n{text}");
+    assert!(
+        !text.contains("unused_helper"),
+        "optimized PTX removes the non-root helper:\n{text}"
+    );
+
+    let no_opt = compiler
+        .compile(
+            &mut module,
+            &CompileOptions::new(Target::parse("sm_120").unwrap())
+                .with_optimization(Optimization::None),
+        )
+        .expect("compiles unoptimized PTX")
+        .into_ptx();
+    let no_opt = String::from_utf8(no_opt).expect("PTX is utf-8");
+    assert!(
+        no_opt.contains("unused_helper"),
+        "no-opt PTX demonstrates that helper removal comes from the optimizer:\n{no_opt}"
     );
 
     // ptxas must accept it for the real target.

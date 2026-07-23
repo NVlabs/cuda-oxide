@@ -22,7 +22,7 @@ use crate::llvm_tools::LlvmToolchain;
 use crate::lower::{add_device_extern_declarations, lower_to_llvm};
 use crate::options::BackendOptions;
 use crate::prep::{MirPreparation, prepare_mir_module};
-use crate::ptx::{generate_ptx, generate_ptx_with_toolchain};
+use crate::ptx::{PtxModule, generate_ptx, generate_ptx_with_toolchain};
 use crate::target::detect_features_in_llvm_text;
 use crate::verify::verify_operation;
 use llvm_export::export::{DebugKind, NvvmIrDialect};
@@ -375,7 +375,7 @@ pub fn compile_translated_module(
             .emit(format!("\n=== Exporting to LLVM IR ({mode} mode) ==="));
     }
     remove_stale_files(request.files.stale_before_export)?;
-    export_llvm_ir(
+    let exported = export_llvm_ir(
         ctx,
         module,
         request.device_externs,
@@ -419,10 +419,14 @@ pub fn compile_translated_module(
     } else {
         None
     };
+    let ptx_module = PtxModule {
+        llvm_ir: request.files.llvm_ir,
+        output: request.files.ptx,
+        public_symbols: &exported.public_symbols,
+    };
     let generated = match request.toolchain {
         ToolchainPolicy::Discover => generate_ptx(
-            request.files.llvm_ir,
-            request.files.ptx,
+            ptx_module,
             request.debug_kind,
             request.backend,
             request.trace.sink,
@@ -430,8 +434,7 @@ pub fn compile_translated_module(
             ptx_libdevice,
         )?,
         ToolchainPolicy::Explicit(toolchain) => generate_ptx_with_toolchain(
-            request.files.llvm_ir,
-            request.files.ptx,
+            ptx_module,
             request.debug_kind,
             request.backend,
             toolchain,
