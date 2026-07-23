@@ -69,7 +69,9 @@ use crate::helpers;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
 use dialect_mir::rust_intrinsics;
 use dialect_mir::types::{MirDisjointSliceType, MirSliceType, MirStructType, MirTupleType};
-use llvm_export::attributes::{FastmathFlags, FastmathFlagsAttr, IntegerOverflowFlagsAttr};
+use llvm_export::attributes::{
+    FCmpPredicateAttr, FastmathFlags, FastmathFlagsAttr, IntegerOverflowFlagsAttr,
+};
 use llvm_export::op_interfaces::{
     BinArithOp, CastOpInterface, CastOpWithNNegInterface, FloatBinArithOpWithFastMathFlags,
     IntBinArithOpWithOverflowFlag,
@@ -320,6 +322,30 @@ impl RustFloatMathIntrinsic {
             rust_intrinsics::CALLEE_FMUL_FAST => Some(Self::FmulFast),
             rust_intrinsics::CALLEE_FDIV_FAST => Some(Self::FdivFast),
             rust_intrinsics::CALLEE_FREM_FAST => Some(Self::FremFast),
+            _ => None,
+        }
+    }
+
+    /// LLVM intrinsic name for Rust math operations that do not need libdevice.
+    fn llvm_intrinsic_name(
+        self,
+        ctx: &Context,
+        result_ty: TypeHandle,
+        loc: pliron::location::Location,
+    ) -> Result<Option<&'static str>> {
+        match self {
+            Self::Fabs => fabs_llvm_intrinsic_name(ctx, result_ty, loc).map(Some),
+            Self::CopysignF32 => Ok(Some("llvm_copysign_f32")),
+            Self::CopysignF64 => Ok(Some("llvm_copysign_f64")),
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether this is Rust's NaN-ignoring scalar maximum/minimum operation.
+    fn minmax_nsz_predicate(self) -> Option<FCmpPredicateAttr> {
+        match self {
+            Self::MaxNumNszF32 | Self::MaxNumNszF64 => Some(FCmpPredicateAttr::OGE),
+            Self::MinNumNszF32 | Self::MinNumNszF64 => Some(FCmpPredicateAttr::OLE),
             _ => None,
         }
     }
@@ -985,7 +1011,11 @@ fn convert_rust_carrying_mul_add(
     Ok(())
 }
 
-/// Lower placeholder calls for rustc's `f32` / `f64` math intrinsics to libdevice.
+/// Lower placeholder calls for rustc's `f32` / `f64` math intrinsics.
+///
+/// Simple scalar operations go to LLVM intrinsics so the ordinary llc -> PTX
+/// path can lower them directly. Transcendentals and other libdevice-owned
+/// operations still lower to `__nv_*` calls and therefore force NVVM IR mode.
 fn convert_rust_float_math_intrinsic(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -1014,9 +1044,16 @@ fn convert_rust_float_math_intrinsic(
         return lower_fast_binop(ctx, rewriter, op, &args, binop, loc);
     }
 
+    if let Some(predicate) = intrinsic.minmax_nsz_predicate() {
+        return lower_float_minmax_nsz(ctx, rewriter, op, &args, predicate);
+    }
+
     let result_mir_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let result_ty = convert_type(ctx, result_mir_ty).map_err(anyhow_to_pliron)?;
-    let intrinsic_name = intrinsic.libdevice_name(ctx, result_ty, loc.clone())?;
+    let intrinsic_name = match intrinsic.llvm_intrinsic_name(ctx, result_ty, loc.clone())? {
+        Some(name) => name,
+        None => intrinsic.libdevice_name(ctx, result_ty, loc.clone())?,
+    };
     let arg_types = args.iter().map(|arg| arg.get_type(ctx)).collect::<Vec<_>>();
     let func_ty = llvm_types::FuncType::get(ctx, result_ty, arg_types, false);
     let parent_block = op.deref(ctx).get_parent_block().ok_or_else(|| {
@@ -1036,6 +1073,55 @@ fn convert_rust_float_math_intrinsic(
     rewriter.replace_operation(ctx, op, llvm_call.get_operation());
 
     Ok(())
+}
+
+/// Lower Rust's NaN-ignoring `min` and `max` contract without libdevice.
+///
+/// LLVM 21's legacy `llvm.maxnum` / `llvm.minnum` intrinsics propagate a
+/// signaling NaN, whereas Rust requires either kind of NaN to be ignored when
+/// paired with a number. Mirror the definition in `core::intrinsics` exactly:
+/// select `y` when `x` is NaN or `y` compares at least/as-most `x`, otherwise
+/// select `x`. An unordered `y` comparison is false, so a NaN in `y` selects
+/// the numeric `x`.
+fn lower_float_minmax_nsz(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    args: &[Value],
+    ordered_predicate: FCmpPredicateAttr,
+) -> Result<()> {
+    let [x, y] = args else {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "Rust float min/max intrinsic requires two operands"
+        );
+    };
+
+    let x_is_nan = llvm::FCmpOp::new(ctx, FCmpPredicateAttr::UNO, *x, *x).get_operation();
+    set_empty_fastmath_flags(ctx, x_is_nan);
+    rewriter.insert_operation(ctx, x_is_nan);
+
+    let y_ordered_against_x = llvm::FCmpOp::new(ctx, ordered_predicate, *y, *x).get_operation();
+    set_empty_fastmath_flags(ctx, y_ordered_against_x);
+    rewriter.insert_operation(ctx, y_ordered_against_x);
+
+    let y_is_ordered_choice = y_ordered_against_x.deref(ctx).get_result(0);
+    let ordered_result = llvm::SelectOp::new(ctx, y_is_ordered_choice, *y, *x).get_operation();
+    rewriter.insert_operation(ctx, ordered_result);
+
+    let x_is_nan_value = x_is_nan.deref(ctx).get_result(0);
+    let ordered_result_value = ordered_result.deref(ctx).get_result(0);
+    let result = llvm::SelectOp::new(ctx, x_is_nan_value, *y, ordered_result_value).get_operation();
+    rewriter.insert_operation(ctx, result);
+    rewriter.replace_operation(ctx, op, result);
+    Ok(())
+}
+
+fn set_empty_fastmath_flags(ctx: &mut Context, op: Ptr<Operation>) {
+    let key: pliron::identifier::Identifier = "llvm_fast_math_flags".try_into().unwrap();
+    op.deref_mut(ctx)
+        .attributes
+        .set(key, FastmathFlagsAttr::default());
 }
 
 /// Lower a `core::intrinsics::f*_fast` placeholder call to the matching
@@ -1109,6 +1195,25 @@ fn integer_bit_width(
         return pliron::input_err!(loc, "expected integer type for Rust bit intrinsic");
     };
     Ok(int_ty.width())
+}
+
+/// Return the LLVM `fabs` intrinsic for the concrete float type.
+fn fabs_llvm_intrinsic_name(
+    ctx: &Context,
+    ty: TypeHandle,
+    loc: pliron::location::Location,
+) -> Result<&'static str> {
+    let ty_ref = ty.deref(ctx);
+    if ty_ref.is::<FP32Type>() {
+        Ok("llvm_fabs_f32")
+    } else if ty_ref.is::<FP64Type>() {
+        Ok("llvm_fabs_f64")
+    } else {
+        pliron::input_err!(
+            loc,
+            "expected f32 or f64 type for Rust float math intrinsic"
+        )
+    }
 }
 
 /// Return the libdevice `fabs` entry point for the concrete float type.
@@ -1664,50 +1769,62 @@ mod tests {
         assert_eq!(RustFloatMathIntrinsic::MinNumNszF64.arg_count(), 2);
     }
 
-    /// `f32::max`/`f64::max` and their `min` siblings lower to the `_nsz`
-    /// flavor of the rustc maxNum/minNum intrinsics, which we route through
-    /// libdevice `__nv_fmax{f}`/`__nv_fmin{f}`. Spot-check the table so a
-    /// future rename in `dialect-mir::rust_intrinsics` cannot drift the
-    /// placeholder name silently away from its libdevice symbol.
+    /// The LLVM 21 `maxnum`/`minnum` intrinsics do not match Rust's signaling
+    /// NaN behavior, so these variants use explicit compare/select lowering.
     #[test]
-    fn test_float_math_maxnum_minnum_nsz_libdevice_symbols() {
+    fn test_float_math_minmax_nsz_predicates() {
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF32.minmax_nsz_predicate(),
+            Some(FCmpPredicateAttr::OGE)
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF64.minmax_nsz_predicate(),
+            Some(FCmpPredicateAttr::OGE)
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF32.minmax_nsz_predicate(),
+            Some(FCmpPredicateAttr::OLE)
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF64.minmax_nsz_predicate(),
+            Some(FCmpPredicateAttr::OLE)
+        );
+        assert_eq!(RustFloatMathIntrinsic::Fabs.minmax_nsz_predicate(), None);
+    }
+
+    #[test]
+    fn test_float_math_copysign_uses_llvm_and_transcendentals_use_libdevice() {
         let ctx = Context::new();
         let f32_ty = FP32Type::get(&ctx).into();
         let f64_ty = FP64Type::get(&ctx).into();
         let loc = pliron::location::Location::Unknown;
 
         assert_eq!(
-            RustFloatMathIntrinsic::MaxNumNszF32
-                .libdevice_name(&ctx, f32_ty, loc.clone())
+            RustFloatMathIntrinsic::CopysignF32
+                .llvm_intrinsic_name(&ctx, f32_ty, loc.clone())
                 .unwrap(),
-            "__nv_fmaxf"
+            Some("llvm_copysign_f32")
         );
         assert_eq!(
-            RustFloatMathIntrinsic::MaxNumNszF64
-                .libdevice_name(&ctx, f64_ty, loc.clone())
+            RustFloatMathIntrinsic::CopysignF64
+                .llvm_intrinsic_name(&ctx, f64_ty, loc.clone())
                 .unwrap(),
-            "__nv_fmax"
+            Some("llvm_copysign_f64")
         );
         assert_eq!(
-            RustFloatMathIntrinsic::MinNumNszF32
-                .libdevice_name(&ctx, f32_ty, loc.clone())
+            RustFloatMathIntrinsic::SinF32
+                .llvm_intrinsic_name(&ctx, f32_ty, loc)
                 .unwrap(),
-            "__nv_fminf"
-        );
-        assert_eq!(
-            RustFloatMathIntrinsic::MinNumNszF64
-                .libdevice_name(&ctx, f64_ty, loc)
-                .unwrap(),
-            "__nv_fmin"
+            None
         );
     }
 
-    /// `Fabs` is the only float-math intrinsic whose libdevice name depends on
+    /// `Fabs` is the only float-math intrinsic whose LLVM name depends on
     /// the result type (the others are width-suffixed in the enum itself).
     /// Ensure both float widths are dispatched correctly and that anything
     /// else is rejected.
     #[test]
-    fn test_fabs_libdevice_name_dispatches_on_float_width() {
+    fn test_fabs_llvm_intrinsic_name_dispatches_on_float_width() {
         let ctx = Context::new();
         let f32_ty = FP32Type::get(&ctx).into();
         let f64_ty = FP64Type::get(&ctx).into();
@@ -1715,13 +1832,13 @@ mod tests {
         let loc = pliron::location::Location::Unknown;
 
         assert_eq!(
-            fabs_libdevice_name(&ctx, f32_ty, loc.clone()).unwrap(),
-            "__nv_fabsf"
+            fabs_llvm_intrinsic_name(&ctx, f32_ty, loc.clone()).unwrap(),
+            "llvm_fabs_f32"
         );
         assert_eq!(
-            fabs_libdevice_name(&ctx, f64_ty, loc.clone()).unwrap(),
-            "__nv_fabs"
+            fabs_llvm_intrinsic_name(&ctx, f64_ty, loc.clone()).unwrap(),
+            "llvm_fabs_f64"
         );
-        assert!(fabs_libdevice_name(&ctx, i32_ty, loc).is_err());
+        assert!(fabs_llvm_intrinsic_name(&ctx, i32_ty, loc).is_err());
     }
 }
