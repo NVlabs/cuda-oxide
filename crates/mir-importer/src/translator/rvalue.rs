@@ -236,6 +236,22 @@ fn cast_enum_fields_to_expected_types(
     (result_values, current_prev_op)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckedBinaryOpKind {
+    Add,
+    Sub,
+    Mul,
+}
+
+fn classify_checked_binary_op(bin_op: &mir::BinOp) -> Result<CheckedBinaryOpKind, String> {
+    match bin_op {
+        mir::BinOp::Add => Ok(CheckedBinaryOpKind::Add),
+        mir::BinOp::Sub => Ok(CheckedBinaryOpKind::Sub),
+        mir::BinOp::Mul => Ok(CheckedBinaryOpKind::Mul),
+        _ => Err(format!("CheckedBinaryOp {:?} not yet implemented", bin_op)),
+    }
+}
+
 /// Translates a MIR rvalue to pliron IR operation(s).
 ///
 /// # Returns
@@ -598,74 +614,51 @@ pub fn translate_rvalue(
             Ok((Some(op), result, prev_op_after_operand))
         }
         mir::Rvalue::CheckedBinaryOp(bin_op, left, right) => {
-            // CheckedBinaryOp produces a tuple (result, overflow_flag)
+            let checked_kind = classify_checked_binary_op(bin_op).map_err(|message| {
+                input_error!(loc.clone(), TranslationErr::unsupported(message))
+            })?;
 
-            // Handle checked operations (Add, Sub, Mul)
-            match bin_op {
-                mir::BinOp::Add | mir::BinOp::Sub | mir::BinOp::Mul => {
-                    // Get operands from value_map, tracking the last inserted operation
-                    let (left_val, prev_op_after_left) = translate_operand(
-                        ctx,
-                        body,
-                        left,
-                        value_map,
-                        block_ptr,
-                        prev_op,
-                        loc.clone(),
-                    )?;
-                    let (right_val, prev_op_after_right) = translate_operand(
-                        ctx,
-                        body,
-                        right,
-                        value_map,
-                        block_ptr,
-                        prev_op_after_left,
-                        loc.clone(),
-                    )?;
+            let (left_val, prev_op_after_left) =
+                translate_operand(ctx, body, left, value_map, block_ptr, prev_op, loc.clone())?;
+            let (right_val, prev_op_after_right) = translate_operand(
+                ctx,
+                body,
+                right,
+                value_map,
+                block_ptr,
+                prev_op_after_left,
+                loc.clone(),
+            )?;
 
-                    // The result type is the MIR-level `(T, bool)` tuple.
-                    // Translate it from the rvalue's rustc type so it is the
-                    // same uniqued, layout-carrying tuple type the rest of
-                    // the body (locals, places) uses.
-                    let rust_tuple_ty = rvalue.ty(body.locals()).map_err(|e| {
-                        input_error_noloc!(TranslationErr::unsupported(format!(
-                            "Failed to query checked-arithmetic result type: {:?}",
-                            e
-                        )))
-                    })?;
-                    let result_type_ptr = types::translate_type(ctx, &rust_tuple_ty)?;
+            // The result type is the MIR-level `(T, bool)` tuple.
+            // Translate it from the rvalue's rustc type so it is the
+            // same uniqued, layout-carrying tuple type the rest of
+            // the body (locals, places) uses.
+            let rust_tuple_ty = rvalue.ty(body.locals()).map_err(|e| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Failed to query checked-arithmetic result type: {:?}",
+                    e
+                )))
+            })?;
+            let result_type = types::translate_type(ctx, &rust_tuple_ty)?;
 
-                    // Create a checked operation based on the binary operator
-                    let op_id = match bin_op {
-                        mir::BinOp::Add => MirCheckedAddOp::get_concrete_op_info(),
-                        mir::BinOp::Sub => MirCheckedSubOp::get_concrete_op_info(),
-                        mir::BinOp::Mul => MirCheckedMulOp::get_concrete_op_info(),
-                        _ => unreachable!(),
-                    };
-                    let op = Operation::new(
-                        ctx,
-                        op_id,
-                        vec![result_type_ptr],     // Result type (tuple)
-                        vec![left_val, right_val], // Operands
-                        vec![],                    // No successors
-                        0,                         // No regions
-                    );
-                    op.deref_mut(ctx).set_loc(loc);
+            let op_id = match checked_kind {
+                CheckedBinaryOpKind::Add => MirCheckedAddOp::get_concrete_op_info(),
+                CheckedBinaryOpKind::Sub => MirCheckedSubOp::get_concrete_op_info(),
+                CheckedBinaryOpKind::Mul => MirCheckedMulOp::get_concrete_op_info(),
+            };
+            let op = Operation::new(
+                ctx,
+                op_id,
+                vec![result_type],
+                vec![left_val, right_val],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
 
-                    // Get the result value
-                    let result = op.deref(ctx).get_result(0);
-
-                    // Return Some(operation) - caller must insert it after field extractions
-                    Ok((Some(op), result, prev_op_after_right))
-                }
-                _ => input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "CheckedBinaryOp {:?} not yet implemented",
-                        bin_op
-                    ))
-                ),
-            }
+            let result = op.deref(ctx).get_result(0);
+            Ok((Some(op), result, prev_op_after_right))
         }
         mir::Rvalue::Use(operand) => {
             // Use just copies/moves a value - no operation needed, just pass through
@@ -8416,5 +8409,34 @@ mod tests {
 
         // Same failure on a type whose size was recorded before the query failed.
         assert_eq!(struct_storage_size(1, 0, 8), None);
+    }
+}
+
+#[cfg(test)]
+mod checked_binary_op_tests {
+    use super::*;
+
+    #[test]
+    fn checked_binary_op_accepts_supported_operators() {
+        assert_eq!(
+            classify_checked_binary_op(&mir::BinOp::Add),
+            Ok(CheckedBinaryOpKind::Add)
+        );
+        assert_eq!(
+            classify_checked_binary_op(&mir::BinOp::Sub),
+            Ok(CheckedBinaryOpKind::Sub)
+        );
+        assert_eq!(
+            classify_checked_binary_op(&mir::BinOp::Mul),
+            Ok(CheckedBinaryOpKind::Mul)
+        );
+    }
+
+    #[test]
+    fn checked_binary_op_rejects_unsupported_operator() {
+        let error = classify_checked_binary_op(&mir::BinOp::Div)
+            .expect_err("Div must remain unsupported as CheckedBinaryOp");
+
+        assert_eq!(error, "CheckedBinaryOp Div not yet implemented");
     }
 }
