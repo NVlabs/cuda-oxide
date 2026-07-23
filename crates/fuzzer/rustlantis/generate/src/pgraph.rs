@@ -360,22 +360,26 @@ impl PlaceGraph {
         // Copy ret
         self.copy_place(old_frame.return_destination, callee_ret);
 
-        // TODO: the following two loops can probably be merged
-        // Remove ref edges into about to be deallocated places (necessary to prevent dangling references)
+        // Remove ref edges into places that are about to be deallocated.
+        // This is necessary to prevent dangling references.
         let mut ref_edges = vec![];
+        let mut alloc_ids = vec![];
+
         for pidx in old_frame.locals.right_values() {
             self.visit_transitive_subfields(*pidx, |node| {
                 ref_edges.extend(self.pointers_to(node).iter().map(|(_, edge)| edge));
                 VisitAction::Continue
             });
+            alloc_ids.push(self.places[*pidx].alloc_id);
         }
+
         for edge in ref_edges {
             self.remove_edge(edge);
         }
 
-        // Deallocate places
-        for pidx in old_frame.locals.right_values() {
-            self.memory.deallocate(self.places[*pidx].alloc_id);
+        // Deallocate places.
+        for alloc_id in alloc_ids {
+            self.memory.deallocate(alloc_id);
         }
     }
 
