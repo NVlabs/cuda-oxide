@@ -21,6 +21,7 @@
 //! | `Aggregate`         | `mir.construct_tuple/struct/enum/array`               |
 //! | `Repeat`            | `mir.construct_array` (array repeat syntax)           |
 //! | `CopyForDeref`      | Same place-read lowering as `Copy`/`Move`             |
+//! | `Len`               | `mir.constant` for arrays; slice metadata extraction  |
 //!
 //! # Key Functions
 //!
@@ -37,10 +38,10 @@ use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
-    MirCheckedSubOp, MirCmpOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
-    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirInsertFieldOp,
-    MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
-    MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
+    MirCheckedSubOp, MirCmpOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp,
+    MirConstructStructOp, MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp,
+    MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
+    MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
 };
 use dialect_mir::types::MirFP16Type;
 use pliron::basic_block::BasicBlock;
@@ -250,6 +251,152 @@ fn classify_checked_binary_op(bin_op: &mir::BinOp) -> Result<CheckedBinaryOpKind
         mir::BinOp::Sub => Ok(CheckedBinaryOpKind::Sub),
         mir::BinOp::Mul => Ok(CheckedBinaryOpKind::Mul),
         _ => Err(format!("CheckedBinaryOp {:?} not yet implemented", bin_op)),
+    }
+}
+
+/// Create a detached `mir.constant` operation for an array length.
+///
+/// The caller owns insertion of the returned operation, matching the
+/// `translate_rvalue` contract for main operations.
+fn create_usize_len_constant(ctx: &mut Context, value: u64, loc: Location) -> Ptr<Operation> {
+    let result_type = types::get_usize_type(ctx);
+    let value_attr = pliron::builtin::attributes::IntegerAttr::new(
+        IntegerType::get(ctx, 64, Signedness::Unsigned),
+        APInt::from_u64(value, NonZeroUsize::new(64).unwrap()),
+    );
+
+    let op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![result_type.to_handle()],
+        vec![],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+    MirConstantOp::new(op).set_attr_value(ctx, value_attr);
+    op
+}
+
+/// Create a detached field extraction for a slice fat pointer's length.
+///
+/// `MirSliceType` stores the data pointer in field 0 and the length in field 1.
+fn create_slice_len_extract(
+    ctx: &mut Context,
+    slice_value: Value,
+    loc: Location,
+) -> Ptr<Operation> {
+    let result_type = types::get_usize_type(ctx);
+    let op = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![result_type.to_handle()],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+    MirExtractFieldOp::new(op).set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+    op
+}
+
+/// Translate `Rvalue::Len` for fixed-size arrays and ordinary Rust slices.
+///
+/// On the pinned toolchain, source-level array and slice `.len()` expressions
+/// are normally folded to constants or pointer-metadata extraction before
+/// optimized MIR reaches the importer. This path is defensive coverage for
+/// future toolchain changes or lower MIR optimization levels.#[allow(clippy::too_many_arguments)]
+fn translate_len(
+    ctx: &mut Context,
+    body: &mir::Body,
+    place: &mir::Place,
+    value_map: &mut ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    let place_ty = place.ty(body.locals()).map_err(|error| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Failed to resolve Rvalue::Len place type: {error:?}"
+            ))
+        )
+    })?;
+
+    match place_ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Array(_, count)) => {
+            let len = count.eval_target_usize().map_err(|error| {
+                input_error!(
+                    loc.clone(),
+                    TranslationErr::unsupported(format!(
+                        "Failed to evaluate Rvalue::Len array length: {error:?}"
+                    ))
+                )
+            })?;
+            let op = create_usize_len_constant(ctx, len, loc);
+            let result = op.deref(ctx).get_result(0);
+            Ok((Some(op), result, prev_op))
+        }
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(_)) => {
+            let Some((last_projection, prefix)) = place.projection.split_last() else {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "Rvalue::Len slice place has no final Deref projection"
+                    )
+                );
+            };
+            if !matches!(last_projection, ProjectionElem::Deref) {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Rvalue::Len slice place must end in Deref, found {:?}",
+                        place.projection
+                    ))
+                );
+            }
+
+            // A slice place is the unsized `[T]` behind a reference or raw pointer.
+            // Removing its final Deref recovers the fat-pointer value `{data, len}`.
+            let fat_pointer_place = mir::Place {
+                local: place.local,
+                projection: prefix.to_vec(),
+            };
+            let (slice_value, last_inserted) = translate_place(
+                ctx,
+                body,
+                &fat_pointer_place,
+                value_map,
+                block_ptr,
+                prev_op,
+                loc.clone(),
+            )?;
+
+            let slice_value_type = slice_value.get_type(ctx);
+            if !slice_value_type
+                .deref(ctx)
+                .is::<dialect_mir::types::MirSliceType>()
+            {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Rvalue::Len expected a slice fat-pointer value, got {}",
+                        slice_value_type.disp(ctx)
+                    ))
+                );
+            }
+
+            let op = create_slice_len_extract(ctx, slice_value, loc);
+            let result = op.deref(ctx).get_result(0);
+            Ok((Some(op), result, last_inserted))
+        }
+        other => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Rvalue::Len is only valid for arrays and slices, got {other:?}"
+            ))
+        ),
     }
 }
 
@@ -1608,13 +1755,9 @@ pub fn translate_rvalue(
 
             Ok((None, value, last_inserted))
         }
-        mir::Rvalue::Len(place) => input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Rvalue::Len for place {:?} not yet implemented",
-                place
-            ))
-        ),
+        mir::Rvalue::Len(place) => {
+            translate_len(ctx, body, place, value_map, block_ptr, prev_op, loc)
+        }
         mir::Rvalue::ThreadLocalRef(item) => input_err!(
             loc,
             TranslationErr::unsupported(format!(
@@ -8460,5 +8603,62 @@ mod checked_binary_op_tests {
             .expect_err("Div must remain unsupported as CheckedBinaryOp");
 
         assert_eq!(error, "CheckedBinaryOp Div not yet implemented");
+    }
+}
+
+#[cfg(test)]
+mod len_rvalue_tests {
+    use super::*;
+    use pliron::common_traits::Verify;
+
+    #[test]
+    fn usize_len_constant_carries_the_expected_value_and_type() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let op = create_usize_len_constant(&mut ctx, 7, Location::Unknown);
+        let constant = MirConstantOp::new(op);
+
+        assert!(constant.verify(&ctx).is_ok());
+        let expected_value = APInt::from_u64(7, NonZeroUsize::new(64).unwrap());
+        assert_eq!(
+            constant
+                .get_attr_value(&ctx)
+                .expect("length constant must carry a value")
+                .value(),
+            expected_value
+        );
+
+        let expected_type = types::get_usize_type(&mut ctx).to_handle();
+        let result_type = op.deref(&ctx).get_result(0).get_type(&ctx);
+        assert_eq!(result_type, expected_type);
+    }
+
+    #[test]
+    fn slice_len_extract_reads_metadata_field_as_usize() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let element_type: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let slice_type: TypeHandle =
+            dialect_mir::types::MirSliceType::get(&mut ctx, element_type).into();
+        let block = BasicBlock::new(&mut ctx, None, vec![slice_type]);
+        let slice_value = block.deref(&ctx).get_argument(0);
+
+        let op = create_slice_len_extract(&mut ctx, slice_value, Location::Unknown);
+        let extract = MirExtractFieldOp::new(op);
+
+        assert!(extract.verify(&ctx).is_ok());
+        assert_eq!(
+            extract
+                .get_attr_index(&ctx)
+                .expect("slice length extraction must carry a field index")
+                .0,
+            1
+        );
+
+        let expected_type = types::get_usize_type(&mut ctx).to_handle();
+        let result_type = op.deref(&ctx).get_result(0).get_type(&ctx);
+        assert_eq!(result_type, expected_type);
     }
 }
