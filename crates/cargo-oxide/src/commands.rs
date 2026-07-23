@@ -1337,8 +1337,7 @@ pub fn emit_ltoir(
     );
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.
-    let stem = artifact_stem(example);
-    let ll_path = example_dir.join(format!("{stem}.ll"));
+    let ll_path = emitted_ll_path(&example_dir, example);
     let ir = std::fs::read(&ll_path).unwrap_or_else(|e| {
         eprintln!(
             "Error: could not read emitted NVVM IR at {}: {e}",
@@ -1376,7 +1375,7 @@ pub fn emit_ltoir(
     // Step 3: write the artifact.
     let out_path = output
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| example_dir.join(format!("{stem}.ltoir")));
+        .unwrap_or_else(|| default_ltoir_path(&example_dir, example));
     for metadata_path in [
         out_path.with_extension("target"),
         out_path.with_extension("options"),
@@ -3258,6 +3257,21 @@ fn artifact_stem(example: &str) -> String {
     example.replace('-', "_")
 }
 
+/// Path to the NVVM IR (`.ll`) the backend emits for `example`. Named after the
+/// Cargo-normalized crate stem, so a hyphenated example resolves to the
+/// underscore-spelled file the build actually wrote. Route `emit-ltoir` reads
+/// through here rather than deriving the name from the raw example.
+fn emitted_ll_path(example_dir: &Path, example: &str) -> PathBuf {
+    example_dir.join(format!("{}.ll", artifact_stem(example)))
+}
+
+/// Default LTOIR output path for `example` when no explicit `--output` is given.
+/// Uses the same Cargo-normalized crate stem as [`emitted_ll_path`] so reads and
+/// writes agree on hyphenated examples.
+fn default_ltoir_path(example_dir: &Path, example: &str) -> PathBuf {
+    example_dir.join(format!("{}.ltoir", artifact_stem(example)))
+}
+
 /// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`, `.cubin`) from a
 /// previous run so we can verify the build produces fresh output.
 fn clean_generated_files(example_dir: &Path, example: &str) {
@@ -3635,6 +3649,26 @@ mod tests {
     fn artifact_stem_normalizes_hyphens_like_cargo() {
         assert_eq!(artifact_stem("rustlantis-smoke"), "rustlantis_smoke");
         assert_eq!(artifact_stem("vecadd"), "vecadd");
+    }
+
+    #[test]
+    fn emit_ltoir_paths_use_normalized_crate_stem() {
+        // Regression for the emit-ltoir read/write mismatch on hyphenated
+        // crates: the backend writes `rustlantis_smoke.{ll,ltoir}`, so both the
+        // NVVM IR read and the default LTOIR write must resolve to the
+        // underscore stem rather than the raw example name.
+        let dir = Path::new("/tmp/cargo-oxide-emit-ltoir");
+        assert_eq!(
+            emitted_ll_path(dir, "rustlantis-smoke"),
+            dir.join("rustlantis_smoke.ll")
+        );
+        assert_eq!(
+            default_ltoir_path(dir, "rustlantis-smoke"),
+            dir.join("rustlantis_smoke.ltoir")
+        );
+        // A non-hyphenated example is unaffected.
+        assert_eq!(emitted_ll_path(dir, "vecadd"), dir.join("vecadd.ll"));
+        assert_eq!(default_ltoir_path(dir, "vecadd"), dir.join("vecadd.ltoir"));
     }
 
     #[test]
