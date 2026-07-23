@@ -924,6 +924,7 @@ mod tests {
         let target = generate_ptx_with_toolchain(
             &ll_path,
             &ptx_path,
+            &["kernel".to_string()],
             DebugKind::Off,
             &opts,
             &toolchain,
