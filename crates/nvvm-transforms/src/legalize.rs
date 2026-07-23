@@ -51,7 +51,11 @@ const NNEG_ATTR: &str = "llvm_nneg_flag";
 /// LLVM 7. Other atomic and fence operations that cuda-oxide has not yet
 /// legalized return an error instead of being emitted with unverified
 /// semantics.
-pub(crate) fn legalize_for_legacy_nvvm(ctx: &mut Context, module: Ptr<Operation>) -> Result<()> {
+pub(crate) fn legalize_for_legacy_nvvm(
+    ctx: &mut Context,
+    module: Ptr<Operation>,
+    capability: u32,
+) -> Result<()> {
     let mut ops = Vec::new();
     collect_ops(ctx, module, &mut ops);
 
@@ -62,7 +66,7 @@ pub(crate) fn legalize_for_legacy_nvvm(ctx: &mut Context, module: Ptr<Operation>
         reject_nonportable_f16_types(ctx, op)?;
         reject_unsupported_op(ctx, op)?;
         validate_rewrite_candidate(ctx, op)?;
-        if let Some(intrinsic) = validate_float_atomic_add(ctx, op)? {
+        if let Some(intrinsic) = validate_float_atomic_add(ctx, op, capability)? {
             float_atomic_adds.push((op, intrinsic));
         }
     }
@@ -301,7 +305,11 @@ fn reject_unsupported_op(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
 /// Validate the exact semantics and declaration ABI needed by the legacy NVVM
 /// floating-point atomic-add intrinsic. This runs for the complete module
 /// before any rewrite so an error cannot leave earlier operations changed.
-fn validate_float_atomic_add(ctx: &Context, op: Ptr<Operation>) -> Result<Option<String>> {
+fn validate_float_atomic_add(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    capability: u32,
+) -> Result<Option<String>> {
     let Some(rmw) = Operation::get_op::<llvm::AtomicRmwOp>(op, ctx) else {
         return Ok(None);
     };
@@ -321,6 +329,15 @@ fn validate_float_atomic_add(ctx: &Context, op: Ptr<Operation>) -> Result<Option
         return pliron::input_err!(
             op.deref(ctx).loc(),
             "legacy NVVM floating-point atomic add supports only f32 and f64"
+        );
+    }
+    // PTX `atom.add.f64` needs sm_60 (Pascal) hardware; reject here so the
+    // failure is a clear cuda-oxide diagnostic before any rewrite, not a
+    // downstream libNVVM or ptxas error on the emitted intrinsic.
+    if width == 64 && capability < 60 {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM f64 atomic add requires sm_60 or newer; the build targets sm_{capability}"
         );
     }
     if rmw.get_attr_llvm_rmw_ordering(ctx).as_deref() != Some(&AtomicOrderingAttr::Monotonic) {
@@ -1482,6 +1499,7 @@ mod tests {
             &mut ctx,
             module.get_operation(),
             llvm_export::export::NvvmIrDialect::LegacyLlvm7,
+            90,
         )
         .unwrap();
 
@@ -1507,7 +1525,7 @@ mod tests {
             .get_operation()
             .insert_at_back(entry, &ctx);
 
-        legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
         assert!(!zext.nneg(&ctx));
         let key: Identifier = NNEG_ATTR.try_into().unwrap();
@@ -1560,7 +1578,7 @@ mod tests {
             let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
             direct_intrinsic_call(&mut ctx, &module, name, i32_ty, vec![i32_ty, i32_ty]);
 
-            legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+            legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
             let ids = operation_ids(&ctx, module.get_operation());
             assert!(ids.iter().any(|id| id == "llvm.select"), "{name}: {ids:?}");
@@ -1597,7 +1615,7 @@ mod tests {
                 vec![i128_ty; parameter_count],
             );
 
-            legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+            legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
             let mut ops = Vec::new();
             collect_ops(&ctx, module.get_operation(), &mut ops);
@@ -1642,7 +1660,7 @@ mod tests {
                     .get_operation()
                     .insert_at_back(entry, &ctx);
 
-                legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+                legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
                 let mut ops = Vec::new();
                 collect_ops(&ctx, module.get_operation(), &mut ops);
@@ -1673,7 +1691,7 @@ mod tests {
             let error = if common_only {
                 legalize_nvvm_bit_intrinsics(&mut ctx, module.get_operation()).unwrap_err()
             } else {
-                legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err()
+                legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err()
             };
             let after = module.get_operation().deref(&ctx).disp(&ctx).to_string();
 
@@ -1701,7 +1719,7 @@ mod tests {
                 let error = if common_only {
                     legalize_nvvm_bit_intrinsics(&mut ctx, module.get_operation()).unwrap_err()
                 } else {
-                    legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err()
+                    legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err()
                 };
                 let after = module.get_operation().deref(&ctx).disp(&ctx).to_string();
 
@@ -1740,6 +1758,7 @@ mod tests {
             &mut ctx,
             module.get_operation(),
             llvm_export::export::NvvmIrDialect::Modern,
+            90,
         )
         .unwrap();
 
@@ -1774,7 +1793,7 @@ mod tests {
             vec![f32_ty],
         );
 
-        legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
         let ids = operation_ids(&ctx, module.get_operation());
         assert_eq!(ids.iter().filter(|id| *id == "llvm.fcmp").count(), 3);
@@ -1828,7 +1847,7 @@ mod tests {
             .get_operation()
             .insert_at_back(vote_entry, &ctx);
 
-        legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
         let mut calls = Vec::new();
         let mut ops = Vec::new();
@@ -1863,7 +1882,7 @@ mod tests {
             .get_operation()
             .insert_at_back(entry, &ctx);
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         let text = error.disp(&ctx).to_string();
         assert!(text.contains("f16"), "{text}");
         assert!(text.contains("CUDA 12"), "{text}");
@@ -1936,7 +1955,7 @@ mod tests {
             }
         }
 
-        legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
 
         let mut ops = Vec::new();
         collect_ops(&ctx, module.get_operation(), &mut ops);
@@ -2032,7 +2051,7 @@ mod tests {
                 scope,
             );
 
-            let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+            let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
             assert!(error.disp(&ctx).to_string().contains(expected), "{error}");
         }
     }
@@ -2052,7 +2071,7 @@ mod tests {
             Some("device".to_string()),
         );
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error.disp(&ctx).to_string().contains("monotonic ordering"),
             "{error}"
@@ -2064,6 +2083,67 @@ mod tests {
                 .iter(&ctx)
                 .any(|op| { Operation::get_op::<llvm::AtomicRmwOp>(op, &ctx).is_some() })
         );
+    }
+
+    #[test]
+    fn legacy_f64_atomic_add_rejects_pre_pascal_target_before_mutation() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "atomic_add".try_into().unwrap());
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+        let function = atomic_add_function(
+            &mut ctx,
+            &module,
+            "atomic_add_f64",
+            1,
+            f64_ty,
+            AtomicOrderingAttr::Monotonic,
+            Some("device".to_string()),
+        );
+
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 52).unwrap_err();
+        assert!(
+            error
+                .disp(&ctx)
+                .to_string()
+                .contains("requires sm_60 or newer"),
+            "{error}"
+        );
+        let entry = function.get_entry_block(&ctx).unwrap();
+        assert!(
+            entry
+                .deref(&ctx)
+                .iter(&ctx)
+                .any(|op| { Operation::get_op::<llvm::AtomicRmwOp>(op, &ctx).is_some() })
+        );
+    }
+
+    #[test]
+    fn legacy_f32_atomic_add_accepts_pre_pascal_target() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "atomic_add".try_into().unwrap());
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        atomic_add_function(
+            &mut ctx,
+            &module,
+            "atomic_add_f32",
+            1,
+            f32_ty,
+            AtomicOrderingAttr::Monotonic,
+            Some("device".to_string()),
+        );
+
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 52).unwrap();
+        let ir = export_module_to_string_with_config(
+            &ctx,
+            &module,
+            &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+        )
+        .expect("f32 atomic add legalizes on pre-Pascal targets");
+        assert!(
+            ir.contains("call float @llvm.nvvm.atomic.load.add.f32.p1f32(float addrspace(1)* "),
+            "{ir}"
+        );
+        assert!(!ir.contains("atomicrmw fadd"), "{ir}");
     }
 
     #[test]
@@ -2091,7 +2171,7 @@ mod tests {
             Some("device".to_string()),
         );
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error
                 .disp(&ctx)
@@ -2136,7 +2216,7 @@ mod tests {
         );
         module.get_operation().deref(&ctx).verify(&ctx).unwrap();
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error.disp(&ctx).to_string().contains("function definition"),
             "{error}"
@@ -2174,7 +2254,7 @@ mod tests {
         );
         module.get_operation().deref(&ctx).verify(&ctx).unwrap();
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error
                 .disp(&ctx)
@@ -2216,7 +2296,7 @@ mod tests {
             Some("block".to_string()),
         );
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error
                 .disp(&ctx)
@@ -2270,7 +2350,7 @@ mod tests {
             .get_operation()
             .insert_at_back(entry, &ctx);
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error
                 .disp(&ctx)
@@ -2297,7 +2377,7 @@ mod tests {
             .get_operation()
             .insert_at_back(entry, &ctx);
 
-        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap_err();
+        let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(error.disp(&ctx).to_string().contains("atomic loads"));
         assert!(Operation::get_op::<llvm::AtomicLoadOp>(load.get_operation(), &ctx).is_some());
     }

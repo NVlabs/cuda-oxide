@@ -339,7 +339,11 @@ pub fn compile_translated_module(
                     .emit("\n=== Legalizing NVVM bit-intrinsic widths ===");
             }
         }
-        nvvm_transforms::legalize_for_nvvm(ctx, module, dialect)
+        let capability = nvvm_target
+            .as_ref()
+            .expect("an NVVM dialect is only selected alongside a resolved NVVM target")
+            .capability();
+        nvvm_transforms::legalize_for_nvvm(ctx, module, dialect, capability)
             .map_err(|error| PipelineError::Lowering(error.disp(ctx).to_string()))?;
     }
 
