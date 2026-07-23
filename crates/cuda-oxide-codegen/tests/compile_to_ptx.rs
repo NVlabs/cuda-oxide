@@ -170,6 +170,23 @@ fn write_tool(root: &Path, name: &str, contents: &str) -> PathBuf {
     let mut permissions = std::fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
     std::fs::set_permissions(&path, permissions).unwrap();
+    // Absorb Linux's fork/exec ETXTBSY window before any test relies on the
+    // tool. A concurrently spawning test can fork while this script's write
+    // fd is briefly open; until that child execs (closing its inherited
+    // CLOEXEC fd), executing the fresh script fails with "text file busy".
+    // Probing here keeps the race out of every toolchain-resolution assert.
+    for attempt in 0..50 {
+        match std::process::Command::new(&path).arg("--version").output() {
+            Ok(_) => break,
+            Err(_) if attempt < 49 => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!(
+                "fake tool {} never became executable: {error}",
+                path.display()
+            ),
+        }
+    }
     path
 }
 
