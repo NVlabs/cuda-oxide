@@ -143,6 +143,12 @@ mod kernels {
     }
 
     #[inline(never)]
+    // The late-initialized slot is the regression: the address-space
+    // analyzer must see one local written from two branches (the
+    // monomorphization-dead shared arm and the live global arm). An
+    // if-expression initializer would let mem2reg fold the slot away
+    // before the analyzer ever classifies it.
+    #[allow(clippy::needless_late_init)]
     fn write_pointer<M: PointerMode>(global: *mut u32) {
         let selected: *mut u32;
         if M::USE_SHARED {
@@ -159,6 +165,8 @@ mod kernels {
     }
 
     #[inline(never)]
+    // Same deliberate shape as write_pointer, with a runtime condition.
+    #[allow(clippy::needless_late_init)]
     fn write_pointer_dynamic(use_shared: bool, global: *mut u32) {
         let selected: *mut u32;
         if use_shared {
