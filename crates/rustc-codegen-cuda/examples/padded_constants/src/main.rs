@@ -16,7 +16,11 @@
 //! Covered shapes:
 //! - a struct constant with padding between its fields,
 //! - the same shape as a tuple constant,
+//! - a three-width struct whose offsets follow from neither order nor size,
 //! - a nested padded struct,
+//! - a struct holding an array of padded structs (element stride is the
+//!   padded size, not the field sum),
+//! - a `#[repr(C)]` struct with interior padding and a trailing field after it,
 //! - a padded struct with a float field, which lowers on a separate path,
 //! - a descending-alignment struct, which needs no padding and passed already.
 //!
@@ -109,7 +113,7 @@ const REPR_C: ReprC = ReprC {
 
 /// One field per thread, so every field is read on the device rather than folded
 /// into a single host-computed answer.
-const FIELDS: usize = 18;
+const FIELDS: usize = 21;
 
 #[cuda_module]
 mod kernels {
@@ -151,6 +155,16 @@ mod kernels {
             2 => s.arr[1].a as u64,
             _ => s.arr[1].b,
         }
+    }
+
+    /// Promoted reference-to-struct constant: `&(8..16)` reaches the importer
+    /// as a thin reference whose provenance names the allocation holding the
+    /// Range's bytes. Pins the by-ref decode path, which must follow the
+    /// indirection and query layout on the pointee, not the reference.
+    #[inline(never)]
+    fn take_promoted_range(sel: usize) -> u64 {
+        let r: &core::ops::Range<u64> = &(8..16);
+        if sel == 0 { r.start } else { r.end }
     }
 
     #[inline(never)]
@@ -197,7 +211,10 @@ mod kernels {
             14 => take_batch(BATCH, 2),
             15 => take_batch(BATCH, 3),
             16 => take_repr_c(REPR_C, 0),
-            _ => take_repr_c(REPR_C, 1),
+            17 => take_repr_c(REPR_C, 1),
+            18 => take_repr_c(REPR_C, 2),
+            19 => take_promoted_range(0),
+            _ => take_promoted_range(1),
         }
     }
 
@@ -244,7 +261,10 @@ fn expected_u64(i: usize) -> u64 {
         14 => BATCH.arr[1].a as u64,
         15 => BATCH.arr[1].b,
         16 => REPR_C.a as u64,
-        _ => REPR_C.b as u64,
+        17 => REPR_C.b as u64,
+        18 => REPR_C.c as u64,
+        19 => 8,
+        _ => 16,
     }
 }
 

@@ -36,10 +36,14 @@ Array value constants support primitive leaves (integers, `f16`, `f32`,
 `f64`), nested arrays, and tuples recursively composed from supported scalar,
 enum, tuple, and zero-sized fields. Tuple element strides and field offsets
 come from rustc layout, including internal and trailing padding; direct tuple
-value constants use the same layout-aware decoder. Arrays whose elements are
-structs or initialized unions are not yet materialized as constants.
-Pointer-bearing array values are rejected until aggregate relocations can be
-represented without losing provenance.
+value constants use the same layout-aware decoder. Struct constants (direct
+and promoted-by-reference) also read every field at its rustc layout offset,
+so padded, reordered, `#[repr(C)]`, and nested shapes decode correctly, and a
+struct's stored size is its padded size, which fixes the element stride for
+arrays of padded structs inside constants. Arrays whose elements are structs
+or initialized unions are not yet materialized as constants. Pointer-bearing
+array, tuple, and struct constants are rejected with a diagnostic until
+aggregate relocations can be represented without losing provenance.
 
 ## Compiler: Closures
 
