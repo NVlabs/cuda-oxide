@@ -234,10 +234,16 @@ struct PtxBackend<'a> {
     generated: &'a GeneratedModuleRequirements,
 }
 
-struct PtxModule<'a> {
-    llvm_ir: &'a Path,
-    output: &'a Path,
-    public_symbols: &'a [String],
+/// One module's artifact paths plus its externally consumed symbol roots.
+// mir-importer pipeline plumbing; not part of the frontend contract.
+#[doc(hidden)]
+pub struct PtxModule<'a> {
+    /// Textual LLVM IR input.
+    pub llvm_ir: &'a Path,
+    /// PTX output path.
+    pub output: &'a Path,
+    /// Symbols the internalization pass must keep external.
+    pub public_symbols: &'a [String],
 }
 
 /// Generates PTX from LLVM IR using `llc`.
@@ -260,9 +266,7 @@ struct PtxModule<'a> {
 // mir-importer pipeline plumbing; not part of the frontend contract.
 #[doc(hidden)]
 pub fn generate_ptx(
-    ll_path: &Path,
-    ptx_path: &Path,
-    public_symbols: &[String],
+    module: PtxModule<'_>,
     debug_kind: DebugKind,
     opts: &BackendOptions,
     diagnostic_sink: Option<fn(&str)>,
@@ -304,11 +308,7 @@ pub fn generate_ptx(
     }
     emit_diagnostics(diagnostic_sink, &diagnostics);
     let mut generated = generate_ptx_impl(
-        PtxModule {
-            llvm_ir: ll_path,
-            output: ptx_path,
-            public_symbols,
-        },
+        module,
         debug_kind,
         PtxBackend {
             options: opts,
@@ -329,9 +329,7 @@ pub fn generate_ptx(
 /// The experimental compiler uses this entry point so discovery is explicit
 /// and one [`LlvmToolchain`] can be reused across compilations.
 pub(crate) fn generate_ptx_with_toolchain(
-    ll_path: &Path,
-    ptx_path: &Path,
-    public_symbols: &[String],
+    module: PtxModule<'_>,
     debug_kind: DebugKind,
     opts: &BackendOptions,
     toolchain: &LlvmToolchain,
@@ -339,11 +337,7 @@ pub(crate) fn generate_ptx_with_toolchain(
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     generate_ptx_impl(
-        PtxModule {
-            llvm_ir: ll_path,
-            output: ptx_path,
-            public_symbols,
-        },
+        module,
         debug_kind,
         PtxBackend {
             options: opts,
@@ -712,9 +706,11 @@ mod tests {
             ..BackendOptions::default()
         };
         let error = generate_ptx(
-            &ll_path,
-            &ptx_path,
-            &[],
+            PtxModule {
+                llvm_ir: &ll_path,
+                output: &ptx_path,
+                public_symbols: &[],
+            },
             DebugKind::Off,
             &opts,
             Some(collect_legacy_diagnostic),
@@ -922,9 +918,11 @@ mod tests {
         .unwrap();
 
         let target = generate_ptx_with_toolchain(
-            &ll_path,
-            &ptx_path,
-            &["kernel".to_string()],
+            PtxModule {
+                llvm_ir: &ll_path,
+                output: &ptx_path,
+                public_symbols: &["kernel".to_string()],
+            },
             DebugKind::Off,
             &opts,
             &toolchain,
