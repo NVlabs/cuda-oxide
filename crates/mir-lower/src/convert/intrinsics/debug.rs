@@ -22,6 +22,7 @@ use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
+use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
@@ -58,18 +59,39 @@ pub(crate) fn convert_assertfail(
         false,
     );
 
-    let parent_block = op.deref(ctx).get_parent_block().unwrap();
-    helpers::ensure_intrinsic_declared(ctx, parent_block, "__assertfail", func_ty)
-        .map_err(|e| pliron::input_error_noloc!("{}", e))?;
+    let parent_block = op
+        .deref(ctx)
+        .get_parent_block()
+        .ok_or_else(|| pliron::input_error_noloc!("nvvm.assertfail has no parent block"))?;
+
+    // Everything after assertfail in the same block is unreachable.
+    // Collect first, then erase in reverse order so uses disappear before defs.
+    let trailing_ops: Vec<_> = parent_block
+        .deref(ctx)
+        .iter(ctx)
+        .skip_while(|candidate| *candidate != op)
+        .skip(1)
+        .collect();
+
+    let declaration =
+        helpers::ensure_intrinsic_declared(ctx, parent_block, "__assertfail", func_ty)
+            .map_err(|error| pliron::input_error_noloc!("{error}"))?;
+    llvm::set_op_noreturn(ctx, declaration);
 
     let sym_name: pliron::identifier::Identifier = "__assertfail".try_into().unwrap();
     let callee = CallOpCallable::Direct(sym_name);
     let call_op = llvm::CallOp::new(ctx, callee, func_ty, operands);
+    llvm::set_op_noreturn(ctx, call_op.get_operation());
+
+    for dead_op in trailing_ops.into_iter().rev() {
+        rewriter.erase_operation(ctx, dead_op);
+    }
+
     rewriter.insert_operation(ctx, call_op.get_operation());
-    // AssertFailOp has no results, so there are no uses to rewire;
-    // erase the original op, the same pattern the zero-result cp.async
-    // control ops use. replace_operation trips the result-count check
-    // because the void call carries no replacement values.
+
+    let unreachable = llvm::UnreachableOp::new(ctx);
+    rewriter.insert_operation(ctx, unreachable.get_operation());
+
     rewriter.erase_operation(ctx, op);
 
     Ok(())

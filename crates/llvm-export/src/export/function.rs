@@ -195,6 +195,7 @@ impl<'a> ModuleExportState<'a> {
         // Check for kernel attribute
         let kernel_key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
         let attrs = &func.get_operation().deref(self.ctx).attributes;
+        let is_noreturn = crate::ops::op_noreturn(self.ctx, func.get_operation());
         let is_kernel = attrs
             .get::<pliron::builtin::attributes::StringAttr>(&kernel_key)
             .is_some();
@@ -290,6 +291,10 @@ impl<'a> ModuleExportState<'a> {
                 }
             }
             write!(output, ")").unwrap();
+
+            if is_noreturn {
+                write!(output, " noreturn").unwrap();
+            }
 
             // Check if this is a known convergent intrinsic
             let is_convergent_intrinsic = Self::is_convergent_intrinsic(&fixed_func_name);
