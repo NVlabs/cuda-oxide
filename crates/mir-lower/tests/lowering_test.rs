@@ -265,6 +265,143 @@ fn test_globaltimer_lowers_to_intrinsic_call() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[test]
+fn test_assertfail_lowers_to_direct_call() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_ptr = module.get_operation();
+
+    let func_name = "kernel_func";
+    let u8_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        8,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let u32_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        32,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let u64_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        64,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let arg_tys: Vec<pliron::r#type::TypeHandle> = vec![
+        ptr_ty.into(),
+        ptr_ty.into(),
+        u32_ty.into(),
+        ptr_ty.into(),
+        u64_ty.into(),
+    ];
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, arg_tys.clone(), vec![]);
+
+    let func_op_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func_ty_attr = pliron::builtin::attributes::TypeAttr::new(func_ty.into());
+    let func = mir::MirFuncOp::new(&mut ctx, func_op_ptr, func_ty_attr);
+    func.set_symbol_name(&mut ctx, func_name.try_into().unwrap());
+
+    let region = func.get_operation().deref(&ctx).get_region(0);
+    let block = {
+        let b = pliron::basic_block::BasicBlock::new(&mut ctx, None, arg_tys);
+        b.insert_at_back(region, &ctx);
+        b
+    };
+
+    let message = block.deref(&ctx).get_argument(0);
+    let file = block.deref(&ctx).get_argument(1);
+    let line = block.deref(&ctx).get_argument(2);
+    let function = block.deref(&ctx).get_argument(3);
+    let char_size = block.deref(&ctx).get_argument(4);
+
+    let assertfail_op =
+        nvvm::AssertFailOp::build(&mut ctx, message, file, line, function, char_size);
+    assertfail_op.insert_at_back(block, &ctx);
+
+    let ret_op_ptr = Operation::new(
+        &mut ctx,
+        mir::MirReturnOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    ret_op_ptr.insert_at_back(block, &ctx);
+
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    const EXTERN: &str = "__assertfail";
+
+    let mut found_decl = false;
+    let mut found_call = false;
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm_export::ops::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        let name = func_op.get_symbol_name(&ctx).to_string();
+
+        if name == EXTERN {
+            found_decl = true;
+        } else if name == func_name {
+            let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+            for func_block in func_region.deref(&ctx).iter(&ctx) {
+                for body_op in func_block.deref(&ctx).iter(&ctx) {
+                    if let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx)
+                        && let CallOpCallable::Direct(sym) = call.callee(&ctx)
+                        && sym.to_string() == EXTERN
+                    {
+                        found_call = true;
+                        assert_eq!(
+                            body_op.deref(&ctx).get_num_operands(),
+                            5,
+                            "__assertfail call must forward all five operands"
+                        );
+                        // (The LLVM dialect models a void call as a single
+                        // void-typed result; the exporter prints it with no
+                        // destination, so only the operand shape matters here.)
+                    }
+                    assert!(
+                        Operation::get_op::<nvvm::AssertFailOp>(body_op, &ctx).is_none(),
+                        "nvvm.assertfail must be fully consumed by the lowering"
+                    );
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_decl,
+        "Expected `{EXTERN}` declaration in lowered module"
+    );
+    assert!(
+        found_call,
+        "Expected call to `{EXTERN}` in lowered kernel body"
+    );
+    Ok(())
+}
+
 /// Lower a single zero-operand, i32-result special-register op and assert it
 /// emits a declaration of and direct call to `intrinsic` (and no inline asm).
 fn assert_sreg_i32_lowers_to_intrinsic(

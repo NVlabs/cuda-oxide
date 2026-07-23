@@ -66,7 +66,11 @@ pub(crate) fn convert_assertfail(
     let callee = CallOpCallable::Direct(sym_name);
     let call_op = llvm::CallOp::new(ctx, callee, func_ty, operands);
     rewriter.insert_operation(ctx, call_op.get_operation());
-    rewriter.replace_operation(ctx, op, call_op.get_operation());
+    // AssertFailOp has no results, so there are no uses to rewire;
+    // erase the original op, the same pattern the zero-result cp.async
+    // control ops use. replace_operation trips the result-count check
+    // because the void call carries no replacement values.
+    rewriter.erase_operation(ctx, op);
 
     Ok(())
 }
