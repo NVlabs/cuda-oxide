@@ -2220,8 +2220,26 @@ pub fn translate_operand(
                             )))
                         })? as usize;
 
+                    // The pointee is decoded from raw bytes below, with no
+                    // provenance map to resolve pointers nested inside it, so
+                    // a pointee that itself contains relocations must fail
+                    // loudly before its placeholder bytes decode as addresses.
+                    let reject_pointee_relocations = |relocations: usize| -> TranslationResult<()> {
+                        if relocations != 0 {
+                            return input_err!(
+                                loc.clone(),
+                                TranslationErr::unsupported(format!(
+                                    "Promoted constant's pointee contains {relocations} pointer \
+                                         relocation(s); cuda-oxide cannot yet preserve nested \
+                                         pointer provenance"
+                                ))
+                            );
+                        }
+                        Ok(())
+                    };
                     let target_bytes: Vec<u8> = match GlobalAlloc::from(alloc_id) {
                         GlobalAlloc::Memory(target_alloc) => {
+                            reject_pointee_relocations(target_alloc.provenance.ptrs.len())?;
                             target_alloc.raw_bytes().ok().unwrap_or_else(|| {
                                 target_alloc
                                     .bytes
@@ -2237,6 +2255,7 @@ pub fn translate_operand(
                                     e
                                 )))
                             })?;
+                            reject_pointee_relocations(target_alloc.provenance.ptrs.len())?;
                             target_alloc.raw_bytes().ok().unwrap_or_else(|| {
                                 target_alloc
                                     .bytes
@@ -5307,7 +5326,7 @@ fn translate_struct_constant(
             if by_ref_pointee.is_some() {
                 // Follow the by-ref indirection to the actual struct allocation.
                 use rustc_public::mir::alloc::GlobalAlloc;
-                let Some(&(_, prov)) = alloc.provenance.ptrs.first() else {
+                let Some(&(prov_pos, prov)) = alloc.provenance.ptrs.first() else {
                     return input_err!(
                         loc,
                         TranslationErr::unsupported(
@@ -5315,6 +5334,28 @@ fn translate_struct_constant(
                         )
                     );
                 };
+                // The pointer's data bytes encode the byte offset into the
+                // target allocation. The decode below slices from byte zero,
+                // so an interior reference must fail loudly rather than read
+                // fields from the wrong base.
+                let ptr_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+                let ref_offset = alloc
+                    .read_partial_uint(prov_pos..prov_pos + ptr_width)
+                    .map_err(|e| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Failed to read struct constant provenance offset: {:?}",
+                            e
+                        )))
+                    })?;
+                if ref_offset != 0 {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Reference-to-struct constant points at interior offset {ref_offset}; \
+                             cuda-oxide cannot yet decode interior references to constants"
+                        ))
+                    );
+                }
                 let alloc_id = prov.0;
                 match GlobalAlloc::from(alloc_id) {
                     GlobalAlloc::Memory(target_alloc) => {
@@ -8350,10 +8391,6 @@ mod pointer_array_constant_type_tests {
         );
     }
 }
-
-// (The hand-rolled niche-attribute writer that lived here was replaced
-// by `MirCastOp::set_attr_niche_encoding(...)`, generated from the typed
-// `NicheEncodingAttr` slot declared on the op.)
 
 #[cfg(test)]
 mod tests {
