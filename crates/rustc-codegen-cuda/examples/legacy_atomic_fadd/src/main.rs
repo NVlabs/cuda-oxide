@@ -58,8 +58,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let got_f32 = counter_f32.cast_elem::<f32>().to_host_vec(&stream)?[0];
     let got_f64 = counter_f64.cast_elem::<f64>().to_host_vec(&stream)?[0];
     let old_values = old_values.to_host_vec(&stream)?;
-    let mut old_f32 = old_values.iter().map(|&(value, _)| value).collect::<Vec<_>>();
-    let mut old_f64 = old_values.iter().map(|&(_, value)| value).collect::<Vec<_>>();
+    let mut old_f32 = old_values
+        .iter()
+        .map(|&(value, _)| value)
+        .collect::<Vec<_>>();
+    let mut old_f64 = old_values
+        .iter()
+        .map(|&(_, value)| value)
+        .collect::<Vec<_>>();
     old_f32.sort_by(f32::total_cmp);
     old_f64.sort_by(f64::total_cmp);
     let old_f32_is_permutation = old_f32
