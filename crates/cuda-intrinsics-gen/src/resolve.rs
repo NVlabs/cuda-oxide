@@ -35380,8 +35380,12 @@ scope = "system"
             target_contract(vec![selector("kind", "f16")], &[("sm_100a", "8.60")]),
         ] {
             assert!(
-                resolve_target_contract("tcgen05_mma", &invalid.selectors, std::slice::from_ref(&invalid))
-                    .is_err(),
+                resolve_target_contract(
+                    "tcgen05_mma",
+                    &invalid.selectors,
+                    std::slice::from_ref(&invalid)
+                )
+                .is_err(),
                 "{invalid:?}"
             );
         }
