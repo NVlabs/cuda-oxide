@@ -2272,6 +2272,7 @@ pub fn codegen_show_pipeline(
     println!("  -C debug-assertions=off     Remove debug checks");
     println!("  -Z mir-enable-passes=-JumpThreading");
     println!("                              Prevent barrier duplication");
+    println!("  -Z always-encode-mir        Emit MIR for all reachable device deps");
     println!();
     println!("Note: panic=abort is NOT required - the codegen backend treats");
     println!("      unwind paths as unreachable (CUDA toolchain limitation, not HW).");
@@ -3337,6 +3338,19 @@ fn build_encoded_rustflags_with_existing(
     }
     flags.extend([
         "-Zmir-enable-passes=-JumpThreading".to_string(),
+        // Device codegen is whole-program: `collector` walks the call graph from
+        // each `#[kernel]` and must emit every reachable dependency function into
+        // one module. rustc encodes cross-crate MIR only for `#[inline]`/generic
+        // items, so a non-`#[inline]`, non-generic dependency function that cannot
+        // be inlined away (canonically: a recursive one) would be *called* but
+        // never *defined* -> LLVM verification fails with "Symbol <crate>__<fn>
+        // not found". Encode all MIR so any reachable dependency function is
+        // device-compilable. This applies build-wide (like the other required
+        // flags), so it also encodes MIR for host-only deps — an intentional,
+        // interim trade (rmeta size) until a surgical device-dep-scoped or
+        // per-crate device-link path lands. It matches the established approach
+        // for whole-program-MIR tools (e.g. Miri).
+        "-Zalways-encode-mir".to_string(),
         "-Csymbol-mangling-version=v0".to_string(),
     ]);
     if profile == CodegenProfilePolicy::ReleaseLikeWithDebugInfo {
@@ -5048,6 +5062,7 @@ path = "src/other.rs"
                 "device_test",
                 "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
                 "-Zmir-enable-passes=-JumpThreading",
+                "-Zalways-encode-mir",
                 "-Csymbol-mangling-version=v0",
             ]
         );
@@ -5117,6 +5132,7 @@ path = "src/other.rs"
                 "-Copt-level=3",
                 "-Cdebug-assertions=off",
                 "-Zmir-enable-passes=-JumpThreading",
+                "-Zalways-encode-mir",
                 "-Csymbol-mangling-version=v0",
             ]
         );
@@ -5202,6 +5218,7 @@ path = "src/other.rs"
         assert!(flags.contains(&"-Cdebug-assertions=off"));
         assert!(flags.contains(&"-Cdebuginfo=2"));
         assert!(flags.contains(&"-Zmir-enable-passes=-JumpThreading"));
+        assert!(flags.contains(&"-Zalways-encode-mir"));
         assert!(flags.contains(&"-Csymbol-mangling-version=v0"));
         assert!(!flags.contains(&""));
     }
