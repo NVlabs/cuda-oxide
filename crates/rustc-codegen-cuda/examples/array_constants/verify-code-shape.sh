@@ -36,7 +36,8 @@ symbol_body() {
         # Unoptimized PTX includes forward declarations. Wait for the matching
         # header to reach `{`; a prototype reaches `;` and is skipped.
         awk -v marker="${symbol}(" '
-            !emit && !candidate && index($0, marker) && index($0, ".func") {
+            !emit && !candidate && index($0, marker) &&
+                (index($0, ".func") || index($0, ".entry")) {
                 candidate = 1
             }
             candidate && $0 ~ /^[[:space:]]*;[[:space:]]*$/ {
@@ -156,24 +157,39 @@ reject_symbol_shape "${llvm_ir}" llvm "${overaligned_symbol}" \
 
 # Optimization may scalarize the aggregate stores and removes the address
 # low-bit computation once the alloca is provably aligned, but the surviving
-# dynamic spill must remain align 32 throughout.
-require_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+# dynamic spill must remain align 32 throughout. Where it survives depends on
+# the middle-end: with plain -O2 the external helper is kept and owns the
+# spill, while internalizing non-root helpers lets `opt` inline it into the
+# kernel and delete the definition. Assert on whichever function actually
+# carries the code in each artifact.
+surviving_symbol() {
+    local artifact="$1"
+    if grep -q "${overaligned_symbol}" "${artifact}"; then
+        echo "${overaligned_symbol}"
+    else
+        echo 'check_array_constants'
+    fi
+}
+optimized_symbol="$(surviving_symbol "${optimized_llvm_ir}")"
+ptx_symbol="$(surviving_symbol "${ptx}")"
+
+require_symbol_shape "${optimized_llvm_ir}" llvm "${optimized_symbol}" \
     "align-32 dynamic array spill alloca in optimized LLVM" \
     "alloca ${overaligned_array}, align 32"
-require_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+require_symbol_shape "${optimized_llvm_ir}" llvm "${optimized_symbol}" \
     "align-32 scalarized store in optimized LLVM" \
     'store i8 18, .* align 32'
-require_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+require_symbol_shape "${optimized_llvm_ir}" llvm "${optimized_symbol}" \
     "align-32 scalarized load in optimized LLVM" \
     'load i8, .* align 32'
-reject_symbol_shape "${optimized_llvm_ir}" llvm "${overaligned_symbol}" \
+reject_symbol_shape "${optimized_llvm_ir}" llvm "${optimized_symbol}" \
     "under-aligned memory operation in optimized LLVM" \
     '(^|, )align 1($|[^0-9])'
 
-require_symbol_shape "${ptx}" ptx "${overaligned_symbol}" \
+require_symbol_shape "${ptx}" ptx "${ptx_symbol}" \
     "32-byte-aligned PTX local depot" \
     '\.local \.align 32 \.b8'
-reject_symbol_shape "${ptx}" ptx "${overaligned_symbol}" \
+reject_symbol_shape "${ptx}" ptx "${ptx_symbol}" \
     "align-1 PTX local depot" \
     '\.local \.align 1 \.b8'
 
