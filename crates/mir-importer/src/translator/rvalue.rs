@@ -1601,6 +1601,15 @@ pub fn translate_rvalue(
         mir::Rvalue::CopyForDeref(place) => {
             // CopyForDeref is semantically a place read. Any load or projection
             // operations emitted by translate_place are already inserted and tracked.
+            //
+            // Note: on the pinned toolchain the MIR optimization pipeline
+            // (copy-prop/GVN) eliminates every CopyForDeref before the
+            // optimized MIR reaches this importer; nested-deref kernels
+            // (`**rr`, including through raw pointers) were probed and none
+            // produce one here today. This arm is defensive coverage so a
+            // future toolchain bump or lower mir-opt-level cannot regress
+            // valid nested-deref kernels into an "unsupported construct"
+            // failure.
             let (value, last_inserted) =
                 translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc)?;
 
