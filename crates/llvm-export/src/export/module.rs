@@ -166,16 +166,26 @@ fn validate_device_extern_function_shape(
     Ok(())
 }
 
+/// Names of the module's externally consumed function definitions: kernel
+/// entries plus `#[device]` exports. One shared list feeds both `@llvm.used`
+/// emission and the internalization public-API list so the two root sets can
+/// never drift apart. The union (rather than kernels-else-device-functions)
+/// keeps a `#[device]` export visible even when the module also has kernels;
+/// anonymous helpers carry neither marker and stay internalizable.
+fn root_function_names<'a>(state: &'a ModuleExportState<'_>) -> Vec<&'a str> {
+    let mut names: Vec<&str> = state
+        .all_kernels
+        .iter()
+        .map(|kernel| kernel.name.as_str())
+        .chain(state.device_functions.iter().map(String::as_str))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 fn emit_llvm_used(output: &mut String, state: &ModuleExportState<'_>) -> Result<(), String> {
-    let names: Vec<&str> = if !state.all_kernels.is_empty() {
-        state
-            .all_kernels
-            .iter()
-            .map(|kernel| kernel.name.as_str())
-            .collect()
-    } else {
-        state.device_functions.iter().map(String::as_str).collect()
-    };
+    let names = root_function_names(state);
     if names.is_empty() {
         return Ok(());
     }
@@ -543,15 +553,10 @@ pub(super) fn export_module_with_externs_impl(
 }
 
 fn public_symbols(state: &ModuleExportState<'_>) -> Vec<String> {
-    let mut symbols = if state.all_kernels.is_empty() {
-        state.device_functions.clone()
-    } else {
-        state
-            .all_kernels
-            .iter()
-            .map(|kernel| kernel.name.clone())
-            .collect()
-    };
+    let mut symbols: Vec<String> = root_function_names(state)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     symbols.extend(state.public_globals.iter().cloned());
     symbols.sort_unstable();
     symbols.dedup();
