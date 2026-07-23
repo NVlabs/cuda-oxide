@@ -54,6 +54,20 @@ impl TyCtxt {
     pub const U128: TyId = TyId::from_usize_unchecked(14);
     pub const F32: TyId = TyId::from_usize_unchecked(15);
     pub const F64: TyId = TyId::from_usize_unchecked(16);
+    pub const INTEGER_TYPES: [TyId; 12] = [
+        Self::ISIZE,
+        Self::I8,
+        Self::I16,
+        Self::I32,
+        Self::I64,
+        Self::I128,
+        Self::USIZE,
+        Self::U8,
+        Self::U16,
+        Self::U32,
+        Self::U64,
+        Self::U128,
+    ];
 
     pub fn from_primitives(config: TyConfig) -> Self {
         let primitives: [TyKind; 17] = [

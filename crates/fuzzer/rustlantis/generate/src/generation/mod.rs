@@ -189,24 +189,7 @@ impl GenerationCtx {
                 Shl | Shr => {
                     // left operand same type as lhs, right can be uint or int
                     let l = self.choose_operand(&[lhs_ty], lhs)?;
-                    // TODO: use a compile time concat
-                    let r = self.choose_operand(
-                        &[
-                            TyCtxt::ISIZE,
-                            TyCtxt::I8,
-                            TyCtxt::I16,
-                            TyCtxt::I32,
-                            TyCtxt::I64,
-                            TyCtxt::I128,
-                            TyCtxt::USIZE,
-                            TyCtxt::U8,
-                            TyCtxt::U16,
-                            TyCtxt::U32,
-                            TyCtxt::U64,
-                            TyCtxt::U128,
-                        ],
-                        lhs,
-                    )?;
+                    let r = self.choose_operand(&TyCtxt::INTEGER_TYPES, lhs)?;
                     (l, r)
                 }
                 Eq | Ne | Lt | Le | Ge | Gt => {
@@ -668,22 +651,7 @@ impl GenerationCtx {
     fn generate_switch_int_params(&self) -> Result<TerminatorParams> {
         trace!("generating a SwitchInt terminator");
         let (places, weights) = PlaceSelector::for_known_val(self.tcx.clone())
-            .of_tys(&[
-                TyCtxt::ISIZE,
-                TyCtxt::I8,
-                TyCtxt::I16,
-                TyCtxt::I32,
-                TyCtxt::I64,
-                TyCtxt::I128,
-                TyCtxt::USIZE,
-                TyCtxt::U8,
-                TyCtxt::U16,
-                TyCtxt::U32,
-                TyCtxt::U64,
-                TyCtxt::U128,
-                // Ty::Char,
-                // Ty::Bool,
-            ])
+            .of_tys(&TyCtxt::INTEGER_TYPES)
             .into_weighted(&self.pt)
             .ok_or(SelectionError::Exhausted)?;
 
