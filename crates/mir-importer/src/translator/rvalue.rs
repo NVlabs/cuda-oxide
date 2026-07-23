@@ -5269,19 +5269,56 @@ fn translate_struct_constant(
         struct_ty.field_types().to_vec()
     };
 
-    // Get the bytes from the constant's allocation.
-    // For promoted constants like &(8..16), the allocation contains a pointer
-    // (8 zero bytes with provenance) pointing to another allocation with the actual struct data.
-    // We need to follow the provenance to get the real struct bytes.
+    // The constant's Rust type decides how to read the allocation. A
+    // reference or raw pointer means stable_mir handed over a promoted
+    // constant indirectly (`&(8..16)`): the allocation is a thin pointer whose
+    // provenance names the allocation with the actual struct data, and the
+    // layout query must run on the pointee. An aggregate type means the
+    // allocation IS the struct's memory image. Deciding by "has provenance"
+    // conflated the two: a by-value struct with a pointer field would have had
+    // its own bytes silently replaced by the first pointee's.
+    let by_ref_pointee = match rust_ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, pointee, _))
+        | rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(pointee, _)) => {
+            Some(pointee)
+        }
+        _ => None,
+    };
+    let struct_rust_ty = by_ref_pointee.unwrap_or(*rust_ty);
+
+    // Read the struct's own bytes, rejecting pointer relocations before their
+    // placeholder bytes can be decoded as field values. A relocation's stored
+    // bytes are the offset into the target allocation, not an address, and the
+    // per-field decoders below carry no provenance map to resolve them.
+    let reject_struct_relocations = |relocations: usize| -> TranslationResult<()> {
+        if relocations != 0 {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Struct constant contains {relocations} pointer relocation(s); \
+                     cuda-oxide cannot yet preserve struct pointer provenance"
+                ))
+            );
+        }
+        Ok(())
+    };
     let bytes = match constant.const_.kind() {
         ConstantKind::Allocated(alloc) => {
-            // Check if this allocation has provenance (i.e., it's a pointer to another allocation)
-            if let Some((_, prov)) = alloc.provenance.ptrs.first() {
-                // Follow the provenance to get the actual struct allocation
+            if by_ref_pointee.is_some() {
+                // Follow the by-ref indirection to the actual struct allocation.
                 use rustc_public::mir::alloc::GlobalAlloc;
+                let Some(&(_, prov)) = alloc.provenance.ptrs.first() else {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "Reference-to-struct constant has no provenance to follow".to_string()
+                        )
+                    );
+                };
                 let alloc_id = prov.0;
                 match GlobalAlloc::from(alloc_id) {
                     GlobalAlloc::Memory(target_alloc) => {
+                        reject_struct_relocations(target_alloc.provenance.ptrs.len())?;
                         target_alloc.raw_bytes().ok().unwrap_or_else(|| {
                             target_alloc
                                 .bytes
@@ -5297,6 +5334,7 @@ fn translate_struct_constant(
                                 e
                             )))
                         })?;
+                        reject_struct_relocations(target_alloc.provenance.ptrs.len())?;
                         target_alloc.raw_bytes().ok().unwrap_or_else(|| {
                             target_alloc
                                 .bytes
@@ -5316,7 +5354,8 @@ fn translate_struct_constant(
                     }
                 }
             } else {
-                // No provenance - use bytes directly (inline struct constant)
+                // The allocation is the struct's own memory image.
+                reject_struct_relocations(alloc.provenance.ptrs.len())?;
                 alloc.raw_bytes().ok().unwrap_or_else(|| {
                     alloc
                         .bytes
@@ -5346,8 +5385,10 @@ fn translate_struct_constant(
     // Parse field values from the bytes. `field_types` is in declaration order,
     // and so is `field_offsets`, but the bytes are the struct's memory image: a
     // field starts at its layout offset, which is not the sum of the sizes before
-    // it once rustc reorders fields or pads between them.
-    let field_offsets = super::layout::aggregate_field_offsets(rust_ty, "Struct", &loc)?;
+    // it once rustc reorders fields or pads between them. The query runs on the
+    // struct type itself; for a by-ref constant, `rust_ty` is the reference,
+    // whose Primitive field shape the helper rejects.
+    let field_offsets = super::layout::aggregate_field_offsets(&struct_rust_ty, "Struct", &loc)?;
     if field_offsets.len() != field_types.len() {
         return input_err!(
             loc,
@@ -6095,8 +6136,8 @@ fn build_const_from_bytes(
                 return input_err!(
                     loc,
                     TranslationErr::unsupported(format!(
-                        "aggregate const: field {field_idx} needs [{off}..{}) of {} bytes",
-                        off + sz,
+                        "aggregate const: field {field_idx} needs {sz} bytes at offset {off}, \
+                         but only {} are available",
                         bytes.len()
                     ))
                 );
@@ -6140,8 +6181,8 @@ fn build_const_from_bytes(
                 return input_err!(
                     loc,
                     TranslationErr::unsupported(format!(
-                        "aggregate const: element {i} needs [{off}..{}) of {} bytes",
-                        off + sz,
+                        "aggregate const: element {i} needs {sz} bytes at offset {off}, \
+                         but only {} are available",
                         bytes.len()
                     ))
                 );
