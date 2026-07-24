@@ -124,6 +124,7 @@
 //! Kernel export names are separate — they use `compute_kernel_export_name`
 //! with human-readable base names derived from the `#[kernel]` macro.
 
+use mir_importer::is_panic_entry_path;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_index::{Idx, bit_set::DenseBitSet};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
@@ -650,15 +651,6 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
 /// device-reachable MIR, a stub was reached through code that the macros
 /// never rewrote, which means a helper function is missing `#[device]`.
 const MISSING_DEVICE_STUB_MARKER: &str = "called outside #[kernel] / #[device]";
-
-/// Returns true for the panic entry points in `core` (and the `std`
-/// re-export) that mark a basic block as a panic path.
-///
-/// Kept in sync with `is_unreachable_body`, which uses the same test to
-/// recognize intrinsic placeholder bodies.
-fn is_panic_entry_path(fn_path: &str) -> bool {
-    fn_path.contains("::panicking::") || fn_path.contains("::rt::panic")
-}
 
 /// If `fn_path` names one of the Rust global-allocator entry points,
 /// returns the bare shim name (for use in the diagnostic), else `None`.
@@ -2262,22 +2254,26 @@ impl<'tcx> DeviceCollector<'tcx> {
             .emit()
     }
 
-    /// Diagnoses panic-formatting machinery inside a collected body
-    /// (issue #76).
+    /// Diagnoses a missing `#[device]` annotation found through the panic
+    /// machinery of a collected body (issue #76).
     ///
     /// Called from [`collect`] for every function that is about to be
-    /// translated. A basic block that ends in a call into
-    /// `core::panicking` and *materializes a `&str` constant in a
-    /// statement* (the panic message, or pieces of a `format_args!`
-    /// template) cannot be translated: string constants in statements have
-    /// no device lowering, so the user would get an opaque
-    /// constant-translation error pointing into `core`. Report the real
-    /// situation instead.
+    /// translated. A basic block ending in a call into `core::panicking`
+    /// is a panic path; the string constants it materializes are the panic
+    /// message (or the pieces of a `format_args!` template).
     ///
-    /// Panic calls whose message travels only in the call arguments are
-    /// left alone on purpose: diverging call arguments are dropped by the
-    /// translator and the call lowers to LLVM `unreachable`, which is the
-    /// supported behavior for conditional panics like `unwrap`.
+    /// A *genuine* panic is not this function's business: the mir-importer
+    /// drops the diverging call, skips the dead message-building statements
+    /// and traps instead (`mir-importer`'s
+    /// `translator::block::translate_block`), so `panic!`, `unwrap`,
+    /// `expect` and every core panic reached through them compile.
+    ///
+    /// One message is still a hard error, because trapping it would bury a
+    /// real bug: the `thread::index_*` stub marker. It can only appear in
+    /// device-reachable MIR when a helper without `#[device]` called the
+    /// public stub and got its host-only panicking body inlined. Lowering
+    /// that to a trap would turn "you forgot an annotation" into a thread
+    /// that silently aborts the kernel, so it is reported here instead.
     fn check_panic_machinery(
         &self,
         mir: &rustc_middle::mir::Body<'tcx>,
@@ -2310,6 +2306,30 @@ impl<'tcx> DeviceCollector<'tcx> {
             };
             scan.visit_basic_block_data(bb, bb_data);
 
+            // Stub marker: the `thread::index_*` stub was inlined into this
+            // body, so a function on the way here is missing `#[device]`.
+            let stub_marker = scan
+                .found
+                .iter()
+                .find(|(_, _, text)| text.contains(MISSING_DEVICE_STUB_MARKER));
+
+            // Any other panic message is fine: the message-building
+            // statements are dead once the diverging call is dropped, so the
+            // importer skips them and the path lowers to a device trap. Note
+            // it under `--verbose` so the dropped message stays traceable.
+            let Some((_, _, marker_text)) = stub_marker else {
+                if self.verbose
+                    && let Some((_, _, text)) = scan.found.first()
+                {
+                    eprintln!(
+                        "[collector] Panic message dropped, path traps on device: {text:?} \
+                         (in `{}`)",
+                        self.tcx.def_path_str(func.instance.def_id())
+                    );
+                }
+                continue;
+            };
+
             let func_path = self.tcx.def_path_str(func.instance.def_id());
             let root_kind = if ctx.root_is_kernel {
                 "kernel"
@@ -2334,60 +2354,23 @@ impl<'tcx> DeviceCollector<'tcx> {
             // through MIR inlining and macro expansion to user code.
             let user_span = outermost_user_span(mir, term.source_info);
 
-            // Stub marker: the `thread::index_*` stub was inlined into this
-            // body, so a function on the way here is missing `#[device]`.
-            if let Some((_, _, text)) = scan
-                .found
-                .iter()
-                .find(|(_, _, text)| text.contains(MISSING_DEVICE_STUB_MARKER))
-            {
-                let stub = stub_name_from_marker_message(text);
-                self.tcx
-                    .dcx()
-                    .struct_span_fatal(
-                        user_span,
-                        format!(
-                            "`{stub}` only works inside `#[kernel]` / `#[device]` \
-                             functions; here it resolves to a host-only stub that \
-                             panics instead of reading the thread index"
-                        ),
-                    )
-                    .with_note(location_note.clone())
-                    .with_help(format!(
-                        "annotate the helper that calls `{stub}` with `#[device]`, or \
-                         compute the index in the kernel and pass it in as a parameter"
-                    ))
-                    .emit()
-            }
-
-            // A panic message materialized in a statement: translation of
-            // this body is guaranteed to fail, so error out with the likely
-            // causes instead.
-            if scan
-                .found
-                .iter()
-                .any(|(loc, _, _)| loc.statement_index < bb_data.statements.len())
-            {
-                self.tcx
-                    .dcx()
-                    .struct_span_fatal(
-                        user_span,
-                        "device code reaches a panic that builds a message string; \
-                         panic message formatting is not supported on the GPU",
-                    )
-                    .with_note(location_note)
-                    .with_note(
-                        "likely causes: a function used in device code without \
-                         `#[device]` (its body then resolves to a host-only stub that \
-                         panics), or a real panic path such as `panic!` / `assert!` / \
-                         `expect` with a message",
-                    )
-                    .with_help(
-                        "annotate device helpers with `#[device]`; for intentional \
-                         checks, branch and return instead of panicking with a message",
-                    )
-                    .emit()
-            }
+            let stub = stub_name_from_marker_message(marker_text);
+            self.tcx
+                .dcx()
+                .struct_span_fatal(
+                    user_span,
+                    format!(
+                        "`{stub}` only works inside `#[kernel]` / `#[device]` \
+                         functions; here it resolves to a host-only stub that \
+                         panics instead of reading the thread index"
+                    ),
+                )
+                .with_note(location_note)
+                .with_help(format!(
+                    "annotate the helper that calls `{stub}` with `#[device]`, or \
+                     compute the index in the kernel and pass it in as a parameter"
+                ))
+                .emit()
         }
     }
 

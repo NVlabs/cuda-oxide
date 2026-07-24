@@ -468,7 +468,7 @@ for the full profiling toolkit.
 | Missing `sync_threads()`         | Stale shared memory reads                  | Add barrier between writes and reads                             |
 | Wrong `shared_mem_bytes`         | `LAUNCH_OUT_OF_RESOURCES` or garbage data  | Match `LaunchConfig` to actual `DynamicSharedArray` usage        |
 | Out-of-bounds with raw pointers  | Trap or silent corruption                  | Use `DisjointSlice::get_mut` for bounds checking                 |
-| `panic!("message")` in kernel    | Compile error (fmt unavailable)            | Use `gpu_assert!` or `debug::trap()`                             |
+| `panic!("message")` in kernel    | Thread traps, message never appears        | Expected: no panic runtime on GPU. `gpu_printf!` before the check to see values |
 | Forgetting to sync after launch  | Host reads stale data                      | Call `to_host_vec`, `stream.synchronize()`, or `.sync()`         |
 | PTX built for wrong arch         | `NO_BINARY_FOR_GPU`                        | Rebuild with `cargo oxide build --arch sm_XX`                    |
 

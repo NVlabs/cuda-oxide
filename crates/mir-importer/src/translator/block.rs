@@ -16,6 +16,10 @@
 //! 2. Terminator is translated last and emits zero-operand control-flow ops
 //!    (`mir.goto`, `mir.cond_br`, `mir.switch`, `mir.return`). Cross-block
 //!    data flow happens via the slots, not block arguments.
+//!
+//! Panic blocks are the one exception: a block that ends in a diverging call
+//! into `core::panicking` lowers to a device trap alone, statements included
+//! (see [`translate_block`]).
 
 use super::statement;
 use super::terminator;
@@ -59,6 +63,26 @@ pub fn translate_block(
     entry_prev_op: Option<Ptr<Operation>>,
 ) -> TranslationResult<()> {
     let mut prev_op: Option<Ptr<Operation>> = entry_prev_op;
+
+    // A block that ends in a diverging call into `core::panicking` is lowered
+    // to `nvvm.trap` + `mir.unreachable`; the call itself is dropped, because
+    // no panic runtime exists on the device (see
+    // `terminator::is_dropped_panic_call`). Its statements exist only to build
+    // what that call would have consumed -- the message `&str`, the
+    // `format_args!` pieces -- and the block has no successor, so nothing they
+    // write can ever be read. Emitting the trap alone is what makes a panic
+    // carrying a message compile at all: a materialized `&str` constant has no
+    // device lowering, so translating those statements always fails.
+    //
+    // A store *through a pointer* in such a block is dropped along with the
+    // message. That stays inside the model cuda-oxide already uses for panics:
+    // the trap aborts the kernel, and the memory state of an aborted kernel is
+    // unspecified, so the store has no defined observer either way.
+    if terminator::is_dropped_panic_call(&mir_block.terminator) {
+        terminator::emit_dropped_panic_trap(ctx, &mir_block.terminator, block_ptr, prev_op);
+        return Ok(());
+    }
+
     for stmt in &mir_block.statements {
         let op_ptr =
             statement::translate_statement(ctx, body, stmt, value_map, block_ptr, prev_op)?;
