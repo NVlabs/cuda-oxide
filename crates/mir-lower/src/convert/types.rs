@@ -797,35 +797,43 @@ fn collect_llvm_pointer_storage(
     (!llvm_type_contains_pointer(ctx, ty)).then_some(())
 }
 
-/// Whether a slotless incoming field and the already selected enum storage
-/// agree exactly about every pointer byte covered by that field.
+/// Analyze how a slotless incoming pointer-bearing field overlaps the enum's
+/// already-selected storage, and report how to back every one of its pointers
+/// with a real `ptr` slot.
 ///
-/// Equality here is intentionally strict: the same absolute offset, extent,
-/// and address space must appear on both sides. This admits the real rustc
-/// layout of `Option<(usize, &T)>`, while continuing to reject a pointer
-/// variant sharing bytes with integer bits or an aggregate with an additional
-/// pointer for which the enum has only raw-byte storage.
-fn pointer_storage_matches_claims(
+/// Returns `Some(extra)` when the field is representable without erasing any
+/// pointer's provenance: every pointer leaf that coincides with an existing
+/// claim reuses that claim, and each remaining ("extra") pointer leaf lands on
+/// bytes no other claim covers, so it can be backed by its own fresh `ptr`
+/// slot. `extra` lists exactly those leaves for the caller to add as claims.
+/// An empty `extra` is the exact-match case (e.g. `Option<(usize, &T)>`, whose
+/// single pointer already coincides with the niche carrier); a non-empty
+/// `extra` is the multi-pointer payload case (e.g. `Option<(&mut [T],
+/// &mut [T])>` from `split_at_mut_checked`, whose second slice pointer needs a
+/// slot of its own beside the carrier).
+///
+/// Returns `None` when the field cannot be represented without punning a
+/// pointer against non-pointer bits: an existing pointer slot the incoming
+/// field does not also carry at the same offset/size/address space, or an extra
+/// pointer leaf that would overlap an existing (necessarily non-pointer) claim.
+/// That genuine pointer/integer union stays fail-closed — there is no single
+/// LLVM slot type that is both provenance-carrying and integer-exact.
+fn analyze_pointer_overlap(
     ctx: &Context,
     incoming_offset: u64,
     incoming_size: u64,
     incoming_ty: TypeHandle,
     colliding_claims: &[&(u64, u64, TypeHandle)],
-) -> bool {
-    let Some(incoming_end) = incoming_offset.checked_add(incoming_size) else {
-        return false;
-    };
+) -> Option<Vec<LlvmPointerStorage>> {
+    let incoming_end = incoming_offset.checked_add(incoming_size)?;
+
     let mut incoming = Vec::new();
-    if collect_llvm_pointer_storage(ctx, incoming_ty, incoming_offset, &mut incoming).is_none() {
-        return false;
-    }
+    collect_llvm_pointer_storage(ctx, incoming_ty, incoming_offset, &mut incoming)?;
 
     let mut existing = Vec::new();
     for &&(offset, _size, claim_ty) in colliding_claims {
         let mut regions = Vec::new();
-        if collect_llvm_pointer_storage(ctx, claim_ty, offset, &mut regions).is_none() {
-            return false;
-        }
+        collect_llvm_pointer_storage(ctx, claim_ty, offset, &mut regions)?;
         existing.extend(regions.into_iter().filter(|region| {
             let Some(region_end) = region.offset.checked_add(region.size) else {
                 return true;
@@ -834,9 +842,39 @@ fn pointer_storage_matches_claims(
         }));
     }
 
-    incoming.sort_unstable();
-    existing.sort_unstable();
-    incoming == existing
+    // Every existing pointer leaf overlapping this field must be one the field
+    // also carries at the same offset/size/address space; otherwise a pointer
+    // slot would be backed by non-matching bytes (an address-space mismatch, or
+    // a pointer claim where the field has integer bits).
+    for leaf in &existing {
+        if !incoming.contains(leaf) {
+            return None;
+        }
+    }
+
+    // Each incoming pointer leaf that does not reuse an existing claim needs its
+    // own slot, and may only get one if it lands on otherwise-unclaimed bytes. A
+    // leaf overlapping a claim it did not match is a pointer/non-pointer pun and
+    // stays fail-closed.
+    let mut extra = Vec::new();
+    for leaf in &incoming {
+        if existing.contains(leaf) {
+            continue;
+        }
+        let leaf_end = leaf.offset.checked_add(leaf.size)?;
+        let overlaps_claim = colliding_claims.iter().any(|&&(o, s, _)| {
+            let Some(claim_end) = o.checked_add(s) else {
+                return true;
+            };
+            o < leaf_end && leaf.offset < claim_end
+        });
+        if overlaps_claim {
+            return None;
+        }
+        extra.push(*leaf);
+    }
+
+    Some(extra)
 }
 
 pub(crate) fn llvm_type_contains_pointer_in_address_space(
@@ -1571,15 +1609,27 @@ pub(crate) fn build_enum_slot_map(
                 || colliding_claims
                     .iter()
                     .any(|&&(_, _, claim_ty)| llvm_type_contains_pointer(ctx, claim_ty));
-            if has_pointer_overlap
-                && !pointer_storage_matches_claims(ctx, offset, size, storage_ty, &colliding_claims)
-            {
-                return Err(anyhow::anyhow!(
-                    "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
-                    name,
-                    offset
-                ));
-            }
+            // Pointer-bearing overlaps must back every pointer leaf with a real
+            // `ptr` slot so the memory round-trip preserves provenance. The
+            // niche carrier backs the leaf that coincides with it; any further
+            // pointer leaf (the extra slice pointer in `split_at_mut_checked`'s
+            // `Option<(&mut [T], &mut [T])>`) gets its own fresh `ptr` slot.
+            // `None` means a pointer punned against non-pointer bits, which
+            // stays fail-closed.
+            let extra_pointer_claims = if has_pointer_overlap {
+                match analyze_pointer_overlap(ctx, offset, size, storage_ty, &colliding_claims) {
+                    Some(extra) => extra,
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
+                            name,
+                            offset
+                        ));
+                    }
+                }
+            } else {
+                Vec::new()
+            };
             let incoming_is_byte_faithful = llvm_type_is_byte_faithful(ctx, storage_ty);
             let claims_are_byte_faithful = colliding_claims
                 .iter()
@@ -1590,6 +1640,14 @@ pub(crate) fn build_enum_slot_map(
                     name,
                     flat
                 ));
+            }
+            // Back each extra pointer leaf with its own `ptr` slot (the field
+            // itself stays slotless and round-trips through memory). Added after
+            // the byte-faithfulness gate so `colliding_claims`'s borrow of
+            // `claims` has ended before we push.
+            for leaf in extra_pointer_claims {
+                let ptr_ty = llvm_types::PointerType::get(ctx, leaf.address_space).into();
+                claims.push((leaf.offset, leaf.size, ptr_ty));
             }
             continue;
         }
@@ -2700,7 +2758,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_pointer_struct_overlapping_later_niche() {
+    fn enum_slot_map_backs_pointer_beside_integer_niche_carrier() {
         let mut ctx = make_ctx();
         let logical = mir_uint(&mut ctx, 8);
         let u32_ty = mir_uint(&mut ctx, 32);
@@ -2738,10 +2796,21 @@ mod tests {
             },
         )
         .into();
-        let error = build_enum_slot_map(&mut ctx, enum_ty)
-            .err()
-            .expect("nested pointer overlap must reject");
-        assert!(error.to_string().contains("pointer provenance"));
+        // The pointer at byte 0 never shares bytes with the integer niche
+        // carrier at byte 8, so it is representable: it gets its own `ptr` slot
+        // and the carrier stays an integer slot. `{ptr@0, i32@8, pad}`.
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(map.field_slots, vec![None]);
+        let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
+        let carrier: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        assert_eq!(
+            struct_fields(&ctx, map.llvm_struct_ty),
+            vec![lowered_pointer, carrier, pad(&mut ctx, 4)]
+        );
+        assert_eq!(
+            llvm_type_size_align(&ctx, map.llvm_struct_ty),
+            Some((16, 8))
+        );
     }
 
     #[test]
@@ -2839,7 +2908,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_aggregate_with_unrepresented_pointer_leaf() {
+    fn enum_slot_map_backs_each_aggregate_pointer_leaf_with_its_own_slot() {
         let mut ctx = make_ctx();
         let logical = mir_uint(&mut ctx, 64);
         let pointee = mir_uint(&mut ctx, 32);
@@ -2878,10 +2947,90 @@ mod tests {
         )
         .into();
 
-        let error = build_enum_slot_map(&mut ctx, enum_ty)
-            .err()
-            .expect("the first pointer has no provenance-preserving storage slot");
-        assert!(error.to_string().contains("pointer provenance"), "{error}");
+        // Both pointer leaves are representable without erasing provenance: the
+        // carrier backs the leaf at byte 8, and the leaf at byte 0 gets its own
+        // fresh `ptr` slot. The payload stays slotless and round-trips through
+        // `{ptr@0, ptr@8}`.
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(map.field_slots, vec![None]);
+        let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
+        assert_eq!(
+            struct_fields(&ctx, map.llvm_struct_ty),
+            vec![lowered_pointer, lowered_pointer]
+        );
+        assert_eq!(
+            llvm_type_size_align(&ctx, map.llvm_struct_ty),
+            Some((16, 8))
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_backs_split_at_mut_slice_pair() {
+        // Models `Option<(&mut [u32], &mut [u32])>`, the `split_at_mut_checked`
+        // return type: two fat slice pointers `{ptr, len}` back to back. The
+        // None niche lives in the first data pointer; both data pointers must
+        // keep their own `ptr` slot so provenance survives the memory
+        // round-trip, with the two `len` fields as raw byte storage.
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let len = mir_uint(&mut ctx, 64);
+        let pointee = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let payload: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "SlicePair".into(),
+            vec![
+                "a_ptr".into(),
+                "a_len".into(),
+                "b_ptr".into(),
+                "b_len".into(),
+            ],
+            vec![pointer, len, pointer, len],
+            vec![0, 1, 2, 3],
+            vec![0, 8, 16, 24],
+            32,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "MaybeSlicePair".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![32]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 32,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(map.field_slots, vec![None]);
+        let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
+        assert_eq!(
+            struct_fields(&ctx, map.llvm_struct_ty),
+            vec![
+                lowered_pointer,
+                pad(&mut ctx, 8),
+                lowered_pointer,
+                pad(&mut ctx, 8),
+            ]
+        );
+        assert_eq!(
+            llvm_type_size_align(&ctx, map.llvm_struct_ty),
+            Some((32, 8))
+        );
     }
 
     #[test]
