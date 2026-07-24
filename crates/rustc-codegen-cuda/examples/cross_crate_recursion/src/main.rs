@@ -10,7 +10,7 @@
 //! inlinable", not the function body. See PR "pass -Zalways-encode-mir ...".
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 #[cuda_module]
 mod kernels {
