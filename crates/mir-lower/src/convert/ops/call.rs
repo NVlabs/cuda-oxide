@@ -445,15 +445,29 @@ impl RustFloatMathIntrinsic {
 
     /// Return the LLVM intrinsic name for operations that can bypass libdevice.
     ///
-    /// Several Rust math intrinsics have direct LLVM intrinsic equivalents
-    /// that the NVPTX backend lowers to single PTX instructions:
+    /// Several Rust math intrinsics have direct LLVM intrinsic equivalents that
+    /// the NVPTX backend selects without a libdevice call. Measured with LLVM
+    /// 21.1 `llc -march=nvptx64 -mcpu=sm_80`, counting only the body:
     ///
-    /// - `fabs`, `copysign`: sign-bit operations (`abs.f32`, `copysign.f32`)
-    /// - `floor`, `ceil`, `trunc`, `round`, `roundeven`: rounding conversions
-    ///   (`cvt.rmi`, `cvt.rpi`, `cvt.rzi`, `cvt.rni.f32.f32`)
+    /// | Intrinsic | PTX | Instructions |
+    /// |-----------|-----|--------------|
+    /// | `fabs` | `abs.f32` / `abs.f64` | 1 |
+    /// | `copysign` | `copysign.f32` / `copysign.f64` | 1 |
+    /// | `floor` | `cvt.rmi` | 1 |
+    /// | `ceil` | `cvt.rpi` | 1 |
+    /// | `trunc` | `cvt.rzi` | 1 |
+    /// | `roundeven` | `cvt.rni` | 1 |
+    /// | `round` | expanded sequence | 11 (f32), 8 (f64) |
     ///
-    /// Using LLVM intrinsics avoids a libdevice function call and removes
-    /// the libNVVM dependency for kernels that only use these operations.
+    /// `round` is the one exception, and deliberately so. It rounds halfway
+    /// cases away from zero, which is not one of the four hardware `cvt` modes
+    /// (`rni` is ties-to-even), so no single instruction can express it. LLVM
+    /// expands it inline into compare/select over `cvt.rzi` rather than
+    /// emitting a `roundf` libcall, so routing it here still removes the
+    /// libdevice call without introducing an unresolved symbol.
+    ///
+    /// Using LLVM intrinsics avoids a libdevice function call and removes the
+    /// libNVVM dependency for kernels that only use these operations.
     ///
     /// `max`/`min` are intentionally left on the libdevice path: LLVM 21's
     /// `maxnum`/`minnum` propagate signaling NaNs, which contradicts Rust's
@@ -1098,9 +1112,8 @@ fn convert_rust_float_math_intrinsic(
     let result_ty = convert_type(ctx, result_mir_ty).map_err(anyhow_to_pliron)?;
 
     // Several math intrinsics have direct LLVM equivalents that the NVPTX
-    // backend lowers to single PTX instructions (abs, copysign, rounding).
-    // Using LLVM intrinsics avoids a libdevice function call and removes
-    // the libNVVM dependency for kernels that only use these operations.
+    // backend selects without a libdevice call (abs, copysign, rounding). See
+    // `llvm_intrinsic_name` for the per-op PTX mapping and instruction counts.
     let intrinsic_name = if let Some(llvm_name) = intrinsic.llvm_intrinsic_name(ctx, result_ty) {
         llvm_name
     } else {
