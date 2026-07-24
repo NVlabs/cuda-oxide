@@ -50,7 +50,8 @@ fn main() {
     let din = DeviceBuffer::from_host(&stream, &input).unwrap();
     let mut out = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-    unsafe { module.shift_right_one(&stream, cfg, &din, &mut out, N) }.expect("shift_right_one launch");
+    unsafe { module.shift_right_one(&stream, cfg, &din, &mut out, N) }
+        .expect("shift_right_one launch");
     let got = out.to_host_vec(&stream).unwrap();
 
     let mut want = input.clone();
