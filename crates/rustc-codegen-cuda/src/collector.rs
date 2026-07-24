@@ -652,7 +652,6 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
 /// never rewrote, which means a helper function is missing `#[device]`.
 const MISSING_DEVICE_STUB_MARKER: &str = "called outside #[kernel] / #[device]";
 
-
 /// If `fn_path` names one of the Rust global-allocator entry points,
 /// returns the bare shim name (for use in the diagnostic), else `None`.
 ///

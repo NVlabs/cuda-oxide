@@ -1697,7 +1697,8 @@ pub fn is_panic_entry_path(fn_path: &str) -> bool {
 }
 
 /// True when `term` is a diverging call into a panic entry point, i.e. exactly
-/// the shape [`translate_call`] drops in favour of a device trap.
+/// the shape `translate_call` (private to this module) drops in favour of a
+/// device trap.
 ///
 /// Callers use this to recognize a block that lowers to nothing but a trap,
 /// before spending any work on its contents.
