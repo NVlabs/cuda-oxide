@@ -156,7 +156,6 @@ unavailable today. Here is the current support matrix:
 | `format!`, `println!`             | Require formatting machinery + I/O                                  | Use `gpu_printf!`                    |
 | `std` I/O, networking, filesystem | No OS on GPU                                                        | Communicate via buffers              |
 | Trait objects (`dyn Trait`)       | Require vtable dispatch                                             | Use generics (monomorphized)         |
-| `panic!` with message             | Formatting + allocation                                             | Use `gpu_assert!` or `debug::trap()` |
 
 :::{tip}
 If you accidentally use an unsupported feature, the compiler will produce a
@@ -317,8 +316,11 @@ In practice this means:
 
 - `unwrap()` and `expect()` work but will trap the GPU on `None`/`Err`.
 - `assert!` and `debug_assert!` work but trap on failure.
-- `panic!("message")` is **not** supported (the formatting machinery is
-  unavailable) -- use `gpu_assert!` or `debug::trap()` instead.
+- `panic!("message")` compiles, and so does `panic!("{}", value)`. The panic
+  path lowers to a trap and the **message is discarded**: there is no panic
+  runtime to print it, and the statements that would have built it are dead
+  once the call is dropped. Reach for `gpu_printf!` before the check when you
+  need to see the values, or `gpu_assert!` for an explicit check.
 
 :::{seealso}
 The [Error Handling and Debugging](error-handling-and-debugging.md) chapter
