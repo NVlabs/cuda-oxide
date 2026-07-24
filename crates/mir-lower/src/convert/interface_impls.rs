@@ -31,9 +31,9 @@ use dialect_mir::ops::{
     MirConstructStructOp, MirConstructTupleOp, MirDbgValueOp, MirDivOp, MirEnumPayloadOp, MirEqOp,
     MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp,
     MirGetDiscriminantOp, MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp,
-    MirMemcpyOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp,
-    MirReturnOp, MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp,
-    MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
+    MirMemcpyOp, MirMemmoveOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
+    MirRemOp, MirReturnOp, MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp,
+    MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
     AssertFailOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp,
@@ -410,6 +410,18 @@ impl MirToLlvmConversion for MirMemcpyOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::ops::memory::convert_memcpy(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MirMemmoveOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::memory::convert_memmove(ctx, rewriter, self.get_operation(), operands_info)
     }
 }
 

@@ -159,6 +159,33 @@ pub(crate) fn convert_memcpy(
     op: Ptr<Operation>,
     operands_info: &OperandsInfo,
 ) -> Result<()> {
+    convert_mem_transfer(ctx, rewriter, op, operands_info, "memcpy")
+}
+
+/// Convert `mir.memmove` to the matching `llvm.memmove.p<dst>.p<src>.i<bits>`.
+///
+/// Identical to [`convert_memcpy`] except it emits the overlap-safe
+/// `llvm.memmove` intrinsic. `mir.memmove` backs `core::intrinsics::copy`
+/// (`ptr::copy`); `mir.memcpy` backs the non-overlapping variant.
+pub(crate) fn convert_memmove(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mem_transfer(ctx, rewriter, op, operands_info, "memmove")
+}
+
+/// Shared lowering for `mir.memcpy` / `mir.memmove`. `intrinsic_base` selects
+/// the LLVM intrinsic family ("memcpy" or "memmove"); both share the same
+/// `(dst, src, len_bytes, isvolatile)` signature and element->byte count scaling.
+fn convert_mem_transfer(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+    intrinsic_base: &str,
+) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let (dst, src, count) = match operands.as_slice() {
         [dst, src, count] => (*dst, *src, *count),
@@ -261,7 +288,7 @@ pub(crate) fn convert_memcpy(
         .downcast_ref::<IntegerType>()
         .map(|t| t.width())
         .unwrap_or(64);
-    let intrinsic_name = format!("llvm_memcpy_p{dst_as}_p{src_as}_i{len_bits}");
+    let intrinsic_name = format!("llvm_{intrinsic_base}_p{dst_as}_p{src_as}_i{len_bits}");
     helpers::ensure_intrinsic_declared(ctx, parent_block, &intrinsic_name, func_ty)
         .map_err(anyhow_to_pliron)?;
 
