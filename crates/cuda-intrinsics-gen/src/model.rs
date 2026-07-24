@@ -2492,18 +2492,24 @@ pub enum ScalarMathFormat {
 pub enum ScalarMathOperation {
     Sin,
     Cos,
-    /// Deferred: no generated variant yet. LLVM 22 renamed the intrinsic to
-    /// the overloaded `llvm.nvvm.ex2.approx.f32`/`.f16` family, which the
-    /// evidence import does not resolve; the legacy `llvm.nvvm.ex2.approx.f`
-    /// and `.ftz.f` names still select directly on both llc 21 and 22, so a
-    /// future overlay entry can admit ex2 through the legacy names (or via
-    /// inline PTX like sin/cos). The variant exists so the family enum
-    /// already covers the full PTX instruction set.
+    /// Routes through inline PTX: LLVM 22's tblgen models ex2 as the
+    /// overloaded `int_nvvm_ex2_approx{,_ftz}` records (anyfloat, no DAG
+    /// selection pattern), so the evidence contract cannot admit a typed
+    /// call. The legacy `llvm.nvvm.ex2.approx.f`/`.ftz.f` names still select
+    /// directly on both llc 21 and 22, so this is promotable to a typed
+    /// route once the import resolves the overloaded family.
     Ex2,
     Lg2,
     Rcp,
     Rsqrt,
     Sqrt,
+    /// Routes through inline PTX: LLVM 22.1.2's tblgen export carries no
+    /// record for tanh at all (llc 22 selects `llvm.nvvm.tanh.approx.f32`
+    /// via NVVMIntrinsic-class matching, and llc 21 miscompiles it into an
+    /// extern funcall), so this is the family's only PTX-native source.
+    /// Hardware floor is sm_75 (PTX ISA 7.0); the family contract gates it
+    /// at the attested sm_80 evidence floor like every other variant.
+    Tanh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

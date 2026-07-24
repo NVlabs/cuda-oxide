@@ -22,7 +22,10 @@
       "coverage_count": 37,
       "stages": [
         {
-          "targets": ["compute_80", "ptx93"],
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
           "representation": "37 pure inline-PTX scalar math calls in one retained NVVM IR kernel",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -30,7 +33,10 @@
           "detail": "CUDA 13.3 libNVVM compiled the typed-pointer NVVM IR fixture to PTX 9.3 and LTOIR. All 37 scalar math variants (sin, cos, lg2, rcp, rsqrt, sqrt with approx and rounded precision modes) are retained as exact, unique instructions with no extern calls or unresolved llvm.nvvm symbols."
         },
         {
-          "targets": ["sm_80", "ptx93"],
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
           "representation": "libNVVM-emitted PTX retaining all 37 scalar math forms",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -42,7 +48,10 @@
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         },
         {
-          "targets": ["sm_80", "ptx93"],
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
           "representation": "retained scalar-math libNVVM LTOIR linked to an sm_80 cubin",
           "stage": "device_link",
           "mechanism": "inline_ptx",
@@ -54,367 +63,1004 @@
           "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
         }
       ]
+    },
+    {
+      "id": "scalar_math_compute80_ptx93_appended",
+      "coverage_count": 3,
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "3 appended pure inline-PTX scalar math calls in one typed-pointer NVVM IR fixture",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified and compiled a dedicated typed-pointer NVVM IR fixture holding the 3 appended variants (ex2.approx.f32, ex2.approx.ftz.f32, tanh.approx.f32) for compute_80. The emitted PTX 9.3 output retains each instruction exactly once with no extern calls; PTX SHA-256 9d2a3b28989cf40d76816090ce6051c2347f46d8bbbd6fd7fb5b479977e5d7cc."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted PTX retaining the 3 appended scalar math forms",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas assembled the appended-fixture PTX into an sm_80 cubin with SHA-256 134a765e19dd2267cf41934ad4ffa3ec0a6f54c43406d4da3102adfb9334e955. tanh.approx.f32's hardware floor is sm_75 (PTX ISA 7.0); the family admits it at the attested sm_80 evidence floor.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "appended-fixture libNVVM LTOIR linked to an sm_80 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 libNVVM compiled the appended fixture with -gen-lto to a 1,848-byte LTOIR (SHA-256 6c6fcf6eb5ddef3cf3ea605c0a866c8cc4db63bae1df7abca521ff507283b56d) and nvJitLink 13.3 linked it into a 1,464-byte sm_80 cubin (SHA-256 3e4a06eab6319f8d75a890f4b2645d35d92125c79eaa2b63dba2e5383552d632) with all three appended instructions retained.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "nvJitLinkVersion 13.3; CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
     }
   ],
   "matrices": [
     {
-      "axes": [{"name": "id", "values": ["sin_approx_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "sin_approx_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_sin_approx_f",
         "llvm_symbol": "llvm.nvvm.sin.approx.f",
         "expected_ptx": {
           "mnemonic": "sin",
-          "modifiers": ["approx", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["sin_approx_ftz_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "sin_approx_ftz_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_sin_approx_ftz_f",
         "llvm_symbol": "llvm.nvvm.sin.approx.ftz.f",
         "expected_ptx": {
           "mnemonic": "sin",
-          "modifiers": ["approx", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["cos_approx_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "cos_approx_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_cos_approx_f",
         "llvm_symbol": "llvm.nvvm.cos.approx.f",
         "expected_ptx": {
           "mnemonic": "cos",
-          "modifiers": ["approx", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["cos_approx_ftz_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "cos_approx_ftz_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_cos_approx_ftz_f",
         "llvm_symbol": "llvm.nvvm.cos.approx.ftz.f",
         "expected_ptx": {
           "mnemonic": "cos",
-          "modifiers": ["approx", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["lg2_approx_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "lg2_approx_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_lg2_approx_f",
         "llvm_symbol": "llvm.nvvm.lg2.approx.f",
         "expected_ptx": {
           "mnemonic": "lg2",
-          "modifiers": ["approx", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["lg2_approx_ftz_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "lg2_approx_ftz_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_lg2_approx_ftz_f",
         "llvm_symbol": "llvm.nvvm.lg2.approx.ftz.f",
         "expected_ptx": {
           "mnemonic": "lg2",
-          "modifiers": ["approx", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["rsqrt_approx_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "rsqrt_approx_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_rsqrt_approx_f",
         "llvm_symbol": "llvm.nvvm.rsqrt.approx.f",
         "expected_ptx": {
           "mnemonic": "rsqrt",
-          "modifiers": ["approx", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["rsqrt_approx_ftz_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "rsqrt_approx_ftz_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_rsqrt_approx_ftz_f",
         "llvm_symbol": "llvm.nvvm.rsqrt.approx.ftz.f",
         "expected_ptx": {
           "mnemonic": "rsqrt",
-          "modifiers": ["approx", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["rsqrt_approx_f64"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "rsqrt_approx_f64"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_rsqrt_approx_d",
         "llvm_symbol": "llvm.nvvm.rsqrt.approx.d",
         "expected_ptx": {
           "mnemonic": "rsqrt",
-          "modifiers": ["approx", "f64"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "f64"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f64"],
-          "llvm_results": ["f64"]
+          "llvm_arguments": [
+            "f64"
+          ],
+          "llvm_results": [
+            "f64"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "axes": [
+        {
+          "name": "rounding",
+          "values": [
+            "rn",
+            "rz",
+            "rm",
+            "rp"
+          ]
+        }
+      ],
       "product_count": 4,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "rcp_${rounding}_f32",
         "source_record": "int_nvvm_rcp_${rounding}_f",
         "llvm_symbol": "llvm.nvvm.rcp.${rounding}.f",
         "expected_ptx": {
           "mnemonic": "rcp",
-          "modifiers": ["${rounding}", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "${rounding}",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "axes": [
+        {
+          "name": "rounding",
+          "values": [
+            "rn",
+            "rz",
+            "rm",
+            "rp"
+          ]
+        }
+      ],
       "product_count": 4,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "rcp_${rounding}_ftz_f32",
         "source_record": "int_nvvm_rcp_${rounding}_ftz_f",
         "llvm_symbol": "llvm.nvvm.rcp.${rounding}.ftz.f",
         "expected_ptx": {
           "mnemonic": "rcp",
-          "modifiers": ["${rounding}", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "${rounding}",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "axes": [
+        {
+          "name": "rounding",
+          "values": [
+            "rn",
+            "rz",
+            "rm",
+            "rp"
+          ]
+        }
+      ],
       "product_count": 4,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "rcp_${rounding}_f64",
         "source_record": "int_nvvm_rcp_${rounding}_d",
         "llvm_symbol": "llvm.nvvm.rcp.${rounding}.d",
         "expected_ptx": {
           "mnemonic": "rcp",
-          "modifiers": ["${rounding}", "f64"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "${rounding}",
+            "f64"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f64"],
-          "llvm_results": ["f64"]
+          "llvm_arguments": [
+            "f64"
+          ],
+          "llvm_results": [
+            "f64"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["rcp_approx_ftz_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "rcp_approx_ftz_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_rcp_approx_ftz_f",
         "llvm_symbol": "llvm.nvvm.rcp.approx.ftz.f",
         "expected_ptx": {
           "mnemonic": "rcp",
-          "modifiers": ["approx", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["rcp_approx_ftz_f64"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "rcp_approx_ftz_f64"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_rcp_approx_ftz_d",
         "llvm_symbol": "llvm.nvvm.rcp.approx.ftz.d",
         "expected_ptx": {
           "mnemonic": "rcp",
-          "modifiers": ["approx", "ftz", "f64"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f64"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f64"],
-          "llvm_results": ["f64"]
+          "llvm_arguments": [
+            "f64"
+          ],
+          "llvm_results": [
+            "f64"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["sqrt_approx_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "sqrt_approx_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_sqrt_approx_f",
         "llvm_symbol": "llvm.nvvm.sqrt.approx.f",
         "expected_ptx": {
           "mnemonic": "sqrt",
-          "modifiers": ["approx", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "id", "values": ["sqrt_approx_ftz_f32"]}],
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "sqrt_approx_ftz_f32"
+          ]
+        }
+      ],
       "product_count": 1,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "${id}",
         "source_record": "int_nvvm_sqrt_approx_ftz_f",
         "llvm_symbol": "llvm.nvvm.sqrt.approx.ftz.f",
         "expected_ptx": {
           "mnemonic": "sqrt",
-          "modifiers": ["approx", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "axes": [
+        {
+          "name": "rounding",
+          "values": [
+            "rn",
+            "rz",
+            "rm",
+            "rp"
+          ]
+        }
+      ],
       "product_count": 4,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "sqrt_${rounding}_f32",
         "source_record": "int_nvvm_sqrt_${rounding}_f",
         "llvm_symbol": "llvm.nvvm.sqrt.${rounding}.f",
         "expected_ptx": {
           "mnemonic": "sqrt",
-          "modifiers": ["${rounding}", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "${rounding}",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "axes": [
+        {
+          "name": "rounding",
+          "values": [
+            "rn",
+            "rz",
+            "rm",
+            "rp"
+          ]
+        }
+      ],
       "product_count": 4,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "sqrt_${rounding}_ftz_f32",
         "source_record": "int_nvvm_sqrt_${rounding}_ftz_f",
         "llvm_symbol": "llvm.nvvm.sqrt.${rounding}.ftz.f",
         "expected_ptx": {
           "mnemonic": "sqrt",
-          "modifiers": ["${rounding}", "ftz", "f32"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "${rounding}",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f32"],
-          "llvm_results": ["f32"]
+          "llvm_arguments": [
+            "f32"
+          ],
+          "llvm_results": [
+            "f32"
+          ]
         }
       }
     },
     {
-      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "axes": [
+        {
+          "name": "rounding",
+          "values": [
+            "rn",
+            "rz",
+            "rm",
+            "rp"
+          ]
+        }
+      ],
       "product_count": 4,
-      "fixtures": ["scalar_math_compute80_ptx93"],
+      "fixtures": [
+        "scalar_math_compute80_ptx93"
+      ],
       "template": {
         "id": "sqrt_${rounding}_f64",
         "source_record": "int_nvvm_sqrt_${rounding}_d",
         "llvm_symbol": "llvm.nvvm.sqrt.${rounding}.d",
         "expected_ptx": {
           "mnemonic": "sqrt",
-          "modifiers": ["${rounding}", "f64"],
-          "operands": [{"kind": "register"}, {"kind": "register"}]
+          "modifiers": [
+            "${rounding}",
+            "f64"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         },
         "facts": {
-          "llvm_arguments": ["f64"],
-          "llvm_results": ["f64"]
+          "llvm_arguments": [
+            "f64"
+          ],
+          "llvm_results": [
+            "f64"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "ex2_approx_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "scalar_math_compute80_ptx93_appended"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_ex2_approx",
+        "llvm_symbol": "llvm.nvvm.ex2.approx",
+        "facts": {
+          "llvm_arguments": [
+            "anonymous_14"
+          ],
+          "llvm_results": [
+            "anyfloat"
+          ]
+        },
+        "expected_ptx": {
+          "mnemonic": "ex2",
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "ex2_approx_ftz_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "scalar_math_compute80_ptx93_appended"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_ex2_approx_ftz",
+        "llvm_symbol": "llvm.nvvm.ex2.approx.ftz",
+        "facts": {
+          "llvm_arguments": [
+            "anonymous_14"
+          ],
+          "llvm_results": [
+            "anyfloat"
+          ]
+        },
+        "expected_ptx": {
+          "mnemonic": "ex2",
+          "modifiers": [
+            "approx",
+            "ftz",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "tanh_approx_f32"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "scalar_math_compute80_ptx93_appended"
+      ],
+      "template": {
+        "id": "${id}",
+        "source": {
+          "kind": "ptx_native",
+          "instruction": "tanh.approx.f32"
+        },
+        "llvm_symbol": null,
+        "facts": {
+          "llvm_arguments": [],
+          "llvm_results": []
+        },
+        "expected_ptx": {
+          "mnemonic": "tanh",
+          "modifiers": [
+            "approx",
+            "f32"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
         }
       }
     }

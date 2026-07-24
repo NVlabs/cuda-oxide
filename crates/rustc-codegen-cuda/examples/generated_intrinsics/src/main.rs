@@ -135,7 +135,8 @@ mod kernels {
     ///
     /// This coverage kernel is compiled but not launched by the example. It
     /// exercises both lowering paths of the scalar_math family: typed
-    /// `llvm.nvvm.*` calls (rcp/sqrt) and inline PTX (sin/cos/lg2/rsqrt).
+    /// `llvm.nvvm.*` calls (rcp/sqrt) and inline PTX (sin/cos/ex2/lg2/
+    /// rsqrt/tanh).
     #[kernel]
     pub fn compile_scalar_math(
         mut output_f32: DisjointSlice<f32>,
@@ -174,6 +175,9 @@ mod kernels {
             raw_float::sqrt_rm_ftz_f32(a32),
             device_float::sqrt_rp_f32(a32),
             raw_float::sqrt_rp_ftz_f32(a32),
+            raw_float::ex2_approx_f32(a32),
+            device_float::ex2_approx_ftz_f32(a32),
+            raw_float::tanh_approx_f32(a32),
         ];
         let values_f64 = [
             raw_float::rcp_approx_ftz_f64(a64),

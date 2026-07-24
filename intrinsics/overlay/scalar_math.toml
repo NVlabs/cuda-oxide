@@ -266,3 +266,24 @@ format = "f64"
 operation = "sqrt"
 precision = "rp"
 subnormal = "preserve"
+
+[[scalar_math.variant]]
+abi_id = "i0819"
+format = "f32"
+operation = "ex2"
+precision = "approx"
+subnormal = "preserve"
+
+[[scalar_math.variant]]
+abi_id = "i0820"
+format = "f32"
+operation = "ex2"
+precision = "approx"
+subnormal = "ftz"
+
+[[scalar_math.variant]]
+abi_id = "i0821"
+format = "f32"
+operation = "tanh"
+precision = "approx"
+subnormal = "preserve"

@@ -1994,6 +1994,7 @@ fn scalar_math_operation_attr(record: &CatalogIntrinsic) -> &'static str {
         ScalarMathOperation::Rcp => "ScalarMathOperationAttr::Rcp",
         ScalarMathOperation::Rsqrt => "ScalarMathOperationAttr::Rsqrt",
         ScalarMathOperation::Sqrt => "ScalarMathOperationAttr::Sqrt",
+        ScalarMathOperation::Tanh => "ScalarMathOperationAttr::Tanh",
     }
 }
 
@@ -9283,7 +9284,7 @@ pub enum ScalarMathFormatAttr { F32, F64 }
 
 #[pliron_attr(name = "nvvm.scalar_math_operation", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum ScalarMathOperationAttr { Sin, Cos, Ex2, Lg2, Rcp, Rsqrt, Sqrt }
+pub enum ScalarMathOperationAttr { Sin, Cos, Ex2, Lg2, Rcp, Rsqrt, Sqrt, Tanh }
 
 #[pliron_attr(name = "nvvm.scalar_math_precision", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -14411,6 +14412,15 @@ fn convert_generated_tcgen05_load(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for ScalarMathOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_scalar_math_format(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_math_operation(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_math_precision(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_math_subnormal(ctx).as_deref(),\n        ) {\n",
         );
         for record in scalar_maths(catalog) {
+            // PTX-native records carry no LLVM symbol. The identifier is
+            // only consumed by the typed route, which such records never
+            // take (their mechanism is always inline PTX), so render an
+            // empty name; the lowering helper rejects it defensively.
+            let intrinsic_name = if record.llvm.is_some() {
+                record.llvm_identifier()
+            } else {
+                String::new()
+            };
             writeln!(
                 output,
                 "            (Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {:?}, {}, {}),",
@@ -14418,7 +14428,7 @@ fn convert_generated_tcgen05_load(
                 scalar_math_operation_attr(record),
                 scalar_math_precision_attr(record),
                 scalar_math_subnormal_attr(record),
-                record.llvm_identifier(),
+                intrinsic_name,
                 scalar_math_ptx_mnemonic(record),
                 scalar_math_contract(record).format == ScalarMathFormat::F64,
                 scalar_math_llvm_mechanism(record) == BackendLoweringMechanism::InlinePtx,
@@ -20780,7 +20790,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 818);
+        assert_eq!(catalog.intrinsics.len(), 821);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records
@@ -22620,7 +22630,7 @@ mod tests {
                 .contains("pub fn fma_rp_ftz_sat_f32(arg0: f32, arg1: f32, arg2: f32) -> f32")
         );
         assert!(compatibility.contains("pub fn add_rp_ftz_sat_f32(arg0: f32, arg1: f32) -> f32"));
-        assert_eq!(compatibility.matches("#[must_use]").count(), 109);
+        assert_eq!(compatibility.matches("#[must_use]").count(), 112);
 
         let dialect = render_dialect_scalar_arithmetic(&catalog, "test-hash");
         assert_eq!(dialect.matches("pub struct ScalarArithmeticOp").count(), 1);
