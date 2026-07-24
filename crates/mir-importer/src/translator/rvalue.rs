@@ -134,6 +134,56 @@ fn cast_to_generic_addrspace_if_needed(
     // No cast needed
     (value, prev_op)
 }
+/// Coerce a raw data pointer so it points to `element_type` in the generic
+/// address space.
+///
+/// `from_raw_parts`/`from_raw_parts_mut` build a `[T]` slice from a thin data
+/// pointer, but a reinterpret cast at the call site (e.g. `p as *mut (u64, u64)`
+/// feeding a `[(u64, u64)]` slice) can leave the data operand typed to the
+/// pre-cast pointee. The fat pointer's data slot must be a generic-address-space
+/// pointer to the slice element type (the same `get_generic` slot every other
+/// data-slot construction uses), so when the pointee differs, emit a `PtrToPtr`
+/// cast to that type. This also normalizes a non-generic address space, composing
+/// with `cast_to_generic_addrspace_if_needed`, which only fires when the pointee
+/// already matched.
+fn coerce_slice_data_pointee(
+    ctx: &mut Context,
+    value: Value,
+    element_type: TypeHandle,
+    is_mutable: bool,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> (Value, Option<Ptr<Operation>>) {
+    let pointee_matches = {
+        let value_type = value.get_type(ctx);
+        let ty_ref = value_type.deref(ctx);
+        match ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
+            Some(pt) => pt.pointee == element_type,
+            None => return (value, prev_op),
+        }
+    };
+    if pointee_matches {
+        return (value, prev_op);
+    }
+    let target_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, is_mutable).into();
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![target_ptr_ty],
+        vec![value],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    match prev_op {
+        Some(p) => cast_op.insert_after(ctx, p),
+        None => cast_op.insert_at_front(block_ptr, ctx),
+    }
+    (cast_op.deref(ctx).get_result(0), Some(cast_op))
+}
 
 /// Cast struct field values to match expected field types (address space normalization).
 ///
@@ -1298,6 +1348,20 @@ pub fn translate_rvalue(
                                 expected_ptr_ty,
                                 block_ptr,
                                 prev_after_len,
+                                loc.clone(),
+                            );
+
+                            // Coerce the data pointer to the slice element type: a
+                            // reinterpret cast feeding `from_raw_parts` can leave it
+                            // typed to the pre-cast pointee (e.g. `*mut u64` for a
+                            // `[(u64, u64)]` slice), which the fat pointer rejects.
+                            let (data_val, current_prev_op) = coerce_slice_data_pointee(
+                                ctx,
+                                data_val,
+                                element_type,
+                                is_mutable,
+                                block_ptr,
+                                current_prev_op,
                                 loc.clone(),
                             );
 
