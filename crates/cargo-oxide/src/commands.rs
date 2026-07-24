@@ -5126,7 +5126,7 @@ path = "src/other.rs"
         assert!(flags.contains(&"-Copt-level=0"));
         assert!(flags.contains(&"-Zcodegen-backend=llvm"));
         assert_eq!(
-            &flags[flags.len() - 5..],
+            &flags[flags.len() - 6..],
             [
                 "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
                 "-Copt-level=3",
@@ -5158,7 +5158,7 @@ path = "src/other.rs"
         );
         assert_eq!(&flags[2..4], ["-L", "native=/nix/store/cuda-cudart/lib"]);
         assert_eq!(
-            flags[flags.len() - 5],
+            flags[flags.len() - 6],
             "-Zcodegen-backend=/tmp/backend path/librustc_codegen_cuda.so"
         );
     }

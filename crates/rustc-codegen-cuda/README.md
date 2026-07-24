@@ -64,13 +64,14 @@ RUSTFLAGS="-Z codegen-backend=/path/to/librustc_codegen_cuda.so" cargo run --rel
 
 ### Required Compiler Flags
 
-These are set automatically by `cargo oxide`. For manual invocations, all three are required:
+These are set automatically by `cargo oxide`. For manual invocations, all four are required:
 
 | Flag                                    | Why                                                 |
 |-----------------------------------------|-----------------------------------------------------|
 | `-C opt-level=3`                        | Enables MIR inlining and const-prop for device code |
 | `-C debug-assertions=off`               | Strips debug checks from device code                |
 | `-Z mir-enable-passes=-JumpThreading`   | Prevents barrier duplication across branches        |
+| `-Z always-encode-mir`                  | Keeps dependency MIR available so the whole-program device collector can compile cross-crate functions that are neither `#[inline]` nor generic (e.g. recursive ones) |
 
 > `panic=abort` is **not** required. The backend treats all unwind paths as unreachable since the CUDA toolchain does not support unwinding today (the hardware could; this is a compiler/runtime limitation).
 
