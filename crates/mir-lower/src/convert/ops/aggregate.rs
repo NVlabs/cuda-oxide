@@ -1442,9 +1442,23 @@ pub(crate) fn convert_field_addr(
     let slot = match map.decl_to_llvm.get(field_index) {
         Some(Some(slot)) => *slot,
         Some(None) => {
-            // ZST field: it has no storage; the struct address stands in
-            // for the field address.
-            rewriter.replace_operation_with_values(ctx, op, vec![ptr_operand]);
+            // ZST field: it has no storage; the struct address stands in for
+            // the field address. Emit an explicit zero-offset GEP instead of
+            // forwarding the base SSA value directly (mirrors the union branch
+            // above): the distinct result keeps dialect conversion's pointer-type
+            // history unambiguous for repeated field accesses off the same base
+            // pointer. Forwarding the base value here type-puns it to the field's
+            // pointee, corrupting the base pointer's recorded type so a sibling
+            // field_addr on the same base later resolves to the wrong (0-field)
+            // pointee -- the "field_addr index N out of bounds for struct with 0
+            // fields" failure on a struct with >= 2 ZST fields (e.g. a closure
+            // that captures other ZST closures, like iter map_fold).
+            use llvm_export::ops::GepIndex;
+            let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+            let gep =
+                llvm::GetElementPtrOp::new(ctx, ptr_operand, vec![GepIndex::Constant(0)], i8_ty);
+            rewriter.insert_operation(ctx, gep.get_operation());
+            rewriter.replace_operation(ctx, op, gep.get_operation());
             return Ok(());
         }
         None => {
