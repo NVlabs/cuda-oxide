@@ -312,6 +312,11 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     ///
     /// - `idx` must be less than `self.len()` (bounds checked, but not the data race below).
     /// - No two threads may write to the same index simultaneously.
+    ///
+    /// `T: Copy` is required because the write overwrites the slot without
+    /// running a destructor on the previous value. Restricting to `Copy` keeps
+    /// that from being a leak, and matches [`Self::read`]. Device buffers hold
+    /// plain data, so this costs nothing in practice.
     /// - No thread may read an index while another thread writes to it,
     ///   unless explicit synchronization (e.g., `sync_threads()`) separates the accesses.
     ///
@@ -335,10 +340,15 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// ```
     #[inline]
     #[must_use]
-    pub unsafe fn write(&mut self, idx: usize, value: T) -> bool {
+    pub unsafe fn write(&mut self, idx: usize, value: T) -> bool
+    where
+        T: Copy,
+    {
         if idx < self.len {
-            // SAFETY: bounds check passed above. The caller guarantees
-            // no two threads write to the same index.
+            // SAFETY: bounds check passed above. The caller guarantees no two
+            // threads write to the same index. `T: Copy` means the slot being
+            // overwritten has no destructor to run, so not dropping the old
+            // value cannot leak.
             unsafe { core::ptr::write(self.ptr.add(idx), value) };
             true
         } else {
