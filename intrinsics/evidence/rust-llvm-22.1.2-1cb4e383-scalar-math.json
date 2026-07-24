@@ -1,0 +1,487 @@
+{
+  "schema": 6,
+  "backend_profile": "rust-llvm-22.1.2-1cb4e383",
+  "backend_kind": "llvm_nvptx",
+  "llvm_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
+  "backend_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+  "backend_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "sm_80",
+    "ptx_feature": "+ptx70",
+    "status": "validated",
+    "declaration_attributes_canonicalized": true,
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "scalar_math_typed_sm80_ptx70",
+      "coverage_count": 28,
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "28 typed LLVM declarations for rcp and sqrt variants with DAG selection patterns",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llvm-as and llvm-dis canonicalized all 37 candidate probes. The 28 typed routes with DAG selections (rcp.{rn,rz,rm,rp}.{f,ftz.f,d}, rcp.approx.ftz.{f,d}, sqrt.{rn,rz,rm,rp}.{f,ftz.f,d}, sqrt.approx.{f,ftz.f}) matched their imported signatures and IntrNoMem property sets."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "28 typed llvm.nvvm rcp and sqrt calls lowered through DAG selection",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned llc emitted each reviewed direct instruction exactly once. The 37-function PTX proof bundle has SHA-256 70a1594b2887bdf4f67fbbc45570545d6045fb1b5822824caa532175fd7557d3."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "28 typed LLVM routes within the 37-function PTX proof",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the 16,065-byte sm_80/PTX 7.0 output and produced a 1,464-byte cubin with SHA-256 6bcec1b1eab13da703fdade053704aa6ab00591a1b38dd7daf48ac0dec541df2.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
+    },
+    {
+      "id": "scalar_math_inline_sm80_ptx70",
+      "coverage_count": 9,
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "9 LLVM declarations for sin, cos, lg2, and rsqrt variants without DAG selection patterns",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "These 9 intrinsics (sin.approx.{f,ftz.f}, cos.approx.{f,ftz.f}, lg2.approx.{f,ftz.f}, rsqrt.approx.{f,ftz.f,d}) have valid LLVM NVVM declarations with IntrNoMem properties but no imported DAG selection patterns. LLVM lowers them through NVVMIntrinsic class pattern matching."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "9 LLVM-lowered unary math calls in the 37-function PTX proof",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc emitted the correct PTX instruction for all 9 routes within the shared 37-function proof bundle. The PTX output has SHA-256 70a1594b2887bdf4f67fbbc45570545d6045fb1b5822824caa532175fd7557d3."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "9 inline-PTX scalar math instructions assembled at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the shared proof and produced a cubin with SHA-256 6bcec1b1eab13da703fdade053704aa6ab00591a1b38dd7daf48ac0dec541df2.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["sin_approx_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_sin_approx_f",
+        "llvm_symbol": "llvm.nvvm.sin.approx.f",
+        "expected_ptx": {
+          "mnemonic": "sin",
+          "modifiers": ["approx", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["sin_approx_ftz_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_sin_approx_ftz_f",
+        "llvm_symbol": "llvm.nvvm.sin.approx.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "sin",
+          "modifiers": ["approx", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cos_approx_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cos_approx_f",
+        "llvm_symbol": "llvm.nvvm.cos.approx.f",
+        "expected_ptx": {
+          "mnemonic": "cos",
+          "modifiers": ["approx", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cos_approx_ftz_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cos_approx_ftz_f",
+        "llvm_symbol": "llvm.nvvm.cos.approx.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "cos",
+          "modifiers": ["approx", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["lg2_approx_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_lg2_approx_f",
+        "llvm_symbol": "llvm.nvvm.lg2.approx.f",
+        "expected_ptx": {
+          "mnemonic": "lg2",
+          "modifiers": ["approx", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["lg2_approx_ftz_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_lg2_approx_ftz_f",
+        "llvm_symbol": "llvm.nvvm.lg2.approx.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "lg2",
+          "modifiers": ["approx", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["rsqrt_approx_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_rsqrt_approx_f",
+        "llvm_symbol": "llvm.nvvm.rsqrt.approx.f",
+        "expected_ptx": {
+          "mnemonic": "rsqrt",
+          "modifiers": ["approx", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["rsqrt_approx_ftz_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_rsqrt_approx_ftz_f",
+        "llvm_symbol": "llvm.nvvm.rsqrt.approx.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "rsqrt",
+          "modifiers": ["approx", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["rsqrt_approx_f64"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_inline_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_rsqrt_approx_d",
+        "llvm_symbol": "llvm.nvvm.rsqrt.approx.d",
+        "expected_ptx": {
+          "mnemonic": "rsqrt",
+          "modifiers": ["approx", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f64"],
+          "llvm_results": ["f64"],
+          "concrete_llvm_arguments": ["f64"],
+          "concrete_llvm_results": ["f64"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "rcp_${rounding}_f32",
+        "source_record": "int_nvvm_rcp_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.rcp.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "rcp",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "rcp_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_rcp_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.rcp.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "rcp",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "rcp_${rounding}_f64",
+        "source_record": "int_nvvm_rcp_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.rcp.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "rcp",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f64"],
+          "llvm_results": ["f64"],
+          "concrete_llvm_arguments": ["f64"],
+          "concrete_llvm_results": ["f64"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["rcp_approx_ftz_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_rcp_approx_ftz_f",
+        "llvm_symbol": "llvm.nvvm.rcp.approx.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "rcp",
+          "modifiers": ["approx", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["rcp_approx_ftz_f64"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_rcp_approx_ftz_d",
+        "llvm_symbol": "llvm.nvvm.rcp.approx.ftz.d",
+        "expected_ptx": {
+          "mnemonic": "rcp",
+          "modifiers": ["approx", "ftz", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f64"],
+          "llvm_results": ["f64"],
+          "concrete_llvm_arguments": ["f64"],
+          "concrete_llvm_results": ["f64"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["sqrt_approx_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_sqrt_approx_f",
+        "llvm_symbol": "llvm.nvvm.sqrt.approx.f",
+        "expected_ptx": {
+          "mnemonic": "sqrt",
+          "modifiers": ["approx", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["sqrt_approx_ftz_f32"]}],
+      "product_count": 1,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_sqrt_approx_ftz_f",
+        "llvm_symbol": "llvm.nvvm.sqrt.approx.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "sqrt",
+          "modifiers": ["approx", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "sqrt_${rounding}_f32",
+        "source_record": "int_nvvm_sqrt_${rounding}_f",
+        "llvm_symbol": "llvm.nvvm.sqrt.${rounding}.f",
+        "expected_ptx": {
+          "mnemonic": "sqrt",
+          "modifiers": ["${rounding}", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "sqrt_${rounding}_ftz_f32",
+        "source_record": "int_nvvm_sqrt_${rounding}_ftz_f",
+        "llvm_symbol": "llvm.nvvm.sqrt.${rounding}.ftz.f",
+        "expected_ptx": {
+          "mnemonic": "sqrt",
+          "modifiers": ["${rounding}", "ftz", "f32"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f32"],
+          "llvm_results": ["f32"],
+          "concrete_llvm_arguments": ["f32"],
+          "concrete_llvm_results": ["f32"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "rounding", "values": ["rn", "rz", "rm", "rp"]}],
+      "product_count": 4,
+      "fixtures": ["scalar_math_typed_sm80_ptx70"],
+      "template": {
+        "id": "sqrt_${rounding}_f64",
+        "source_record": "int_nvvm_sqrt_${rounding}_d",
+        "llvm_symbol": "llvm.nvvm.sqrt.${rounding}.d",
+        "expected_ptx": {
+          "mnemonic": "sqrt",
+          "modifiers": ["${rounding}", "f64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["f64"],
+          "llvm_results": ["f64"],
+          "concrete_llvm_arguments": ["f64"],
+          "concrete_llvm_results": ["f64"]
+        }
+      }
+    }
+  ]
+}
