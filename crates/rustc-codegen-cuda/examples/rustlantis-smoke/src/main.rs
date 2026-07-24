@@ -36,7 +36,7 @@
 use core::intrinsics::mir::*;
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
-use cuda_host::cuda_launch;
+use cuda_host::cuda_module;
 use fuzzer::{dump_var, trace_finish, trace_reset};
 
 mod generated_case;
@@ -90,15 +90,25 @@ fn compute_stage1_trace(seed: i32) -> u64 {
 // =============================================================================
 //
 // Launched as <<<1, 1>>> from the host. Writes one hash per stage.
+//
+// Loaded through `#[cuda_module]` rather than by reading a `.ptx` off disk. A
+// generated case that calls into libdevice (any `f64` maths, for one) makes the
+// pipeline emit NVVM IR and leave the PTX to the consumer, so there is no `.ptx`
+// to read and every such seed died on module load instead of being compared.
 
-#[kernel]
-pub fn rl_smoke(mut stage1_out: DisjointSlice<u64>, mut stage2_out: DisjointSlice<u64>) {
-    if let Some(slot) = stage1_out.get_mut(thread::index_1d()) {
-        *slot = compute_stage1_trace(10);
-    }
+#[cuda_module]
+mod kernels {
+    use super::*;
 
-    if let Some(slot) = stage2_out.get_mut(thread::index_1d()) {
-        *slot = generated_case::compute_rustlantis_trace();
+    #[kernel]
+    pub fn rl_smoke(mut stage1_out: DisjointSlice<u64>, mut stage2_out: DisjointSlice<u64>) {
+        if let Some(slot) = stage1_out.get_mut(thread::index_1d()) {
+            *slot = compute_stage1_trace(10);
+        }
+
+        if let Some(slot) = stage2_out.get_mut(thread::index_1d()) {
+            *slot = generated_case::compute_rustlantis_trace();
+        }
     }
 }
 
@@ -119,9 +129,7 @@ fn main() {
 
     let mut stage1_out = DeviceBuffer::<u64>::zeroed(&stream, 1).expect("alloc stage1_out");
     let mut stage2_out = DeviceBuffer::<u64>::zeroed(&stream, 1).expect("alloc stage2_out");
-    let module = ctx
-        .load_module_from_file("rustlantis_smoke.ptx")
-        .expect("Failed to load PTX module");
+    let module = kernels::load(&ctx).expect("Failed to load device module");
 
     let cfg = LaunchConfig {
         grid_dim: (1, 1, 1),
@@ -129,18 +137,10 @@ fn main() {
         shared_mem_bytes: 0,
     };
 
-    // SAFETY: two `slice_mut(..)` pairs match `rl_smoke`'s two slice
-    // parameters; both are live DeviceBuffers allocated above.
-    unsafe {
-        cuda_launch! {
-            kernel: rl_smoke,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice_mut(stage1_out), slice_mut(stage2_out)]
-        }
-    }
-    .expect("Kernel launch failed");
+    // SAFETY: the two arguments match `rl_smoke`'s two slice parameters, and
+    // both are live DeviceBuffers allocated above.
+    unsafe { module.rl_smoke(&stream, cfg, &mut stage1_out, &mut stage2_out) }
+        .expect("Kernel launch failed");
 
     let gpu_stage1 = stage1_out.to_host_vec(&stream).expect("readback stage1")[0];
     let gpu_stage2 = stage2_out.to_host_vec(&stream).expect("readback stage2")[0];

@@ -5,19 +5,27 @@ use mir::{
 use rand::{Rng, RngCore, seq::IndexedRandom};
 use rand_distr::Distribution;
 
-struct Sombrero;
+struct UsizeSombrero {
+    small_values_upper_bound: usize,
+}
 
-impl Distribution<usize> for Sombrero {
+impl Distribution<usize> for UsizeSombrero {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> usize {
+        if self.small_values_upper_bound == 0 {
+            return rng.random_range(usize::MIN..=usize::MAX);
+        }
+
         match rng.random_range(0..=1) {
-            0 => rng.random_range(0..8), // FIXME: ARRAY_MAX_LEN
+            0 => rng.random_range(0..self.small_values_upper_bound),
             1 => rng.random_range(usize::MIN..=usize::MAX),
             _ => unreachable!(),
         }
     }
 }
 
-impl Distribution<isize> for Sombrero {
+struct IsizeSombrero;
+
+impl Distribution<isize> for IsizeSombrero {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> isize {
         match rng.random_range(0..=2) {
             0 => rng.random_range(-128i32..=127i32) as isize,
@@ -49,7 +57,10 @@ pub trait GenLiteral: Rng {
                 }
             }
             TyKind::Uint(UintTy::Usize) => {
-                let i: usize = Sombrero.sample(self);
+                let distribution = UsizeSombrero {
+                    small_values_upper_bound: tcx.config.array_max_len,
+                };
+                let i: usize = distribution.sample(self);
                 i.try_into().expect("usize isn't greater than 128 bits")
             }
             TyKind::Uint(UintTy::U8) => self.random_range(u8::MIN..=u8::MAX).into(),
@@ -58,7 +69,7 @@ pub trait GenLiteral: Rng {
             TyKind::Uint(UintTy::U64) => self.random_range(u64::MIN..=u64::MAX).into(),
             TyKind::Uint(UintTy::U128) => self.random_range(u128::MIN..=u128::MAX).into(),
             TyKind::Int(IntTy::Isize) => {
-                let i: isize = Sombrero.sample(self);
+                let i: isize = IsizeSombrero.sample(self);
                 i.try_into().expect("isize isn't greater than 128 bits")
             }
             TyKind::Int(IntTy::I8) => self.random_range(i8::MIN..=i8::MAX).into(),
@@ -157,5 +168,70 @@ fn generate_f64<R: Rng + ?Sized>(rng: &mut R) -> f64 {
         Category::Zero => *[0.0, -0.0].choose(rng).unwrap(),
         Category::Infinity => *[f64::INFINITY, f64::NEG_INFINITY].choose(rng).unwrap(),
         Category::NaN => f64::NAN,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    struct SequenceRng {
+        values: VecDeque<u64>,
+    }
+
+    impl SequenceRng {
+        fn new(values: impl IntoIterator<Item = u64>) -> Self {
+            Self {
+                values: values.into_iter().collect(),
+            }
+        }
+    }
+
+    impl RngCore for SequenceRng {
+        fn next_u32(&mut self) -> u32 {
+            self.next_u64() as u32
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.values.pop_front().expect("test RNG value")
+        }
+
+        fn fill_bytes(&mut self, dst: &mut [u8]) {
+            for chunk in dst.chunks_mut(std::mem::size_of::<u64>()) {
+                let bytes = self.next_u64().to_le_bytes();
+                chunk.copy_from_slice(&bytes[..chunk.len()]);
+            }
+        }
+    }
+
+    #[test]
+    fn positive_bound_drives_small_value_sampling() {
+        let distribution = UsizeSombrero {
+            small_values_upper_bound: 3,
+        };
+        let mut rng = SequenceRng::new([0, u64::MAX]);
+
+        assert_eq!(distribution.sample(&mut rng), 2);
+    }
+
+    #[test]
+    fn positive_bound_keeps_the_full_width_bucket() {
+        let distribution = UsizeSombrero {
+            small_values_upper_bound: 3,
+        };
+        let mut rng = SequenceRng::new([u64::MAX, 0x1234]);
+
+        assert_eq!(distribution.sample(&mut rng), 0x1234);
+    }
+
+    #[test]
+    fn zero_bound_disables_the_small_value_bucket() {
+        let distribution = UsizeSombrero {
+            small_values_upper_bound: 0,
+        };
+        let mut rng = SequenceRng::new([0x1234]);
+
+        assert_eq!(distribution.sample(&mut rng), 0x1234);
     }
 }

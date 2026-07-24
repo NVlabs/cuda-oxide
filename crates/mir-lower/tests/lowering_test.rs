@@ -265,6 +265,143 @@ fn test_globaltimer_lowers_to_intrinsic_call() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[test]
+fn test_assertfail_lowers_to_direct_call() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_ptr = module.get_operation();
+
+    let func_name = "kernel_func";
+    let u8_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        8,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let u32_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        32,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let u64_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        64,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let arg_tys: Vec<pliron::r#type::TypeHandle> = vec![
+        ptr_ty.into(),
+        ptr_ty.into(),
+        u32_ty.into(),
+        ptr_ty.into(),
+        u64_ty.into(),
+    ];
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, arg_tys.clone(), vec![]);
+
+    let func_op_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func_ty_attr = pliron::builtin::attributes::TypeAttr::new(func_ty.into());
+    let func = mir::MirFuncOp::new(&mut ctx, func_op_ptr, func_ty_attr);
+    func.set_symbol_name(&mut ctx, func_name.try_into().unwrap());
+
+    let region = func.get_operation().deref(&ctx).get_region(0);
+    let block = {
+        let b = pliron::basic_block::BasicBlock::new(&mut ctx, None, arg_tys);
+        b.insert_at_back(region, &ctx);
+        b
+    };
+
+    let message = block.deref(&ctx).get_argument(0);
+    let file = block.deref(&ctx).get_argument(1);
+    let line = block.deref(&ctx).get_argument(2);
+    let function = block.deref(&ctx).get_argument(3);
+    let char_size = block.deref(&ctx).get_argument(4);
+
+    let assertfail_op =
+        nvvm::AssertFailOp::build(&mut ctx, message, file, line, function, char_size);
+    assertfail_op.insert_at_back(block, &ctx);
+
+    let ret_op_ptr = Operation::new(
+        &mut ctx,
+        mir::MirReturnOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    ret_op_ptr.insert_at_back(block, &ctx);
+
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    const EXTERN: &str = "__assertfail";
+
+    let mut found_decl = false;
+    let mut found_call = false;
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm_export::ops::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        let name = func_op.get_symbol_name(&ctx).to_string();
+
+        if name == EXTERN {
+            found_decl = true;
+        } else if name == func_name {
+            let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+            for func_block in func_region.deref(&ctx).iter(&ctx) {
+                for body_op in func_block.deref(&ctx).iter(&ctx) {
+                    if let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx)
+                        && let CallOpCallable::Direct(sym) = call.callee(&ctx)
+                        && sym.to_string() == EXTERN
+                    {
+                        found_call = true;
+                        assert_eq!(
+                            body_op.deref(&ctx).get_num_operands(),
+                            5,
+                            "__assertfail call must forward all five operands"
+                        );
+                        // (The LLVM dialect models a void call as a single
+                        // void-typed result; the exporter prints it with no
+                        // destination, so only the operand shape matters here.)
+                    }
+                    assert!(
+                        Operation::get_op::<nvvm::AssertFailOp>(body_op, &ctx).is_none(),
+                        "nvvm.assertfail must be fully consumed by the lowering"
+                    );
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_decl,
+        "Expected `{EXTERN}` declaration in lowered module"
+    );
+    assert!(
+        found_call,
+        "Expected call to `{EXTERN}` in lowered kernel body"
+    );
+    Ok(())
+}
+
 /// Lower a single zero-operand, i32-result special-register op and assert it
 /// emits a declaration of and direct call to `intrinsic` (and no inline asm).
 fn assert_sreg_i32_lowers_to_intrinsic(
@@ -1116,8 +1253,8 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     // Kernel args: [mask (i32), value (i64), lane/delta (i32)].
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i64_ty.into(), i32_ty.into()]);
@@ -2526,6 +2663,92 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
 }
 
 #[test]
+fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Result<(), anyhow::Error>
+{
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+    let input = entry.deref(&ctx).get_argument(0);
+
+    let inline_ptx = nvvm::InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into(), i32_ty.into()],
+        vec![input],
+        "add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;",
+        "=r,=r,r",
+        true,
+        false,
+    );
+    inline_ptx.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut asm_result = None;
+    let mut extract_indices = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+            assert_eq!(
+                inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|s| String::from((*s).clone()))
+                    .as_deref(),
+                Some("add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;")
+            );
+            assert_eq!(
+                inline_asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|s| String::from((*s).clone()))
+                    .as_deref(),
+                Some("=r,=r,r")
+            );
+            let result = inline_asm.get_operation().deref(&ctx).get_result(0);
+            let result_ty = result.get_type(&ctx);
+            let result_ty = result_ty.deref(&ctx);
+            let struct_ty = result_ty
+                .downcast_ref::<llvm_types::StructType>()
+                .expect("multi-output inline PTX must return an LLVM struct");
+            assert_eq!(struct_ty.num_fields(), 2);
+            for index in 0..2 {
+                assert_eq!(
+                    struct_ty
+                        .field_type(index)
+                        .deref(&ctx)
+                        .downcast_ref::<IntegerType>()
+                        .expect("multi-output inline PTX struct field must stay i32")
+                        .width(),
+                    32
+                );
+            }
+            asm_result = Some(result);
+        } else if let Some(extract) = Operation::get_op::<llvm::ExtractValueOp>(op, &ctx) {
+            let aggregate = extract.get_operation().deref(&ctx).get_operand(0);
+            assert_eq!(
+                Some(aggregate),
+                asm_result,
+                "extractvalue must consume the struct-returning asm result"
+            );
+            extract_indices.push(extract.indices(&ctx));
+        }
+    }
+
+    assert!(
+        asm_result.is_some(),
+        "Expected struct-returning inline PTX asm op"
+    );
+    assert_eq!(
+        extract_indices,
+        vec![vec![0], vec![1]],
+        "each output must be extracted once, in constraint order"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
@@ -2552,7 +2775,7 @@ fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), an
                 .get_attr_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))?;
             (template.contains("%clusterid") || template.contains("%nclusterid"))
-                .then(|| (template, asm))
+                .then_some((template, asm))
         })
         .collect::<Vec<_>>();
     assert_eq!(lowered.len(), 2);
@@ -6071,11 +6294,11 @@ fn test_ldmatrix_rejects_wrong_result_arity() {
         0,
     );
     let ldmatrix = nvvm::LdmatrixOp::new(op);
-    ldmatrix.set_attr_nvvm_ldmatrix_shape(&mut ctx, nvvm::LdmatrixShapeAttr::M8n8);
-    ldmatrix.set_attr_nvvm_ldmatrix_multiplicity(&mut ctx, nvvm::LdmatrixMultiplicityAttr::X1);
-    ldmatrix.set_attr_nvvm_ldmatrix_layout(&mut ctx, nvvm::LdmatrixLayoutAttr::Normal);
-    ldmatrix.set_attr_nvvm_ldmatrix_element(&mut ctx, nvvm::LdmatrixElementAttr::B16);
-    ldmatrix.set_attr_nvvm_ldmatrix_state_space(&mut ctx, nvvm::LdmatrixStateSpaceAttr::Shared);
+    ldmatrix.set_attr_nvvm_ldmatrix_shape(&ctx, nvvm::LdmatrixShapeAttr::M8n8);
+    ldmatrix.set_attr_nvvm_ldmatrix_multiplicity(&ctx, nvvm::LdmatrixMultiplicityAttr::X1);
+    ldmatrix.set_attr_nvvm_ldmatrix_layout(&ctx, nvvm::LdmatrixLayoutAttr::Normal);
+    ldmatrix.set_attr_nvvm_ldmatrix_element(&ctx, nvvm::LdmatrixElementAttr::B16);
+    ldmatrix.set_attr_nvvm_ldmatrix_state_space(&ctx, nvvm::LdmatrixStateSpaceAttr::Shared);
     op.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 

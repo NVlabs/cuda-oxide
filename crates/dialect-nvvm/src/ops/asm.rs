@@ -23,6 +23,9 @@ use pliron_derive::pliron_op;
 ///
 /// This operation is produced by the MIR importer for `cuda_device::ptx_asm!`
 /// marker calls and lowered to LLVM inline assembly.
+///
+/// Supports zero or more results for multi-output PTX instructions
+/// (e.g. MMA, vectorized loads).
 #[pliron_op(
     name = "nvvm.inline_ptx",
     format,
@@ -41,7 +44,7 @@ impl InlinePtxOp {
         InlinePtxOp { op }
     }
 
-    /// Build an inline PTX operation with zero or one result.
+    /// Build an inline PTX operation with zero or more results.
     pub fn build(
         ctx: &mut Context,
         result_tys: Vec<TypeHandle>,
@@ -66,6 +69,21 @@ impl InlinePtxOp {
         wrapped.set_attr_ptx_convergent(ctx, BoolAttr::new(convergent));
         wrapped.get_operation()
     }
+
+    /// Count the output constraints in an LLVM-style constraint string.
+    ///
+    /// Output constraints are the comma-separated tokens prefixed with `=`
+    /// (e.g. `=r`, `=f`). Each op result binds to exactly one output
+    /// constraint, in order. This is the canonical counting rule; both the
+    /// op verifier and the MIR importer's `ptx_asm!` translation use it so
+    /// they can never disagree on how many results an inline PTX block
+    /// produces.
+    pub fn count_output_constraints(constraints: &str) -> usize {
+        constraints
+            .split(',')
+            .filter(|constraint| constraint.starts_with('='))
+            .count()
+    }
 }
 
 impl Verify for InlinePtxOp {
@@ -74,12 +92,15 @@ impl Verify for InlinePtxOp {
         if self.get_attr_ptx_template(ctx).is_none() {
             return verify_err!(op.loc(), "nvvm.inline_ptx requires ptx_template attribute");
         }
-        if self.get_attr_ptx_constraints(ctx).is_none() {
+        let Some(constraints) = self
+            .get_attr_ptx_constraints(ctx)
+            .map(|attr| String::from((*attr).clone()))
+        else {
             return verify_err!(
                 op.loc(),
                 "nvvm.inline_ptx requires ptx_constraints attribute"
             );
-        }
+        };
         if self.get_attr_ptx_sideeffect(ctx).is_none() {
             return verify_err!(
                 op.loc(),
@@ -92,8 +113,16 @@ impl Verify for InlinePtxOp {
                 "nvvm.inline_ptx requires ptx_convergent attribute"
             );
         }
-        if op.get_num_results() > 1 {
-            return verify_err!(op.loc(), "nvvm.inline_ptx supports at most one result");
+        // Each result binds to exactly one `=`-prefixed output constraint,
+        // in order; a mismatch would mis-bind PTX registers and is only
+        // diagnosed much later (and worse) by llc.
+        let num_outputs = Self::count_output_constraints(&constraints);
+        let num_results = op.get_num_results();
+        if num_results != num_outputs {
+            return verify_err!(
+                op.loc(),
+                "nvvm.inline_ptx has {num_results} results but {num_outputs} `=` output constraints"
+            );
         }
         Ok(())
     }

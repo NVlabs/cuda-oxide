@@ -881,6 +881,7 @@ pub mod wgmma {
 }
 
 #[cfg(test)]
+#[allow(clippy::type_complexity)]
 mod tests {
     #[test]
     fn public_abs_bf16x2_reexports_abi_i0070() {

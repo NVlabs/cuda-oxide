@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#![feature(proc_macro_def_site)]
+#![feature(proc_macro_def_site, proc_macro_tracked_env)]
 
 mod device_copy;
 mod printf;
@@ -74,9 +74,25 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 /// Literal PTX registers that begin with `%` must be escaped as `%%`, matching
 /// CUDA C++ inline PTX. Literal `$` labels can be written normally.
 ///
-/// The initial surface supports zero or one `out`, up to 16 `in` operands,
-/// `clobber("memory")`, `options(register_only)`, and the explicit
-/// `options(register_only, may_diverge)` opt-in.
+/// The surface supports up to 8 `out` operands (each constraint prefixed
+/// with `=`, e.g. `"=r"`), up to 16 `in` operands, `clobber("memory")`,
+/// `options(register_only)`, and the explicit
+/// `options(register_only, may_diverge)` opt-in. With two or more `out`
+/// operands the snippet returns a tuple under the hood, destructured into
+/// the output places in declaration order:
+///
+/// ```ignore
+/// let (sum, prod): (u32, u32);
+/// unsafe {
+///     ptx_asm!(
+///         "add.u32 %0, %2, %3; mul.lo.u32 %1, %2, %3;",
+///         out("=r") sum,
+///         out("=r") prod,
+///         in("r") x,
+///         in("r") y,
+///     );
+/// }
+/// ```
 ///
 /// By default, snippets are treated as side-effecting and stay inside their
 /// current control flow. Use `options(register_only)` only for snippets that
@@ -104,8 +120,10 @@ pub fn device_copy(input: TokenStream) -> TokenStream {
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{
-    DEVICE_EXTERN_PREFIX, DEVICE_PREFIX, INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL,
-    RESERVED_ROOT, artifact_anchor_symbol, artifact_anchor_symbol_v2, constant_symbol,
+    CODEGEN_FINGERPRINT_ENV, DEVICE_CODEGEN_CRATE_ENV, DEVICE_EXTERN_PREFIX, DEVICE_PREFIX,
+    INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL, MATERIALIZE_CUBIN_ENV,
+    MATERIALIZER_PROVENANCE_ENV, RESERVED_ROOT, artifact_anchor_symbol, artifact_anchor_symbol_v2,
+    constant_symbol, ptx_merge_required_marker,
 };
 use syn::{
     Expr, ExprCall, ExprMethodCall, ExprPath, FnArg, ForeignItem, GenericArgument, GenericParam,
@@ -118,6 +136,15 @@ use syn::{
     visit::{self, Visit},
     visit_mut::{self, VisitMut},
 };
+
+/// Record cuda-oxide's exact device-codegen identity in the consuming crate's
+/// dep-info. Cargo then rebuilds only crates that can own or instantiate device
+/// code when output mode, architecture, policy, or tool provenance changes.
+fn track_codegen_environment() {
+    let _ = proc_macro::tracked::env_var(CODEGEN_FINGERPRINT_ENV);
+    let _ = proc_macro::tracked::env_var(MATERIALIZE_CUBIN_ENV);
+    let _ = proc_macro::tracked::env_var(MATERIALIZER_PROVENANCE_ENV);
+}
 
 /// Build a private identifier that cannot capture, or be captured by, a name
 /// written in the user's kernel signature.
@@ -406,6 +433,7 @@ fn scope_parameter_collision(input: &ItemFn, scope: &Ident) -> Option<Ident> {
 /// when the source kernel itself is safe.
 #[proc_macro_attribute]
 pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     if !attr.is_empty() {
         return syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -727,18 +755,53 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
 
     let artifact_anchor_statements = cuda_module_artifact_anchor_statements(&transformed.kernels)?;
     let has_generic = transformed.kernels.iter().any(|k| k.is_generic);
+    let ptx_merge_required_markers = transformed.kernels.iter().filter_map(|kernel| {
+        if !kernel.is_generic {
+            return None;
+        }
+        let marker = internal_ident(&ptx_merge_required_marker(&kernel.fn_name.to_string()));
+        let cfg_attrs = &kernel.effective_cfg_attrs;
+        Some(quote! {
+            #(#cfg_attrs)*
+            // Consumed by the codegen collector. This enabled generic kernel
+            // requires run-time PTX bundle merging, which ahead-of-time cubin
+            // materialization cannot represent yet.
+            #[doc(hidden)]
+            #[used]
+            #[allow(dead_code, non_upper_case_globals)]
+            static #marker: u8 = 0;
+        })
+    });
+    let enable_generic_loader_statements = transformed.kernels.iter().filter_map(|kernel| {
+        if !kernel.is_generic {
+            return None;
+        }
+        let cfg_attrs = &kernel.effective_cfg_attrs;
+        Some(quote! {
+            #(#cfg_attrs)*
+            let _ = {
+                __cuda_oxide_has_enabled_generic_kernel = true;
+            };
+        })
+    });
     let has_launch_contract = transformed
         .kernels
         .iter()
         .any(|kernel| kernel.launch_contract.is_some());
     let module_loader = if has_generic {
-        // At least one kernel is generic: its PTX is emitted into the
-        // consuming binary's bundle, not this crate's bundle. Merge all
-        // PTX bundles from the executable so generic monomorphizations are
-        // visible regardless of which crate compiled them.
+        // A syntactically present generic kernel may be removed by cfg. Make
+        // the loader decision under the exact same effective cfg chain as its
+        // marker, so eligibility and run-time behavior cannot disagree.
         quote! {
-            let _ = name; // merged load ignores the crate-name hint
-            let module = ::cuda_host::load_all_ptx_bundles_merged(ctx)?;
+            #[allow(unused_mut)]
+            let mut __cuda_oxide_has_enabled_generic_kernel = false;
+            #(#enable_generic_loader_statements)*
+            let module = if __cuda_oxide_has_enabled_generic_kernel {
+                let _ = name; // merged load ignores the crate-name hint
+                ::cuda_host::load_all_ptx_bundles_merged(ctx)?
+            } else {
+                ::cuda_host::load_embedded_module(ctx, name)?
+            };
         }
     } else {
         quote! {
@@ -932,6 +995,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
         #(#module_attrs)*
         #vis mod #ident {
             #(#module_items)*
+            #(#ptx_merge_required_markers)*
             #(#launch_contract_impls)*
 
             #[derive(Clone, Debug)]
@@ -1361,7 +1425,7 @@ fn cuda_module_artifact_anchor_statements(
         return Ok(TokenStream2::new());
     };
 
-    let owner_filter = std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE").ok();
+    let owner_filter = proc_macro::tracked::env_var(DEVICE_CODEGEN_CRATE_ENV).ok();
     let owner_selection = device_codegen_owner_selection(owner_filter.as_deref(), &crate_name);
     if owner_selection == Some(false) {
         // The backend deliberately omits this crate's artifact. Omitting the
@@ -3313,6 +3377,7 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// and are not unrolled.
 #[proc_macro_attribute]
 pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let args = parse_macro_input!(attr as KernelArgs);
     let mut input = parse_macro_input!(item as ItemFn);
 
@@ -3497,6 +3562,7 @@ impl Parse for ConstantArgs {
 /// ```
 #[proc_macro_attribute]
 pub fn constant(attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let args = parse_macro_input!(attr as ConstantArgs);
     let input = parse_macro_input!(item as syn::ItemStatic);
 
@@ -5399,6 +5465,7 @@ pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn device(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    track_codegen_environment();
     // Try parsing as a function definition first
     if let Ok(input) = syn::parse::<ItemFn>(item.clone()) {
         return generate_device_function(input);
@@ -6019,6 +6086,7 @@ impl Parse for CudaLaunchInput {
 /// `stream.synchronize()` to wait for completion.
 #[proc_macro]
 pub fn cuda_launch(input: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let input = parse_macro_input!(input as CudaLaunchInput);
 
     let stream = &input.stream;
@@ -6433,6 +6501,7 @@ impl Parse for CudaLaunchAsyncInput {
 /// ```
 #[proc_macro]
 pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
+    track_codegen_environment();
     let input = parse_macro_input!(input as CudaLaunchAsyncInput);
     expand_cuda_launch_async(input).into()
 }
@@ -6577,6 +6646,7 @@ fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStream2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reserved_oxide_symbols::PTX_MERGE_REQUIRED_PREFIX;
 
     /// Expands a `#[cuda_module]` body and returns the generated tokens as a
     /// whitespace-free string, so tests can assert on call paths without
@@ -6703,6 +6773,81 @@ mod tests {
         assert!(
             expanded.contains("mixed_ptx_name::<T,N>()"),
             "typed launch must forward type and const arguments to the name helper:\n{expanded}"
+        );
+        assert!(
+            expanded.contains(PTX_MERGE_REQUIRED_PREFIX),
+            "generic cuda_module must emit the compiler-visible PTX-merge marker:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn non_generic_cuda_module_does_not_emit_ptx_merge_marker() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn plain(output: &mut [u32]) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        assert!(
+            !expanded.contains(PTX_MERGE_REQUIRED_PREFIX),
+            "non-generic cuda_module must remain eligible for cubin materialization:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn cfg_gated_generic_uses_the_same_gate_for_marker_and_loader() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn plain(output: &mut [u32]) {}
+
+                #[cfg(feature = "generic")]
+                #[kernel]
+                pub fn optional<T: Copy>(value: T) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        let marker = ptx_merge_required_marker("optional");
+
+        assert!(
+            expanded.contains(&format!(
+                "#[cfg(feature=\"generic\")]#[doc(hidden)]#[used]#[allow(dead_code,non_upper_case_globals)]static{marker}:u8=0"
+            )),
+            "marker must inherit the generic kernel's cfg:\n{expanded}"
+        );
+        assert!(
+            expanded.contains(
+                "#[cfg(feature=\"generic\")]let_={__cuda_oxide_has_enabled_generic_kernel=true;};"
+            ),
+            "loader selection must inherit the generic kernel's cfg:\n{expanded}"
+        );
+        assert!(
+            expanded.contains("if__cuda_oxide_has_enabled_generic_kernel{let_=name;::cuda_host::load_all_ptx_bundles_merged(ctx)?}else{::cuda_host::load_embedded_module(ctx,name)?}"),
+            "loader must fall back to the embedded artifact when no generic kernel is enabled:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn nested_generic_marker_inherits_every_ancestor_cfg() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[cfg(feature = "outer")]
+                mod nested {
+                    #[cfg(target_os = "linux")]
+                    #[kernel]
+                    pub fn map<T: Copy>(value: T) {}
+                }
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        let marker = ptx_merge_required_marker("map");
+        assert!(
+            expanded.contains(&format!(
+                "#[cfg(feature=\"outer\")]#[cfg(target_os=\"linux\")]#[doc(hidden)]#[used]#[allow(dead_code,non_upper_case_globals)]static{marker}:u8=0"
+            )),
+            "root marker must use the nested kernel's effective cfg chain:\n{expanded}"
         );
     }
 

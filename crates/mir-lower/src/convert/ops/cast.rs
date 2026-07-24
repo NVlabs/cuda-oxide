@@ -12,7 +12,7 @@
 //!
 //! | MirCastKindAttr                | LLVM Operation                                         |
 //! |--------------------------------|--------------------------------------------------------|
-//! | Transmute                      | `emit_pointer_cast` (see below)                        |
+//! | Transmute                      | exact-size bit cast or aligned memory round-trip       |
 //! | IntToInt (wider, signed)       | `sext`                                                 |
 //! | IntToInt (wider, unsigned)     | `zext`                                                 |
 //! | IntToInt (narrower)            | `trunc`                                                |
@@ -32,13 +32,11 @@
 //! | ptr-to-array → struct (slice)  | `insertvalue` ptr + `insertvalue` len into undef |
 //! | other                          | falls through to `emit_pointer_cast`             |
 //!
-//! ## `emit_pointer_cast` handles struct↔scalar conversions, including
-//! niche-encoded enums:
+//! ## `emit_pointer_cast` handles semantic pointer coercions:
 //! | Source → Dest                                  | LLVM Operation                              |
 //! |------------------------------------------------|---------------------------------------------|
-//! | Transmute with `niche_encoding`, dst struct    | `icmp` + `select` + nested `insertvalue`    |
 //! | struct → ptr (fat→thin)                        | `extractvalue` field 0                      |
-//! | ptr → struct (thin→fat, no niche)              | `insertvalue` into undef                    |
+//! | ptr → struct (thin→fat)                        | `insertvalue` into undef                    |
 //! | ptr → integer                                  | `ptrtoint`                                  |
 //! | integer → ptr                                  | `inttoptr`                                  |
 //! | struct → struct (transmute)                    | `alloca` + `store` + `load`                 |
@@ -49,17 +47,19 @@
 //! | array ↔ anything, mismatched size              | cuda-oxide error (see issue #125)           |
 //! | otherwise                                      | `bitcast`                                   |
 //!
-//! The niche path runs first because it is the only correct lowering when
-//! the importer has classified the destination as a niche-optimised enum,
-//! regardless of whether the scalar source happens to be a pointer (e.g.
-//! `Option<&T>`) or an integer (e.g. `Option<NonZeroUsize>`).
+//! Transmute never uses those semantic field-zero shortcuts. When an enum or
+//! another aggregate participates, its already-physical LLVM bytes are copied
+//! through an exactly-sized, explicitly aligned stack slot.
 
-use crate::convert::types::convert_type;
+use crate::convert::types::{
+    convert_type, llvm_type_contains_pointer_in_address_space, llvm_type_is_byte_faithful,
+    llvm_type_size_align,
+};
 use crate::helpers;
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::MirCastOp;
 use dialect_mir::types::{MirArrayType, MirPtrType};
-use llvm_export::op_interfaces::CastOpInterface;
+use llvm_export::op_interfaces::{CastOpInterface, CastOpWithNNegInterface};
 use llvm_export::ops as llvm;
 use llvm_export::types::FuncType;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -112,7 +112,7 @@ pub fn convert(
     let val_ty = val.get_type(ctx);
 
     let llvm_op = match &cast_kind {
-        MirCastKindAttr::Transmute => emit_pointer_cast(ctx, rewriter, op, val, val_ty, llvm_ty)?,
+        MirCastKindAttr::Transmute => emit_transmute(ctx, rewriter, val, val_ty, llvm_ty)?,
 
         MirCastKindAttr::IntToInt => {
             let src_w = val_ty
@@ -375,6 +375,38 @@ fn emit_unsize_cast(
         let dst_is_struct = llvm_ty.deref(ctx).is::<llvm_export::types::StructType>();
 
         if dst_is_struct {
+            // Coerce the source data pointer to the slice's field-0 address
+            // space. When the array lives in shared memory (addrspace 3, e.g.
+            // a `&[T; N]` row of a nested `SharedArray<[T; N], M>` borrowed
+            // via indexing — see `examples/shared_slice_unsize`), forming a
+            // `&[T]`/`&mut [T]` fat pointer over it yields a
+            // `ptr addrspace(3)`, but the canonical slice type stores
+            // `ptr addrspace(0)` in field 0. Insert an addrspacecast so the
+            // insert_value types match (PTX lowers this to `cvta.shared`).
+            let field0_as = llvm_ty
+                .deref(ctx)
+                .downcast_ref::<llvm_export::types::StructType>()
+                .map(|st| st.field_type(0))
+                .and_then(|f0| {
+                    f0.deref(ctx)
+                        .downcast_ref::<llvm_export::types::PointerType>()
+                        .map(|pt| pt.address_space())
+                });
+            let val_as = val
+                .get_type(ctx)
+                .deref(ctx)
+                .downcast_ref::<llvm_export::types::PointerType>()
+                .map(|pt| pt.address_space());
+            let val = match (val_as, field0_as) {
+                (Some(s_as), Some(d_as)) if s_as != d_as => {
+                    let cast_ty = llvm_export::types::PointerType::get(ctx, d_as).into();
+                    let c = llvm::AddrSpaceCastOp::new(ctx, val, cast_ty);
+                    rewriter.insert_operation(ctx, c.get_operation());
+                    c.get_operation().deref(ctx).get_result(0)
+                }
+                _ => val,
+            };
+
             let undef = llvm::UndefOp::new(ctx, llvm_ty);
             rewriter.insert_operation(ctx, undef.get_operation());
             let undef_val = undef.get_operation().deref(ctx).get_result(0);
@@ -414,7 +446,7 @@ fn emit_unsize_cast(
 fn emit_pointer_cast(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
+    _op: Ptr<Operation>,
     val: pliron::value::Value,
     val_ty: pliron::r#type::TypeHandle,
     llvm_ty: pliron::r#type::TypeHandle,
@@ -435,23 +467,6 @@ fn emit_pointer_cast(
     let src_is_array = val_ty.deref(ctx).is::<llvm_export::types::ArrayType>();
     let dst_is_array = llvm_ty.deref(ctx).is::<llvm_export::types::ArrayType>();
 
-    // Niched-enum Transmute first. Rustc stores `Option<NonZeroT>`,
-    // `Option<&T>`, `Option<Box<T>>`, `Option<NonNull<T>>`,
-    // `Option<bool>`, `Option<char>`, ... as a single scalar where one
-    // forbidden bit pattern of the inner type stands in for `None`. When
-    // that scalar form has to be materialized as our un-niched
-    // `{ discriminant, payload }` aggregate, rustc emits a Transmute and
-    // the importer attaches a `niche_encoding` attribute. We rebuild the
-    // aggregate explicitly here. This branch runs **before** the legacy
-    // ptr→struct fat-pointer arm because a niched-enum destination has an
-    // `i8` discriminant in field 0, not a pointer slot. See issue #21.
-    if dst_is_struct
-        && let Some(niche) = read_niche_info(ctx, op)
-        && (src_is_int || src_is_ptr)
-    {
-        return emit_scalar_to_niched_enum(ctx, rewriter, op, val, val_ty, llvm_ty, niche);
-    }
-
     if src_is_struct && dst_is_ptr {
         Ok(llvm::ExtractValueOp::new(ctx, val, vec![0])
             .map_err(|e| pliron::input_error_noloc!("pointer cast ExtractValueOp: {e}"))?
@@ -466,25 +481,7 @@ fn emit_pointer_cast(
     } else if src_is_int && dst_is_ptr {
         Ok(llvm::IntToPtrOp::new(ctx, val, llvm_ty).get_operation())
     } else if src_is_struct && dst_is_struct {
-        // struct → struct: LLVM forbids bitcast between aggregates with
-        // different field layouts. Go through memory: alloca + store + load.
-        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
-        let one = {
-            let apint =
-                pliron::utils::apint::APInt::from_i64(1, std::num::NonZeroUsize::new(64).unwrap());
-            let attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
-            let c = llvm::ConstantOp::new(ctx, attr.into());
-            rewriter.insert_operation(ctx, c.get_operation());
-            c.get_operation().deref(ctx).get_result(0)
-        };
-        let alloca = llvm::AllocaOp::new(ctx, val_ty, one);
-        rewriter.insert_operation(ctx, alloca.get_operation());
-        let ptr = alloca.get_operation().deref(ctx).get_result(0);
-
-        let store = llvm::StoreOp::new(ctx, val, ptr);
-        rewriter.insert_operation(ctx, store.get_operation());
-
-        Ok(llvm::LoadOp::new(ctx, ptr, llvm_ty).get_operation())
+        emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
     } else if let (Some(s), Some(d)) = (src_as, dst_as) {
         if s != d {
             let cast_ty = llvm_export::types::PointerType::get(ctx, d).into();
@@ -492,26 +489,11 @@ fn emit_pointer_cast(
         } else {
             Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation())
         }
-    } else if src_is_int && dst_is_struct {
-        // Scalar -> aggregate Transmute the importer did not classify as a
-        // niche-optimised enum (e.g. `usize -> NonNull<T>` from `core::fmt` /
-        // `core::ptr`). rustc guarantees the two have equal size, so lower it
-        // as a faithful memory round-trip through `emit_transmute_via_memory`,
-        // which checks size equality and stamps the natural alignment (an
-        // unguarded round-trip could silently move the wrong bytes). See #21.
-        //
-        // Scope note: we intentionally do NOT add the address-space-coercion
-        // cast variants (array->slice unsize, or thin-ptr->wrapper-field-0,
-        // over an `addrspace(3)` source). Those only arise for rust-gpu
-        // `#[spirv(workgroup)]` shared arrays; cuda-oxide has no such construct
-        // (its shared memory is `SharedArray`, which exposes no `&[T; N]` to
-        // unsize and no addrspace-3 slice), so there is no reachable trigger.
-        // And `std`-originated casts can never reach here at all: the collector
-        // rejects any `std::` call up front (device code is `core`/`alloc`-only).
-        emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
-    } else if src_is_struct && llvm_ty.deref(ctx).is::<IntegerType>() {
-        emit_struct_to_scalar(ctx, rewriter, val, val_ty, llvm_ty)
-    } else if src_is_array || dst_is_array {
+    } else if (src_is_int && dst_is_struct)
+        || (src_is_struct && llvm_ty.deref(ctx).is::<IntegerType>())
+        || src_is_array
+        || dst_is_array
+    {
         // Array on either side (e.g. `u32::from_ne_bytes` is a
         // `[u8; 4]` → `u32` Transmute, `u32::to_ne_bytes` the reverse).
         // LLVM's `bitcast` is only defined between non-aggregate
@@ -520,6 +502,151 @@ fn emit_pointer_cast(
     } else {
         Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation())
     }
+}
+
+/// Lower Rust `Transmute` without assigning semantic meaning to aggregate
+/// fields. Equal-size aggregates use memory; equal-bit-size scalar values use
+/// LLVM's bit-preserving casts. This is what lets an integer transmute to a
+/// physically represented enum (and a pointer to an Option-like enum) without
+/// inventing or extracting a field-zero payload.
+fn emit_transmute(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    val: pliron::value::Value,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
+) -> Result<Ptr<Operation>> {
+    // Lowering runs before the exporter chooses its target data layout.
+    // Shared pointers are 64-bit in PTX/legacy mode but 32-bit in modern
+    // NVVM (`p3:32`). A transmute observes the physical pointer bytes, so the
+    // target-agnostic 8-byte approximation used by general type conversion
+    // cannot be sound here. Reject scalar and nested aggregate forms until
+    // target mode is available at this stage.
+    let shared = llvm_export::types::address_space::SHARED;
+    if llvm_type_contains_pointer_in_address_space(ctx, val_ty, shared)
+        || llvm_type_contains_pointer_in_address_space(ctx, llvm_ty, shared)
+    {
+        return pliron::input_err_noloc!(
+            "Transmute involving a shared-memory pointer is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM) and is not yet supported"
+        );
+    }
+
+    let (src_bytes, _) = llvm_type_size_align(ctx, val_ty).ok_or_else(|| {
+        pliron::input_error_noloc!(
+            "Transmute: cannot determine source layout for {}",
+            val_ty.disp(ctx)
+        )
+    })?;
+    let (dst_bytes, _) = llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
+        pliron::input_error_noloc!(
+            "Transmute: cannot determine destination layout for {}",
+            llvm_ty.disp(ctx)
+        )
+    })?;
+    if src_bytes != dst_bytes {
+        return pliron::input_err_noloc!(
+            "Transmute size mismatch: source {} is {} bytes, destination {} is {} bytes",
+            val_ty.disp(ctx),
+            src_bytes,
+            llvm_ty.disp(ctx),
+            dst_bytes
+        );
+    }
+
+    let is_aggregate = |ty: pliron::r#type::TypeHandle, ctx: &Context| {
+        let ty = ty.deref(ctx);
+        ty.is::<llvm_export::types::StructType>() || ty.is::<llvm_export::types::ArrayType>()
+    };
+    if is_aggregate(val_ty, ctx) || is_aggregate(llvm_ty, ctx) {
+        return emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty);
+    }
+
+    let src_bits = scalar_bit_width(ctx, val_ty).ok_or_else(|| {
+        pliron::input_error_noloc!("Transmute: unsupported scalar source {}", val_ty.disp(ctx))
+    })?;
+    let dst_bits = scalar_bit_width(ctx, llvm_ty).ok_or_else(|| {
+        pliron::input_error_noloc!(
+            "Transmute: unsupported scalar destination {}",
+            llvm_ty.disp(ctx)
+        )
+    })?;
+    if src_bits != dst_bits {
+        // `bool` is the important case: it is one byte in Rust memory but i1
+        // in SSA. Its physical memory byte is the zero-extended 0 or 1, so
+        // make that boundary explicit instead of relying on a type-punned
+        // i1 store/load to define the rest of the byte.
+        let src_integer_width = val_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .map(IntegerType::width);
+        let dst_integer_width = llvm_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .map(IntegerType::width);
+        if src_integer_width == Some(1) && dst_integer_width == Some(8) {
+            return Ok(llvm::ZExtOp::new_with_nneg(ctx, val, llvm_ty, false).get_operation());
+        }
+        if src_integer_width == Some(8) && dst_integer_width == Some(1) {
+            return Ok(llvm::TruncOp::new(ctx, val, llvm_ty).get_operation());
+        }
+        return emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty);
+    }
+
+    let src_ptr_as = val_ty
+        .deref(ctx)
+        .downcast_ref::<llvm_export::types::PointerType>()
+        .map(|ty| ty.address_space());
+    let dst_ptr_as = llvm_ty
+        .deref(ctx)
+        .downcast_ref::<llvm_export::types::PointerType>()
+        .map(|ty| ty.address_space());
+    let src_is_int = val_ty.deref(ctx).is::<IntegerType>();
+    let dst_is_int = llvm_ty.deref(ctx).is::<IntegerType>();
+
+    match (src_ptr_as, dst_ptr_as) {
+        (Some(source), Some(destination)) if source != destination => {
+            Ok(llvm::AddrSpaceCastOp::new(ctx, val, llvm_ty).get_operation())
+        }
+        (Some(_), Some(_)) => Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation()),
+        (Some(_), None) if dst_is_int => {
+            Ok(llvm::PtrToIntOp::new(ctx, val, llvm_ty).get_operation())
+        }
+        (None, Some(_)) if src_is_int => {
+            Ok(llvm::IntToPtrOp::new(ctx, val, llvm_ty).get_operation())
+        }
+        (Some(_), None) => {
+            let integer_ty: pliron::r#type::TypeHandle =
+                IntegerType::get(ctx, src_bits, Signedness::Signless).into();
+            let ptr_to_int = llvm::PtrToIntOp::new(ctx, val, integer_ty);
+            rewriter.insert_operation(ctx, ptr_to_int.get_operation());
+            let integer = ptr_to_int.get_operation().deref(ctx).get_result(0);
+            Ok(llvm::BitcastOp::new(ctx, integer, llvm_ty).get_operation())
+        }
+        (None, Some(_)) => {
+            let integer_ty: pliron::r#type::TypeHandle =
+                IntegerType::get(ctx, dst_bits, Signedness::Signless).into();
+            let bitcast = llvm::BitcastOp::new(ctx, val, integer_ty);
+            rewriter.insert_operation(ctx, bitcast.get_operation());
+            let integer = bitcast.get_operation().deref(ctx).get_result(0);
+            Ok(llvm::IntToPtrOp::new(ctx, integer, llvm_ty).get_operation())
+        }
+        (None, None) => Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation()),
+    }
+}
+
+fn scalar_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u32> {
+    let ty_ref = ty.deref(ctx);
+    if let Some(integer) = ty_ref.downcast_ref::<IntegerType>() {
+        return Some(integer.width());
+    }
+    if let Some(float) = type_cast::<dyn FloatTypeInterface>(&*ty_ref) {
+        return u32::try_from(float.get_semantics().bits).ok();
+    }
+    if ty_ref.is::<llvm_export::types::PointerType>() {
+        return Some(64);
+    }
+    drop(ty_ref);
+    llvm_type_size_align(ctx, ty).and_then(|(bytes, _)| u32::try_from(bytes.checked_mul(8)?).ok())
 }
 
 fn const_i64(
@@ -533,279 +660,6 @@ fn const_i64(
     let c = llvm::ConstantOp::new(ctx, attr.into());
     rewriter.insert_operation(ctx, c.get_operation());
     c.get_operation().deref(ctx).get_result(0)
-}
-
-fn const_int_of(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    ty: pliron::r#type::TypeHandle,
-    value: i64,
-) -> Result<pliron::value::Value> {
-    let int_ty = ty
-        .deref(ctx)
-        .downcast_ref::<IntegerType>()
-        .ok_or_else(|| pliron::input_error_noloc!("const_int_of: expected IntegerType"))?
-        .clone();
-    let width = std::num::NonZeroUsize::new(int_ty.width() as usize)
-        .ok_or_else(|| pliron::input_error_noloc!("const_int_of: zero-width integer"))?;
-    let apint = pliron::utils::apint::APInt::from_i64(value, width);
-    let attr = pliron::builtin::attributes::IntegerAttr::new(
-        IntegerType::get(ctx, int_ty.width(), int_ty.signedness()),
-        apint,
-    );
-    let c = llvm::ConstantOp::new(ctx, attr.into());
-    rewriter.insert_operation(ctx, c.get_operation());
-    Ok(c.get_operation().deref(ctx).get_result(0))
-}
-
-/// Maximum newtype-wrapper depth we will descend through when locating a
-/// scalar slot inside an aggregate (`NonZero<T>` -> `Pat<T, _>` -> `T`
-/// is three layers; eight gives generous headroom for hand-rolled chains
-/// without risking pathological infinite loops on cyclic-looking types).
-const MAX_NEWTYPE_DEPTH: usize = 8;
-
-/// Find the `insertvalue` index path that lands `scalar_ty` at the deepest
-/// scalar slot of `aggregate_ty`, descending through single-field struct
-/// wrappers (the `NonZero<T>` -> `Pat<T, _>` -> `T` chain, or
-/// `{ ptr }` for `Option<&T>`). Returns `None` when no compatible scalar
-/// slot exists within `MAX_NEWTYPE_DEPTH` layers.
-fn deep_scalar_index_path(
-    ctx: &Context,
-    aggregate_ty: pliron::r#type::TypeHandle,
-    scalar_ty: pliron::r#type::TypeHandle,
-) -> Option<Vec<u32>> {
-    let mut path = Vec::new();
-    let mut current = aggregate_ty;
-    for _ in 0..MAX_NEWTYPE_DEPTH {
-        if current == scalar_ty {
-            return Some(path);
-        }
-        // Same-width integers are interchangeable even if not pointer-equal
-        // because LLVM integer types are signless while MIR carries
-        // signedness.
-        if let (Some(c), Some(t)) = (
-            current.deref(ctx).downcast_ref::<IntegerType>(),
-            scalar_ty.deref(ctx).downcast_ref::<IntegerType>(),
-        ) && c.width() == t.width()
-        {
-            return Some(path);
-        }
-        let next = {
-            let r = current.deref(ctx);
-            let s = r.downcast_ref::<llvm_export::types::StructType>()?;
-            if s.num_fields() != 1 {
-                return None;
-            }
-            s.field_type(0)
-        };
-        path.push(0);
-        current = next;
-    }
-    None
-}
-
-/// Read the niche encoding off a `MirCastOp` via its typed accessor.
-/// Returns `None` when the importer did not attach one (i.e. the cast is
-/// not into a niched enum).
-fn read_niche_info(
-    ctx: &Context,
-    op: Ptr<Operation>,
-) -> Option<dialect_mir::attributes::NicheEncodingAttr> {
-    dialect_mir::ops::MirCastOp::new(op)
-        .get_attr_niche_encoding(ctx)
-        .map(|r| r.clone())
-}
-
-/// Rebuild a `MirEnumType` aggregate from the scalar `val` rustc passed
-/// through a niche-encoded Transmute, using the niche info the importer
-/// attached. Accepts both integer-scalar sources (e.g. `i64` for
-/// `Option<NonZeroUsize>`) and pointer-scalar sources (e.g. `ptr` for
-/// `Option<&T>`); the comparison is done in the source's own type so we
-/// never need a `ptrtoint` round-trip.
-fn emit_scalar_to_niched_enum(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    val: pliron::value::Value,
-    val_ty: pliron::r#type::TypeHandle,
-    llvm_ty: pliron::r#type::TypeHandle,
-    niche: dialect_mir::attributes::NicheEncodingAttr,
-) -> Result<Ptr<Operation>> {
-    let (disc_ty, payload_ty) = {
-        let r = llvm_ty.deref(ctx);
-        let s = r
-            .downcast_ref::<llvm_export::types::StructType>()
-            .ok_or_else(|| {
-                pliron::input_error_noloc!("emit_scalar_to_niched_enum: dst is not a struct")
-            })?;
-        if s.num_fields() != 2 {
-            return pliron::input_err_noloc!(
-                "niched-enum aggregate must have exactly 2 fields (discriminant, payload), got {}",
-                s.num_fields()
-            );
-        }
-        (s.field_type(0), s.field_type(1))
-    };
-
-    // Field 0 carries ONE tag semantic everywhere: the variant's declared
-    // discriminant VALUE. The niche attribute records variant INDICES, so
-    // map them through the result enum's variant_discriminants before
-    // storing. For Option-likes (discriminants [0, 1]) this is the
-    // identity, but enums with explicit discriminants must not see a raw
-    // index in the tag slot (issue #132 groundwork).
-    let (niche_disc_value, untagged_disc_value) = {
-        let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
-        let mir_result_ty_obj = mir_result_ty.deref(ctx);
-        let enum_ty = mir_result_ty_obj
-            .downcast_ref::<dialect_mir::types::MirEnumType>()
-            .ok_or_else(|| {
-                pliron::input_error_noloc!(
-                    "emit_scalar_to_niched_enum: niche-encoded cast result is not a MirEnumType"
-                )
-            })?;
-        let discr_of = |idx: u32| -> Result<u64> {
-            enum_ty
-                .variant_discriminants
-                .get(idx as usize)
-                .copied()
-                .ok_or_else(|| {
-                    pliron::input_error_noloc!(
-                        "emit_scalar_to_niched_enum: variant index {} has no discriminant ({} discriminants recorded)",
-                        idx,
-                        enum_ty.variant_discriminants.len()
-                    )
-                })
-        };
-        (
-            discr_of(niche.niche_variant_idx)?,
-            discr_of(niche.untagged_variant_idx)?,
-        )
-    };
-
-    // Build a comparison constant in the source's own type. For integer
-    // sources that's just the niche bit pattern; for pointer sources we
-    // construct it as `inttoptr i64 <niche_start>` (which folds to `null`
-    // when niche_start is 0, the case rustc actually emits).
-    let src_is_ptr = val_ty.deref(ctx).is::<llvm_export::types::PointerType>();
-    let cmp_const = if src_is_ptr {
-        let i64_ty: pliron::r#type::TypeHandle =
-            IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let i64_const = const_int_of(ctx, rewriter, i64_ty, niche.niche_start as i64)?;
-        let i2p = llvm::IntToPtrOp::new(ctx, i64_const, val_ty);
-        rewriter.insert_operation(ctx, i2p.get_operation());
-        i2p.get_operation().deref(ctx).get_result(0)
-    } else {
-        const_int_of(ctx, rewriter, val_ty, niche.niche_start as i64)?
-    };
-
-    let icmp = llvm::ICmpOp::new(
-        ctx,
-        llvm_export::attributes::ICmpPredicateAttr::EQ,
-        val,
-        cmp_const,
-    );
-    rewriter.insert_operation(ctx, icmp.get_operation());
-    let is_niche = icmp.get_operation().deref(ctx).get_result(0);
-
-    let niche_disc = const_int_of(ctx, rewriter, disc_ty, niche_disc_value as i64)?;
-    let untagged_disc = const_int_of(ctx, rewriter, disc_ty, untagged_disc_value as i64)?;
-    let disc_select = llvm::SelectOp::new(ctx, is_niche, niche_disc, untagged_disc);
-    rewriter.insert_operation(ctx, disc_select.get_operation());
-    let disc = disc_select.get_operation().deref(ctx).get_result(0);
-
-    let undef = llvm::UndefOp::new(ctx, llvm_ty);
-    rewriter.insert_operation(ctx, undef.get_operation());
-    let undef_val = undef.get_operation().deref(ctx).get_result(0);
-
-    let with_disc = llvm::InsertValueOp::new(ctx, undef_val, disc, vec![0]);
-    rewriter.insert_operation(ctx, with_disc.get_operation());
-    let with_disc_val = with_disc.get_operation().deref(ctx).get_result(0);
-
-    let mut deep_path = vec![1u32];
-    let rest = deep_scalar_index_path(ctx, payload_ty, val_ty).ok_or_else(|| {
-        pliron::input_error_noloc!(
-            "niched-enum payload field has no scalar slot matching the source type"
-        )
-    })?;
-    deep_path.extend(rest);
-
-    let final_insert = llvm::InsertValueOp::new(ctx, with_disc_val, val, deep_path);
-    Ok(final_insert.get_operation())
-}
-
-/// Aggregate -> scalar memory round-trip (e.g. `{ { i64 } }` -> `i64`).
-///
-/// The store-then-load only produces the right value when the destination
-/// scalar's bit width is at least as wide as the deepest scalar reachable
-/// inside the aggregate. If it is narrower we would silently truncate; if
-/// the alloca holds padding bytes the load would pull them in. We bail
-/// out loudly in those cases rather than emit a quiet miscompile.
-fn emit_struct_to_scalar(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    val: pliron::value::Value,
-    val_ty: pliron::r#type::TypeHandle,
-    llvm_ty: pliron::r#type::TypeHandle,
-) -> Result<Ptr<Operation>> {
-    let dst_width = llvm_ty
-        .deref(ctx)
-        .downcast_ref::<IntegerType>()
-        .map(|t| t.width())
-        .ok_or_else(|| {
-            pliron::input_error_noloc!("emit_struct_to_scalar: destination is not an integer type")
-        })?;
-
-    if let Some(src_width) = single_scalar_struct_width(ctx, val_ty) {
-        if src_width != dst_width {
-            return pliron::input_err_noloc!(
-                "struct -> scalar Transmute size mismatch: source {} bits, destination {} bits. \
-                 Refusing to fall through to a memory round-trip that would silently miscompile \
-                 (see issue #21).",
-                src_width,
-                dst_width
-            );
-        }
-    } else {
-        return pliron::input_err_noloc!(
-            "struct -> scalar Transmute over an aggregate that is not a single-scalar newtype \
-             wrapper. The memory round-trip is not safe here without an explicit niche \
-             reconstruction; refusing to emit it."
-        );
-    }
-
-    let one = const_i64(ctx, rewriter, 1);
-    let alloca = llvm::AllocaOp::new(ctx, val_ty, one);
-    rewriter.insert_operation(ctx, alloca.get_operation());
-    let ptr = alloca.get_operation().deref(ctx).get_result(0);
-    let store = llvm::StoreOp::new(ctx, val, ptr);
-    rewriter.insert_operation(ctx, store.get_operation());
-    Ok(llvm::LoadOp::new(ctx, ptr, llvm_ty).get_operation())
-}
-
-/// Walks single-field struct wrappers (`{ { i64 } }`, `{ ptr }`, etc.)
-/// and returns the bit width of the innermost scalar, or `None` if the
-/// aggregate has any layer that is not a single-field wrapper.
-fn single_scalar_struct_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u32> {
-    let mut current = ty;
-    for _ in 0..MAX_NEWTYPE_DEPTH {
-        let r = current.deref(ctx);
-        if let Some(i) = r.downcast_ref::<IntegerType>() {
-            return Some(i.width());
-        }
-        if let Some(p) = r.downcast_ref::<llvm_export::types::PointerType>() {
-            // Pointers are addressed as opaque integer-width bit patterns
-            // for the purpose of memory-round-trip sizing. CUDA targets
-            // 64-bit pointers across address spaces.
-            let _ = p;
-            return Some(64);
-        }
-        let s = r.downcast_ref::<llvm_export::types::StructType>()?;
-        if s.num_fields() != 1 {
-            return None;
-        }
-        current = s.field_type(0);
-    }
-    None
 }
 
 /// Equal-size Transmute through memory: `alloca` a stack slot, `store` the
@@ -834,14 +688,14 @@ fn emit_transmute_via_memory(
     val_ty: pliron::r#type::TypeHandle,
     llvm_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
-    let Some(src_bytes) = type_byte_size(ctx, val_ty) else {
+    let Some((src_bytes, src_align)) = llvm_type_size_align(ctx, val_ty) else {
         return pliron::input_err_noloc!(
             "Transmute via memory round-trip: cannot compute the total size of source type {}. \
              Refusing to lower (see issue #125).",
             val_ty.disp(ctx)
         );
     };
-    let Some(dst_bytes) = type_byte_size(ctx, llvm_ty) else {
+    let Some((dst_bytes, dst_align)) = llvm_type_size_align(ctx, llvm_ty) else {
         return pliron::input_err_noloc!(
             "Transmute via memory round-trip: cannot compute the total size of destination \
              type {}. Refusing to lower (see issue #125).",
@@ -860,110 +714,75 @@ fn emit_transmute_via_memory(
         );
     }
 
+    // A memory round-trip can expose every stored byte through a different
+    // destination type. Refuse a non-byte-faithful aggregate source: the
+    // important example is `{ i1 }`, where LLVM may leave the upper seven
+    // bits of Rust's one-byte `bool` storage undefined. The scalar-bool path
+    // above explicitly zero-extends to i8, but recursively normalizing bools
+    // and implicit padding inside arbitrary aggregates is not implemented.
+    // A representation-identical aggregate-to-aggregate transmute remains
+    // safe because the destination observes the same typed fields rather
+    // than reinterpreting those unspecified bits.
+    let source_is_aggregate = {
+        let source = val_ty.deref(ctx);
+        source.is::<llvm_export::types::StructType>()
+            || source.is::<llvm_export::types::ArrayType>()
+    };
+    if source_is_aggregate && val_ty != llvm_ty && !llvm_type_is_byte_faithful(ctx, val_ty) {
+        return pliron::input_err_noloc!(
+            "Transmute via memory round-trip: source aggregate {} is not byte-faithful (for example, it may contain bool/i1 or implicit padding). Refusing to expose unspecified storage bits through destination {}.",
+            val_ty.disp(ctx),
+            llvm_ty.disp(ctx)
+        );
+    }
+
     // The slot must satisfy whichever side needs the stricter alignment.
-    let align = abi_alignment_bytes(ctx, val_ty).max(abi_alignment_bytes(ctx, llvm_ty));
+    let align = u32::try_from(src_align.max(dst_align)).map_err(|_| {
+        pliron::input_error_noloc!("Transmute alignment does not fit LLVM alignment metadata")
+    })?;
+
+    let is_i1 = |ty: pliron::r#type::TypeHandle, ctx: &Context| {
+        ty.deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 1)
+    };
+    let source_is_i1 = is_i1(val_ty, ctx);
+    let destination_is_i1 = is_i1(llvm_ty, ctx);
+
+    let byte_ty: pliron::r#type::TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+
+    // An SSA i1 has one byte of Rust storage, whose valid physical values are
+    // exactly 0 and 1. Always cross that memory boundary as i8. This also
+    // covers bool <-> one-byte aggregate transmutes.
+    let stored_value = if source_is_i1 {
+        let zext = llvm::ZExtOp::new_with_nneg(ctx, val, byte_ty, false);
+        rewriter.insert_operation(ctx, zext.get_operation());
+        zext.get_operation().deref(ctx).get_result(0)
+    } else {
+        val
+    };
+    let storage_ty = if source_is_i1 { byte_ty } else { val_ty };
 
     let one = const_i64(ctx, rewriter, 1);
-    let alloca = llvm::AllocaOp::new(ctx, val_ty, one);
+    let alloca = llvm::AllocaOp::new(ctx, storage_ty, one);
     llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align);
     rewriter.insert_operation(ctx, alloca.get_operation());
     let ptr = alloca.get_operation().deref(ctx).get_result(0);
 
-    let store = llvm::StoreOp::new(ctx, val, ptr);
+    let store = llvm::StoreOp::new(ctx, stored_value, ptr);
     llvm_export::ops::set_op_alignment(ctx, store.get_operation(), align);
     rewriter.insert_operation(ctx, store.get_operation());
 
-    let load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
+    let loaded_ty = if destination_is_i1 { byte_ty } else { llvm_ty };
+    let load = llvm::LoadOp::new(ctx, ptr, loaded_ty);
     llvm_export::ops::set_op_alignment(ctx, load.get_operation(), align);
-    Ok(load.get_operation())
-}
-
-/// Total size in bytes of an LLVM-dialect type, for transmute size
-/// checking. Integer widths are rounded up to whole bytes because the
-/// memory round-trip operates at byte granularity (an `i1` occupies one
-/// byte in a stack slot).
-///
-/// Covers integers, floats, pointers (64-bit on our CUDA targets),
-/// arrays (element size times length), and structs whose fields tile the
-/// layout with no padding. Returns `None` when the size cannot be
-/// computed confidently (a struct that needs padding, an opaque struct,
-/// or an unknown type), so callers refuse the transmute operation
-/// explicitly instead of guessing.
-fn type_byte_size(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u64> {
-    let r = ty.deref(ctx);
-    if let Some(i) = r.downcast_ref::<IntegerType>() {
-        return Some((i.width() as u64).div_ceil(8));
+    if destination_is_i1 {
+        rewriter.insert_operation(ctx, load.get_operation());
+        let byte = load.get_operation().deref(ctx).get_result(0);
+        Ok(llvm::TruncOp::new(ctx, byte, llvm_ty).get_operation())
+    } else {
+        Ok(load.get_operation())
     }
-    if let Some(f) = type_cast::<dyn FloatTypeInterface>(&*r) {
-        return Some((f.get_semantics().bits as u64).div_ceil(8));
-    }
-    if r.is::<llvm_export::types::PointerType>() {
-        // CUDA targets use 64-bit pointers in every address space we emit.
-        return Some(8);
-    }
-    if let Some(a) = r.downcast_ref::<llvm_export::types::ArrayType>() {
-        let elem_bytes = type_byte_size(ctx, a.elem_type())?;
-        return elem_bytes.checked_mul(a.size());
-    }
-    if let Some(s) = r.downcast_ref::<llvm_export::types::StructType>() {
-        if s.is_opaque() {
-            return None;
-        }
-        // A struct's size is only trustworthy when the fields tile the
-        // layout exactly: each field starts where the previous one ended
-        // (no inter-field padding) and the total is a multiple of the
-        // struct's own alignment (no tail padding). Anything else would
-        // make the store/load round-trip move padding bytes around.
-        let mut offset: u64 = 0;
-        let mut max_align: u64 = 1;
-        for field in s.fields() {
-            let field_align = abi_alignment_bytes(ctx, field) as u64;
-            if !offset.is_multiple_of(field_align) {
-                return None; // inter-field padding required
-            }
-            offset += type_byte_size(ctx, field)?;
-            max_align = max_align.max(field_align);
-        }
-        if !offset.is_multiple_of(max_align) {
-            return None; // tail padding required
-        }
-        return Some(offset);
-    }
-    None
-}
-
-/// Conservative ABI alignment (bytes) of an LLVM-dialect type. Mirrors
-/// the natural-alignment fallback in the textual `.ll` exporter so the
-/// alignment stamped on a transmute stack slot agrees with what the
-/// exporter assumes for direct loads/stores of the same type.
-fn abi_alignment_bytes(ctx: &Context, ty: pliron::r#type::TypeHandle) -> u32 {
-    let r = ty.deref(ctx);
-    if let Some(i) = r.downcast_ref::<IntegerType>() {
-        return std::cmp::max(1, i.width() / 8);
-    }
-    if let Some(f) = type_cast::<dyn FloatTypeInterface>(&*r) {
-        return std::cmp::max(1, (f.get_semantics().bits / 8) as u32);
-    }
-    if r.is::<llvm_export::types::PointerType>() {
-        return 8;
-    }
-    if let Some(a) = r.downcast_ref::<llvm_export::types::ArrayType>() {
-        // An array aligns like its element type.
-        return abi_alignment_bytes(ctx, a.elem_type());
-    }
-    if let Some(s) = r.downcast_ref::<llvm_export::types::StructType>() {
-        if s.is_opaque() {
-            return 8;
-        }
-        // A struct aligns like its most-aligned field (1 if empty).
-        return s
-            .fields()
-            .map(|f| abi_alignment_bytes(ctx, f))
-            .max()
-            .unwrap_or(1);
-    }
-    // Conservative fallback for unknown types.
-    8
 }
 
 /// Float → float: extend or truncate precision.
@@ -1012,7 +831,10 @@ mod tests {
     use crate::convert::ops::test_util::*;
     use dialect_mir::attributes::MirCastKindAttr;
     use dialect_mir::ops as mir;
-    use dialect_mir::types::MirPtrType;
+    use dialect_mir::types::{
+        EnumCarrierKind, EnumEncoding, EnumLayoutKind, EnumVariant, MirEnumType, MirPtrType,
+        MirStructType,
+    };
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
     use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
@@ -1026,7 +848,7 @@ mod tests {
         IntegerType::get(ctx, width, signedness).into()
     }
 
-    fn lower_single_cast(
+    fn build_single_cast(
         ctx: &mut Context,
         src_ty: TypeHandle,
         dst_ty: TypeHandle,
@@ -1049,6 +871,16 @@ mod tests {
         let cast_result = cast_op.deref(ctx).get_result(0);
         append_mir_return(ctx, block, vec![cast_result]);
 
+        module_ptr
+    }
+
+    fn lower_single_cast(
+        ctx: &mut Context,
+        src_ty: TypeHandle,
+        dst_ty: TypeHandle,
+        kind: MirCastKindAttr,
+    ) -> Ptr<Operation> {
+        let module_ptr = build_single_cast(ctx, src_ty, dst_ty, kind);
         crate::lower_mir_to_llvm(ctx, module_ptr).expect("lowering failed");
         module_ptr
     }
@@ -1104,6 +936,253 @@ mod tests {
             .downcast_ref::<llvm_export::types::PointerType>()
             .expect("expected LLVM pointer type")
             .address_space()
+    }
+
+    fn integer_niche_enum(ctx: &mut Context) -> TypeHandle {
+        let u8_ty: TypeHandle = int_ty(ctx, 8, Signedness::Unsigned);
+        let u32_ty: TypeHandle = int_ty(ctx, 32, Signedness::Unsigned);
+        MirEnumType::get_with_encoding(
+            ctx,
+            "MaybeNonZero".into(),
+            u8_ty,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![u32_ty], vec![0], vec![4]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 4,
+                abi_align: 4,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into()
+    }
+
+    fn pointer_niche_enum(ctx: &mut Context, pointer: TypeHandle) -> TypeHandle {
+        let u8_ty: TypeHandle = int_ty(ctx, 8, Signedness::Unsigned);
+        MirEnumType::get_with_encoding(
+            ctx,
+            "MaybeRef".into(),
+            u8_ty,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![pointer], vec![0], vec![8]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into()
+    }
+
+    fn assert_physical_transmute_round_trip(ctx: &Context, module: Ptr<Operation>) {
+        let body = kernel_blocks(ctx, module);
+        assert_eq!(count_ops::<llvm::AllocaOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::StoreOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::LoadOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::ExtractValueOp>(ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::InsertValueOp>(ctx, &body), 0);
+    }
+
+    #[test]
+    fn transmute_between_integer_and_niche_enum_preserves_physical_bytes() {
+        for integer_to_enum in [true, false] {
+            let mut ctx = make_ctx();
+            let integer = int_ty(&mut ctx, 32, Signedness::Unsigned);
+            let enum_ty = integer_niche_enum(&mut ctx);
+            let (source, destination) = if integer_to_enum {
+                (integer, enum_ty)
+            } else {
+                (enum_ty, integer)
+            };
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+            assert_physical_transmute_round_trip(&ctx, module);
+        }
+    }
+
+    #[test]
+    fn transmute_between_pointer_and_reference_niche_enum_is_not_field_coercion() {
+        for pointer_to_enum in [true, false] {
+            let mut ctx = make_ctx();
+            let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+            let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+            let enum_ty = pointer_niche_enum(&mut ctx, pointer);
+            let (source, destination) = if pointer_to_enum {
+                (pointer, enum_ty)
+            } else {
+                (enum_ty, pointer)
+            };
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+            assert_physical_transmute_round_trip(&ctx, module);
+        }
+    }
+
+    #[test]
+    fn transmute_between_bool_and_byte_uses_explicit_integer_casts() {
+        for bool_to_byte in [true, false] {
+            let mut ctx = make_ctx();
+            let boolean = int_ty(&mut ctx, 1, Signedness::Signless);
+            let byte = int_ty(&mut ctx, 8, Signedness::Unsigned);
+            let (source, destination) = if bool_to_byte {
+                (boolean, byte)
+            } else {
+                (byte, boolean)
+            };
+
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+            let body = kernel_blocks(&ctx, module);
+            assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
+            assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
+            assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
+            assert_eq!(
+                count_ops::<llvm::ZExtOp>(&ctx, &body),
+                usize::from(bool_to_byte)
+            );
+            assert_eq!(
+                count_ops::<llvm::TruncOp>(&ctx, &body),
+                usize::from(!bool_to_byte)
+            );
+        }
+    }
+
+    #[test]
+    fn transmute_between_bool_and_byte_array_materializes_the_physical_byte() {
+        for bool_to_bytes in [true, false] {
+            let mut ctx = make_ctx();
+            let boolean = int_ty(&mut ctx, 1, Signedness::Signless);
+            let byte = int_ty(&mut ctx, 8, Signedness::Unsigned);
+            let bytes: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, byte, 1).into();
+            let (source, destination) = if bool_to_bytes {
+                (boolean, bytes)
+            } else {
+                (bytes, boolean)
+            };
+
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+            let body = kernel_blocks(&ctx, module);
+            assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 1);
+            assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 1);
+            assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
+            assert_eq!(
+                count_ops::<llvm::ZExtOp>(&ctx, &body),
+                usize::from(bool_to_bytes)
+            );
+            assert_eq!(
+                count_ops::<llvm::TruncOp>(&ctx, &body),
+                usize::from(!bool_to_bytes)
+            );
+
+            let stores = find_all::<llvm::StoreOp>(&ctx, &body);
+            let stored_width = stores[0]
+                .get_operand_value(&ctx)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .map(IntegerType::width);
+            if bool_to_bytes {
+                assert_eq!(stored_width, Some(8), "the memory store must be i8");
+            }
+            let loads = find_all::<llvm::LoadOp>(&ctx, &body);
+            let loaded_width = loads[0]
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .map(IntegerType::width);
+            if !bool_to_bytes {
+                assert_eq!(loaded_width, Some(8), "the memory load must be i8");
+            }
+        }
+    }
+
+    #[test]
+    fn transmute_from_bool_wrapper_rejects_unspecified_upper_byte_bits() {
+        let mut ctx = make_ctx();
+        let boolean = int_ty(&mut ctx, 1, Signedness::Signless);
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "BoolWrapper".into(),
+            vec!["value".into()],
+            vec![boolean],
+            vec![0],
+            vec![0],
+            1,
+            1,
+        )
+        .into();
+        let byte = int_ty(&mut ctx, 8, Signedness::Unsigned);
+        let module = build_single_cast(&mut ctx, wrapper, byte, MirCastKindAttr::Transmute);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("aggregate bool storage must not be exposed as raw bytes");
+        assert!(
+            error.to_string().contains("not byte-faithful"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn transmute_involving_shared_pointer_rejects_target_dependent_width() {
+        for wrap_pointer in [false, true] {
+            for pointer_is_source in [false, true] {
+                let mut ctx = make_ctx();
+                let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+                let shared_pointer: TypeHandle =
+                    MirPtrType::get(&mut ctx, pointee, false, 3).into();
+                let pointer_shape = if wrap_pointer {
+                    MirStructType::get_with_full_layout(
+                        &mut ctx,
+                        "SharedPointerWrapper".into(),
+                        vec!["pointer".into()],
+                        vec![shared_pointer],
+                        vec![0],
+                        vec![0],
+                        8,
+                        8,
+                    )
+                    .into()
+                } else {
+                    shared_pointer
+                };
+                let bits = int_ty(&mut ctx, 64, Signedness::Unsigned);
+                let (source, destination) = if pointer_is_source {
+                    (pointer_shape, bits)
+                } else {
+                    (bits, pointer_shape)
+                };
+                let module =
+                    build_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+
+                let error = crate::lower_mir_to_llvm(&mut ctx, module)
+                    .expect_err("shared-pointer transmute must fail before target mode is known");
+                assert!(
+                    error.to_string().contains("target-mode dependent"),
+                    "unexpected diagnostic: {error}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1291,6 +1370,75 @@ mod tests {
             pointer_addrspace(&ctx, result_ty),
             3,
             "ptr -> ptr addrspace cast must produce an addrspace(3) pointer"
+        );
+    }
+
+    /// `&mut [T; N]` in shared memory (addrspace 3) unsized to `&mut [T]`:
+    /// the slice's field-0 pointer slot is generic (addrspace 0), so the data
+    /// pointer must be `addrspacecast` before the `insert_value` (PTX
+    /// `cvta.shared`). Without the coercion the lowered module fails
+    /// verification with "Value being inserted / extracted does not match the
+    /// type of the indexed aggregate".
+    #[test]
+    fn shared_array_unsize_coerces_data_pointer_to_slice_addrspace() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
+        let src_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, arr_ty, true).into();
+        let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            src_ty,
+            dst_ty,
+            MirCastKindAttr::PointerCoercionUnsize,
+        );
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            1,
+            "shared -> generic data pointer must be addrspacecast before insertion"
+        );
+        assert_eq!(
+            count_ops::<llvm::InsertValueOp>(&ctx, &body),
+            2,
+            "fat pointer construction must insert data pointer and length"
+        );
+        assert_eq!(
+            count_ops::<mir::MirCastOp>(&ctx, &body),
+            0,
+            "mir.cast must be replaced during lowering"
+        );
+    }
+
+    /// The same unsize from a generic (addrspace 0) array must NOT insert a
+    /// spurious addrspacecast.
+    #[test]
+    fn generic_array_unsize_needs_no_addrspace_coercion() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
+        let src_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, arr_ty, true).into();
+        let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            src_ty,
+            dst_ty,
+            MirCastKindAttr::PointerCoercionUnsize,
+        );
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            0,
+            "matching address spaces must not introduce an addrspacecast"
+        );
+        assert_eq!(
+            count_ops::<llvm::InsertValueOp>(&ctx, &body),
+            2,
+            "fat pointer construction must insert data pointer and length"
         );
     }
 }

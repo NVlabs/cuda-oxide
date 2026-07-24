@@ -64,6 +64,12 @@ fn stderr_pipeline_trace(message: &str) {
 pub struct CollectedFunction {
     /// The monomorphized stable_mir instance (includes concrete generic args).
     pub instance: Instance,
+    /// Number of blocks in the rustc MIR body from which `instance.body()` is
+    /// converted. The importer verifies that conversion preserved the CFG.
+    pub rustc_mir_block_count: usize,
+    /// Exact per-block rustc successors for this monomorphized instance under
+    /// CUDA Oxide's device runtime-check policy.
+    pub rustc_mono_successors: Vec<Vec<usize>>,
     /// True if this is a GPU kernel entry point (has `#[kernel]` attribute).
     pub is_kernel: bool,
     /// The name to export in PTX. For kernels, this is the user-visible name.
@@ -254,6 +260,8 @@ pub fn run_pipeline(
             &mut ctx,
             &body,
             &func.instance,
+            func.rustc_mir_block_count,
+            &func.rustc_mono_successors,
             func.is_kernel,
             func.is_inline_always,
             Some(&func.export_name),
@@ -327,6 +335,7 @@ pub fn run_pipeline(
                 &config.output_dir,
                 &config.output_name,
                 config.allow_fma_contraction,
+                config.debug_kind,
             )?;
             // Publish the target last: its version marker is the completion record
             // that says the sibling options file is required.
@@ -393,16 +402,23 @@ fn write_nvvm_target_sidecar(
     })
 }
 
-/// Records the compile-wide options (currently the fma-contraction policy) that
-/// downstream LTOIR builds must preserve, next to the emitted `.ll`.
+/// Records the compile-wide FMA and debug policies that downstream libNVVM and
+/// nvJitLink stages must preserve, next to the emitted `.ll`.
 fn write_nvvm_compile_options_sidecar(
     output_dir: &Path,
     output_name: &str,
     allow_fma_contraction: bool,
+    debug_kind: DebugKind,
 ) -> Result<(), PipelineError> {
     let path = output_dir.join(format!("{output_name}.options"));
-    let options =
-        oxide_artifacts::ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction);
+    let debug_policy = match debug_kind {
+        DebugKind::Off => oxide_artifacts::ArtifactDebugPolicy::None,
+        DebugKind::LineTables => oxide_artifacts::ArtifactDebugPolicy::LineTables,
+        DebugKind::Full => oxide_artifacts::ArtifactDebugPolicy::Full,
+    };
+    let options = oxide_artifacts::ArtifactCompileOptions::new()
+        .with_fma_contraction(allow_fma_contraction)
+        .with_debug_policy(debug_policy);
     std::fs::write(&path, options.sidecar_text()).map_err(|error| {
         PipelineError::Export(format!(
             "failed to record NVVM compile options in {}: {error}",
@@ -417,6 +433,8 @@ fn stale_compilation_artifact_paths(
 ) -> Vec<std::path::PathBuf> {
     [
         "ll",
+        "linked.ll",
+        "linked.opt.ll",
         "ptx",
         "target",
         "options",
@@ -462,6 +480,8 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         for suffix in [
             "ll",
+            "linked.ll",
+            "linked.opt.ll",
             "ptx",
             "target",
             "options",
@@ -492,7 +512,14 @@ mod tests {
 
         assert_eq!(result.artifact_kind, CompilationArtifactKind::NvvmIr);
         assert_ne!(fs::read(&result.ll_path).unwrap(), b"stale");
-        for suffix in ["ptx", "ltoir", "cubin", "cubin.target"] {
+        for suffix in [
+            "linked.ll",
+            "linked.opt.ll",
+            "ptx",
+            "ltoir",
+            "cubin",
+            "cubin.target",
+        ] {
             assert!(!root.join(format!("kernel.{suffix}")).exists(), "{suffix}");
         }
         assert_ne!(fs::read(root.join("kernel.target")).unwrap(), b"stale");
@@ -555,6 +582,47 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).expect("clean up temp output dir");
+    }
+
+    #[test]
+    fn nvvm_sidecar_preserves_deferred_debug_policy() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_nvvm_debug_options_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        for (name, debug_kind, expected_debug) in [
+            (
+                "off",
+                DebugKind::Off,
+                oxide_artifacts::ArtifactDebugPolicy::None,
+            ),
+            (
+                "lines",
+                DebugKind::LineTables,
+                oxide_artifacts::ArtifactDebugPolicy::LineTables,
+            ),
+            (
+                "full",
+                DebugKind::Full,
+                oxide_artifacts::ArtifactDebugPolicy::Full,
+            ),
+        ] {
+            write_nvvm_compile_options_sidecar(&root, name, false, debug_kind).unwrap();
+            let text = fs::read_to_string(root.join(format!("{name}.options"))).unwrap();
+            let options =
+                oxide_artifacts::ArtifactCompileOptions::from_sidecar_text(&text).unwrap();
+            assert!(!options.fma_contraction_enabled());
+            assert_eq!(options.debug_policy(), expected_debug);
+        }
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

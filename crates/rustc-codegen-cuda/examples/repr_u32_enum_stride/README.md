@@ -63,5 +63,6 @@ shape with one mechanism, which is why this example also tests:
 unsigned tag, so a memory-loaded `e as i32` zero-extended the `0xFF` byte to
 `255` instead of sign-extending it to `-1`.
 
-Niched enums (e.g. `Option<&T>`) are intentionally NOT affected: their
-un-niched in-kernel model keeps the variant-count tag.
+Niched enums (for example `Option<&T>`) use a different rustc layout path:
+their otherwise-invalid payload value is recorded as the physical carrier,
+and cuda-oxide does not add a separate variant-count tag.

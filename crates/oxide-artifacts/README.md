@@ -56,7 +56,8 @@ Artifact Blob
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  |       Payload Count           |        Entry Count            |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |                         Reserved (zero)                       |
+ |        Compile Options (v2) / Reserved Zero (v1)              |
+ |                                                               |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  |                         Bundle Name ...                      /
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -71,7 +72,16 @@ Artifact Blob
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-Header size is currently 32 bytes.
+Header size is currently 32 bytes. The final field occupies bytes 24 through
+31 (the half-open range `[24, 32)`) and is a 64-bit compile-options bitset in
+version 2. Bit 0 disables FMA contraction; unknown option bits are rejected.
+Version-1 bundles define the same bytes as reserved zero and use the historical
+default policy, where FMA contraction is allowed.
+
+Version 2 is the latest supported format. For backward compatibility, the
+writer still emits version 1 when the compile-options bitset is zero. It emits
+version 2 only when a bundle carries a non-default compile policy, ensuring
+that an older reader rejects policy it would otherwise silently ignore.
 
 ```text
 Payload Record (24 bytes)
@@ -144,7 +154,8 @@ cubin from embedded NVVM IR/LTOIR before loading.
 
 ## Constraints
 
-- The format version is currently `1`.
+- The latest supported format version is `2`; default-policy bundles are still
+  emitted as version `1` for backward compatibility.
 - All numeric fields are little-endian.
 - The blob header is fixed at 32 bytes.
 - Payload and entry records are fixed at 24 bytes each.
@@ -163,9 +174,20 @@ cubin from embedded NVVM IR/LTOIR before loading.
   section.
 - `object`: enables both read and write support.
 
+## Compression Policy
+
+Compression is intentionally not part of the base artifact wire format.
+
+`oxide-artifacts` stores device-code payload bytes as provided by the compiler
+or packaging layer. This keeps the crate as a neutral container for PTX, NVVM IR,
+LTOIR, cubin, and entry metadata, while allowing runtime or loader layers to
+decide how those payloads should be consumed.
+
+If embedded payload size becomes a measured problem, compression should first be
+handled by a higher-level packaging, distribution, or loader layer. Per-payload
+compression should only be added to this format as an explicit versioned
+extension with codec and decompressed-size metadata.
+
 ## TODO
 
-- Investigate whether compression is useful or necessary for embedded payloads,
-  especially for large PTX bundles, and whether it belongs in this crate
-  or in a higher-level packaging layer.
 - Consider Windows support later.

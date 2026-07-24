@@ -14,7 +14,7 @@ struct FakeModule;
 
 impl FakeModule {
     fn load_function(&self, _name: &str) -> Result<cuda_core::CudaFunction, ()> {
-        unimplemented!()
+        unreachable!("this trybuild fixture never executes module loading")
     }
 }
 

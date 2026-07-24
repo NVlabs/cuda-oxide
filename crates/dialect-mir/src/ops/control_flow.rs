@@ -331,7 +331,8 @@ impl BranchOpInterface for MirCondBranchOp {
 
 /// MIR assert operation.
 ///
-/// Assert condition is true, else panic (not supported in kernels, assumes panic=abort/unreachable).
+/// Assert condition is true, else abort the kernel.
+/// Lowered to a conditional branch whose failure side traps (`llvm.trap` -> PTX `trap`)
 ///
 /// # Operands
 ///

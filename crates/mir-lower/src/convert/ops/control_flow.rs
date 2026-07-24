@@ -25,6 +25,7 @@
 
 use llvm_export::ops as llvm;
 use pliron::basic_block::BasicBlock;
+use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
@@ -138,7 +139,7 @@ pub(crate) fn convert_cond_branch(
 /// Convert `mir.assert` to conditional branch with abort block.
 ///
 /// MIR assert is converted to:
-/// 1. Create an abort block with `llvm.unreachable`
+/// 1. Create an abort block: `llvm.call @llvm.trap()` + `llvm.unreachable`
 /// 2. `llvm.cond_br` to success block (if true) or abort block (if false)
 ///
 /// The abort block is inserted directly (not through the rewriter), since it's
@@ -173,6 +174,14 @@ pub(crate) fn convert_assert(
 
     let abort_block = BasicBlock::new(ctx, None, vec![]);
     abort_block.insert_at_back(region, ctx);
+
+    let void_ty = llvm_export::types::VoidType::get(ctx);
+    let trap_func_ty = llvm_export::types::FuncType::get(ctx, void_ty.into(), vec![], false);
+    crate::helpers::ensure_intrinsic_declared(ctx, abort_block, "llvm_trap", trap_func_ty)
+        .map_err(|e| pliron::input_error_noloc!("{}", e))?;
+    let trap_sym: pliron::identifier::Identifier = "llvm_trap".try_into().unwrap();
+    let trap_call = llvm::CallOp::new(ctx, CallOpCallable::Direct(trap_sym), trap_func_ty, vec![]);
+    trap_call.get_operation().insert_at_back(abort_block, ctx);
 
     llvm::UnreachableOp::new(ctx)
         .get_operation()
@@ -260,7 +269,10 @@ mod tests {
     use dialect_mir::ops as mir;
     use dialect_mir::types::MirTupleType;
     use llvm_export::ops as llvm;
-    use pliron::builtin::op_interfaces::{BranchOpInterface, OperandSegmentInterface};
+    use pliron::builtin::op_interfaces::{
+        BranchOpInterface, CallOpCallable, CallOpInterface, OperandSegmentInterface,
+        SymbolOpInterface,
+    };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::linked_list::ContainsLinkedList;
     use pliron::op::Op;
@@ -395,9 +407,9 @@ mod tests {
     }
 
     #[test]
-    fn convert_assert_creates_abort_block_with_unreachable() {
+    fn convert_assert_creates_abort_block_with_trap() {
         // mir.assert lowers to a llvm.cond_br whose false side is a fresh
-        // block ending in llvm.unreachable.
+        // block that calls @llvm.trap() and ends in llvm.unreachable.
         let mut ctx = make_ctx();
         let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
@@ -444,6 +456,34 @@ mod tests {
             false_succ, abort_block,
             "cond_br false side must target the abort block"
         );
+
+        let abort_ops: Vec<_> = abort_block.deref(&ctx).iter(&ctx).collect();
+        assert_eq!(
+            abort_ops.len(),
+            2,
+            "abort block must hold exactly the trap call and unreachable"
+        );
+        let trap_call = Operation::get_op::<llvm::CallOp>(abort_ops[0], &ctx)
+            .expect("abort block must start with a call");
+        let CallOpCallable::Direct(sym) = trap_call.callee(&ctx) else {
+            panic!("trap call must be a direct call");
+        };
+        assert_eq!(
+            sym.to_string(),
+            "llvm_trap",
+            "abort block must call @llvm.trap so opt cannot assume the condition"
+        );
+        assert!(
+            Operation::get_op::<llvm::UnreachableOp>(abort_ops[1], &ctx).is_some(),
+            "abort block must terminate with llvm.unreachable"
+        );
+
+        let has_trap_decl = module_top_block(&ctx, module_ptr)
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, &ctx))
+            .any(|func| func.get_symbol_name(&ctx).to_string() == "llvm_trap");
+        assert!(has_trap_decl, "llvm.trap must be declared in the module");
     }
 
     #[test]

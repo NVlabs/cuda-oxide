@@ -18,10 +18,10 @@
 //! ## What this crate owns
 //!
 //! The `cuda_oxide_*` namespace, reserved for cuda-oxide internal symbols.
-//! Every prefix below ends with `246e25db_`, which is
+//! Every prefix below contains the component `246e25db_`, which is
 //! `sha256("cuda_oxide_ + rust")` truncated to 8 hex chars. The hash
 //! makes accidental collisions effectively impossible — nobody writes
-//! `fn cuda_oxide_kernel_246e25db_foo()` by accident.
+//! `fn cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_foo()` by accident.
 //!
 //! ## Layered API
 //!
@@ -54,6 +54,21 @@ use alloc::string::String;
 // Layer 1 — raw constants
 // ============================================================================
 
+/// Cargo-visible identity for settings that can change device code or its
+/// embedded artifact. Device-owning procedural macros track this variable so
+/// Cargo invalidates those crates without invalidating unrelated host crates.
+pub const CODEGEN_FINGERPRINT_ENV: &str = "CUDA_OXIDE_INTERNAL_CODEGEN_FINGERPRINT";
+
+/// Internal cargo-oxide/backend opt-in for build-time cubin materialization.
+pub const MATERIALIZE_CUBIN_ENV: &str = "CUDA_OXIDE_MATERIALIZE_CUBIN";
+
+/// Exact CUDA compiler/linker provenance discovered by cargo-oxide and checked
+/// again by the codegen backend before materialization.
+pub const MATERIALIZER_PROVENANCE_ENV: &str = "CUDA_OXIDE_INTERNAL_MATERIALIZER_PROVENANCE";
+
+/// Optional comma-separated filter selecting crates that may own device code.
+pub const DEVICE_CODEGEN_CRATE_ENV: &str = "CUDA_OXIDE_DEVICE_CODEGEN_CRATE";
+
 /// Reserved root that prefixes every cuda-oxide internal symbol.
 ///
 /// User code must not define functions whose name starts with this.
@@ -62,8 +77,8 @@ use alloc::string::String;
 /// and emitting a compile error.
 pub const RESERVED_ROOT: &str = "cuda_oxide_";
 
-/// Magic suffix appended to every prefix to defend against accidental
-/// name collisions in user code.
+/// Magic component embedded in every prefix to defend against accidental name
+/// collisions in user code.
 ///
 /// `sha256("cuda_oxide_ + rust")` truncated to 8 hex chars. The exact
 /// value is irrelevant — what matters is that it's fixed forever and
@@ -72,17 +87,35 @@ pub const HASH_SUFFIX: &str = "246e25db";
 
 /// Prefix added to `#[kernel]` functions for collector detection.
 ///
-/// `#[kernel] fn vecadd(...)` becomes `fn cuda_oxide_kernel_246e25db_vecadd(...)`.
+/// `#[kernel] fn vecadd(...)` becomes
+/// `fn cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_vecadd(...)`.
 /// The collector finds these by name; the PTX entry name itself is the
 /// unprefixed base (e.g., `vecadd`).
-pub const KERNEL_PREFIX: &str = "cuda_oxide_kernel_246e25db_";
+///
+/// The `codegen_v1` component is a cache-protocol handshake. It lets a newer
+/// backend reject pre-tracked-env macro expansions instead of silently reusing
+/// device artifacts across output or architecture changes. The complete
+/// legacy prefix remains embedded after that tag so an explicitly configured
+/// older backend still recognizes and compiles a new root.
+pub const KERNEL_PREFIX: &str = "cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_";
+
+/// Kernel prefix emitted before the scoped Cargo cache protocol existed.
+///
+/// Consumers continue to recognize it so the backend can produce an explicit
+/// compatibility diagnostic. New macro expansions must never emit it.
+pub const LEGACY_KERNEL_PREFIX: &str = "cuda_oxide_kernel_246e25db_";
 
 /// Prefix added to `#[device]` functions for collector detection.
 ///
-/// `#[device] fn helper(...)` becomes `fn cuda_oxide_device_246e25db_helper(...)`.
+/// `#[device] fn helper(...)` becomes
+/// `fn cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_helper(...)`.
 /// The LLVM-export layer strips this prefix to produce clean device-side
-/// symbol names in the final PTX/LTOIR.
-pub const DEVICE_PREFIX: &str = "cuda_oxide_device_246e25db_";
+/// symbol names in the final PTX/LTOIR. As with [`KERNEL_PREFIX`], the complete
+/// legacy prefix remains embedded for older-backend compatibility.
+pub const DEVICE_PREFIX: &str = "cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_";
+
+/// Device-function prefix emitted before the scoped Cargo cache protocol.
+pub const LEGACY_DEVICE_PREFIX: &str = "cuda_oxide_device_246e25db_";
 
 /// Prefix added to functions inside `#[device] extern "C" { ... }` blocks.
 ///
@@ -133,6 +166,17 @@ pub const KERNEL_SCOPE_LOCAL: &str = "cuda_oxide_kernel_scope_246e25db";
 /// linker to pull the artifact member out of the archive.
 pub const ARTIFACT_ANCHOR_PREFIX: &str = "cuda_oxide_artifact_anchor_246e25db_";
 
+/// Prefix of private statics emitted by `#[cuda_module]` for enabled generic
+/// kernels.
+///
+/// Generic kernel specializations can be emitted into a downstream crate's
+/// device artifact, so loading only the defining crate's artifact is not
+/// sufficient. The host API therefore merges PTX bundles for such modules.
+/// Ahead-of-time cubin materialization cannot preserve that behavior today;
+/// the codegen collector uses this marker to reject the unsupported case
+/// before loading libNVVM or nvJitLink.
+pub const PTX_MERGE_REQUIRED_PREFIX: &str = "cuda_oxide_ptx_merge_required_246e25db_";
+
 // ============================================================================
 // Layer 2 — builders (macro side)
 // ============================================================================
@@ -141,7 +185,10 @@ pub const ARTIFACT_ANCHOR_PREFIX: &str = "cuda_oxide_artifact_anchor_246e25db_";
 ///
 /// ```
 /// use reserved_oxide_symbols::kernel_symbol;
-/// assert_eq!(kernel_symbol("vecadd"), "cuda_oxide_kernel_246e25db_vecadd");
+/// assert_eq!(
+///     kernel_symbol("vecadd"),
+///     "cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_vecadd"
+/// );
 /// ```
 pub fn kernel_symbol(base: &str) -> String {
     format!("{KERNEL_PREFIX}{base}")
@@ -151,7 +198,10 @@ pub fn kernel_symbol(base: &str) -> String {
 ///
 /// ```
 /// use reserved_oxide_symbols::device_symbol;
-/// assert_eq!(device_symbol("helper"), "cuda_oxide_device_246e25db_helper");
+/// assert_eq!(
+///     device_symbol("helper"),
+///     "cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_helper"
+/// );
 /// ```
 pub fn device_symbol(base: &str) -> String {
     format!("{DEVICE_PREFIX}{base}")
@@ -191,6 +241,13 @@ pub fn instantiate_symbol(base: &str) -> String {
 /// ```
 pub fn constant_symbol(base: &str) -> String {
     format!("{CONSTANT_PREFIX}{base}")
+}
+
+/// Build the compiler marker associated with one generic kernel.
+pub fn ptx_merge_required_marker(base: &str) -> String {
+    let mut symbol = String::from(PTX_MERGE_REQUIRED_PREFIX);
+    push_symbol_sanitized(&mut symbol, base);
+    symbol
 }
 
 /// Build the legacy artifact link-anchor symbol for a package and version.
@@ -262,7 +319,10 @@ fn push_symbol_sanitized(symbol: &mut String, raw: &str) {
 // ============================================================================
 
 /// Returns `true` if `name` is a kernel symbol (or contains one as a
-/// suffix of a longer FQDN like `crate::module::cuda_oxide_kernel_246e25db_foo`).
+/// suffix of a longer FQDN like
+/// `crate::module::cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_foo`). Legacy roots
+/// are recognized too so they can be rejected safely by a protocol-aware
+/// backend rather than disappearing as ordinary host functions.
 ///
 /// ```
 /// use reserved_oxide_symbols::{is_kernel_symbol, kernel_symbol};
@@ -270,7 +330,22 @@ fn push_symbol_sanitized(symbol: &mut String, raw: &str) {
 /// assert!(!is_kernel_symbol("vecadd"));
 /// ```
 pub fn is_kernel_symbol(name: &str) -> bool {
-    name.contains(KERNEL_PREFIX)
+    name.contains(KERNEL_PREFIX) || name.contains(LEGACY_KERNEL_PREFIX)
+}
+
+/// Returns `true` only for a kernel emitted by the scoped-cache protocol.
+pub fn is_current_kernel_symbol(name: &str) -> bool {
+    name.rsplit("::")
+        .next()
+        .is_some_and(|item| item.starts_with(KERNEL_PREFIX))
+}
+
+/// Returns `true` only for a kernel emitted before the scoped-cache protocol.
+pub fn is_legacy_kernel_symbol(name: &str) -> bool {
+    name.rsplit("::")
+        .next()
+        .is_some_and(|item| item.starts_with(LEGACY_KERNEL_PREFIX))
+        && !is_current_kernel_symbol(name)
 }
 
 /// Returns `true` if `name` is a device-function symbol (excluding extern).
@@ -285,7 +360,24 @@ pub fn is_kernel_symbol(name: &str) -> bool {
 /// assert!(!is_device_symbol(&device_extern_symbol("foo")));
 /// ```
 pub fn is_device_symbol(name: &str) -> bool {
-    name.contains(DEVICE_PREFIX)
+    name.contains(DEVICE_PREFIX) || name.contains(LEGACY_DEVICE_PREFIX)
+}
+
+/// Returns `true` only for a device function emitted by the scoped-cache
+/// protocol.
+pub fn is_current_device_symbol(name: &str) -> bool {
+    name.rsplit("::")
+        .next()
+        .is_some_and(|item| item.starts_with(DEVICE_PREFIX))
+}
+
+/// Returns `true` only for a device function emitted before the scoped-cache
+/// protocol.
+pub fn is_legacy_device_symbol(name: &str) -> bool {
+    name.rsplit("::")
+        .next()
+        .is_some_and(|item| item.starts_with(LEGACY_DEVICE_PREFIX))
+        && !is_current_device_symbol(name)
 }
 
 /// Returns `true` if `name` is a `#[device] extern` symbol.
@@ -296,6 +388,14 @@ pub fn is_device_symbol(name: &str) -> bool {
 /// ```
 pub fn is_device_extern_symbol(name: &str) -> bool {
     name.contains(DEVICE_EXTERN_PREFIX)
+}
+
+/// Returns `true` for a generic-kernel PTX-merge marker path.
+pub fn is_ptx_merge_required_marker(name: &str) -> bool {
+    name.rsplit("::")
+        .next()
+        .and_then(|component| component.strip_prefix(PTX_MERGE_REQUIRED_PREFIX))
+        .is_some_and(|base| !base.is_empty())
 }
 
 /// Returns `true` if `name` is a closure-monomorphization helper symbol.
@@ -332,7 +432,7 @@ pub fn is_constant_symbol(name: &str) -> bool {
 /// ```
 /// use reserved_oxide_symbols::kernel_base_name;
 /// assert_eq!(
-///     kernel_base_name("cuda_oxide_kernel_246e25db_vecadd"),
+///     kernel_base_name("cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_vecadd"),
 ///     Some("vecadd"),
 /// );
 /// assert_eq!(
@@ -344,6 +444,10 @@ pub fn is_constant_symbol(name: &str) -> bool {
 pub fn kernel_base_name(name: &str) -> Option<&str> {
     name.find(KERNEL_PREFIX)
         .map(|pos| &name[pos + KERNEL_PREFIX.len()..])
+        .or_else(|| {
+            name.find(LEGACY_KERNEL_PREFIX)
+                .map(|pos| &name[pos + LEGACY_KERNEL_PREFIX.len()..])
+        })
 }
 
 /// Strip the device prefix from a possibly-FQDN symbol name.
@@ -355,7 +459,7 @@ pub fn kernel_base_name(name: &str) -> Option<&str> {
 /// ```
 /// use reserved_oxide_symbols::device_base_name;
 /// assert_eq!(
-///     device_base_name("cuda_oxide_device_246e25db_helper"),
+///     device_base_name("cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_helper"),
 ///     Some("helper"),
 /// );
 /// assert_eq!(device_base_name("cuda_oxide_device_extern_246e25db_foo"), None);
@@ -363,6 +467,10 @@ pub fn kernel_base_name(name: &str) -> Option<&str> {
 pub fn device_base_name(name: &str) -> Option<&str> {
     name.find(DEVICE_PREFIX)
         .map(|pos| &name[pos + DEVICE_PREFIX.len()..])
+        .or_else(|| {
+            name.find(LEGACY_DEVICE_PREFIX)
+                .map(|pos| &name[pos + LEGACY_DEVICE_PREFIX.len()..])
+        })
 }
 
 /// Strip the device-extern prefix from a possibly-FQDN symbol name.
@@ -382,8 +490,8 @@ pub fn device_extern_base_name(name: &str) -> Option<&str> {
 
 /// Format a mangled symbol as a human-readable diagnostic label.
 ///
-/// `cuda_oxide_kernel_246e25db_vecadd` becomes `vecadd (kernel)`,
-/// `cuda_oxide_device_246e25db_helper` becomes `helper (device)`, and
+/// `cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_vecadd` becomes `vecadd (kernel)`,
+/// `cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_helper` becomes `helper (device)`, and
 /// device-extern symbols become `<base> (device extern)`. Returns `None`
 /// for anything outside the reserved namespace.
 ///
@@ -393,7 +501,7 @@ pub fn device_extern_base_name(name: &str) -> Option<&str> {
 /// ```
 /// use reserved_oxide_symbols::display_name;
 /// assert_eq!(
-///     display_name("cuda_oxide_kernel_246e25db_vecadd").as_deref(),
+///     display_name("cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_vecadd").as_deref(),
 ///     Some("vecadd (kernel)"),
 /// );
 /// assert_eq!(display_name("std::vec::Vec::new"), None);
@@ -460,11 +568,23 @@ mod tests {
     #[test]
     fn hash_value_is_pinned() {
         assert_eq!(HASH_SUFFIX, "246e25db");
-        assert_eq!(KERNEL_PREFIX, "cuda_oxide_kernel_246e25db_");
-        assert_eq!(DEVICE_PREFIX, "cuda_oxide_device_246e25db_");
+        assert_eq!(
+            KERNEL_PREFIX,
+            "cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_"
+        );
+        assert_eq!(LEGACY_KERNEL_PREFIX, "cuda_oxide_kernel_246e25db_");
+        assert_eq!(
+            DEVICE_PREFIX,
+            "cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_"
+        );
+        assert_eq!(LEGACY_DEVICE_PREFIX, "cuda_oxide_device_246e25db_");
         assert_eq!(DEVICE_EXTERN_PREFIX, "cuda_oxide_device_extern_246e25db_");
         assert_eq!(INSTANTIATE_PREFIX, "cuda_oxide_instantiate_246e25db_");
         assert_eq!(CONSTANT_PREFIX, "cuda_oxide_const_246e25db_");
+        assert_eq!(
+            PTX_MERGE_REQUIRED_PREFIX,
+            "cuda_oxide_ptx_merge_required_246e25db_"
+        );
     }
 
     /// Every prefix shares the reserved root. The macro guard checks
@@ -475,10 +595,13 @@ mod tests {
     fn all_prefixes_share_reserved_root() {
         for p in [
             KERNEL_PREFIX,
+            LEGACY_KERNEL_PREFIX,
             DEVICE_PREFIX,
+            LEGACY_DEVICE_PREFIX,
             DEVICE_EXTERN_PREFIX,
             INSTANTIATE_PREFIX,
             CONSTANT_PREFIX,
+            PTX_MERGE_REQUIRED_PREFIX,
         ] {
             assert!(
                 p.starts_with(RESERVED_ROOT),
@@ -498,6 +621,22 @@ mod tests {
         assert!(!DEVICE_PREFIX.contains(DEVICE_EXTERN_PREFIX));
     }
 
+    #[test]
+    fn ptx_merge_markers_are_per_kernel_and_sanitized() {
+        let marker = ptx_merge_required_marker("nested::map-value");
+        assert_eq!(
+            marker,
+            "cuda_oxide_ptx_merge_required_246e25db_nested__map_value"
+        );
+        assert!(is_ptx_merge_required_marker(&marker));
+        assert!(is_ptx_merge_required_marker(&format!(
+            "crate::module::{marker}"
+        )));
+        assert!(!is_ptx_merge_required_marker(PTX_MERGE_REQUIRED_PREFIX));
+        assert!(!is_ptx_merge_required_marker(&format!("prefix_{marker}")));
+        assert!(!is_ptx_merge_required_marker(&format!("{marker}::child")));
+    }
+
     /// `kernel_base_name(kernel_symbol(x)) == Some(x)` for any reasonable
     /// base name. Same property for device, device_extern, instantiate.
     #[test]
@@ -512,6 +651,61 @@ mod tests {
             assert_eq!(instantiate_base_name(&instantiate_symbol(base)), Some(base),);
             assert_eq!(constant_base_name(&constant_symbol(base)), Some(base));
         }
+    }
+
+    #[test]
+    fn current_and_legacy_codegen_roots_are_distinguished_and_strip_identically() {
+        let current_kernel = kernel_symbol("map");
+        let legacy_kernel = format!("{LEGACY_KERNEL_PREFIX}map");
+        let current_device = device_symbol("helper");
+        let legacy_device = format!("{LEGACY_DEVICE_PREFIX}helper");
+
+        assert!(is_kernel_symbol(&current_kernel));
+        assert!(is_current_kernel_symbol(&current_kernel));
+        assert!(!is_legacy_kernel_symbol(&current_kernel));
+        assert!(is_kernel_symbol(&legacy_kernel));
+        assert!(!is_current_kernel_symbol(&legacy_kernel));
+        assert!(is_legacy_kernel_symbol(&legacy_kernel));
+        assert_eq!(kernel_base_name(&current_kernel), Some("map"));
+        assert_eq!(kernel_base_name(&legacy_kernel), Some("map"));
+        assert!(current_kernel.contains(LEGACY_KERNEL_PREFIX));
+        assert_eq!(
+            current_kernel
+                .find(LEGACY_KERNEL_PREFIX)
+                .map(|index| &current_kernel[index + LEGACY_KERNEL_PREFIX.len()..]),
+            Some("map"),
+            "an older backend must detect and strip the embedded legacy prefix"
+        );
+
+        assert!(is_device_symbol(&current_device));
+        assert!(is_current_device_symbol(&current_device));
+        assert!(!is_legacy_device_symbol(&current_device));
+        assert!(is_device_symbol(&legacy_device));
+        assert!(!is_current_device_symbol(&legacy_device));
+        assert!(is_legacy_device_symbol(&legacy_device));
+        assert_eq!(device_base_name(&current_device), Some("helper"));
+        assert_eq!(device_base_name(&legacy_device), Some("helper"));
+        assert!(current_device.contains(LEGACY_DEVICE_PREFIX));
+        assert_eq!(
+            current_device
+                .find(LEGACY_DEVICE_PREFIX)
+                .map(|index| &current_device[index + LEGACY_DEVICE_PREFIX.len()..]),
+            Some("helper"),
+            "an older backend must detect and strip the embedded legacy prefix"
+        );
+
+        // An old macro prefixes the user-written base verbatim. Its output
+        // must remain legacy even when that base begins with the protocol's
+        // spelling.
+        let old_collision = format!("{LEGACY_KERNEL_PREFIX}codegen_v1_map");
+        assert!(is_legacy_kernel_symbol(&old_collision));
+        assert!(!is_current_kernel_symbol(&old_collision));
+
+        // Protocol classification is about the root item, never an enclosing
+        // path component with a reserved-looking name.
+        let misleading_path = format!("crate::{KERNEL_PREFIX}module::{LEGACY_KERNEL_PREFIX}map");
+        assert!(is_legacy_kernel_symbol(&misleading_path));
+        assert!(!is_current_kernel_symbol(&misleading_path));
     }
 
     /// Cross-crate kernels carry path qualifiers like

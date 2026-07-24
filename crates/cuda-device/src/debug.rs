@@ -57,21 +57,23 @@ include!("generated/debug_control.rs");
 /// // Simple assertion
 /// gpu_assert!(x >= 0);
 ///
-/// // With custom message (message is ignored in current impl)
+/// // With a custom string-literal message
 /// gpu_assert!(idx < len, "Index out of bounds");
 /// ```
 ///
 /// # Behavior
 ///
 /// When the condition is false:
-/// - The kernel execution is aborted via `trap()`
+/// - The no-message form aborts kernel execution via [`trap()`]
+/// - The message form reports the message and call-site metadata via CUDA's
+///   device-side `__assertfail` system call
 /// - The CUDA driver reports an error to the host
 /// - Other threads may continue briefly before the error propagates
 ///
 /// # Notes
 ///
 /// - Use sparingly in performance-critical code
-/// - The message argument is currently ignored (will be supported with assertfail)
+/// - Custom messages must be string literals
 /// - For debugging, consider using [`breakpoint()`] instead
 #[macro_export]
 macro_rules! gpu_assert {
@@ -80,12 +82,85 @@ macro_rules! gpu_assert {
             $crate::debug::trap();
         }
     };
-    ($cond:expr, $msg:expr) => {
+    ($cond:expr, $msg:literal) => {{
         if !$cond {
-            // TODO (npasham): Use llvm.nvvm.assertfail for better error messages with file/line
-            $crate::debug::trap();
+            const __GPU_ASSERT_MESSAGE_TEXT: &str = $msg;
+            const __GPU_ASSERT_MESSAGE: [u8; __GPU_ASSERT_MESSAGE_TEXT.len() + 1] =
+                $crate::debug::__gpu_assert_c_string::<{ __GPU_ASSERT_MESSAGE_TEXT.len() + 1 }>(
+                    __GPU_ASSERT_MESSAGE_TEXT,
+                );
+
+            const __GPU_ASSERT_FILE_TEXT: &str = file!();
+            const __GPU_ASSERT_FILE: [u8; __GPU_ASSERT_FILE_TEXT.len() + 1] =
+                $crate::debug::__gpu_assert_c_string::<{ __GPU_ASSERT_FILE_TEXT.len() + 1 }>(
+                    __GPU_ASSERT_FILE_TEXT,
+                );
+
+            const __GPU_ASSERT_FUNCTION_TEXT: &str = module_path!();
+            const __GPU_ASSERT_FUNCTION: [u8; __GPU_ASSERT_FUNCTION_TEXT.len() + 1] =
+                $crate::debug::__gpu_assert_c_string::<{ __GPU_ASSERT_FUNCTION_TEXT.len() + 1 }>(
+                    __GPU_ASSERT_FUNCTION_TEXT,
+                );
+
+            $crate::debug::__gpu_assertfail(
+                __GPU_ASSERT_MESSAGE.as_ptr(),
+                __GPU_ASSERT_FILE.as_ptr(),
+                line!(),
+                __GPU_ASSERT_FUNCTION.as_ptr(),
+                1,
+            );
         }
+    }};
+    ($cond:expr, $msg:expr) => {
+        compile_error!("gpu_assert! messages must be string literals")
     };
+}
+
+/// Builds a null-terminated byte array for CUDA assertion metadata.
+///
+/// This helper is public only because [`gpu_assert!`] expands in downstream
+/// crates. It is evaluated at compile time by the message form of the macro.
+#[doc(hidden)]
+pub const fn __gpu_assert_c_string<const N: usize>(value: &str) -> [u8; N] {
+    let bytes = value.as_bytes();
+    assert!(
+        N == bytes.len() + 1,
+        "GPU assertion C string has an invalid length"
+    );
+
+    let mut output = [0; N];
+    let mut index = 0;
+    while index < bytes.len() {
+        assert!(
+            bytes[index] != 0,
+            "gpu_assert! strings must not contain NUL bytes"
+        );
+        output[index] = bytes[index];
+        index += 1;
+    }
+    output
+}
+
+/// Internal CUDA assertion-failure wrapper.
+///
+/// This function is recognized by the cuda-oxide compiler and lowered to
+/// CUDA's device-side `__assertfail(message, file, line, function, char_size)`
+/// system call. Do not call directly.
+///
+/// # Safety
+///
+/// This function only works within CUDA kernel context. Calling it from host
+/// code will panic.
+#[doc(hidden)]
+#[inline(never)]
+pub fn __gpu_assertfail(
+    _message: *const u8,
+    _file: *const u8,
+    _line: u32,
+    _function: *const u8,
+    _char_size: usize,
+) {
+    unreachable!("__gpu_assertfail called outside CUDA kernel context")
 }
 
 // =============================================================================

@@ -30,6 +30,15 @@ impl ClearEnv for Command {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RustcDiagnostic {
+    #[serde(rename = "$message_type")]
+    message_type: String,
+    message: String,
+    level: String,
+    rendered: Option<String>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ProcessOutput {
     pub status: ExitStatus,
@@ -80,7 +89,7 @@ pub fn from_config(config: Config) -> HashMap<String, Box<dyn Backend>> {
             BackendConfig::MiriRepo { path, flags } => {
                 Box::new(Miri::from_repo(path, flags).unwrap())
             }
-            BackendConfig::LLVM { toolchain, flags } => Box::new(LLVM::new(toolchain, flags)),
+            BackendConfig::LLVM { toolchain, flags } => Box::new(Llvm::new(toolchain, flags)),
             BackendConfig::Cranelift { toolchain, flags } => {
                 Box::new(Cranelift::from_rustup(toolchain, flags))
             }
@@ -91,7 +100,7 @@ pub fn from_config(config: Config) -> HashMap<String, Box<dyn Backend>> {
                 Box::new(Cranelift::from_binary(path, flags))
             }
             BackendConfig::GCC { path, flags } => {
-                Box::new(GCC::from_built_repo(path, flags).unwrap())
+                Box::new(Gcc::from_built_repo(path, flags).unwrap())
             }
         };
         backends.insert(name, backend);
@@ -109,7 +118,7 @@ pub struct BackendInitError(pub String);
 
 pub trait Backend: Send + Sync {
     fn compile(&self, _: &Source, _: &Path) -> ProcessOutput {
-        panic!("not implemented")
+        unimplemented!("this backend does not support compilation")
     }
 
     fn execute(&self, source: &Source, target: &Path) -> ExecResult {
@@ -154,25 +163,23 @@ fn run_compile_command(mut command: Command, source: &Source) -> process::Output
         }
     };
 
-    let compile_out = compiler
+    compiler
         .wait_with_output()
-        .expect("can execute rustc and get output");
-
-    compile_out
+        .expect("can execute rustc and get output")
 }
 
-struct LLVM {
+struct Llvm {
     toolchain: String,
     flags: Vec<String>,
 }
 
-impl LLVM {
+impl Llvm {
     fn new(toolchain: String, flags: Vec<String>) -> Self {
         Self { toolchain, flags }
     }
 }
 
-impl Backend for LLVM {
+impl Backend for Llvm {
     fn compile(&self, source: &Source, target: &Path) -> ProcessOutput {
         let mut command = Command::new("rustc");
 
@@ -305,6 +312,38 @@ impl Miri {
     }
 }
 
+fn parse_miri_stderr(stderr: Vec<u8>) -> (Vec<u8>, bool) {
+    let mut rendered_stderr = Vec::with_capacity(stderr.len());
+    let mut has_error = false;
+
+    for line in stderr.split_inclusive(|byte| *byte == b'\n') {
+        let json = line.strip_suffix(b"\n").unwrap_or(line);
+
+        match serde_json::from_slice::<RustcDiagnostic>(json) {
+            Ok(diagnostic) if diagnostic.message_type == "diagnostic" => {
+                has_error |= diagnostic.level == "error" || diagnostic.level.starts_with("error:");
+
+                if let Some(rendered) = diagnostic.rendered {
+                    rendered_stderr.extend_from_slice(rendered.as_bytes());
+
+                    if !rendered.ends_with('\n') {
+                        rendered_stderr.push(b'\n');
+                    }
+                } else {
+                    rendered_stderr.extend_from_slice(diagnostic.message.as_bytes());
+                    rendered_stderr.push(b'\n');
+                }
+            }
+            _ => {
+                // Preserve stderr produced by the interpreted program.
+                rendered_stderr.extend_from_slice(line);
+            }
+        }
+    }
+
+    (rendered_stderr, has_error)
+}
+
 impl Backend for Miri {
     fn execute(&self, source: &Source, _: &Path) -> ExecResult {
         debug!("Executing with Miri {source}");
@@ -312,7 +351,7 @@ impl Backend for Miri {
             BackendSource::Path(binary) => Command::new(binary),
             BackendSource::Rustup(toolchain) => {
                 let mut cmd = Command::new("rustup");
-                cmd.args(["run", &toolchain, "miri"]);
+                cmd.args(["run", toolchain, "miri"]);
                 cmd
             }
         };
@@ -320,16 +359,19 @@ impl Backend for Miri {
 
         command
             .clear_env(&["PATH", "DEVELOPER_DIR"])
-            .args([OsStr::new("--sysroot"), self.sysroot.as_os_str()]);
+            .args([OsStr::new("--sysroot"), self.sysroot.as_os_str()])
+            .arg("--error-format=json");
 
-        let miri_out = run_compile_command(command, source);
+        let mut miri_out = run_compile_command(command, source);
+        let (stderr, miri_failed) = parse_miri_stderr(miri_out.stderr);
 
-        // FIXME: we assume the source always exits with 0, and any non-zero return code
-        // came from Miri itself (e.g. UB and type check errors)
-        if !miri_out.status.success() {
-            return Err(CompExecError(miri_out.into()));
+        miri_out.stderr = stderr;
+
+        if miri_failed || miri_out.status.code().is_none() {
+            Err(CompExecError(miri_out.into()))
+        } else {
+            Ok(miri_out.into())
         }
-        Ok(miri_out.into())
     }
 }
 
@@ -413,14 +455,14 @@ impl Backend for Cranelift {
     }
 }
 
-struct GCC {
+struct Gcc {
     library: PathBuf,
     sysroot: PathBuf,
     repo: PathBuf,
     flags: Vec<String>,
 }
 
-impl GCC {
+impl Gcc {
     fn from_built_repo<P: AsRef<Path>>(
         cg_gcc: P,
         flags: Vec<String>,
@@ -452,7 +494,7 @@ impl GCC {
     }
 }
 
-impl Backend for GCC {
+impl Backend for Gcc {
     fn compile(&self, source: &Source, target: &Path) -> ProcessOutput {
         let mut command = Command::new("rustc");
         command

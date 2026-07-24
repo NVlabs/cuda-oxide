@@ -360,22 +360,26 @@ impl PlaceGraph {
         // Copy ret
         self.copy_place(old_frame.return_destination, callee_ret);
 
-        // TODO: the following to loops can probably be merged
-        // Remove ref edges into about to be deallocated places (necessary to prevent dangling references)
+        // Remove ref edges into places that are about to be deallocated.
+        // This is necessary to prevent dangling references.
         let mut ref_edges = vec![];
+        let mut alloc_ids = vec![];
+
         for pidx in old_frame.locals.right_values() {
             self.visit_transitive_subfields(*pidx, |node| {
                 ref_edges.extend(self.pointers_to(node).iter().map(|(_, edge)| edge));
                 VisitAction::Continue
             });
+            alloc_ids.push(self.places[*pidx].alloc_id);
         }
+
         for edge in ref_edges {
             self.remove_edge(edge);
         }
 
-        // Deallocate places
-        for pidx in old_frame.locals.right_values() {
-            self.memory.deallocate(self.places[*pidx].alloc_id);
+        // Deallocate places.
+        for alloc_id in alloc_ids {
+            self.memory.deallocate(alloc_id);
         }
     }
 
@@ -533,8 +537,8 @@ impl PlaceGraph {
         }
     }
 
-    /// Assigns a discriminant to a enum-typed place, and invalidates all variant projections
-    /// of the enum. If the old and new discrimiant are equal, all variants are still invalidated.
+    /// Assigns a discriminant to an enum-typed place, and invalidates all variant projections
+    /// of the enum. If the old and new discriminant are equal, all variants are still invalidated.
     /// This is not necessary if the discriminant assignment originates from a SetDiscriminant statement,
     /// but it's needed if it originates from assigning a whole enum from another enum.
     pub fn assign_discriminant(&mut self, p: impl ToPlaceIndex, discriminant: Option<VariantIdx>) {
@@ -1012,19 +1016,10 @@ impl PlaceGraph {
             return false;
         }
 
-        let a_sub: Vec<PlaceIndex> = self.subfields(a);
+        let a_sub = self.subfields(a);
+        let b_sub: HashSet<PlaceIndex> = self.subfields(b).into_iter().collect();
 
-        let b_sub: Vec<PlaceIndex> = self.subfields(b);
-
-        // TODO: should I use a hashmap here?
-        for a_node in a_sub {
-            for b_node in &b_sub {
-                if a_node == *b_node {
-                    return true;
-                }
-            }
-        }
-        false
+        a_sub.into_iter().any(|a_node| b_sub.contains(&a_node))
     }
 
     pub fn assign_literal(&mut self, p: impl ToPlaceIndex, val: Option<Literal>) {

@@ -23,7 +23,7 @@
 //! cargo oxide setup                   # explicitly build/install backend
 //! ```
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use std::path::PathBuf;
 
 mod backend;
@@ -42,6 +42,11 @@ mod commands;
     version
 )]
 struct Cli {
+    /// Compile embedded NVVM IR to a target-specific cubin during the build.
+    /// Requires an explicit/configured architecture and exact CUDA-tool
+    /// provenance. The final binary then does not need libNVVM or nvJitLink.
+    #[arg(long, global = true)]
+    materialize_cubin: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -49,6 +54,10 @@ struct Cli {
 /// Available subcommands for `cargo oxide`.
 #[derive(Subcommand)]
 enum Commands {
+    /// Internal helper: discover exact CUDA compiler provenance in the same
+    /// startup environment that will be given to Cargo/rustc.
+    #[command(name = "__materializer-provenance", hide = true)]
+    MaterializerProvenance,
     /// Build and run an example or project
     Run {
         /// Example name (required in workspace, optional for standalone projects)
@@ -291,6 +300,60 @@ fn use_build_passthrough(
         || has_cargo_args
 }
 
+fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
+    if !cli.materialize_cubin {
+        return Ok(());
+    }
+
+    match &cli.command {
+        Commands::Run {
+            emit_nvvm_ir: true,
+            ..
+        }
+        | Commands::Build {
+            emit_nvvm_ir: true,
+            ..
+        }
+        | Commands::Pipeline {
+            emit_nvvm_ir: true,
+            ..
+        } => Err(
+            "--materialize-cubin cannot be combined with --emit-nvvm-ir; one requests a final cubin and the other requests NVVM IR"
+                .to_string(),
+        ),
+        Commands::Run { .. }
+        | Commands::Sanitize { .. }
+        | Commands::Build { .. }
+        | Commands::Test { .. }
+        | Commands::Pipeline { .. }
+        | Commands::Debug { .. } => Ok(()),
+        Commands::EmitLtoir { .. } => Err(
+            "--materialize-cubin cannot be combined with emit-ltoir; one emits a final cubin and the other emits linkable LTOIR"
+                .to_string(),
+        ),
+        Commands::Fmt { .. } => Err(
+            "--materialize-cubin cannot be used with fmt because fmt does not compile device code"
+                .to_string(),
+        ),
+        Commands::New { .. } => Err(
+            "--materialize-cubin cannot be used with new because new does not compile device code"
+                .to_string(),
+        ),
+        Commands::Doctor => Err(
+            "--materialize-cubin cannot be used with doctor because doctor does not compile device code"
+                .to_string(),
+        ),
+        Commands::Setup => Err(
+            "--materialize-cubin cannot be used with setup because setup only builds the codegen backend"
+                .to_string(),
+        ),
+        Commands::MaterializerProvenance => Err(
+            "--materialize-cubin cannot be passed to the internal materializer discovery helper"
+                .to_string(),
+        ),
+    }
+}
+
 fn main() {
     // Handle both invocation methods:
     // 1. Cargo subcommand: `cargo oxide run vecadd` → argv = ["cargo-oxide", "oxide", "run", "vecadd"]
@@ -306,8 +369,17 @@ fn main() {
 
     let explicit_passthrough = has_passthrough_separator(&effective_args);
     let cli = Cli::parse_from(effective_args);
+    if let Err(error) = validate_materialization_cli(&cli) {
+        Cli::command()
+            .error(ErrorKind::ArgumentConflict, error)
+            .exit();
+    }
+    let materialize_cubin = cli.materialize_cubin;
 
     match cli.command {
+        Commands::MaterializerProvenance => {
+            commands::print_materializer_provenance();
+        }
         Commands::Run {
             example,
             emit_nvvm_ir,
@@ -319,7 +391,13 @@ fn main() {
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "run");
-            validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
+            validate_output_arch(
+                &ctx,
+                &example,
+                emit_nvvm_ir,
+                materialize_cubin,
+                arch.as_deref(),
+            );
             commands::codegen_run(
                 &ctx,
                 &example,
@@ -329,6 +407,7 @@ fn main() {
                 features.as_deref(),
                 bin.as_deref(),
                 no_fmad,
+                materialize_cubin,
             );
         }
         Commands::Sanitize {
@@ -343,6 +422,7 @@ fn main() {
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "sanitize");
+            validate_output_arch(&ctx, &example, false, materialize_cubin, arch.as_deref());
             let (sanitizer_args, application_args) =
                 split_sanitizer_and_application_args(&sanitizer_args);
             commands::codegen_sanitize(
@@ -356,6 +436,7 @@ fn main() {
                 features.as_deref(),
                 bin.as_deref(),
                 no_fmad,
+                materialize_cubin,
             );
         }
         Commands::Build {
@@ -380,7 +461,13 @@ fn main() {
             );
             if !passthrough {
                 let example = resolve_example_name(example, &ctx, "build");
-                validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
+                validate_output_arch(
+                    &ctx,
+                    &example,
+                    emit_nvvm_ir,
+                    materialize_cubin,
+                    arch.as_deref(),
+                );
                 commands::codegen_build(
                     &ctx,
                     &example,
@@ -389,6 +476,7 @@ fn main() {
                     arch.as_deref(),
                     features.as_deref(),
                     no_fmad,
+                    materialize_cubin,
                 );
             } else {
                 if example.is_some() {
@@ -397,7 +485,13 @@ fn main() {
                     );
                     std::process::exit(2);
                 }
-                validate_nvvm_ir_arch(&ctx, "cargo build", emit_nvvm_ir, arch.as_deref());
+                validate_output_arch(
+                    &ctx,
+                    "cargo build",
+                    emit_nvvm_ir,
+                    materialize_cubin,
+                    arch.as_deref(),
+                );
                 commands::codegen_cargo_passthrough(
                     &ctx,
                     commands::CargoPassthroughSubcommand::Build,
@@ -410,6 +504,7 @@ fn main() {
                         device_codegen_crate: device_codegen_crate.as_deref(),
                         device_cfgs: &device_cfgs,
                         no_fmad,
+                        materialize_cubin,
                     },
                     &cargo_args,
                 );
@@ -424,6 +519,13 @@ fn main() {
             cargo_args,
         } => {
             let ctx = commands::resolve_context();
+            validate_output_arch(
+                &ctx,
+                "cargo test",
+                false,
+                materialize_cubin,
+                arch.as_deref(),
+            );
             commands::codegen_cargo_passthrough(
                 &ctx,
                 commands::CargoPassthroughSubcommand::Test,
@@ -436,6 +538,7 @@ fn main() {
                     device_codegen_crate: device_codegen_crate.as_deref(),
                     device_cfgs: &device_cfgs,
                     no_fmad: false,
+                    materialize_cubin,
                 },
                 &cargo_args,
             );
@@ -468,8 +571,21 @@ fn main() {
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "pipeline");
-            validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
-            commands::codegen_show_pipeline(&ctx, &example, emit_nvvm_ir, arch.as_deref(), no_fmad);
+            validate_output_arch(
+                &ctx,
+                &example,
+                emit_nvvm_ir,
+                materialize_cubin,
+                arch.as_deref(),
+            );
+            commands::codegen_show_pipeline(
+                &ctx,
+                &example,
+                emit_nvvm_ir,
+                arch.as_deref(),
+                no_fmad,
+                materialize_cubin,
+            );
         }
         Commands::Debug {
             example,
@@ -481,6 +597,7 @@ fn main() {
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "debug");
+            validate_output_arch(&ctx, &example, false, materialize_cubin, arch.as_deref());
             commands::codegen_debug(
                 &ctx,
                 &example,
@@ -489,6 +606,7 @@ fn main() {
                 bin.as_deref(),
                 cgdb,
                 tui,
+                materialize_cubin,
             );
         }
         Commands::Fmt { check } => {
@@ -541,14 +659,20 @@ fn resolve_example_name(name: Option<String>, ctx: &commands::Context, subcomman
 ///
 /// NVVM IR output is architecture-specific, so omitting every target source
 /// would produce an unusable artifact. Exits with a descriptive error.
-fn validate_nvvm_ir_arch(
+fn validate_output_arch(
     ctx: &commands::Context,
     example: &str,
     emit_nvvm_ir: bool,
+    materialize_cubin: bool,
     arch: Option<&str>,
 ) {
-    if emit_nvvm_ir && !commands::has_configured_arch(ctx, arch) {
-        eprintln!("Error: --emit-nvvm-ir requires a target architecture");
+    if (emit_nvvm_ir || materialize_cubin) && !commands::has_configured_arch(ctx, arch) {
+        let option = if materialize_cubin {
+            "--materialize-cubin"
+        } else {
+            "--emit-nvvm-ir"
+        };
+        eprintln!("Error: {option} requires a target architecture");
         eprintln!();
         eprintln!("NVVM IR output is architecture-specific. Pass --arch, set");
         eprintln!("CUDA_OXIDE_TARGET, or configure default-arch. For example:");
@@ -556,7 +680,7 @@ fn validate_nvvm_ir_arch(
         eprintln!("  --arch sm_100    Blackwell");
         eprintln!();
         eprintln!("Example:");
-        eprintln!("  cargo oxide run {} --emit-nvvm-ir --arch sm_120", example);
+        eprintln!("  cargo oxide run {example} {option} --arch sm_120");
         std::process::exit(1);
     }
 }
@@ -600,6 +724,74 @@ mod tests {
             cargo_args,
             strings(&["-p", "gpu-app", "--test", "smoke", "--", "--nocapture"])
         );
+    }
+
+    #[test]
+    fn materialize_cubin_is_a_global_codegen_option() {
+        let after_subcommand = Cli::try_parse_from([
+            "cargo-oxide",
+            "build",
+            "demo",
+            "--materialize-cubin",
+            "--arch",
+            "sm_90",
+        ])
+        .unwrap();
+        assert!(after_subcommand.materialize_cubin);
+        assert!(validate_materialization_cli(&after_subcommand).is_ok());
+
+        let before_subcommand = Cli::try_parse_from([
+            "cargo-oxide",
+            "--materialize-cubin",
+            "test",
+            "--arch",
+            "sm_90",
+        ])
+        .unwrap();
+        assert!(before_subcommand.materialize_cubin);
+        assert!(validate_materialization_cli(&before_subcommand).is_ok());
+    }
+
+    #[test]
+    fn materialize_cubin_rejects_non_codegen_subcommands() {
+        for args in [
+            &["cargo-oxide", "fmt", "--materialize-cubin"][..],
+            &["cargo-oxide", "new", "demo", "--materialize-cubin"],
+            &["cargo-oxide", "doctor", "--materialize-cubin"],
+            &["cargo-oxide", "setup", "--materialize-cubin"],
+            &[
+                "cargo-oxide",
+                "emit-ltoir",
+                "demo",
+                "--arch",
+                "sm_90",
+                "--materialize-cubin",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args).expect("global flag should parse first");
+            let error = validate_materialization_cli(&cli)
+                .expect_err("materialization must be rejected for this subcommand");
+            assert!(error.contains("--materialize-cubin"), "{error}");
+        }
+    }
+
+    #[test]
+    fn materialize_cubin_rejects_explicit_nvvm_ir_output() {
+        for subcommand in ["run", "build", "pipeline"] {
+            let cli = Cli::try_parse_from([
+                "cargo-oxide",
+                subcommand,
+                "demo",
+                "--emit-nvvm-ir",
+                "--materialize-cubin",
+                "--arch",
+                "sm_90",
+            ])
+            .unwrap();
+            let error = validate_materialization_cli(&cli)
+                .expect_err("two distinct final output modes must conflict");
+            assert!(error.contains("cannot be combined with --emit-nvvm-ir"));
+        }
     }
 
     #[test]

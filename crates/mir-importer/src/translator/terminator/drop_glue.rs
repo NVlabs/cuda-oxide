@@ -3,7 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Conservative "is this drop glue a no-op?" analysis.
+//! Drop glue analysis and emission for device code.
+//!
+//! This module provides two capabilities:
+//!
+//! 1. **No-op analysis** ([`drop_glue_is_noop`]): a conservative static proof
+//!    that dropping a value does nothing observable, allowing the `Drop`
+//!    terminator to be lowered as a plain branch (fast path).
+//!
+//! 2. **Drop glue emission** (`emit_drop_glue`): when the no-op proof fails,
+//!    emits a device-side call to the monomorphized `drop_in_place::<T>`
+//!    function, which the collector has already gathered for translation.
+//!
+//! # No-op analysis
 //!
 //! rustc keeps a MIR `Drop` terminator for any type whose destructor
 //! *might* do something. That includes types whose destructor turns out
@@ -17,16 +29,6 @@
 //! shuffles index values between local variables on the way to the
 //! empty shim. The same holds for any element type without drop glue,
 //! including plain `Copy` structs.
-//!
-//! cuda-oxide does not emit device-side `drop_in_place` calls, so the
-//! importer normally rejects `Drop` terminators (a destructor that is
-//! silently skipped would be a miscompile). This module lets it accept
-//! the harmless ones: it walks the monomorphized drop-glue MIR and
-//! proves that every reachable path does nothing observable. When the
-//! proof succeeds, the `Drop` terminator can be lowered to a plain
-//! branch. When it fails (or the analysis hits anything it does not
-//! understand), the caller keeps the loud error, so a genuinely
-//! effectful destructor can never be skipped by accident.
 //!
 //! What counts as "nothing observable":
 //!
@@ -44,7 +46,35 @@
 //! the compiler has already folded shut (for example checks behind the
 //! `UbChecks` flag, which is off for device builds) do not have to be
 //! proven; only code that can actually execute does.
+//!
+//! # Drop glue emission
+//!
+//! When the no-op proof fails, the type has an effectful destructor that
+//! must actually run. `emit_drop_glue` resolves the monomorphized
+//! `drop_in_place::<T>` instance, obtains its mangled symbol name (which
+//! the collector uses as the export name for the translated device
+//! function), and emits a `mir.call` passing the dropped place's address
+//! as the sole `&mut T` argument.
+//!
+//! # Device-side destructor safety notes
+//!
+//! - Device-side destructors run synchronously; there is no async cleanup.
+//! - Panicking in a destructor on device is not recoverable (panic=abort).
+//! - Drop order follows Rust's standard LIFO semantics.
+//! - Types with `Drop` must ensure their drop implementation is
+//!   device-compatible (no host-only syscalls, allocations, etc.).
 
+use crate::error::{TranslationErr, TranslationResult};
+use crate::translator::rvalue;
+use crate::translator::values::ValueMap;
+use dialect_mir::ops::MirCallOp;
+use pliron::basic_block::BasicBlock;
+use pliron::context::{Context, Ptr};
+use pliron::identifier::Legaliser;
+use pliron::input_error;
+use pliron::location::{Located, Location};
+use pliron::op::Op;
+use pliron::operation::Operation;
 use rustc_public::mir;
 use rustc_public::mir::mono::Instance;
 use rustc_public::ty::{RigidTy, Ty, TyKind};
@@ -61,10 +91,178 @@ const MAX_PROOF_DEPTH: usize = 16;
 ///
 /// `dropped_ty` must be fully monomorphized (no generic parameters
 /// left), which holds for every body the importer translates.
-pub(super) fn drop_glue_is_noop(dropped_ty: Ty) -> bool {
-    let instance = Instance::resolve_drop_in_place(dropped_ty);
-    instance_is_noop(&instance, &mut Vec::new())
+///
+/// This is a thin wrapper over [`drop_instance_is_noop`], the single
+/// no-op predicate shared by every site that must agree on whether a
+/// drop is observable.
+pub fn drop_glue_is_noop(dropped_ty: Ty) -> bool {
+    drop_instance_is_noop(&Instance::resolve_drop_in_place(dropped_ty))
 }
+
+/// Returns true when the given `drop_in_place` instance is provably a
+/// no-op, by walking the monomorphized shim MIR and proving every
+/// reachable path does nothing observable (body-level proof).
+///
+/// This is THE no-op predicate for drop glue. Three decisions must stay
+/// in exact lockstep, and all three consult this function:
+///
+/// 1. Whether `translate_drop` emits a `drop_in_place` call or a plain
+///    branch (via [`drop_glue_is_noop`]).
+/// 2. Whether the collector gathers the shim for translation
+///    (`rustc-codegen-cuda`'s `collector::process_drop_place`).
+/// 3. Whether device codegen keeps the shim in the translation set
+///    (`rustc-codegen-cuda`'s `device_codegen` no-op filter).
+///
+/// If these drift, emitted calls reference uncollected symbols (or dead
+/// shim bodies get translated and fail on unsupported constructs). Any
+/// widening of this proof must be sound for ALL callers: a `Drop` impl
+/// whose fields are trivially droppable can still be observable (e.g. a
+/// raw-pointer RAII guard whose `drop` writes through the pointer), so
+/// type-level "all fields drop-free" reasoning is NOT a valid fallback.
+///
+/// Must be called inside a `rustc_internal::run()` context so that
+/// stable MIR queries are available.
+pub fn drop_instance_is_noop(instance: &Instance) -> bool {
+    instance_is_noop(instance, &mut Vec::new())
+}
+
+/// Emits a device-side call to `drop_in_place::<T>` for the given place.
+///
+/// This is the fallback path when [`drop_glue_is_noop`] returns false,
+/// meaning the type has an effectful destructor that must actually execute.
+/// The function:
+///
+/// 1. Resolves the monomorphized `drop_in_place::<T>` instance
+/// 2. Obtains its mangled name (matching what the collector exported)
+/// 3. Legalises the name through the same `Legaliser` used for all call sites
+/// 4. Computes the dropped place's in-memory address (a `&mut T` pointer)
+/// 5. Emits a `mir.call` to the drop function with that pointer as argument
+/// 6. Branches to the successor block
+///
+/// The caller (`translate_drop`) has already checked that the no-op fast path
+/// does not apply.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_drop_glue(
+    ctx: &mut Context,
+    body: &mir::Body,
+    place: &mir::Place,
+    dropped_ty: Ty,
+    target: mir::BasicBlockIdx,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    legaliser: &mut Legaliser,
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    // Resolve the monomorphized drop_in_place::<T> instance.
+    let drop_instance = Instance::resolve_drop_in_place(dropped_ty);
+
+    // The mangled name is what the collector uses as the export/symbol name
+    // for the translated device function.
+    let mangled = drop_instance.mangled_name();
+    let callee_name = legaliser.legalise(&mangled);
+
+    // drop_in_place::<T> takes a single argument: *mut T (a mutable pointer
+    // to the value being dropped). We obtain this by taking the address of
+    // the dropped place.
+    //
+    // For a simple local `_N`, this is just the alloca slot pointer.
+    // For a projected place like `_N.field`, we compute the field address.
+    let (place_ptr, last_op) =
+        compute_drop_place_address(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
+
+    // The return type of drop_in_place is `()` (unit / void).
+    let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
+
+    // Emit the call: `drop_in_place::<T>(ptr)`
+    let call_op = Operation::new(
+        ctx,
+        MirCallOp::get_concrete_op_info(),
+        vec![unit_ty.into()],
+        vec![place_ptr],
+        vec![],
+        0,
+    );
+    call_op.deref_mut(ctx).set_loc(loc.clone());
+
+    let callee_attr = pliron::builtin::attributes::StringAttr::new(callee_name.to_string());
+    call_op.deref_mut(ctx).attributes.set(
+        pliron::identifier::Identifier::try_from("callee").unwrap(),
+        callee_attr,
+    );
+
+    if let Some(prev) = last_op {
+        call_op.insert_after(ctx, prev);
+    } else {
+        call_op.insert_at_front(block_ptr, ctx);
+    }
+
+    // Branch to the successor block.
+    let target_block = block_map[target];
+    let goto_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![target_block],
+        0,
+    );
+    goto_op.deref_mut(ctx).set_loc(loc);
+    goto_op.insert_after(ctx, call_op);
+
+    Ok(goto_op)
+}
+
+/// Computes the in-memory address of the place being dropped.
+///
+/// `drop_in_place::<T>` expects a `*mut T` argument. For a bare local `_N`
+/// this is just the local's alloca slot (which is already a pointer). For a
+/// projected place (`_N.field`, `(*_N)`, etc.) we walk the projection chain
+/// via `translate_place_address`.
+fn compute_drop_place_address(
+    ctx: &mut Context,
+    body: &mir::Body,
+    place: &mir::Place,
+    value_map: &ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(pliron::value::Value, Option<Ptr<Operation>>)> {
+    // Try the full projection-aware address computation first.
+    if let Some((addr, last_op)) = rvalue::translate_place_address(
+        ctx,
+        body,
+        value_map,
+        place,
+        /* is_mutable */ true,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )? {
+        return Ok((addr, last_op));
+    }
+
+    // Fallback: for a bare local with no projection, the alloca slot IS
+    // the pointer we need.
+    if place.projection.is_empty()
+        && let Some(slot) = value_map.get_slot(place.local)
+    {
+        return Ok((slot, prev_op));
+    }
+
+    Err(input_error!(
+        loc,
+        TranslationErr::unsupported(format!(
+            "drop glue: cannot compute in-memory address for dropped place {:?}",
+            place
+        ))
+    ))
+}
+
+// ============================================================================
+// No-op analysis (unchanged from original)
+// ============================================================================
 
 /// Proves that calling `instance` does nothing observable.
 ///
@@ -191,8 +389,12 @@ fn body_is_noop(body: &mir::Body, in_progress: &mut Vec<String>) -> bool {
                 worklist.push(*target);
             }
 
-            // Everything else (diverging calls, asserts, inline asm,
+            // Everything else (asserts, diverging calls, inline asm,
             // resume/abort) either has an effect or might not return.
+            // Asserts fail the proof deliberately: following only the
+            // success edge would silently delete a would-be device trap.
+            // A failed proof now emits the real drop_in_place call, so
+            // there is no pressure to widen the proof here.
             _ => return false,
         }
     }
@@ -226,9 +428,11 @@ fn statement_is_noop(kind: &mir::StatementKind) -> bool {
             !place_writes_through_pointer(place)
         }
 
-        // `copy_nonoverlapping` writes through a raw pointer; never a
-        // no-op.
-        StatementKind::Intrinsic(_) => false,
+        // `assume` is a no-op at runtime (it only carries information
+        // for the optimiser). `copy_nonoverlapping` writes through a
+        // raw pointer and is never a no-op.
+        StatementKind::Intrinsic(mir::NonDivergingIntrinsic::Assume(_)) => true,
+        StatementKind::Intrinsic(mir::NonDivergingIntrinsic::CopyNonOverlapping(_)) => false,
     }
 }
 
@@ -254,12 +458,9 @@ fn const_operand_bits(operand: &mir::Operand) -> Option<u128> {
             };
             alloc.read_uint().ok()
         }
-        // Runtime check flags (`UbChecks` and friends). Device code is
-        // built with `-C debug-assertions=off`, so these evaluate to
-        // false; the statement translator lowers them to a constant
-        // false for the same reason. Folding them here lets the proof
-        // skip check-only branches instead of having to prove them.
-        mir::Operand::RuntimeChecks(_) => Some(0),
+        // Keep proof reachability synchronized with collection and operand
+        // translation through the device-wide runtime-check policy.
+        mir::Operand::RuntimeChecks(_) => Some(u128::from(crate::DEVICE_RUNTIME_CHECKS_VALUE)),
         _ => None,
     }
 }

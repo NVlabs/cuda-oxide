@@ -29,7 +29,7 @@ jobs:
         #   * `cuda-bindings` — generated sys bindings covered transitively.
         #   * `fuzzer` — differential-testing infra with no unit tests.
         #   * `rustc-codegen-cuda` — its own [workspace] that links against
-        #     `rustc-private` dylibs; covered by the dedicated clippy job.
+        #     `rustc-private` dylibs; covered by the separate job below.
         include:
           - package: cuda-intrinsics-gen
           - package: cuda-intrinsics
@@ -55,6 +55,10 @@ jobs:
           # live-toolkit tests remain explicitly ignored on stock runners.
           - package: libnvvm-sys
           - package: nvjitlink-sys
+          # Driverless shared libNVVM/nvJitLink policy. Its default suite is
+          # pure and validates options, provenance, and cubin structure; the
+          # live-toolkit smoke test remains explicitly ignored.
+          - package: cuda-artifact-finalizer
           # pure-Rust kernel-launch helpers + tcgen05 tiling tables
           - package: cuda-host
             needs_cuda: true
@@ -140,6 +144,26 @@ jobs:
           out="$(cargo run -p cargo-oxide -- doctor 2>&1)" || true
           printf '%s\n' "${out}"
           printf '%s\n' "${out}" | grep -q "CUDA headers (cuda.h)"
+
+  rustc-codegen-cuda-unit-tests:
+    name: cargo test --lib (rustc-codegen-cuda)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # This standalone workspace uses rustc-private APIs, so run its tests
+      # directly rather than pretending the root package matrix covers them.
+      # The live CUDA-tool tests remain ignored; these regressions need no GPU
+      # or toolkit installation.
+      - name: Run codegen-backend unit tests
+        working-directory: crates/rustc-codegen-cuda
+        run: |
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+          cargo test --lib
 
   generated-intrinsics:
     name: generated intrinsics are current and ABI-compatible

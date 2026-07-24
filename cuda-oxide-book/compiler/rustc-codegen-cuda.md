@@ -89,7 +89,7 @@ in a crowd. The exact prefix strings (and the helpers that match and strip
 them) live in the workspace-internal `reserved-oxide-symbols` crate; both the
 macro side and the collector side import from there so the contract stays in
 one place. The 8-hex-char `<hash>` makes accidental collisions effectively
-impossible: nobody writes `cuda_oxide_kernel_246e25db_foo` by accident.
+impossible: nobody writes `cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_foo` by accident.
 
 ### Step 3: If Device Code Found, Build and Compile
 

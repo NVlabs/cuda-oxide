@@ -16,233 +16,109 @@ cargo oxide run device_closures
 
 ## How Closures Work in GPU Code
 
-### The Problem: `no_std` vs `std` MIR Differences
+### Rust's Closure Call Model
 
-When you write:
+`Fn`, `FnMut`, and `FnOnce` are language traits defined in `core::ops`.
+`std::ops` re-exports them; it does not provide a different closure-call
+implementation. All three call methods use the `extern "rust-call"` ABI, which
+passes ordinary arguments in a tuple at the trait-call boundary.
 
-```rust
-fn apply_closure<F: FnOnce(u32) -> u32>(f: F, x: u32) -> u32 {
-    f(x)
-}
-
-#[kernel]
-pub fn test_closure_fnonce(mut out: DisjointSlice<u32>) {
-    let triple = |x: u32| x * 3;
-    let idx = thread::index_1d();
-    if let Some(out_elem) = out.get_mut(idx) {
-        *out_elem = apply_closure(triple, 7);
-    }
-}
-```
-
-Rustc generates **different MIR** depending on `no_std` vs `std`:
-
-#### `no_std` Crate (Separate Kernel Crate Approach)
+Rustc lowers an overloaded call such as `f(a, b)` through the appropriate
+`Fn*` trait method. At a high level:
 
 ```text
-bb1: {
-    _14 = &mut _6;  // Create REFERENCE to closure
-    _5 = <closure as core::ops::FnMut>::call_mut(move _14, move _13)
-    //                                           ^^^^^^^^
-    //                                           Reference passed
-}
+f(a, b)
+  -> <F as Fn*>::call*(receiver, (a, b))
+  -> resolved closure body or adapter shim
 ```
 
-#### `std` Crate (Unified Compilation)
+The source-backed paths are:
+
+- `compiler/rustc_mir_build/src/thir/cx/expr.rs`, which constructs the
+  overloaded call through the callable traits.
+- `compiler/rustc_middle/src/ty/instance.rs`, where
+  `Instance::resolve_closure`, `needs_fn_once_adapter_shim`, and
+  `ShimKind::ClosureOnce` choose the concrete instance.
+- `library/core/src/ops/function.rs`, which defines the three traits and their
+  receiver types.
+
+### Why MIR Snapshots Can Look Different
+
+For the same general source pattern, one compilation may expose
+`FnMut::call_mut(&mut self, args)` while another exposes
+`FnOnce::call_once(self, args)`. Those are useful observed MIR shapes, but they
+are not a `no_std` versus `std` semantic rule.
+
+The exact shape depends on the closure's inferred kind, the trait bound used at
+the call site, instance resolution, and which MIR transformations have already
+run. The backend must therefore inspect the resolved instance and the actual
+receiver type instead of guessing from the crate's use of `std` or `no_std`.
+
+### Direct Bodies and `ClosureOnce` Shims
+
+Every closure has a unique anonymous environment type containing its captures.
+Rustc also emits a callable body for that type. Instance resolution can select
+that body directly or introduce an adapter:
 
 ```text
-bb1: {
-    // NO reference created!
-    _5 = <closure as std::ops::FnOnce>::call_once(const ZeroSized: {closure}, move _12)
-    //                                            ^^^^^^^^^^^^^^^^^^^^^^^^^
-    //                                            Value passed directly
-}
+actual FnOnce, requested FnOnce:
+  owned self ---------------------------> closure body(self, args...)
+
+actual Fn, requested FnOnce:
+  owned self -> ClosureOnce shim -> borrow self -> closure body(&self, args...)
+
+actual FnMut, requested FnOnce:
+  owned self -> ClosureOnce shim -> borrow self -> closure body(&mut self, args...)
+
+requested Fn/FnMut:
+  &self / &mut self --------------------> closure body(receiver, args...)
 ```
 
-### Why This Difference?
+The adapter is necessary because an `Fn` or `FnMut` closure can be consumed
+through an `FnOnce` bound even though its body uses a borrowed receiver. A
+genuine by-value `FnOnce` closure does not need that borrow. Consequently, the
+closure body does not always take a reference, and a visible
+`FnOnce::call_once` does not by itself prove that the backend should create one.
 
-> **⚠️ UNVERIFIED**: The following explanation is based on observed behaviour and
-> needs verification against a local checkout of the rustc source
-> (`git clone https://github.com/rust-lang/rust.git`).
+### What the CUDA Backend Does
 
-In `no_std` environments, `core::ops::FnOnce` appears to lack full intrinsic support for
-`call_once`, so rustc desugars through `FnMut::call_mut(&mut self)` as a fallback. In `std`
-environments, `FnOnce::call_once(self)` is explicitly lowered with the special `rust-call` ABI.
+The collector and translator handle related responsibilities:
 
-**TODO**: Verify this in rustc source - look for where closure trait method lowering differs
-based on `std` vs `no_std` crate type. Relevant areas may include:
-- `compiler/rustc_mir_build/src/thir/cx/expr.rs` (closure call lowering)
-- `compiler/rustc_middle/src/ty/instance.rs` (instance resolution)
-- Lang items for `fn_once`, `fn_mut`, `fn` traits
-
-### The Closure Body
-
-Both pipelines generate a **separate closure body function**:
+1. `collector.rs` recognizes callable-trait methods through rustc's trait
+   identity, reads the receiver's closure type, and adds the monomorphized
+   closure body to the device worklist. It does not rely on a function name
+   containing `call_once` or `call_mut`.
+2. `mir-importer/src/translator/terminator/mod.rs` verifies the exact
+   `core::{Fn, FnMut, FnOnce}` method and `rust-call` ABI, records whether the
+   resolved instance is a shim, extracts the closure body's symbol from the
+   receiver type, and unpacks the tuple arguments.
+3. The translator creates a receiver reference only when the resolved instance
+   is a shim and the MIR receiver is not already a reference. Direct
+   by-value `FnOnce` calls remain by value.
 
 ```text
-fn _RNCNv...test_closure_fnonce0B3_ {
-    let mut _1: &'{erased} Closure(...);  // Expects REFERENCE
-    let _2: u32;
-    bb0: {
-        _0 = Mul(copy _2, const 3_u32)
-        return
-    }
-}
+MIR callable-trait call
+  -> identify core Fn* method and receiver closure
+  -> resolve instance kind (body or shim)
+  -> collect/select closure body
+  -> conditionally adapt receiver
+  -> unpack rust-call tuple
+  -> emit direct device call
 ```
 
-**Key observation**: The closure body expects `_1` to be a **reference** (`&Closure`).
+## Why Closures Need Special Handling
 
-- In `no_std`: We pass a reference → ✓ works
-- In `std`: We pass a value → ✗ type mismatch!
+Regular helper functions such as `#[device] fn helper(...)` already have an
+ordinary direct-call ABI. Closures add a generated environment receiver, an
+`Fn*` trait-call boundary, possible adapter shims, and tuple-packed
+`rust-call` arguments.
 
-### Understanding the Closure Type
-
-```text
-&'{erased} Closure(
-    DefId(0:66 ~ device_closures[eb71]::...test_closure_fnonce::{closure#0}),
-    [
-        i8,                                              // Internal marker
-        Binder { extern "RustCall" fn((u32,)) -> u32 },  // Signature
-        ()                                               // Captures (empty = ZST)
-    ]
-)
-```
-
-For a closure WITH captures:
-
-```text
-[..., (&'{erased} u32,)]  // Captures tuple: holds &u32 (the captured factor)
-```
-
-### How Trait Calls Resolve to Closure Bodies
-
-When the MIR says `<closure as FnMut>::call_mut(...)`, how does this become a call to the
-closure body function? There is **no intermediate trait method** - the closure body IS the
-implementation. Here's how the resolution works:
-
-#### Step 1: Every Closure Gets a Unique Anonymous Type
-
-```rust
-let triple = |x: u32| x * 3;
-```
-
-Rustc creates a unique type: `{closure@src/main.rs:157:22: 157:30}`. Two identical closures
-have different types.
-
-#### Step 2: Rustc Auto-Implements `Fn*` Traits
-
-For this closure type, rustc generates (conceptually):
-
-```rust
-impl FnOnce<(u32,)> for {closure@157:22} {
-    fn call_once(self, args: (u32,)) -> u32 { /* points to closure body */ }
-}
-impl FnMut<(u32,)> for {closure@157:22} {
-    fn call_mut(&mut self, args: (u32,)) -> u32 { /* points to SAME body */ }
-}
-```
-
-The trait impl doesn't contain code - it points to the closure body function.
-
-#### Step 3: The MIR Call is Monomorphic
-
-```text
-_5 = <{closure@src/main.rs:157:22} as FnMut<(u32,)>>::call_mut(...)
-      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-      Concrete type, not generic - rustc knows exactly which function at compile time
-```
-
-#### Step 4: The Closure Body Has a Mangled Name
-
-```text
-fn _RNCNvCskdg9vxy9oFe_23device_closures46cuda_oxide_kernel_246e25db_test_closure_fnonce0B3_
-   ^^^                                                                                            ^
-   Rust symbol                                                                              closure index
-```
-
-The host-side identifier `cuda_oxide_kernel_246e25db_test_closure_fnonce` is the
-hash-suffixed reserved form the `#[kernel]` macro emits; the byte count after
-`device_closures` (`46`) is the length of that segment in the demangled symbol.
-
-Encodes: `_R` (Rust) + `NC` (Nested Closure) + parent path + `0` (first closure) + crate hash.
-
-#### Step 5: Our Backend Resolution
-
-In `translate_closure_call()` and `collector.rs`, we:
-
-```rust
-// 1. Extract closure type from the call
-if let TyKind::Closure(closure_def_id, substs) = closure_ty.kind() {
-
-    // 2. Resolve to monomorphized instance
-    let instance = Instance::resolve(tcx, closure_def_id, substs);
-
-    // 3. Get the mangled symbol name
-    let mangled = tcx.symbol_name(instance);  // "_RNCNv...0B3_"
-
-    // 4. Generate direct call to that function
-    generate_call(mangled, args);
-}
-```
-
-**Key insight**: `<ClosureType as FnMut>::call_mut` resolves directly to `_RNCNv...closure_body`.
-The trait syntax in MIR is just how rustc represents the call - by codegen time, it's a direct
-function call with no indirection.
-
-## The Fixes Required
-
-### Fix 1: Collector - Discover Closure Bodies
-
-Closures inside kernels have names like `cuda_oxide_kernel_<hash>_foo::{closure#0}`. We skip them
-as kernel entry points, but we still need to collect them for compilation.
-
-When the collector sees `FnOnce::call_once` / `FnMut::call_mut` / `Fn::call` with a closure
-type argument, it extracts and collects the closure body:
-
-```rust
-// In collector.rs
-if fn_name.contains("call_once") || fn_name.contains("call_mut") {
-    for arg in args.iter() {
-        if let TyKind::Closure(def_id, substs) = arg.as_type().kind() {
-            // Add closure body to collection
-            self.worklist.push_back(CollectedFunction {
-                instance: closure_instance,
-                export_name: mangled_name,
-            });
-        }
-    }
-}
-```
-
-### Fix 2: Translator - Create Reference for `call_once`
-
-When translating `FnOnce::call_once(self, args)` in `std` mode, the self is passed by value
-but the closure body expects a reference. We create a `MirRefOp`:
-
-```rust
-// In translate_closure_call()
-let is_call_once = call_name.contains("call_once");
-
-let self_arg = if is_call_once {
-    // Create &mut self for the closure body
-    let ref_op = MirRefOp::new(ctx, self_value, /*mutable=*/true);
-    ref_op.result()
-} else {
-    // call_mut/call already pass reference
-    self_value
-};
-```
-
-## Why Only Closures Need This
-
-Regular helper functions (like `#[device] fn helper(...)`) don't need special handling:
-
-| Aspect             | Closures                              | Regular Functions    |
-|--------------------|---------------------------------------|----------------------|
-| Call mechanism     | Trait method dispatch (`Fn*::call*`)  | Direct function call |
-| ABI                | `rust-call` (special tuple unpacking) | Standard Rust ABI    |
-| Self parameter     | Implicit, varies by trait             | Explicit parameters  |
-| `std` vs `no_std`  | Different MIR generation              | Same MIR             |
+| Aspect         | Closures                              | Regular functions    |
+|----------------|---------------------------------------|----------------------|
+| Call boundary  | `Fn*::call*` trait method             | Direct function call |
+| ABI            | `rust-call` tuple arguments           | Standard Rust ABI    |
+| Receiver       | Value or reference, possibly adapted  | Explicit parameters  |
+| Resolution     | Body or `ClosureOnce` adapter shim    | Function instance    |
 
 ## Test Cases
 

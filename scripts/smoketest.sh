@@ -24,6 +24,12 @@
 #                   with exit 0 (e.g. mathdx_ffi_test when MATHDX_ROOT is
 #                   unset), in which case we require the cuda-oxide
 #                   NVVM IR (`.ll`) to have been generated.
+#   ltoir-modern -- like ltoir, but the example needs the modern NVVM path
+#                   (small scalar externs are rejected by the legacy CUDA 12
+#                   LLVM 7 dialect by design). Uses the host arch on
+#                   Blackwell+ (CC >= 10.0) and requires full execution
+#                   there; elsewhere compiles for the sm_100 floor and
+#                   requires the NVVM IR (`.ll`) plus its `.target` sidecar.
 #   auto-nvvm    -- runs without NVVM or architecture flags to check automatic
 #                   libdevice and target selection. Compile-only CI supplies a
 #                   target because no GPU is available.
@@ -44,17 +50,22 @@ set -uo pipefail
 
 TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
-LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
+LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_atomic_fadd legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
+LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_tuple_array_provenance error_tuple_constant_provenance error_struct_constant_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+
+# Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
+NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
 
 classify() {
     local ex="$1" cat
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
     for cat in "${WGMMA_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo wgmma;       return; }; done
     for cat in "${LTOIR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo ltoir;       return; }; done
+    for cat in "${LTOIR_MODERN_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo ltoir-modern; return; }; done
     for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
     for cat in "${BLACKWELL_COMPILE_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo blackwell-compile; return; }; done
     for cat in "${ERROR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo error;       return; }; done
@@ -233,9 +244,21 @@ else
     LTOIR_ARCH="sm_90"
 fi
 
+# ltoir-modern examples need the modern NVVM path (sm_100+). On a Blackwell+
+# host (CC >= 10.0) target the host arch so the cubin loads and the example
+# executes; elsewhere compile for the sm_100 floor and expect the verdict to
+# fall back to compile-only semantics.
+LTOIR_MODERN_EXEC=0
+if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge 10 ]]; then
+    LTOIR_MODERN_ARCH="${LTOIR_ARCH}"
+    LTOIR_MODERN_EXEC=1
+else
+    LTOIR_MODERN_ARCH="sm_100"
+fi
+
 printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_BOLD}" "${git_head}" "${C_RESET}" "${git_branch}"
 printf "GPU: %s\n" "${gpu_info}"
-printf "LTOIR arch: %s\n" "${LTOIR_ARCH}"
+printf "LTOIR arch: %s (modern: %s)\n" "${LTOIR_ARCH}" "${LTOIR_MODERN_ARCH}"
 if [[ ${COMPILE_ONLY} -eq 1 ]]; then
     printf "Mode: compile-only (device artifacts only; nothing is executed)\n"
 fi
@@ -329,6 +352,42 @@ verdict_error() {
     # The generated-intrinsic fixtures protect fail-closed compiler contracts,
     # so merely observing an unrelated compile error is not enough.
     case "${ex}" in
+        error_enum_constant_provenance)
+            if ! grep -Fq 'Enum constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve enum pointer provenance' "${log}"; then
+                echo "FAIL (missing enum pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_enum_pointer_overlap)
+            if ! grep -Fq 'overlapping pointer and non-identical storage' "${log}"; then
+                echo "FAIL (missing overlapping enum pointer-provenance diagnostic)"
+                return 1
+            fi
+            ;;
+        error_enum_shared_pointer_layout)
+            if ! grep -Fq 'contains a shared-memory pointer whose size is target-mode dependent' "${log}"; then
+                echo "FAIL (missing target-dependent shared-pointer layout diagnostic)"
+                return 1
+            fi
+            ;;
+        error_tuple_array_provenance)
+            if ! grep -Fq 'Array value constant contains 2 pointer relocation(s); cuda-oxide cannot yet preserve array pointer provenance' "${log}"; then
+                echo "FAIL (missing tuple-array pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_tuple_constant_provenance)
+            if ! grep -Fq 'Tuple constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve tuple pointer provenance' "${log}"; then
+                echo "FAIL (missing direct-tuple pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_struct_constant_provenance)
+            if ! grep -Fq 'Struct constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve struct pointer provenance' "${log}"; then
+                echo "FAIL (missing struct pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
         error_generated_intrinsic_abi)
             if ! grep -Fq 'cuda-intrinsics ABI mismatch' "${log}" \
                 || ! grep -Fq '__cuda_oxide_intrinsic_abi_v2::i0001' "${log}"; then
@@ -449,6 +508,37 @@ verdict_ltoir() {
     return 1
 }
 
+verdict_ltoir_modern() {
+    local ex="$1" log="$2" ec="$3"
+    local ex_dir="crates/rustc-codegen-cuda/examples/${ex}"
+    local artifact="${ex//-/_}"
+    if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+    if [[ ${LTOIR_MODERN_EXEC} -eq 1 ]]; then
+        # Blackwell+ host: the cubin targets the host arch, so the example
+        # must execute end to end like any other ltoir example.
+        if [[ ${ec} -ne 0 ]]; then echo "FAIL (LTOIR modern, exit=${ec})"; return 1; fi
+        if grep_failure_markers "${log}"; then
+            echo "FAIL (LTOIR modern, failure marker in output)"
+            return 1
+        fi
+        if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then
+            echo "PASS (LTOIR modern, executed)"
+            return 0
+        fi
+        echo "FAIL (LTOIR modern, no success marker)"
+        return 1
+    fi
+    # Pre-Blackwell or GPU-less host: the sm_100-floor cubin cannot load, so
+    # require the compile half only -- fresh NVVM IR plus its .target sidecar
+    # (mirrors verdict_compile's NVVM-IR artifact rule).
+    if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.target" ]]; then
+        echo "PASS (LTOIR modern, NVVM IR compiled for ${LTOIR_MODERN_ARCH})"
+        return 0
+    fi
+    echo "FAIL (LTOIR modern, no NVVM IR for the ${LTOIR_MODERN_ARCH} floor)"
+    return 1
+}
+
 # Compile-only verdict, used for every non-error category when
 # --compile-only is set. Two requirements:
 #   1. `cargo oxide build` exited 0. Device codegen failures are rustc
@@ -517,10 +607,37 @@ verdict_compile() {
 
 # ---- Runner --------------------------------------------------------------
 
+# Run `cargo oxide "$@"`, appending EXTRA_RUSTFLAGS (set per-example by
+# run_cargo) to the inherited Cargo flag source. rustc resolves repeated -Z
+# options last-one-wins, and Cargo prefers CARGO_ENCODED_RUSTFLAGS over
+# RUSTFLAGS when both are present.
+EXTRA_RUSTFLAGS=""
+invoke_cargo_oxide() {
+    if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
+        if [[ -v CARGO_ENCODED_RUSTFLAGS ]]; then
+            local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
+            if [[ -n "${encoded_flags}" ]]; then
+                encoded_flags+=$'\x1f'
+            fi
+            CARGO_ENCODED_RUSTFLAGS="${encoded_flags}${EXTRA_RUSTFLAGS}" \
+                cargo oxide "$@"
+        else
+            RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${EXTRA_RUSTFLAGS}" cargo oxide "$@"
+        fi
+    else
+        cargo oxide "$@"
+    fi
+}
+
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
+    local noinline
+    EXTRA_RUSTFLAGS=""
+    for noinline in "${NOINLINE_MIR_EXAMPLES[@]}"; do
+        [[ "${ex}" == "${noinline}" ]] && EXTRA_RUSTFLAGS="-Zinline-mir=no"
+    done
     # This exact-target batch must pass both compiler routes. The second build
     # may replace the first artifact, so preserve both exit codes in one gate.
     if [[ "${cat}" == "blackwell-compile" ]]; then
@@ -1183,10 +1300,10 @@ run_cargo() {
         nvvm_arch="$(nvvm_verify_arch "${ex}")"
         local -a args=("emit-ltoir" "${ex}" "--arch=${nvvm_arch}")
         if [[ ${VERBOSE} -eq 1 ]]; then
-            cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+            invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
             CARGO_EC=${PIPESTATUS[0]}
         else
-            cargo oxide "${args[@]}" >"${log}" 2>&1
+            invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
             CARGO_EC=$?
         fi
         return
@@ -1201,12 +1318,66 @@ run_cargo() {
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
+    if [[ "${cat}" == "ltoir-modern" ]]; then
+        args+=("--emit-nvvm-ir" "--arch=${LTOIR_MODERN_ARCH}")
+    fi
     if [[ ${VERBOSE} -eq 1 ]]; then
-        cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+        invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
         CARGO_EC=${PIPESTATUS[0]}
     else
-        cargo oxide "${args[@]}" >"${log}" 2>&1
+        invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
+    fi
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "array_constants" ]]; then
+        local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+        if ! "${shape_check}" >>"${log}" 2>&1; then
+            printf 'array_constants failed its exact unoptimized LLVM, optimized LLVM, or PTX shape assertions\n' >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
+    if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "helper_fn" ]]; then
+        local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local llvm="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local nested_defs entry_count
+        # The nested helpers are private, so the middle-end internalizes,
+        # inlines, and deletes them from the optimized PTX. Their canonical
+        # mangling and non-kernel classification (the #358 regression) are
+        # pinned in the pre-opt LLVM IR; the PTX pins the single kernel entry.
+        nested_defs="$(grep -cE '^define .*_RI.*nested_identity' "${llvm}" 2>/dev/null)"
+        entry_count="$(grep -cE '^\.visible \.entry ' "${ptx}" 2>/dev/null)"
+        if [[ ! -s "${ptx}" || ! -s "${llvm}" || ${nested_defs} -ne 2 || ${entry_count} -ne 1 ]] \
+            || ! grep -qF '.visible .entry vecadd_with_helper(' "${ptx}" \
+            || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${llvm}" \
+            || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${ptx}"; then
+            printf 'helper_fn expected one kernel entry, two canonically mangled nested_identity helpers in the pre-opt LLVM IR, and no _TID_ helper symbols\n' >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "disjoint_slice_len" ]]; then
+        local llvm_ir="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local kernel_ir loaded_slice extracted_len
+        kernel_ir="$(
+            awk '
+                /^define ptx_kernel void @write_len\(/ { in_function = 1 }
+                in_function { print }
+                in_function && /^}/ { exit }
+            ' "${llvm_ir}" 2>/dev/null
+        )"
+        loaded_slice="$(
+            sed -nE 's/^[[:space:]]*(%[^ ]+) = load \{ ptr, i64 \}, ptr .*/\1/p' \
+                <<<"${kernel_ir}"
+        )"
+        extracted_len="$(
+            sed -nE 's/^[[:space:]]*%[^ ]+ = extractvalue \{ ptr, i64 \} (%[^,]+), 1$/\1/p' \
+                <<<"${kernel_ir}"
+        )"
+        if [[ ! -s "${llvm_ir}" || -z "${kernel_ir}" \
+            || -z "${loaded_slice}" || -z "${extracted_len}" \
+            || "$(wc -l <<<"${loaded_slice}")" -ne 1 \
+            || "${extracted_len}" != "${loaded_slice}" ]]; then
+            printf 'disjoint_slice_len must load the &DisjointSlice receiver before extracting field 1; the no-inline regression path was bypassed\n' >>"${log}"
+            CARGO_EC=1
+        fi
     fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "standalone_device_fn" ]]; then
         local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
@@ -1313,6 +1484,7 @@ for ex in "${selected[@]}"; do
             tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
             wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             standard)    verdict="$(verdict_standard    "${log}" "${ec}")"        && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;

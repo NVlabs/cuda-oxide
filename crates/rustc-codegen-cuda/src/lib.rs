@@ -303,6 +303,7 @@ extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors;
 extern crate rustc_hir;
+extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_metadata;
 extern crate rustc_middle;
@@ -320,6 +321,7 @@ extern crate rustc_codegen_llvm;
 mod collector;
 mod device_codegen;
 mod generated_intrinsics;
+mod materialize;
 
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind};
@@ -405,7 +407,7 @@ impl CudaCodegenConfig {
                 .ok()
                 .map(std::path::PathBuf::from),
             device_codegen_crates: parse_device_codegen_crates(
-                std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE")
+                std::env::var(reserved_oxide_symbols::DEVICE_CODEGEN_CRATE_ENV)
                     .ok()
                     .as_deref(),
             ),
@@ -440,6 +442,13 @@ fn should_codegen_device_crate(
     contains_device_code: bool,
 ) -> bool {
     contains_device_code && config.allows_device_codegen_for(crate_name)
+}
+
+fn reject_unsupported_codegen_protocol(
+    scoped_fingerprint_present: bool,
+    unsupported_root_present: bool,
+) -> bool {
+    scoped_fingerprint_present && unsupported_root_present
 }
 
 impl CodegenBackend for CudaCodegenBackend {
@@ -513,6 +522,19 @@ impl CodegenBackend for CudaCodegenBackend {
             let kernel_count = collector::count_kernels_in_cgus(tcx, mono_partitions.codegen_units);
             let device_fn_count =
                 collector::count_device_fns_in_cgus(tcx, mono_partitions.codegen_units);
+            let unsupported_protocol_root = collector::unsupported_codegen_protocol_root_in_cgus(
+                tcx,
+                mono_partitions.codegen_units,
+            );
+            if reject_unsupported_codegen_protocol(
+                std::env::var_os(reserved_oxide_symbols::CODEGEN_FINGERPRINT_ENV).is_some(),
+                unsupported_protocol_root.is_some(),
+            ) {
+                let root = unsupported_protocol_root.expect("presence checked above");
+                tcx.dcx().fatal(format!(
+                    "[rustc_codegen_cuda] Device-code root `{root}` was emitted by a cuda-macros version that predates the scoped Cargo cache protocol. Rebuild the source with cuda-macros from the same cuda-oxide revision; older macro expansions, including pre-expanded output from before this protocol, cannot be cached safely across output and architecture changes."
+                ));
+            }
             let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
             let owner_selected = self.config.allows_device_codegen_for(crate_name.as_str());
             let contains_device_code = kernel_count > 0 || device_fn_count > 0;
@@ -567,6 +589,12 @@ impl CodegenBackend for CudaCodegenBackend {
 
             // Step 2: If device code exists, compile via cuda-oxide
             let _device_result = if has_device_code {
+                let materialization_request =
+                    materialize::request_from_env().unwrap_or_else(|error| {
+                        tcx.dcx().fatal(format!(
+                            "[rustc_codegen_cuda] Invalid cubin materialization request: {error}"
+                        ))
+                    });
                 if self.config.verbose {
                     eprintln!("[rustc_codegen_cuda] Compiling device code via cuda-oxide...");
                 }
@@ -577,6 +605,17 @@ impl CodegenBackend for CudaCodegenBackend {
                     mono_partitions.codegen_units,
                     self.config.verbose,
                 );
+
+                materialize::validate_collection(
+                    materialization_request,
+                    !collection_result.device_externs.is_empty(),
+                    collection_result.requires_ptx_bundle_merge,
+                )
+                .unwrap_or_else(|error| {
+                    tcx.dcx().fatal(format!(
+                        "[rustc_codegen_cuda] Cannot materialize this device artifact: {error}"
+                    ))
+                });
 
                 if self.config.verbose {
                     eprintln!(
@@ -690,6 +729,7 @@ impl CodegenBackend for CudaCodegenBackend {
                                 artifact,
                                 device_functions,
                                 self.config.device_codegen_crates.is_some(),
+                                materialization_request,
                             ) {
                                 Ok(path) => {
                                     if self.config.verbose {
@@ -781,6 +821,7 @@ impl CodegenBackend for CudaCodegenBackend {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_device_artifact_object(
     output_dir: &Path,
     output_name: &str,
@@ -789,8 +830,22 @@ fn write_device_artifact_object(
     artifact: &device_codegen::DeviceCodegenArtifact,
     functions: &[collector::CollectedFunction<'_>],
     use_target_specific_anchor: bool,
+    materialization_request: Option<materialize::MaterializationRequest>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let bundle_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| output_name.to_string());
+    let materialized_artifact;
+    let (artifact, was_materialized) = match materialize_artifact_for_embedding(
+        materialization_request,
+        &bundle_name,
+        result,
+        artifact,
+    )? {
+        Some(cubin) => {
+            materialized_artifact = cubin;
+            (&materialized_artifact, true)
+        }
+        None => (artifact, false),
+    };
     let payload_kind = match artifact.kind {
         device_codegen::DeviceCodegenArtifactKind::Ptx => oxide_artifacts::ArtifactPayloadKind::Ptx,
         device_codegen::DeviceCodegenArtifactKind::NvvmIr => {
@@ -803,16 +858,20 @@ fn write_device_artifact_object(
             oxide_artifacts::ArtifactPayloadKind::Cubin
         }
     };
-    let compile_options = if matches!(
-        artifact.kind,
-        device_codegen::DeviceCodegenArtifactKind::NvvmIr
-            | device_codegen::DeviceCodegenArtifactKind::Ltoir
-    ) {
-        oxide_artifacts::ArtifactCompileOptions::new()
-            .with_fma_contraction(result.allow_fma_contraction)
-    } else {
-        oxide_artifacts::ArtifactCompileOptions::new()
-    };
+    // Preserve the actual policy even after IR has become a cubin. Consumers
+    // and diagnostics must not mistake `--no-fmad` materialization for a
+    // default-policy artifact merely because no compilation remains to do.
+    let carries_compile_policy = was_materialized
+        || matches!(
+            artifact.kind,
+            device_codegen::DeviceCodegenArtifactKind::NvvmIr
+                | device_codegen::DeviceCodegenArtifactKind::Ltoir
+        );
+    let compile_options = embedded_compile_options(
+        result.allow_fma_contraction,
+        result.debug_kind,
+        carries_compile_policy,
+    );
     let mut spec = oxide_artifacts::ArtifactBundleSpec::new(&bundle_name, &result.target)
         .with_compile_options(compile_options)
         .with_payload(oxide_artifacts::ArtifactPayloadSpec::new(
@@ -865,6 +924,87 @@ fn write_device_artifact_object(
         oxide_artifacts::build_host_object_for_target(&blob, host_target, Some(&legacy_anchor))?
     };
     write_artifact_object(output_dir, output_name, host_target, &object, "embed")
+}
+
+fn embedded_compile_options(
+    allow_fma_contraction: bool,
+    debug_kind: llvm_export::export::DebugKind,
+    carries_compile_policy: bool,
+) -> oxide_artifacts::ArtifactCompileOptions {
+    if carries_compile_policy {
+        let debug_policy = match debug_kind {
+            llvm_export::export::DebugKind::Off => oxide_artifacts::ArtifactDebugPolicy::None,
+            llvm_export::export::DebugKind::LineTables => {
+                oxide_artifacts::ArtifactDebugPolicy::LineTables
+            }
+            llvm_export::export::DebugKind::Full => oxide_artifacts::ArtifactDebugPolicy::Full,
+        };
+        oxide_artifacts::ArtifactCompileOptions::new()
+            .with_fma_contraction(allow_fma_contraction)
+            .with_debug_policy(debug_policy)
+    } else {
+        // Preserve main's byte-level PTX/already-cubin default. These payloads
+        // never carried later-stage compile policy before materialization was
+        // added, including when the backend itself ran with --no-fmad.
+        oxide_artifacts::ArtifactCompileOptions::new()
+    }
+}
+
+/// Opt-in (`CUDA_OXIDE_MATERIALIZE_CUBIN`): compile NVVM IR / LTOIR
+/// artifacts down to a final cubin before embedding, so the consuming
+/// binary loads device code directly through the CUDA driver — no libNVVM
+/// or nvJitLink on the deployment host and no first-load compile hit. The
+/// cubin is pinned to the emitted architecture; the default (embed the IR,
+/// compile at load) keeps cuda-host's execution routing, including the PTX
+/// bridge to newer GPUs. Once requested, this path fails closed unless codegen
+/// produced NVVM IR or LTOIR; accepting PTX or an already-built cubin would
+/// bypass the wrapper's provenance-checked finalization recipe. See
+/// `materialize` for the trade-offs.
+fn materialize_artifact_for_embedding(
+    request: Option<materialize::MaterializationRequest>,
+    bundle_name: &str,
+    result: &device_codegen::DeviceCodegenResult,
+    artifact: &device_codegen::DeviceCodegenArtifact,
+) -> Result<Option<device_codegen::DeviceCodegenArtifact>, Box<dyn std::error::Error>> {
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    let debug_policy = match result.debug_kind {
+        llvm_export::export::DebugKind::Off => cuda_artifact_finalizer::DebugPolicy::None,
+        llvm_export::export::DebugKind::LineTables => {
+            cuda_artifact_finalizer::DebugPolicy::LineTables
+        }
+        llvm_export::export::DebugKind::Full => cuda_artifact_finalizer::DebugPolicy::Full,
+    };
+    let cubin = match artifact.kind {
+        device_codegen::DeviceCodegenArtifactKind::NvvmIr => materialize::nvvm_ir_to_cubin(
+            request,
+            &artifact.bytes,
+            bundle_name,
+            &result.target,
+            result.allow_fma_contraction,
+            debug_policy,
+        )?,
+        device_codegen::DeviceCodegenArtifactKind::Ltoir => materialize::ltoir_to_cubin(
+            request,
+            &artifact.bytes,
+            &artifact.name,
+            &result.target,
+            result.allow_fma_contraction,
+            debug_policy,
+        )?,
+        device_codegen::DeviceCodegenArtifactKind::Ptx => {
+            return Err(Box::new(materialize::MaterializeError::PtxInput));
+        }
+        device_codegen::DeviceCodegenArtifactKind::Cubin => {
+            return Err(Box::new(materialize::MaterializeError::CubinInput));
+        }
+    };
+    Ok(Some(device_codegen::DeviceCodegenArtifact {
+        kind: device_codegen::DeviceCodegenArtifactKind::Cubin,
+        name: format!("{bundle_name}.cubin"),
+        bytes: cubin,
+    }))
 }
 
 fn write_filtered_artifact_anchor_object(
@@ -993,5 +1133,106 @@ mod tests {
             ..CudaCodegenConfig::default()
         };
         assert!(config.allows_device_codegen_for("gpu_kernels"));
+    }
+
+    #[test]
+    fn scoped_cache_protocol_rejects_old_roots_even_when_codegen_would_be_filtered() {
+        assert!(reject_unsupported_codegen_protocol(true, true));
+        assert!(!reject_unsupported_codegen_protocol(false, true));
+        assert!(!reject_unsupported_codegen_protocol(true, false));
+
+        let config = CudaCodegenConfig {
+            device_codegen_crates: parse_device_codegen_crates(Some("some_other_crate")),
+            ..CudaCodegenConfig::default()
+        };
+        assert!(!config.allows_device_codegen_for("legacy_kernel_crate"));
+        // Protocol validation is intentionally independent of owner selection:
+        // filtered legacy output must not become fresh forever when the filter
+        // later selects the crate.
+        assert!(reject_unsupported_codegen_protocol(true, true));
+    }
+
+    #[test]
+    fn materialized_cubin_keeps_target_entries_and_no_fmad_policy() {
+        use oxide_artifacts::{
+            ArtifactBundleSpec, ArtifactEntryKind, ArtifactEntrySpec, ArtifactPayloadKind,
+            ArtifactPayloadSpec, build_artifact_blob, parse_artifact_blob,
+        };
+
+        let blob = build_artifact_blob(
+            &ArtifactBundleSpec::new("demo", "sm_90a")
+                .with_compile_options(embedded_compile_options(
+                    false,
+                    llvm_export::export::DebugKind::LineTables,
+                    true,
+                ))
+                .with_payload(ArtifactPayloadSpec::new(
+                    ArtifactPayloadKind::Cubin,
+                    "demo.cubin",
+                    b"final cubin",
+                ))
+                .with_entry(ArtifactEntrySpec::new(
+                    "kernel_a",
+                    ArtifactEntryKind::Kernel,
+                ))
+                .with_entry(ArtifactEntrySpec::new(
+                    "helper",
+                    ArtifactEntryKind::DeviceFunction,
+                )),
+        )
+        .unwrap();
+        let bundle = parse_artifact_blob(&blob).unwrap();
+
+        assert_eq!(bundle.name, "demo");
+        assert_eq!(bundle.target, "sm_90a");
+        assert_eq!(
+            bundle.payload(ArtifactPayloadKind::Cubin),
+            Some(&b"final cubin"[..])
+        );
+        assert!(!bundle.compile_options.fma_contraction_enabled());
+        assert_eq!(
+            bundle.compile_options.debug_policy(),
+            oxide_artifacts::ArtifactDebugPolicy::LineTables
+        );
+        assert_eq!(bundle.entries.len(), 2);
+        assert_eq!(
+            bundle.entry("kernel_a").map(|entry| entry.kind),
+            Some(ArtifactEntryKind::Kernel)
+        );
+        assert_eq!(
+            bundle.entry("helper").map(|entry| entry.kind),
+            Some(ArtifactEntryKind::DeviceFunction)
+        );
+    }
+
+    #[test]
+    fn ordinary_ptx_keeps_legacy_default_bundle_header() {
+        let blob = oxide_artifacts::build_artifact_blob(
+            &oxide_artifacts::ArtifactBundleSpec::new("demo", "sm_90")
+                .with_compile_options(embedded_compile_options(
+                    false,
+                    llvm_export::export::DebugKind::Full,
+                    false,
+                ))
+                .with_payload(oxide_artifacts::ArtifactPayloadSpec::new(
+                    oxide_artifacts::ArtifactPayloadKind::Ptx,
+                    "demo.ptx",
+                    b"ptx",
+                )),
+        )
+        .unwrap();
+
+        assert_eq!(&blob[..8], &oxide_artifacts::ARTIFACT_MAGIC);
+        assert_eq!(u16::from_le_bytes([blob[8], blob[9]]), 1);
+        let parsed = oxide_artifacts::parse_artifact_blob(&blob).unwrap();
+        assert!(parsed.compile_options.fma_contraction_enabled());
+        assert_eq!(
+            parsed.compile_options.debug_policy(),
+            oxide_artifacts::ArtifactDebugPolicy::None
+        );
+        assert_eq!(
+            parsed.payload(oxide_artifacts::ArtifactPayloadKind::Ptx),
+            Some(&b"ptx"[..])
+        );
     }
 }

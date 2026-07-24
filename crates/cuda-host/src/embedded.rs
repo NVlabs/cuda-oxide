@@ -148,19 +148,18 @@ fn load_bundle(
     if let Some(nvvm_ir) = bundle.payload(ArtifactPayloadKind::NvvmIr) {
         let emitted = target_arch_for_bundle(bundle)?;
         let execution = ltoir::execution_arch_for_context(ctx)?;
-        let allow_fma_contraction = bundle.compile_options.fma_contraction_enabled();
         let image = match ltoir::execution_route(&emitted, &execution)? {
-            ltoir::ExecutionRoute::Cubin => ltoir::build_cubin_from_nvvm_ir_with_options(
+            ltoir::ExecutionRoute::Cubin => ltoir::build_cubin_from_nvvm_ir_with_compile_options(
                 nvvm_ir,
                 &bundle.name,
                 &emitted.sm(),
-                allow_fma_contraction,
+                bundle.compile_options,
             )?,
-            ltoir::ExecutionRoute::PtxBridge => ltoir::build_ptx_from_nvvm_ir_with_options(
+            ltoir::ExecutionRoute::PtxBridge => ltoir::build_ptx_from_nvvm_ir_with_compile_options(
                 nvvm_ir,
                 &bundle.name,
                 &emitted.sm(),
-                allow_fma_contraction,
+                bundle.compile_options,
             )?,
         };
         return Ok(ctx.load_module_from_image(&image)?);
@@ -169,19 +168,18 @@ fn load_bundle(
     if let Some(ltoir) = bundle.payload(ArtifactPayloadKind::Ltoir) {
         let emitted = target_arch_for_bundle(bundle)?;
         let execution = ltoir::execution_arch_for_context(ctx)?;
-        let allow_fma_contraction = bundle.compile_options.fma_contraction_enabled();
         let image = match ltoir::execution_route(&emitted, &execution)? {
-            ltoir::ExecutionRoute::Cubin => ltoir::link_ltoir_to_cubin_with_options(
+            ltoir::ExecutionRoute::Cubin => ltoir::link_ltoir_to_cubin_with_compile_options(
                 ltoir,
                 &bundle.name,
                 &emitted.sm(),
-                allow_fma_contraction,
+                bundle.compile_options,
             )?,
-            ltoir::ExecutionRoute::PtxBridge => ltoir::link_ltoir_to_ptx_with_options(
+            ltoir::ExecutionRoute::PtxBridge => ltoir::link_ltoir_to_ptx_with_compile_options(
                 ltoir,
                 &bundle.name,
                 &emitted.sm(),
-                allow_fma_contraction,
+                bundle.compile_options,
             )?,
         };
         return Ok(ctx.load_module_from_image(&image)?);
@@ -194,7 +192,7 @@ fn load_bundle(
 
 fn target_arch_for_bundle(
     bundle: &OwnedArtifactBundle,
-) -> Result<libnvvm_sys::CudaArch, ltoir::LtoirError> {
+) -> Result<cuda_artifact_finalizer::CudaArch, ltoir::LtoirError> {
     let explicit = std::env::var("CUDA_OXIDE_TARGET").ok();
     target_arch_for_bundle_with_explicit(bundle, explicit.as_deref())
 }
@@ -202,13 +200,13 @@ fn target_arch_for_bundle(
 fn target_arch_for_bundle_with_explicit(
     bundle: &OwnedArtifactBundle,
     explicit_target: Option<&str>,
-) -> Result<libnvvm_sys::CudaArch, ltoir::LtoirError> {
+) -> Result<cuda_artifact_finalizer::CudaArch, ltoir::LtoirError> {
     ltoir::resolve_source_target(concrete_bundle_target(&bundle.target)?, explicit_target)
 }
 
 fn concrete_bundle_target(
     target: &str,
-) -> Result<Option<libnvvm_sys::CudaArch>, ltoir::LtoirError> {
+) -> Result<Option<cuda_artifact_finalizer::CudaArch>, ltoir::LtoirError> {
     match target {
         // Compatibility for artifacts emitted before concrete NVVM targets
         // were recorded. New bundles must never use these sentinels.

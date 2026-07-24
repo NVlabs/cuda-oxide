@@ -35,31 +35,62 @@ pub struct ExecResults {
 }
 
 impl ExecResults {
-    fn from_exec_results<'a>(map: impl Iterator<Item = (String, ExecResult)>) -> Self {
-        //TODO: optimisation here to check if all results are equal directly, since most should be
+    fn exec_results_eq(lhs: &ExecResult, rhs: &ExecResult) -> bool {
+        match (lhs, rhs) {
+            (Ok(lhs), Ok(rhs)) => lhs.stdout == rhs.stdout,
+            _ => lhs == rhs,
+        }
+    }
 
-        // Split execution results into equivalent classes
-        let mut eq_classes: HashMap<ExecResult, HashSet<String>> = HashMap::new();
+    fn insert_exec_result(
+        eq_classes: &mut HashMap<ExecResult, HashSet<String>>,
+        name: String,
+        result: ExecResult,
+    ) {
+        for (class_result, names) in eq_classes.iter_mut() {
+            if Self::exec_results_eq(class_result, &result) {
+                names.insert(name);
+                return;
+            }
+        }
 
-        'outer: for (name, result) in map {
-            for (class_result, names) in &mut eq_classes {
-                // Put into an existing equivalence class
-                let eq = if let Ok(class_out) = class_result
-                    && let Ok(ref out) = result
-                {
-                    class_out.stdout == out.stdout
-                } else {
-                    result == *class_result
-                };
-                if eq {
-                    names.insert(name);
-                    continue 'outer;
-                }
+        eq_classes.insert(result, HashSet::from([name]));
+    }
+
+    fn from_exec_results(map: impl Iterator<Item = (String, ExecResult)>) -> Self {
+        let mut map = map;
+
+        let Some((first_name, first_result)) = map.next() else {
+            return Self {
+                results: HashMap::new(),
+            };
+        };
+
+        let mut first_names = HashSet::from([first_name]);
+
+        while let Some((name, result)) = map.next() {
+            if Self::exec_results_eq(&first_result, &result) {
+                first_names.insert(name);
+                continue;
             }
 
-            // No equal execution result, make a new class
-            eq_classes.insert(result.clone(), HashSet::from([name]));
+            // Slow path: at least one backend disagrees, so split into equivalence classes.
+            let mut eq_classes = HashMap::new();
+            eq_classes.insert(first_result, first_names);
+
+            Self::insert_exec_result(&mut eq_classes, name, result);
+
+            for (name, result) in map {
+                Self::insert_exec_result(&mut eq_classes, name, result);
+            }
+
+            return Self {
+                results: eq_classes,
+            };
         }
+
+        let mut eq_classes = HashMap::new();
+        eq_classes.insert(first_result, first_names);
 
         Self {
             results: eq_classes,
@@ -175,4 +206,140 @@ pub fn run_diff_test<'a>(
         .collect();
 
     ExecResults::from_exec_results(exec_results.into_iter())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{ffi::OsString, process::ExitStatus};
+
+    fn exit_status(code: u32) -> ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw((code as i32) << 8)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            ExitStatus::from_raw(code)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = code;
+            unimplemented!("test exit statuses are only defined for Unix and Windows")
+        }
+    }
+
+    fn process_output(status: u32, stdout: &str, stderr: &str) -> backends::ProcessOutput {
+        backends::ProcessOutput {
+            status: exit_status(status),
+            stdout: OsString::from(stdout),
+            stderr: OsString::from(stderr),
+        }
+    }
+
+    fn ok(status: u32, stdout: &str, stderr: &str) -> ExecResult {
+        Ok(process_output(status, stdout, stderr))
+    }
+
+    fn err(status: u32, stdout: &str, stderr: &str) -> ExecResult {
+        Err(CompExecError(process_output(status, stdout, stderr)))
+    }
+
+    fn class_for<'a>(results: &'a ExecResults, backend: &str) -> &'a HashSet<String> {
+        results
+            .results
+            .values()
+            .find(|names| names.contains(backend))
+            .expect("backend has an equivalence class")
+    }
+
+    #[test]
+    fn empty_input_stays_empty() {
+        let results = ExecResults::from_exec_results(std::iter::empty());
+
+        assert!(results.results.is_empty());
+        assert!(!results.all_same());
+        assert!(results.all_success());
+    }
+
+    #[test]
+    fn successful_results_are_equivalent_by_stdout_only() {
+        let results = ExecResults::from_exec_results(
+            [
+                ("llvm".to_owned(), ok(0, "same output", "first stderr")),
+                (
+                    "cranelift".to_owned(),
+                    ok(7, "same output", "different stderr"),
+                ),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(results.results.len(), 1);
+        assert_eq!(
+            class_for(&results, "llvm"),
+            &HashSet::from(["llvm".to_owned(), "cranelift".to_owned()])
+        );
+        assert!(results.all_same());
+        assert!(results.all_success());
+    }
+
+    #[test]
+    fn errors_use_structural_equivalence() {
+        let matching = err(1, "compiler stdout", "same error");
+        let results = ExecResults::from_exec_results(
+            [
+                ("miri".to_owned(), matching.clone()),
+                ("miri-opt".to_owned(), matching),
+                (
+                    "miri-unchecked".to_owned(),
+                    err(1, "compiler stdout", "different error"),
+                ),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(results.results.len(), 2);
+        assert_eq!(
+            class_for(&results, "miri"),
+            &HashSet::from(["miri".to_owned(), "miri-opt".to_owned()])
+        );
+        assert_eq!(
+            class_for(&results, "miri-unchecked"),
+            &HashSet::from(["miri-unchecked".to_owned()])
+        );
+        assert!(!results.all_same());
+        assert!(!results.all_success());
+    }
+
+    #[test]
+    fn mismatch_falls_back_and_builds_all_equivalence_classes() {
+        let repeated_error = err(1, "", "compile failed");
+        let results = ExecResults::from_exec_results(
+            [
+                ("llvm".to_owned(), ok(0, "a", "")),
+                ("cranelift".to_owned(), ok(0, "b", "")),
+                ("gcc".to_owned(), ok(9, "a", "ignored")),
+                ("miri".to_owned(), repeated_error.clone()),
+                ("miri-opt".to_owned(), repeated_error),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(results.results.len(), 3);
+        assert_eq!(
+            class_for(&results, "llvm"),
+            &HashSet::from(["llvm".to_owned(), "gcc".to_owned()])
+        );
+        assert_eq!(
+            class_for(&results, "cranelift"),
+            &HashSet::from(["cranelift".to_owned()])
+        );
+        assert_eq!(
+            class_for(&results, "miri"),
+            &HashSet::from(["miri".to_owned(), "miri-opt".to_owned()])
+        );
+    }
 }

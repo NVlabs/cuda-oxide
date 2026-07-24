@@ -17,24 +17,33 @@ The dialect defines seven types that preserve Rust-level semantics:
 | `MirSliceType`        | Fat pointers (`&[T]` = ptr + len)                  | `mir.slice<f32, addrspace: 1>`        |
 | `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access     | `mir.disjoint_slice<f32, ...>`        |
 | `MirStructType`       | Named structs with layout metadata                 | `mir.struct<"Point", [f32, f32]>`     |
-| `MirEnumType`         | Rust enums with discriminant + variant payloads    | `mir.enum<"Ordering", i8, ...>`       |
+| `MirEnumType`         | Rust enums with their exact rustc layout           | `mir.enum<"Ordering", i8, ...>`       |
 | `MirArrayType`        | Fixed-size arrays                                  | `mir.array<f32, 256>`                 |
 
-`MirEnumType` records the enum's layout the way rustc computed it: the
-tag's type (width and signedness), the variant names, the declared
-discriminant VALUES (not variant positions), per-variant field counts,
-the field types, where each field and the tag live (byte positions),
-and total size / alignment in bytes (0 = layout not recorded). In
-textual order:
+`MirEnumType` records the enum's layout the way rustc computed it: Direct,
+Niche, Single, or Empty; the physical integer/pointer carrier and absolute
+byte offset when one exists; full-width niche arithmetic; the variant names
+and declared discriminant VALUES; inhabitedness; exact field offsets/sizes;
+and total size/alignment. `Unknown` is reserved for legacy hand-built IR and
+is rejected by physical lowering. A size of zero can still be a known ZST
+Single/Empty layout.
+
+The textual type stores these as flattened parallel lists, for example:
 
 ```text
-mir.enum<"Ordering", si8, ["Less", "Equal", "Greater"], [255, 0, 1], [0, 0, 0], [], [], 0, 1, 1>
+mir.enum<"Ordering", si8, ["Less", "Equal", "Greater"], [255, 0, 1],
+         [0, 0, 0], [], [], [], 0, 1, 1,
+         1, 1, 8, 0, 0, 0, 0, 0, 0, 0, [1, 1, 1]>
 ```
 
-`Ordering::Less` is declared as -1, stored as the unsigned i8 bit
-pattern 255. The tag slot of a lowered enum always holds these declared
-values; using variant indices instead made `Ordering::Less` match the
-`Equal` arm (issue #146).
+`Ordering::Less` is declared as -1, stored as the unsigned i8 bit pattern
+255. In a Direct layout, the carrier slot holds these declared values; using
+variant indices instead made `Ordering::Less` match the `Equal` arm (issue
+#146).
+
+For a niche layout such as `Option<&T>`, the carrier is the pointer itself:
+null encodes `None`, and a non-null pointer is the untagged `Some` variant.
+The device never adds a synthetic discriminant.
 
 ### Address Spaces
 

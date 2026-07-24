@@ -33,6 +33,8 @@
 use libloading::{Library, Symbol};
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::SystemTime;
@@ -572,6 +574,7 @@ impl LibraryFileIdentity {
         Self::capture_file(file).as_ref() == Some(self)
     }
 
+    #[cfg(test)]
     fn matches_path(&self, path: &Path) -> bool {
         path.metadata()
             .ok()
@@ -636,12 +639,12 @@ fn open_library_path(path: &Path, retain_exact_file: bool) -> Option<OpenedLibra
         && file.metadata().is_ok_and(|metadata| metadata.is_file())
     {
         let identity = LibraryFileIdentity::capture_file(&file);
-        // Load the same absolute file we opened. Re-resolving a relative path
-        // could select another DSO if the process working directory changes.
-        if let Ok(lib) = unsafe { Library::new(canonical_path) } {
-            let identity = identity.filter(|identity| {
-                identity.matches_file(&file) && identity.matches_path(canonical_path)
-            });
+        // Load through the retained descriptor, not the pathname. A pathname
+        // can already be present in glibc's dlopen cache for an older inode;
+        // `/proc/self/fd/N` names the exact inode that we fingerprint below.
+        let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        if let Ok(lib) = unsafe { Library::new(&descriptor_path) } {
+            let identity = identity.filter(|identity| identity.matches_file(&file));
             return Some(OpenedLibrary {
                 library: lib,
                 loaded_file: Some(file),
@@ -679,6 +682,70 @@ fn cuda_roots_from_env(mut get_env: impl FnMut(&str) -> Option<String>) -> Vec<P
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    fn compile_probe_library(source: &Path, output: &Path, value: i32) {
+        std::fs::write(
+            source,
+            format!("int cuda_oxide_probe(void) {{ return {value}; }}\n"),
+        )
+        .unwrap();
+        let status = std::process::Command::new("cc")
+            .args(["-shared", "-fPIC", "-Wl,-soname,libprobe.so"])
+            .arg(source)
+            .arg("-o")
+            .arg(output)
+            .status()
+            .expect("run C compiler for the dlopen identity regression test");
+        assert!(status.success(), "C compiler failed with {status}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cache_loader_uses_replacement_inode_even_when_path_is_already_loaded() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "nvjitlink-sys-dlopen-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let library_path = directory.join("libprobe.so");
+        let replacement_path = directory.join("replacement.so");
+        let first_source = directory.join("first.c");
+        let second_source = directory.join("second.c");
+        compile_probe_library(&first_source, &library_path, 1);
+
+        let old_library = unsafe { Library::new(&library_path) }.unwrap();
+        let old_probe: Symbol<unsafe extern "C" fn() -> c_int> =
+            unsafe { old_library.get(b"cuda_oxide_probe") }.unwrap();
+        assert_eq!(unsafe { old_probe() }, 1);
+
+        compile_probe_library(&second_source, &replacement_path, 2);
+        let replacement_bytes = std::fs::read(&replacement_path).unwrap();
+        std::fs::rename(&replacement_path, &library_path).unwrap();
+
+        let opened = open_library_path(&library_path, true).expect("load retained replacement");
+        let replacement_probe: Symbol<unsafe extern "C" fn() -> c_int> =
+            unsafe { opened.library.get(b"cuda_oxide_probe") }.unwrap();
+        assert_eq!(unsafe { replacement_probe() }, 2);
+        assert_eq!(unsafe { old_probe() }, 1);
+        let retained = opened
+            .loaded_file
+            .as_ref()
+            .expect("exact cache load retains its descriptor");
+        let mut retained_bytes = Vec::new();
+        std::io::Read::read_to_end(&mut retained.try_clone().unwrap(), &mut retained_bytes)
+            .unwrap();
+        assert_eq!(retained_bytes, replacement_bytes);
+        assert!(opened.loaded_identity.is_some());
+
+        drop(opened);
+        drop(old_library);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn open_descriptor_remains_bound_to_replaced_inode() {

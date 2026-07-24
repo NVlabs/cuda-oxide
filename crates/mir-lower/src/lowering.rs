@@ -30,13 +30,11 @@
 use crate::context::{DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
-    is_zero_sized_type,
+    is_zero_sized_type, mir_type_abi_align,
 };
 
 use dialect_mir::ops::MirFuncOp;
-use dialect_mir::types::{
-    MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirUnionType,
-};
+use dialect_mir::types::{MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType};
 use llvm_export::ops as llvm;
 use pliron::{
     basic_block::BasicBlock,
@@ -225,14 +223,10 @@ pub fn convert_func(
     // Kernel parameters are host data: the host writes them (by value at
     // launch, or into DeviceBuffer memory behind a pointer or slice) and
     // the kernel reads the same bytes, so both sides must agree on what
-    // every byte means. Most enums are fine; their device layout is
-    // byte-identical to rustc's. The exception is enums whose layout we
-    // do not model: niche-encoded ones like Option<&T>, where the host
-    // stores NO tag at all (it marks None with an impossible payload
-    // value, null, since a real &T is never null) while the device adds
-    // an explicit tag of its own. The two sides would read different
-    // bytes, so reject those here at the boundary. Using such an enum
-    // purely inside a kernel is fine and stays allowed.
+    // every byte means. Importer-produced Direct, Niche, Single, and Empty
+    // enum layouts are byte-identical to rustc. A legacy/hand-built Unknown
+    // layout has no such proof, so reject it here with a focused ABI error;
+    // physical lowering independently rejects Unknown layouts everywhere.
     if is_kernel {
         let mir_arg_types = {
             use pliron::builtin::type_interfaces::FunctionTypeInterface;
@@ -246,17 +240,12 @@ pub fn convert_func(
                     .map_err(anyhow_to_pliron)?
             {
                 return pliron::input_err_noloc!(
-                    "kernel `{}` parameter {} contains enum `{}`, whose layout differs \
-                     between host and device: the host encodes the variant inside the \
-                     payload itself (Rust's niche optimisation, e.g. null means None for \
-                     a never-null reference) while the device stores an explicit tag. \
-                     Reading it from a kernel would read the wrong bytes. Give the enum an \
-                     explicit discriminant repr (e.g. #[repr(u32)]) to pass it across the \
-                     kernel boundary; using `{}` only inside kernel code (locals, \
-                     construct, match) works as before.",
+                    "kernel `{}` parameter {} contains enum `{}` with unknown physical \
+                     rustc layout at the kernel boundary; refusing to guess its bytes. \
+                     This indicates legacy or malformed dialect-mir input rather than an \
+                     unsupported Rust niche layout.",
                     func_name_str,
                     i,
-                    enum_name,
                     enum_name
                 );
             }
@@ -721,29 +710,9 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
 // Alignment Pre-Pass
 // ============================================================================
 
-/// The real (rustc) alignment of a struct or enum type, when recorded.
-///
-/// The converted LLVM struct alone can claim too little: an enum that
-/// lowers to `{ i8, [7 x i8] }` looks like "align 1" to LLVM even when
-/// Rust requires align 8. Memory ops touching such values get stamped
-/// with the recorded alignment instead.
-fn aggregate_over_align(ctx: &Context, ty: TypeHandle) -> Option<u64> {
-    let ty_ref = ty.deref(ctx);
-    if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
-        return Some(s.abi_align).filter(|a| *a > 0);
-    }
-    if let Some(e) = ty_ref.downcast_ref::<dialect_mir::types::MirEnumType>() {
-        return Some(e.abi_align()).filter(|a| *a > 0);
-    }
-    if let Some(u) = ty_ref.downcast_ref::<MirUnionType>() {
-        return Some(u.abi_align()).filter(|a| *a > 0);
-    }
-    None
-}
-
 /// Stamp the true ABI alignment onto every `mir.load`, `mir.store`,
 /// `mir.alloca`, and `mir.ref` whose accessed/allocated type carries a
-/// rustc ABI alignment in `MirStructType`, `MirEnumType`, or `MirUnionType`.
+/// rustc ABI alignment. Arrays inherit it recursively from their element.
 ///
 /// Must run BEFORE `inline_region` moves the blocks and BEFORE dialect
 /// conversion replaces MIR types with LLVM types, since the alignment
@@ -763,10 +732,10 @@ fn stamp_memory_op_alignment(ctx: &mut Context, mir_blocks: &[Ptr<BasicBlock>]) 
             let op_id = Operation::get_opid(op, ctx);
             let align = if op_id == load_id {
                 // load: result(0) is the loaded value.
-                aggregate_over_align(ctx, op.deref(ctx).get_result(0).get_type(ctx))
+                mir_type_abi_align(ctx, op.deref(ctx).get_result(0).get_type(ctx))
             } else if op_id == store_id {
                 // store: operand(1) is the stored value.
-                aggregate_over_align(ctx, op.deref(ctx).get_operand(1).get_type(ctx))
+                mir_type_abi_align(ctx, op.deref(ctx).get_operand(1).get_type(ctx))
             } else if op_id == alloca_id {
                 // alloca: pointee type lives inside the MirPtrType result.
                 let res_ty = op.deref(ctx).get_result(0).get_type(ctx);
@@ -774,12 +743,12 @@ fn stamp_memory_op_alignment(ctx: &mut Context, mir_blocks: &[Ptr<BasicBlock>]) 
                     .deref(ctx)
                     .downcast_ref::<MirPtrType>()
                     .map(|p| p.pointee)
-                    .and_then(|pointee| aggregate_over_align(ctx, pointee))
+                    .and_then(|pointee| mir_type_abi_align(ctx, pointee))
             } else if op_id == ref_id {
                 // ref: operand(0) is the value being referenced (spilled to
-                // stack). If it is an over-aligned struct, the synthesised
-                // alloca+store in convert_ref must honour that alignment.
-                aggregate_over_align(ctx, op.deref(ctx).get_operand(0).get_type(ctx))
+                // stack). The synthesised alloca+store in convert_ref must
+                // honour the value type's recorded alignment.
+                mir_type_abi_align(ctx, op.deref(ctx).get_operand(0).get_type(ctx))
             } else {
                 None
             };

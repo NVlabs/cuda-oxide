@@ -23,16 +23,41 @@ const PAYLOAD_RECORD_BYTES: usize = 24;
 const ENTRY_RECORD_BYTES: usize = 24;
 
 const OPTION_NO_FMA_CONTRACTION: u64 = 1 << 0;
-const KNOWN_COMPILE_OPTIONS: u64 = OPTION_NO_FMA_CONTRACTION;
+const OPTION_DEBUG_LINE_TABLES: u64 = 1 << 1;
+const OPTION_DEBUG_FULL: u64 = 1 << 2;
+const OPTION_DEBUG_MASK: u64 = OPTION_DEBUG_LINE_TABLES | OPTION_DEBUG_FULL;
+const KNOWN_COMPILE_OPTIONS: u64 = OPTION_NO_FMA_CONTRACTION | OPTION_DEBUG_MASK;
 
 /// Marker written on the second line of a versioned NVVM/LTOIR `.target`
 /// sidecar. Its presence makes older one-line readers reject the artifact
-/// instead of silently ignoring required compile policy.
+/// instead of silently ignoring required compile policy. The marker versions
+/// the target/options handshake; the `.options` file carries its own v1/v2
+/// format header.
 pub const COMPILE_OPTIONS_TARGET_MARKER: &str = "compile-options=v1";
 
 const COMPILE_OPTIONS_SIDECAR_HEADER: &str = "cuda-oxide-compile-options-v1";
 const COMPILE_OPTIONS_FMA_ON: &str = "cuda-oxide-compile-options-v1\nfma-contraction=on\n";
 const COMPILE_OPTIONS_FMA_OFF: &str = "cuda-oxide-compile-options-v1\nfma-contraction=off\n";
+const COMPILE_OPTIONS_FMA_ON_LINE_TABLES: &str =
+    "cuda-oxide-compile-options-v2\nfma-contraction=on\ndebug=line-tables\n";
+const COMPILE_OPTIONS_FMA_OFF_LINE_TABLES: &str =
+    "cuda-oxide-compile-options-v2\nfma-contraction=off\ndebug=line-tables\n";
+const COMPILE_OPTIONS_FMA_ON_FULL_DEBUG: &str =
+    "cuda-oxide-compile-options-v2\nfma-contraction=on\ndebug=full\n";
+const COMPILE_OPTIONS_FMA_OFF_FULL_DEBUG: &str =
+    "cuda-oxide-compile-options-v2\nfma-contraction=off\ndebug=full\n";
+
+/// Debug information that later CUDA compilation/linking stages must retain.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ArtifactDebugPolicy {
+    /// No device debug output is requested.
+    #[default]
+    None,
+    /// Preserve source line mappings without disabling optimization.
+    LineTables,
+    /// Preserve full debug information; libNVVM finalization runs unoptimized.
+    Full,
+}
 
 /// Compilation policy that must remain attached to a device artifact until
 /// its final machine-code generation step.
@@ -64,8 +89,29 @@ impl ArtifactCompileOptions {
         self.0 & OPTION_NO_FMA_CONTRACTION == 0
     }
 
+    /// Record the debug policy that all remaining CUDA compiler stages must
+    /// use.
+    pub const fn with_debug_policy(mut self, policy: ArtifactDebugPolicy) -> Self {
+        self.0 &= !OPTION_DEBUG_MASK;
+        self.0 |= match policy {
+            ArtifactDebugPolicy::None => 0,
+            ArtifactDebugPolicy::LineTables => OPTION_DEBUG_LINE_TABLES,
+            ArtifactDebugPolicy::Full => OPTION_DEBUG_FULL,
+        };
+        self
+    }
+
+    /// Debug policy attached to this artifact.
+    pub const fn debug_policy(self) -> ArtifactDebugPolicy {
+        match self.0 & OPTION_DEBUG_MASK {
+            OPTION_DEBUG_LINE_TABLES => ArtifactDebugPolicy::LineTables,
+            OPTION_DEBUG_FULL => ArtifactDebugPolicy::Full,
+            _ => ArtifactDebugPolicy::None,
+        }
+    }
+
     fn from_bits(bits: u64) -> Result<Self, ArtifactError> {
-        if bits & !KNOWN_COMPILE_OPTIONS != 0 {
+        if bits & !KNOWN_COMPILE_OPTIONS != 0 || bits & OPTION_DEBUG_MASK == OPTION_DEBUG_MASK {
             return Err(ArtifactError::UnsupportedCompileOptions(bits));
         }
         Ok(Self(bits))
@@ -77,20 +123,36 @@ impl ArtifactCompileOptions {
 
     /// Encode this policy for a sibling `.options` file.
     pub const fn sidecar_text(self) -> &'static str {
-        if self.fma_contraction_enabled() {
-            COMPILE_OPTIONS_FMA_ON
-        } else {
-            COMPILE_OPTIONS_FMA_OFF
+        match (self.fma_contraction_enabled(), self.debug_policy()) {
+            (true, ArtifactDebugPolicy::None) => COMPILE_OPTIONS_FMA_ON,
+            (false, ArtifactDebugPolicy::None) => COMPILE_OPTIONS_FMA_OFF,
+            (true, ArtifactDebugPolicy::LineTables) => COMPILE_OPTIONS_FMA_ON_LINE_TABLES,
+            (false, ArtifactDebugPolicy::LineTables) => COMPILE_OPTIONS_FMA_OFF_LINE_TABLES,
+            (true, ArtifactDebugPolicy::Full) => COMPILE_OPTIONS_FMA_ON_FULL_DEBUG,
+            (false, ArtifactDebugPolicy::Full) => COMPILE_OPTIONS_FMA_OFF_FULL_DEBUG,
         }
     }
 
-    /// Parse a complete version-1 `.options` file.
+    /// Parse a complete `.options` file. Version 1 defaults to no debug policy;
+    /// version 2 records line-table or full-debug preservation explicitly.
     pub fn from_sidecar_text(value: &str) -> Result<Self, ArtifactError> {
         match value {
             COMPILE_OPTIONS_FMA_ON => Ok(Self::new()),
             COMPILE_OPTIONS_FMA_OFF => Ok(Self::new().with_fma_contraction(false)),
+            COMPILE_OPTIONS_FMA_ON_LINE_TABLES => {
+                Ok(Self::new().with_debug_policy(ArtifactDebugPolicy::LineTables))
+            }
+            COMPILE_OPTIONS_FMA_OFF_LINE_TABLES => Ok(Self::new()
+                .with_fma_contraction(false)
+                .with_debug_policy(ArtifactDebugPolicy::LineTables)),
+            COMPILE_OPTIONS_FMA_ON_FULL_DEBUG => {
+                Ok(Self::new().with_debug_policy(ArtifactDebugPolicy::Full))
+            }
+            COMPILE_OPTIONS_FMA_OFF_FULL_DEBUG => Ok(Self::new()
+                .with_fma_contraction(false)
+                .with_debug_policy(ArtifactDebugPolicy::Full)),
             _ => Err(ArtifactError::MalformedCompileOptions(format!(
-                "expected `{COMPILE_OPTIONS_SIDECAR_HEADER}` with exactly one `fma-contraction=on|off` setting"
+                "expected `{COMPILE_OPTIONS_SIDECAR_HEADER}` or `cuda-oxide-compile-options-v2` with canonical fma/debug settings"
             ))),
         }
     }
@@ -994,6 +1056,10 @@ mod tests {
 
         let bundle = parse_artifact_blob(&blob).unwrap();
         assert!(bundle.compile_options.fma_contraction_enabled());
+        assert_eq!(
+            bundle.compile_options.debug_policy(),
+            ArtifactDebugPolicy::None
+        );
     }
 
     #[test]
@@ -1009,15 +1075,59 @@ mod tests {
     }
 
     #[test]
-    fn compile_options_sidecar_round_trips_both_policies() {
+    fn compile_options_sidecar_round_trips_fma_and_debug_policies() {
         for allow_fma_contraction in [true, false] {
-            let expected =
-                ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction);
-            let parsed =
-                ArtifactCompileOptions::from_sidecar_text(expected.sidecar_text()).unwrap();
-            assert_eq!(parsed, expected);
+            for debug in [
+                ArtifactDebugPolicy::None,
+                ArtifactDebugPolicy::LineTables,
+                ArtifactDebugPolicy::Full,
+            ] {
+                let expected = ArtifactCompileOptions::new()
+                    .with_fma_contraction(allow_fma_contraction)
+                    .with_debug_policy(debug);
+                let parsed =
+                    ArtifactCompileOptions::from_sidecar_text(expected.sidecar_text()).unwrap();
+                assert_eq!(parsed, expected);
+            }
         }
         assert!(ArtifactCompileOptions::from_sidecar_text("fma-contraction=off\n").is_err());
+    }
+
+    #[test]
+    fn artifact_blob_round_trips_each_debug_policy() {
+        for debug in [ArtifactDebugPolicy::LineTables, ArtifactDebugPolicy::Full] {
+            let expected = ArtifactCompileOptions::new()
+                .with_fma_contraction(false)
+                .with_debug_policy(debug);
+            let blob = build_artifact_blob(
+                &ArtifactBundleSpec::new("debug", "sm_90")
+                    .with_compile_options(expected)
+                    .with_payload(ArtifactPayloadSpec::new(
+                        ArtifactPayloadKind::NvvmIr,
+                        "debug.ll",
+                        b"nvvm ir",
+                    )),
+            )
+            .unwrap();
+
+            assert_eq!(read_u16(&blob, 8).unwrap(), ARTIFACT_VERSION);
+            assert_eq!(
+                parse_artifact_blob(&blob).unwrap().compile_options,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn version_2_rejects_conflicting_debug_bits() {
+        let mut blob = sample_blob();
+        write_u16(&mut blob, 8, ARTIFACT_VERSION);
+        write_u64(&mut blob, 24, OPTION_DEBUG_MASK);
+
+        assert!(matches!(
+            parse_artifact_blob(&blob),
+            Err(ArtifactError::UnsupportedCompileOptions(bits)) if bits == OPTION_DEBUG_MASK
+        ));
     }
 
     #[test]

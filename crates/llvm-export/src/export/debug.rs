@@ -788,7 +788,6 @@ mod tests {
         };
         let state = ModuleExportState::new(
             &ctx,
-            false,
             true,
             super::super::config::DebugKind::LineTables,
             None,

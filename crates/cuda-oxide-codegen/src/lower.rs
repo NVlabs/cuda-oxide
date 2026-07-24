@@ -160,10 +160,16 @@ fn device_extern_type_to_pliron(
                 "device-extern parameters and aggregate elements cannot be `void`".to_string(),
             ));
         }
-        DeviceExternType::Integer(bits) if *bits > 0 => {
+        DeviceExternType::Integer(bits)
+        | DeviceExternType::SignExtInteger(bits)
+        | DeviceExternType::ZeroExtInteger(bits)
+            if *bits > 0 =>
+        {
             IntegerType::get(ctx, *bits, Signedness::Signless).into()
         }
-        DeviceExternType::Integer(_) => {
+        DeviceExternType::Integer(_)
+        | DeviceExternType::SignExtInteger(_)
+        | DeviceExternType::ZeroExtInteger(_) => {
             return Err(PipelineError::Export(
                 "device-extern integer width must be non-zero".to_string(),
             ));

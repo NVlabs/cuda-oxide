@@ -54,7 +54,7 @@
 //!   - `tma`: Tensor memory access
 //!   - `memory`: SharedArray indexing, stmatrix
 
-mod drop_glue;
+pub mod drop_glue;
 pub mod helpers;
 pub mod intrinsics;
 
@@ -106,6 +106,7 @@ pub fn translate_terminator(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     block_map: &[Ptr<BasicBlock>],
+    rustc_mono_successors: &[usize],
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
     let loc = span_to_location(ctx, term.span);
@@ -152,16 +153,29 @@ pub fn translate_terminator(
             legaliser,
         ),
 
-        mir::TerminatorKind::SwitchInt { discr, targets } => translate_switch(
-            ctx, body, discr, targets, block_ptr, prev_op, value_map, block_map, loc,
-        ),
+        mir::TerminatorKind::SwitchInt { discr, targets } => match rustc_mono_successors {
+            // rustc evaluated this switch for the concrete instance. Emit
+            // that exact edge instead of evaluating the converted public MIR
+            // a second time.
+            [target] => translate_goto(ctx, *target, block_ptr, prev_op, block_map, loc),
+            [] => input_err!(
+                loc,
+                TranslationErr::invalid_op(
+                    "rustc supplied no successor for a reachable SwitchInt".to_string()
+                )
+            ),
+            _ => translate_switch(
+                ctx, body, discr, targets, block_ptr, prev_op, value_map, block_map, loc,
+            ),
+        },
 
         mir::TerminatorKind::Drop {
             place,
             target,
             unwind,
         } => translate_drop(
-            ctx, body, place, *target, unwind, block_ptr, prev_op, block_map, loc,
+            ctx, body, place, *target, unwind, block_ptr, prev_op, value_map, block_map, legaliser,
+            loc,
         ),
 
         mir::TerminatorKind::Unreachable => {
@@ -359,16 +373,27 @@ fn translate_assert(
     // panic occurs, the GPU thread traps.
     let _ = unwind;
 
-    // Translate the condition operand
+    // Translate the condition operand.
+    //
+    // MIR assert conditions are operands, not necessarily places. In
+    // particular, rustc can retain boolean constants for guaranteed-failure
+    // blocks and deliberate traps. The shared operand translator preserves the
+    // old Copy/Move path by delegating to `translate_place`.
+    //
+    // Keep RuntimeChecks fail-closed here. `translate_operand` currently lowers
+    // those session-dependent flags to `false` without access to rustc's
+    // `Session`; accepting them as assert conditions would silently change the
+    // requested assertion policy. They need separate session-policy plumbing.
     let (cond_value, mut last_inserted) = match cond {
-        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            rvalue::translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?
+        mir::Operand::Copy(_) | mir::Operand::Move(_) | mir::Operand::Constant(_) => {
+            rvalue::translate_operand(ctx, body, cond, value_map, block_ptr, prev_op, loc.clone())?
         }
-        _ => {
+        mir::Operand::RuntimeChecks(_) => {
             return input_err!(
                 loc.clone(),
                 TranslationErr::unsupported(
-                    "Constant conditions in assert not yet implemented".to_string(),
+                    "RuntimeChecks conditions in assert require session-policy lowering"
+                        .to_string(),
                 )
             );
         }
@@ -766,30 +791,29 @@ fn translate_switch(
 /// Translates a MIR `Drop` terminator.
 ///
 /// rustc emits `TerminatorKind::Drop` only for places whose type has drop
-/// glue. cuda-oxide does not yet emit device-side `drop_in_place` calls,
-/// so a destructor that actually does something cannot run on the device.
+/// glue. Two cases:
 ///
-/// Two cases:
-///
-/// 1. **Provably no-op glue**: when the monomorphized drop glue does
-///    nothing observable (checked by [`drop_glue::drop_glue_is_noop`]),
+/// 1. **Provably no-op glue** (fast path): when the monomorphized drop glue
+///    does nothing observable (checked by [`drop_glue::drop_glue_is_noop`]),
 ///    the terminator lowers to a plain branch to its target block.
 ///    The common source pattern is `for x in arr` over a by-value
 ///    array: the loop's `core::array::IntoIter<T, N>` has an
 ///    `impl Drop`, but for element types without drop glue that
-///    destructor folds to nothing.
+///    destructor folds to nothing. This avoids the overhead of emitting
+///    a function call for drops that are statically proven to do nothing.
 ///
-/// 2. **Genuinely effectful glue**: we surface a hard error with the
-///    dropped place's type so the user can diagnose and restructure
-///    the kernel. Lowering to a goto here would silently skip the
-///    destructor and miscompile.
+/// 2. **Effectful glue** (fallback): when the no-op proof fails, the type
+///    has a genuine destructor. We emit a device-side call to the
+///    monomorphized `drop_in_place::<T>` function, which the collector has
+///    already gathered and translated as a regular device function.
 ///
 /// Suppressing drop glue on a Copy-shaped value (e.g. wrapping in
 /// `core::mem::ManuallyDrop`) prevents the Drop terminator from being
-/// emitted in the first place and lets the kernel compile.
+/// emitted in the first place and lets the kernel compile without any
+/// drop overhead.
 ///
-/// The unwind action is ignored: device code is panic=abort, and for the
-/// no-op case there is nothing that could unwind anyway.
+/// The unwind action is ignored: device code is panic=abort, so there is
+/// nothing that could unwind.
 #[allow(clippy::too_many_arguments)]
 fn translate_drop(
     ctx: &mut Context,
@@ -799,7 +823,9 @@ fn translate_drop(
     _unwind: &mir::UnwindAction,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
+    legaliser: &mut Legaliser,
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     let dropped_ty = place.ty(body.locals()).map_err(|e| {
@@ -810,19 +836,16 @@ fn translate_drop(
             ))
         )
     })?;
+
+    // Fast path: if the drop is provably a no-op, emit a plain branch.
     if drop_glue::drop_glue_is_noop(dropped_ty) {
         return translate_goto(ctx, target, block_ptr, prev_op, block_map, loc);
     }
-    input_err!(
+
+    // Fallback: emit a device-side call to drop_in_place::<T>(ptr).
+    drop_glue::emit_drop_glue(
+        ctx, body, place, dropped_ty, target, block_ptr, prev_op, value_map, block_map, legaliser,
         loc,
-        TranslationErr::unsupported(format!(
-            "drop of `{:?}` is not supported on the device; its destructor \
-             does observable work and cuda-oxide does not yet emit \
-             device-side `drop_in_place` calls. Restructure the kernel to \
-             use only `Copy` types, or wrap the value in \
-             `core::mem::ManuallyDrop` to suppress drop glue.",
-            dropped_ty.kind()
-        ))
     )
 }
 
@@ -1105,8 +1128,7 @@ fn translate_call(
     // ordinary type it compiles to nothing. We decide which case applies
     // from the monomorphized type's layout: uninhabited types are exactly
     // those whose layout has `VariantsShape::Empty`. Inhabited types lower
-    // to a unit no-op; uninhabited ones lower to `unreachable`, matching
-    // how device code models panics (they cannot execute on the GPU).
+    // to a unit no-op; uninhabited ones lower to a trap.
     // If the generic argument or its layout cannot be read, fall through
     // to the loud "not yet supported" rejection below.
     if let Some(ref name) = pattern_name
@@ -1123,21 +1145,7 @@ fn translate_call(
             rustc_public::abi::VariantsShape::Empty
         );
         if uninhabited {
-            let op = Operation::new(
-                ctx,
-                dialect_mir::ops::MirUnreachableOp::get_concrete_op_info(),
-                vec![],
-                vec![],
-                vec![],
-                0,
-            );
-            op.deref_mut(ctx).set_loc(loc);
-            if let Some(prev) = prev_op {
-                op.insert_after(ctx, prev);
-            } else {
-                op.insert_at_front(block_ptr, ctx);
-            }
-            return Ok(op);
+            return Ok(emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc));
         }
         return helpers::emit_unit_noop_intrinsic(
             ctx,
@@ -1175,11 +1183,19 @@ fn translate_call(
 
     // Handle diverging calls (calls that never return, like unwrap_failed, panic, etc.)
     // These have no target block because the function never returns.
-    // In GPU code, we emit an unreachable terminator since panics can't actually execute.
+    //
+    // The callee is dropped and replaced by an immediate trap. That applies
+    // to every `-> !` callee reaching this point, including a user
+    // `#[device]` fn that legitimately diverges (e.g. `loop {}`); full Rust
+    // fidelity would emit the call for resolvable callees the way
+    // `translate_function_item_call` does. Dropping the call is a
+    // pre-existing semantic: the trap only makes it safe, where the bare
+    // `unreachable` previously emitted here was UB that let `opt` delete
+    // the whole panic path.
     if target_usize.is_none() {
-        // This is a diverging call (returns !) - emit unreachable
+        // This is a diverging call (returns !) - emit trap + unreachable
         // Examples: unwrap_failed(), panic!(), abort()
-        return Ok(emit_unreachable_after(ctx, block_ptr, prev_op, loc));
+        return Ok(emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc));
     }
 
     // A call to a rustc intrinsic that no dispatch arm above recognized can
@@ -1403,9 +1419,12 @@ fn translate_function_item_call(
 ///
 /// ## Important: Closure Body Resolution
 ///
-/// In unified compilation with `std`, `Instance::resolve` for `<Closure as FnOnce>::call_once`
-/// returns a trait method **shim**, not the closure body directly. We must extract the closure's
-/// DefId from `args[0]`'s type and resolve that to get the actual closure body's mangled name.
+/// When an `Fn` or `FnMut` closure is requested through `FnOnce`,
+/// `Instance::resolve` returns a `ClosureOnce` adapter shim rather than the
+/// closure body. Other closure calls may resolve directly to the body. In
+/// either case, extract the closure DefId from `args[0]` so the emitted device
+/// call targets the body; `resolved_is_shim` separately controls receiver
+/// adaptation.
 ///
 /// See `device_closures/README.md` for detailed documentation.
 #[allow(clippy::too_many_arguments)]
@@ -1437,9 +1456,9 @@ fn translate_closure_call(
     // carries the already-resolved concrete type, so use that.
     let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
 
-    // Extract the closure body's name from the closure type in args[0].
-    // This is critical for unified compilation where Instance::resolve returns
-    // a trait shim instead of the closure body directly.
+    // Extract the closure body's name from the closure type in args[0]. This
+    // avoids targeting a ClosureOnce adapter when instance resolution selected
+    // one, while remaining correct for calls that resolve directly to the body.
     let closure_body_name = extract_closure_body_name(&args[0], body);
 
     let raw_callee = closure_body_name
@@ -1470,22 +1489,12 @@ fn translate_closure_call(
     )?;
     last_op = tuple_last_op;
 
-    // Determine whether the resolved closure body expects a reference.
-    //
-    // In `std` mode, rustc generates `FnOnce::call_once(self, args)` which passes
-    // the closure BY VALUE. But the closure body expects `&self` (a reference).
-    //
-    // In `no_std` mode, rustc generates `FnMut::call_mut(&mut self, args)` which
-    // already passes a reference.
-    //
-    // When we have call_once, we need to create a reference to the closure value
-    // before calling the closure body.
-    //
-    // A compiler shim for `FnOnce` over an `Fn`/`FnMut` closure receives the
-    // closure by value but calls a body that expects a reference. A genuine
-    // by-value `FnOnce` closure resolves directly to its body (`Item`) and must
-    // stay by value. Calls whose MIR receiver is already a reference need no
-    // extra borrow in either case.
+    // Determine whether bypassing a resolved adapter shim requires us to
+    // reproduce its receiver borrow. A ClosureOnce shim for an `Fn`/`FnMut`
+    // closure receives the closure by value but calls a body that expects a
+    // reference. A genuine by-value `FnOnce` closure resolves directly to its
+    // body and must stay by value. A receiver that MIR already passes by
+    // reference needs no extra borrow.
     let receiver_needs_borrow = resolved_is_shim
         && operand_type(&args[0], body).is_some_and(|ty| {
             !matches!(
@@ -1495,8 +1504,7 @@ fn translate_closure_call(
         });
 
     let self_arg = if receiver_needs_borrow {
-        // For call_once: self is passed by value, but closure body expects reference.
-        // Create a MirRefOp to take a reference to the closure value.
+        // Reproduce the adapter shim's borrow before calling the body directly.
         let self_ty = self_value.get_type(ctx);
         let ptr_ty = dialect_mir::types::MirPtrType::get(ctx, self_ty, true, 0);
 
@@ -1534,7 +1542,7 @@ fn translate_closure_call(
         self_value
     };
 
-    // Build unpacked arguments: start with self (or ref to self for call_once)
+    // Build unpacked arguments, starting with the original or adapted receiver.
     let mut unpacked_args = vec![self_arg];
 
     // Unpack the tuple - extract each field
@@ -1636,6 +1644,14 @@ fn translate_closure_call(
     }
 }
 
+/// Terminates the block with a bare `mir.unreachable`.
+///
+/// Only for paths that can never execute: rustc-proven unreachability
+/// (`TerminatorKind::Unreachable`) or code after a call that is emitted into
+/// the module and genuinely never returns.
+///
+/// Runtime-reachable panic paths whose diverging call is dropped must use
+/// [`emit_trap_unreachable_after`] instead.
 fn emit_unreachable_after(
     ctx: &mut Context,
     block_ptr: Ptr<BasicBlock>,
@@ -1657,6 +1673,31 @@ fn emit_unreachable_after(
         op.insert_at_front(block_ptr, ctx);
     }
     op
+}
+
+/// Terminates the block with `nvvm.trap` followed by `mir.unreachable`.
+///
+/// For runtime-reachable diverging paths whose call is not emitted (dropped
+/// panic calls). A thread reaching it aborts the kernel (`trap;` in PTX).
+fn emit_trap_unreachable_after(
+    ctx: &mut Context,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> Ptr<Operation> {
+    let trap_op = dialect_nvvm::ops::TrapOp::build(ctx);
+    trap_op.deref_mut(ctx).set_loc(loc.clone());
+    // `nvvm.trap` is a generated intrinsic; the target-requirements
+    // verifier rejects it without its exact ABI marker (`i0295` is
+    // trap's append-only id in intrinsics/abi-v1.toml, the same marker
+    // the generated `debug::trap` dispatch attaches).
+    helpers::set_generated_intrinsic_marker(ctx, trap_op, "v1:i0295");
+    if let Some(prev) = prev_op {
+        trap_op.insert_after(ctx, prev);
+    } else {
+        trap_op.insert_at_front(block_ptr, ctx);
+    }
+    emit_unreachable_after(ctx, block_ptr, Some(trap_op), loc)
 }
 
 /// True only when the rust-call receiver is itself a closure.
@@ -1776,12 +1817,11 @@ fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo
 
 /// Extracts the closure body's mangled name from a closure operand.
 ///
-/// In unified compilation with `std`, when we see a call like:
+/// When instance resolution selects an adapter shim for a call like:
 ///   `<{closure} as FnOnce<(u32,)>>::call_once(closure_ref, args_tuple)`
 ///
-/// The `call_name` from `Instance::resolve` gives us the trait method shim's name,
-/// not the closure body. We need to extract the closure's DefId from `args[0]`'s type
-/// and resolve that to get the actual closure body's mangled name.
+/// the resolved call name identifies the shim, not the closure body. Extract
+/// the closure's DefId from `args[0]` and resolve the body independently.
 ///
 /// The closure argument can be:
 /// - A direct closure value (type is `Closure(def, substs)`)
@@ -1804,8 +1844,8 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
         _ => return None,
     };
 
-    // Get the closure body instance directly, NOT through resolve_closure
-    // (which returns a call_once shim in unified/std compilation).
+    // Get the closure body instance directly. Resolving the callable-trait
+    // method can legitimately select a ClosureOnce adapter instead.
     //
     // The closure_def.def_id() gives us the DefId of the closure body.
     // We construct the mangled name by creating an FnDef and resolving it.
@@ -2381,6 +2421,18 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)
         // =================================================================
+        "cuda_device::debug::__gpu_assertfail" => Ok(Some(intrinsics::debug::emit_assertfail(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         "cuda_device::debug::__gpu_vprintf" => Ok(Some(intrinsics::debug::emit_vprintf(
             ctx,
             body,

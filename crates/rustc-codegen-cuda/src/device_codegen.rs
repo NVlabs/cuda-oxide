@@ -98,7 +98,7 @@ use llvm_export::ops::{
     DebugInlinedScope, DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation,
     DebugSourceScopeMap,
 };
-use rustc_middle::ty::{EarlyBinder, TypingEnv};
+use rustc_middle::ty::{EarlyBinder, InstanceKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
 use rustc_span::{Span, hygiene};
@@ -115,9 +115,16 @@ enum DeviceExternTypePosition {
 /// external function boundary.
 ///
 /// Raw-pointer pointees are preserved recursively. Unsupported C ABI types
-/// return an error instead of being treated as an arbitrary pointer. Small
-/// integer parameters are rejected until their `signext` or `zeroext`
-/// attributes can be emitted.
+/// return an error instead of being treated as an arbitrary pointer.
+///
+/// Integer types smaller than 32 bits keep their NARROW IR type (`i8`,
+/// `i16`, `i1` for `bool`) and carry a `signext`/`zeroext` ABI attribute,
+/// exactly like clang's NVPTXABIInfo and rustc's nvptx64 callconv; the NVPTX
+/// backend performs the `.param.b32` widening. This keeps the emitted
+/// `declare` byte-for-byte compatible with clang/nvcc-compiled LTOIR
+/// definitions and lets cuda-oxide's own narrow SSA values flow into the
+/// call with no inserted conversions. `f16` is passed as `half` directly
+/// since NVPTX has native f16 support.
 fn rustc_ty_to_device_extern_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
@@ -134,40 +141,55 @@ fn rustc_ty_to_device_extern_type<'tcx>(
         };
     }
 
-    let integer = |bits| {
+    // For pointer pointees, all integer widths are valid without extension.
+    // For by-value parameters/returns, sub-32-bit integers keep their narrow
+    // type and gain the sign/zero extension ABI attribute at that width.
+    let signed_integer = |bits: u32| {
         if position == DeviceExternTypePosition::Pointee || matches!(bits, 32 | 64) {
             Ok(E::Integer(bits))
+        } else if matches!(bits, 8 | 16) {
+            // NVPTX ABI: narrow type with signext (clang NVPTXABIInfo shape).
+            Ok(E::SignExtInteger(bits))
         } else {
             Err(format!(
-                "`i{bits}` is not yet supported by value in a device extern; use i32/i64 or pass a pointer"
+                "`i{bits}` is not supported by value in a device extern; use i32/i64 or pass a pointer"
+            ))
+        }
+    };
+
+    let unsigned_integer = |bits: u32| {
+        if position == DeviceExternTypePosition::Pointee || matches!(bits, 32 | 64) {
+            Ok(E::Integer(bits))
+        } else if matches!(bits, 8 | 16) {
+            // NVPTX ABI: narrow type with zeroext (clang NVPTXABIInfo shape).
+            Ok(E::ZeroExtInteger(bits))
+        } else {
+            Err(format!(
+                "`u{bits}` is not supported by value in a device extern; use u32/u64 or pass a pointer"
             ))
         }
     };
 
     match ty.kind() {
         TyKind::Int(int_ty) => match int_ty {
-            rustc_middle::ty::IntTy::I8 => integer(8),
-            rustc_middle::ty::IntTy::I16 => integer(16),
-            rustc_middle::ty::IntTy::I32 => integer(32),
-            rustc_middle::ty::IntTy::I64 => integer(64),
-            rustc_middle::ty::IntTy::I128 => integer(128),
-            rustc_middle::ty::IntTy::Isize => integer(64), // nvptx64
+            rustc_middle::ty::IntTy::I8 => signed_integer(8),
+            rustc_middle::ty::IntTy::I16 => signed_integer(16),
+            rustc_middle::ty::IntTy::I32 => signed_integer(32),
+            rustc_middle::ty::IntTy::I64 => signed_integer(64),
+            rustc_middle::ty::IntTy::I128 => signed_integer(128),
+            rustc_middle::ty::IntTy::Isize => signed_integer(64), // nvptx64
         },
         TyKind::Uint(uint_ty) => match uint_ty {
-            rustc_middle::ty::UintTy::U8 => integer(8),
-            rustc_middle::ty::UintTy::U16 => integer(16),
-            rustc_middle::ty::UintTy::U32 => integer(32),
-            rustc_middle::ty::UintTy::U64 => integer(64),
-            rustc_middle::ty::UintTy::U128 => integer(128),
-            rustc_middle::ty::UintTy::Usize => integer(64), // nvptx64
+            rustc_middle::ty::UintTy::U8 => unsigned_integer(8),
+            rustc_middle::ty::UintTy::U16 => unsigned_integer(16),
+            rustc_middle::ty::UintTy::U32 => unsigned_integer(32),
+            rustc_middle::ty::UintTy::U64 => unsigned_integer(64),
+            rustc_middle::ty::UintTy::U128 => unsigned_integer(128),
+            rustc_middle::ty::UintTy::Usize => unsigned_integer(64), // nvptx64
         },
         TyKind::Float(float_ty) => match float_ty {
-            rustc_middle::ty::FloatTy::F16 if position == DeviceExternTypePosition::Pointee => {
-                Ok(E::Float16)
-            }
-            rustc_middle::ty::FloatTy::F16 => Err(
-                "`f16` is not yet supported by value in a device extern; pass a pointer or use a CUDA C wrapper".to_string(),
-            ),
+            // NVPTX supports native f16 (LLVM `half`) in all positions.
+            rustc_middle::ty::FloatTy::F16 => Ok(E::Float16),
             rustc_middle::ty::FloatTy::F32 => Ok(E::Float32),
             rustc_middle::ty::FloatTy::F64 => Ok(E::Float64),
             rustc_middle::ty::FloatTy::F128 => {
@@ -206,10 +228,16 @@ fn rustc_ty_to_device_extern_type<'tcx>(
         {
             Ok(E::Void)
         }
-        TyKind::Bool => Err(
-            "`bool` is not yet supported in device extern signatures; use `u32` in a C-compatible wrapper"
-                .to_string(),
-        ),
+        TyKind::Bool => {
+            if position == DeviceExternTypePosition::Pointee {
+                // Behind a pointer, bool is just i8 (Rust's bool is 1 byte).
+                Ok(E::Integer(8))
+            } else {
+                // NVPTX ABI: bool stays i1 with zeroext, matching both
+                // clang's `zeroext i1` and cuda-oxide's own i1 SSA values.
+                Ok(E::ZeroExtInteger(1))
+            }
+        }
         TyKind::Char => Err(
             "Rust `char` is not supported in device extern signatures; use `u32` in a C-compatible wrapper".to_string(),
         ),
@@ -245,6 +273,10 @@ pub struct DeviceCodegenResult {
     /// Whether later compilation stages may contract ordinary floating-point
     /// multiply/add expressions.
     pub allow_fma_contraction: bool,
+    /// Debug policy used when exporting the NVVM IR. Later materialization
+    /// stages must preserve this policy instead of silently compiling with
+    /// their own defaults.
+    pub debug_kind: llvm_export::export::DebugKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -562,6 +594,7 @@ pub fn generate_device_code<'tcx>(
     let show_rustc_mir = config.dump_rustc_mir;
     let show_mir = config.dump_mir_dialect;
     let show_llvm = config.dump_llvm_dialect;
+    let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
 
     // Print raw rustc MIR if requested (before conversion to stable_mir)
     if show_rustc_mir {
@@ -631,27 +664,57 @@ pub fn generate_device_code<'tcx>(
             )
         })
         .collect();
+    let device_mono_reachability: Vec<crate::collector::DeviceMonoReachability> = functions
+        .iter()
+        .map(|func| crate::collector::device_mono_reachability(tcx, func.instance))
+        .collect();
 
     let result = rustc_internal::run(tcx, || {
-        // Convert internal Instance<'tcx> to stable_mir Instance
+        // Convert internal Instance<'tcx> to stable_mir Instance.
+        // Drop glue instances whose bodies are provably no-ops are filtered
+        // out: the mir-importer's translate_drop fast-path emits a plain
+        // branch for them and never references the function, so translating
+        // their (potentially complex) shim bodies is both unnecessary and
+        // can fail on constructs the device pipeline does not support.
+        // The collector already skips these at discovery time with the
+        // same shared predicate (collector::process_drop_place), so this
+        // filter is a final guard that keeps translation in lockstep with
+        // emission if a future collection path forgets the check.
         let stable_functions: Vec<mir_importer::CollectedFunction> = functions
             .iter()
             .zip(export_names.iter())
             .zip(debug_scope_maps.iter())
             .zip(inline_always_flags.iter())
-            .map(
-                |(((func, (export_name, is_kernel)), debug_source_scopes), is_inline_always)| {
+            .zip(device_mono_reachability.iter())
+            .filter_map(
+                |(
+                    (((func, (export_name, is_kernel)), debug_source_scopes), is_inline_always),
+                    reachability,
+                )| {
                     // Use rustc_internal::stable() to convert the Instance.
                     // This is the key bridge between rustc_middle and rustc_public types.
                     let stable_instance = rustc_internal::stable(func.instance);
 
-                    mir_importer::CollectedFunction {
+                    // Skip no-op drop glue: the mir-importer lowers these as
+                    // plain branches (via drop_glue_is_noop) and never emits a
+                    // call, so the function body is dead. Translating it would
+                    // fail on IntoIter and similar stdlib shims whose MIR
+                    // contains constructs the device pipeline does not support.
+                    if matches!(func.instance.def, InstanceKind::DropGlue(..))
+                        && mir_importer::drop_instance_is_noop(&stable_instance)
+                    {
+                        return None;
+                    }
+
+                    Some(mir_importer::CollectedFunction {
                         instance: stable_instance,
+                        rustc_mir_block_count: reachability.block_count,
+                        rustc_mono_successors: reachability.successors.clone(),
                         is_kernel: *is_kernel,
                         export_name: export_name.clone(),
                         debug_source_scopes: Some(debug_source_scopes.clone()),
                         is_inline_always: *is_inline_always,
-                    }
+                    })
                 },
             )
             .collect();
@@ -669,7 +732,6 @@ pub fn generate_device_code<'tcx>(
             }
         }
 
-        let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
         let target_arch = std::env::var("CUDA_OXIDE_TARGET").ok();
         let device_arch_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
         let allow_fma_contraction = std::env::var_os("CUDA_OXIDE_NO_FMA").is_none();
@@ -737,6 +799,7 @@ pub fn generate_device_code<'tcx>(
                     ptx_content,
                     artifact,
                     allow_fma_contraction: compilation_result.allow_fma_contraction,
+                    debug_kind,
                 })
             }
             Err(pipeline_err) => Err(DeviceCodegenError::PtxGeneration(format!(

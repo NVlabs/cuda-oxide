@@ -27,6 +27,7 @@ use crate::{
 };
 
 use super::{
+    ExportedModule,
     config::{DebugKind, ExportBackendConfig, NvvmIrDialect},
     externs::{DeviceExternDecl, DeviceExternType},
     metadata::{emit_nvvm_annotations, emit_nvvmir_version, needs_nvvm_annotations},
@@ -97,7 +98,9 @@ fn device_extern_type_matches_erased(
     let actual = actual.deref(ctx);
     match expected {
         DeviceExternType::Void => actual.is::<VoidType>(),
-        DeviceExternType::Integer(bits) => actual
+        DeviceExternType::Integer(bits)
+        | DeviceExternType::SignExtInteger(bits)
+        | DeviceExternType::ZeroExtInteger(bits) => actual
             .downcast_ref::<IntegerType>()
             .is_some_and(|ty| ty.width() == *bits),
         DeviceExternType::Float16 => actual.is::<HalfType>(),
@@ -163,16 +166,26 @@ fn validate_device_extern_function_shape(
     Ok(())
 }
 
+/// Names of the module's externally consumed function definitions: kernel
+/// entries plus `#[device]` exports. One shared list feeds both `@llvm.used`
+/// emission and the internalization public-API list so the two root sets can
+/// never drift apart. The union (rather than kernels-else-device-functions)
+/// keeps a `#[device]` export visible even when the module also has kernels;
+/// anonymous helpers carry neither marker and stay internalizable.
+fn root_function_names<'a>(state: &'a ModuleExportState<'_>) -> Vec<&'a str> {
+    let mut names: Vec<&str> = state
+        .all_kernels
+        .iter()
+        .map(|kernel| kernel.name.as_str())
+        .chain(state.device_functions.iter().map(String::as_str))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 fn emit_llvm_used(output: &mut String, state: &ModuleExportState<'_>) -> Result<(), String> {
-    let names: Vec<&str> = if !state.all_kernels.is_empty() {
-        state
-            .all_kernels
-            .iter()
-            .map(|kernel| kernel.name.as_str())
-            .collect()
-    } else {
-        state.device_functions.iter().map(String::as_str).collect()
-    };
+    let names = root_function_names(state);
     if names.is_empty() {
         return Ok(());
     }
@@ -252,6 +265,15 @@ fn validate_device_extern_decl(
     {
         return Err(format!(
             "device extern `@{}` uses `half`, which is not supported by the CUDA 12 legacy LLVM 7 NVVM dialect",
+            decl.export_name
+        ));
+    }
+    if legacy_typed_pointers
+        && (decl.return_type.ext_attr().is_some()
+            || decl.param_types.iter().any(|ty| ty.ext_attr().is_some()))
+    {
+        return Err(format!(
+            "device extern `@{}` passes a sub-32-bit integer or `bool` by value, which is not supported by the CUDA 12 legacy LLVM 7 NVVM dialect; use i32/u32 or pass a pointer",
             decl.export_name
         ));
     }
@@ -360,14 +382,13 @@ pub(super) fn export_module_with_externs_impl(
     module: &ModuleOp,
     device_externs: &[DeviceExternDecl],
     config: &dyn ExportBackendConfig,
-) -> Result<String, String> {
+) -> Result<ExportedModule, String> {
     validate_export_config(config)?;
     let mut output = String::new();
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
     let mut state = ModuleExportState::new(
         ctx,
-        emit_all_annotations,
         emit_ptx_kernel_keyword,
         config.debug_kind(),
         config.nvvm_ir_dialect(),
@@ -419,6 +440,10 @@ pub(super) fn export_module_with_externs_impl(
                 continue;
             }
             write!(&mut output, "declare ").unwrap();
+            // Return-position attributes precede the type: `declare signext i8 @f()`.
+            if let Some(attr) = decl.return_type.ext_attr() {
+                write!(&mut output, "{attr} ").unwrap();
+            }
             decl.return_type
                 .write_llvm(&mut output, state.legacy_typed_pointers())?;
             write!(&mut output, " @{}(", decl.export_name).unwrap();
@@ -426,7 +451,7 @@ pub(super) fn export_module_with_externs_impl(
                 if index != 0 {
                     write!(&mut output, ", ").unwrap();
                 }
-                param.write_llvm(&mut output, state.legacy_typed_pointers())?;
+                param.write_llvm_with_attr(&mut output, state.legacy_typed_pointers())?;
             }
             writeln!(&mut output, ")").unwrap();
         }
@@ -521,7 +546,21 @@ pub(super) fn export_module_with_externs_impl(
     }
 
     verify_legacy_text(&output, &state)?;
-    Ok(output)
+    Ok(ExportedModule {
+        llvm_ir: output,
+        public_symbols: public_symbols(&state),
+    })
+}
+
+fn public_symbols(state: &ModuleExportState<'_>) -> Vec<String> {
+    let mut symbols: Vec<String> = root_function_names(state)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    symbols.extend(state.public_globals.iter().cloned());
+    symbols.sort_unstable();
+    symbols.dedup();
+    symbols
 }
 
 /// Export a module op to a String containing LLVM IR with custom backend configuration.
@@ -539,7 +578,6 @@ pub(super) fn export_module_to_string_with_config(
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
     let mut state = ModuleExportState::new(
         ctx,
-        emit_all_annotations,
         emit_ptx_kernel_keyword,
         config.debug_kind(),
         config.nvvm_ir_dialect(),

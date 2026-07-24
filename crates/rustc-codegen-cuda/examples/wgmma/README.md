@@ -76,13 +76,16 @@ Loading PTX from: wgmma.ptx
 --- Test: WGMMA Sync Primitives ---
 
 Launching wgmma_sync_test kernel...
-SMEM descriptor: 0xC000000000000xxx
+SMEM descriptor: 0xC00000080008xxxx
 ✓ Swizzle mode correct (128B)
-  Leading dimension offset: xxx (raw bits)
-  Stride offset: xxx (raw bits)
+  Leading dimension offset: 8 (raw bits)
+  Stride offset: 8 (raw bits)
 
 === WGMMA Test Complete ===
 ```
+
+`xxxx` is the descriptor's variable 14-bit shared-memory address field. The
+fixed `0008` fields decode to raw leading-dimension and stride offsets of `8`.
 
 ### On Pre-Hopper or Blackwell:
 

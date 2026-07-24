@@ -76,7 +76,17 @@ if [ "${1:-}" = "--version" ]; then
   echo "LLVM version 21.0.0"
   exit 0
 fi
-cp "$2" "$5"
+input=""
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) shift; out="$1" ;;
+    -*) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+cp "$input" "$out"
 "#,
             )
         });
@@ -160,6 +170,23 @@ fn write_tool(root: &Path, name: &str, contents: &str) -> PathBuf {
     let mut permissions = std::fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
     std::fs::set_permissions(&path, permissions).unwrap();
+    // Absorb Linux's fork/exec ETXTBSY window before any test relies on the
+    // tool. A concurrently spawning test can fork while this script's write
+    // fd is briefly open; until that child execs (closing its inherited
+    // CLOEXEC fd), executing the fresh script fails with "text file busy".
+    // Probing here keeps the race out of every toolchain-resolution assert.
+    for attempt in 0..50 {
+        match std::process::Command::new(&path).arg("--version").output() {
+            Ok(_) => break,
+            Err(_) if attempt < 49 => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!(
+                "fake tool {} never became executable: {error}",
+                path.display()
+            ),
+        }
+    }
     path
 }
 
@@ -245,6 +272,114 @@ fn compilation_preserves_input_and_is_repeatable() {
     assert!(first.diagnostics().iter().any(|diagnostic| {
         diagnostic.level == DiagnosticLevel::Note && diagnostic.stage == CompilationStage::Codegen
     }));
+}
+
+#[test]
+fn verbose_option_surfaces_pipeline_diagnostics() {
+    let tools = FakeTools::successful(false);
+    let compiler = tools.compiler();
+    let mut module = CodegenModule::new("verbose").unwrap();
+    add_empty_function(&mut module, true);
+    let options = CompileOptions::new(Target::parse("sm_80").unwrap())
+        .with_optimization(Optimization::None)
+        .with_verbose(true);
+
+    let compilation = compiler.compile(&mut module, &options).unwrap();
+    assert!(
+        compilation
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Target:")),
+        "expected a verbose target-selection diagnostic, got {:?}",
+        compilation.diagnostics()
+    );
+}
+
+#[test]
+fn the_default_verbose_setting_suppresses_pipeline_diagnostics() {
+    let tools = FakeTools::successful(false);
+    let compiler = tools.compiler();
+    let mut module = CodegenModule::new("quiet").unwrap();
+    add_empty_function(&mut module, true);
+    let options =
+        CompileOptions::new(Target::parse("sm_80").unwrap()).with_optimization(Optimization::None);
+    assert!(!options.verbose(), "verbose defaults to false");
+
+    let compilation = compiler.compile(&mut module, &options).unwrap();
+    assert!(
+        !compilation
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Target:")),
+        "the verbose target-selection diagnostic must be absent by default, got {:?}",
+        compilation.diagnostics()
+    );
+}
+
+#[test]
+fn from_paths_records_a_toolchain_diagnostic_on_success() {
+    let tools = FakeTools::successful(true);
+    let toolchain = Toolchain::from_paths(tools.llc.clone(), tools.opt.clone()).unwrap();
+    let selection = toolchain
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.message.starts_with("explicit toolchain:"))
+        .expect("explicit toolchain construction should report what it selected");
+    assert_eq!(selection.level, DiagnosticLevel::Note);
+    assert_eq!(selection.stage, CompilationStage::Toolchain);
+    assert!(
+        selection.message.contains(&tools.llc.display().to_string()),
+        "{}",
+        selection.message
+    );
+}
+
+#[test]
+fn discover_records_a_toolchain_diagnostic_on_success() {
+    // Unlike the rest of this suite, discovery cannot be faked: it reads the
+    // Rust sysroot and PATH. Skip where no LLVM 21+ llc exists.
+    let Ok(toolchain) = Toolchain::discover() else {
+        return;
+    };
+    let selection = toolchain
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.message.starts_with("discovered toolchain:"))
+        .expect("discovery should report what it selected");
+    assert_eq!(selection.level, DiagnosticLevel::Note);
+    assert_eq!(selection.stage, CompilationStage::Toolchain);
+    assert!(
+        selection
+            .message
+            .contains(&toolchain.llc_path().display().to_string()),
+        "{}",
+        selection.message
+    );
+}
+
+#[test]
+fn compile_owned_matches_compile_and_leaves_no_reusable_module() {
+    let tools = FakeTools::successful(true);
+    let compiler = tools.compiler();
+    let options = CompileOptions::new(Target::parse("sm_80").unwrap());
+
+    let mut borrowed_module = CodegenModule::new("borrowed").unwrap();
+    add_empty_function(&mut borrowed_module, true);
+    let borrowed = compiler.compile(&mut borrowed_module, &options).unwrap();
+
+    let mut owned_module = CodegenModule::new("owned").unwrap();
+    add_empty_function(&mut owned_module, true);
+    let owned = compiler.compile_owned(owned_module, &options).unwrap();
+
+    assert_eq!(borrowed.ptx(), owned.ptx());
+    assert_eq!(borrowed.target(), owned.target());
+
+    // What the clone in `compile` buys, and what `compile_owned` gives up:
+    // the borrowed module survives its compilation and produces the same PTX
+    // again. `owned_module` was consumed above and cannot be recompiled, which
+    // the type system enforces at every call site.
+    let again = compiler.compile(&mut borrowed_module, &options).unwrap();
+    assert_eq!(again.ptx(), borrowed.ptx());
 }
 
 #[test]
