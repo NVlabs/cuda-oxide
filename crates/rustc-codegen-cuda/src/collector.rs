@@ -124,6 +124,7 @@
 //! Kernel export names are separate — they use `compute_kernel_export_name`
 //! with human-readable base names derived from the `#[kernel]` macro.
 
+use mir_importer::is_panic_entry_path;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_index::{Idx, bit_set::DenseBitSet};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
@@ -651,14 +652,6 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
 /// never rewrote, which means a helper function is missing `#[device]`.
 const MISSING_DEVICE_STUB_MARKER: &str = "called outside #[kernel] / #[device]";
 
-/// Returns true for the panic entry points in `core` (and the `std`
-/// re-export) that mark a basic block as a panic path.
-///
-/// Kept in sync with `is_unreachable_body`, which uses the same test to
-/// recognize intrinsic placeholder bodies.
-fn is_panic_entry_path(fn_path: &str) -> bool {
-    fn_path.contains("::panicking::") || fn_path.contains("::rt::panic")
-}
 
 /// If `fn_path` names one of the Rust global-allocator entry points,
 /// returns the bare shim name (for use in the diagnostic), else `None`.

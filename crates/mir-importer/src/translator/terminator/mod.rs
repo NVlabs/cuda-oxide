@@ -1682,12 +1682,17 @@ fn emit_unreachable_after(
 /// Returns true for the panic entry points in `core` (and the `std`
 /// re-export) that mark a basic block as a panic path.
 ///
-/// Must agree with `is_panic_entry_path` in the codegen collector
-/// (`rustc-codegen-cuda/src/collector.rs`), which deliberately does not
-/// collect these callees: every call this predicate accepts has to be dropped
-/// here instead of being emitted as a call to a symbol the module never
-/// defines.
-fn is_panic_entry_path(fn_path: &str) -> bool {
+/// This is the single source of truth for that test. The codegen collector
+/// (`rustc-codegen-cuda/src/collector.rs`) imports it so the callees it
+/// deliberately does not collect are exactly the calls this translator drops
+/// in favour of a device trap: every call this predicate accepts has to be
+/// dropped here instead of being emitted as a call to a symbol the module
+/// never defines.
+///
+/// The substring match is intentionally broad: a user function whose path
+/// contains a `panicking` module segment is also treated as a panic entry
+/// and trapped rather than translated.
+pub fn is_panic_entry_path(fn_path: &str) -> bool {
     fn_path.contains("::panicking::") || fn_path.contains("::rt::panic")
 }
 
