@@ -81,10 +81,14 @@ pub struct DynamicSharedAlignment {
 /// We scan the MIR to find it and extract the const generic parameters.
 ///
 /// Returns `Some(ClusterDims)` if found, `None` otherwise.
-fn detect_cluster_config(body: &mir::Body) -> Option<ClusterDims> {
+fn detect_cluster_config(
+    body: &mir::Body,
+    reachable: &std::collections::BTreeSet<usize>,
+) -> Option<ClusterDims> {
     use rustc_public::ty::TyConstKind;
 
-    for block in &body.blocks {
+    for &block_idx in reachable {
+        let block = &body.blocks[block_idx];
         // Use let-else for early continue pattern
         let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
             continue;
@@ -132,11 +136,15 @@ fn detect_cluster_config(body: &mir::Body) -> Option<ClusterDims> {
 /// We scan the MIR to find it and extract the const generic parameters.
 ///
 /// Returns `Some(LaunchBounds)` if found, `None` otherwise.
-fn detect_launch_bounds_config(body: &mir::Body) -> Result<Option<LaunchBounds>, String> {
+fn detect_launch_bounds_config(
+    body: &mir::Body,
+    reachable: &std::collections::BTreeSet<usize>,
+) -> Result<Option<LaunchBounds>, String> {
     use rustc_public::ty::TyConstKind;
 
     let mut detected: Option<LaunchBounds> = None;
-    for block in &body.blocks {
+    for &block_idx in reachable {
+        let block = &body.blocks[block_idx];
         let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
             continue;
         };
@@ -215,10 +223,14 @@ fn detect_launch_bounds_config(body: &mir::Body) -> Result<Option<LaunchBounds>,
 /// Scans MIR for the dynamic-shared alignment marker injected by
 /// `#[launch_contract]` and extracts its const generic argument. The importer
 /// records the value before removing the call from the executable path.
-fn detect_dynamic_shared_alignment(body: &mir::Body) -> Option<DynamicSharedAlignment> {
+fn detect_dynamic_shared_alignment(
+    body: &mir::Body,
+    reachable: &std::collections::BTreeSet<usize>,
+) -> Option<DynamicSharedAlignment> {
     use rustc_public::ty::TyConstKind;
 
-    for block in &body.blocks {
+    for &block_idx in reachable {
+        let block = &body.blocks[block_idx];
         let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
             continue;
         };
@@ -249,16 +261,19 @@ fn detect_dynamic_shared_alignment(body: &mir::Body) -> Option<DynamicSharedAlig
     None
 }
 
-/// Return the non-unwind successors of a terminator.
+/// Return the non-unwind successors of a block's terminator.
 ///
 /// [`mir::Terminator::successors`] includes unwind cleanup blocks alongside
 /// "normal" control-flow targets. The CUDA toolchain does not support stack
 /// unwinding (hardware could, but `nvcc`/`ptxas` never wire it up), so the
 /// translator treats unwind cleanups as dead code. This helper strips them
-/// out so the worklist only visits blocks that matter on GPU.
-fn non_unwind_successors(kind: &mir::TerminatorKind) -> Vec<usize> {
+/// out so the worklist only visits blocks that matter on GPU. Monomorphized
+/// branch reachability is supplied separately by rustc's collector; the
+/// importer must not reconstruct a second constant-evaluation model from the
+/// converted public MIR.
+fn non_unwind_successors(block: &mir::BasicBlock) -> Vec<usize> {
     use mir::TerminatorKind::*;
-    match kind {
+    match &block.terminator.kind {
         Goto { target } => vec![*target],
         SwitchInt { targets, .. } => targets.all_targets(),
         Return | Resume | Abort | Unreachable => vec![],
@@ -268,20 +283,82 @@ fn non_unwind_successors(kind: &mir::TerminatorKind) -> Vec<usize> {
     }
 }
 
-/// BFS from the entry block (index 0) following non-unwind successors.
+fn validate_monomorphized_successor_shape(
+    body_block_count: usize,
+    rustc_mir_block_count: usize,
+    rustc_mono_successors: &[Vec<usize>],
+) -> Result<(), String> {
+    if body_block_count != rustc_mir_block_count {
+        return Err(format!(
+            "rustc/public MIR CFG mismatch: collector recorded {rustc_mir_block_count} blocks but importer received {body_block_count}"
+        ));
+    }
+    if rustc_mono_successors.len() != body_block_count {
+        return Err(format!(
+            "rustc collector supplied successor lists for {} blocks but the public MIR body has {body_block_count}",
+            rustc_mono_successors.len()
+        ));
+    }
+    for (source, successors) in rustc_mono_successors.iter().enumerate() {
+        if let Some(target) = successors
+            .iter()
+            .copied()
+            .find(|target| *target >= body_block_count)
+        {
+            return Err(format!(
+                "rustc collector edge {source} -> {target} is outside the {body_block_count}-block public MIR body"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_monomorphized_successors(
+    body: &mir::Body,
+    rustc_mir_block_count: usize,
+    rustc_mono_successors: &[Vec<usize>],
+) -> Result<(), String> {
+    validate_monomorphized_successor_shape(
+        body.blocks.len(),
+        rustc_mir_block_count,
+        rustc_mono_successors,
+    )?;
+    for (source, successors) in rustc_mono_successors.iter().enumerate() {
+        let public_successors = body.blocks[source].terminator.successors();
+        if let Some(target) = successors
+            .iter()
+            .copied()
+            .find(|target| !public_successors.contains(target))
+        {
+            return Err(format!(
+                "rustc collector edge {source} -> {target} does not exist in the converted public MIR CFG"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// BFS from the entry block following rustc's exact per-block monomorphized
+/// successors, intersected with the importer's existing non-unwind policy.
 ///
 /// The result is a sorted set of reachable-on-GPU block indices; unwind-only
 /// cleanup blocks end up outside this set and are filled in with
 /// `mir.unreachable` by [`translate_body`] so pliron verification still
-/// passes.
-fn compute_reachable_blocks(body: &mir::Body) -> std::collections::BTreeSet<usize> {
+/// passes. Constant switches and device runtime-check switches are never
+/// re-evaluated here: the collector's edges are the semantic source of truth.
+fn compute_reachable_blocks(
+    body: &mir::Body,
+    rustc_mono_successors: &[Vec<usize>],
+) -> std::collections::BTreeSet<usize> {
     let mut reachable = std::collections::BTreeSet::new();
     let mut frontier: Vec<usize> = vec![0];
     reachable.insert(0);
     while let Some(idx) = frontier.pop() {
-        let successors = non_unwind_successors(&body.blocks[idx].terminator.kind);
-        for succ in successors {
-            if reachable.insert(succ) {
+        let non_unwind: std::collections::BTreeSet<_> = non_unwind_successors(&body.blocks[idx])
+            .into_iter()
+            .collect();
+        for &succ in &rustc_mono_successors[idx] {
+            if non_unwind.contains(&succ) && reachable.insert(succ) {
                 frontier.push(succ);
             }
         }
@@ -627,6 +704,7 @@ fn emit_entry_allocas(
     value_map: &mut ValueMap,
     debug_kind: DebugKind,
     debug_source_scopes: Option<&DebugSourceScopeMap>,
+    reachable: &std::collections::BTreeSet<usize>,
 ) -> Option<Ptr<Operation>> {
     let mut prev_op: Option<Ptr<Operation>> = None;
     let debug_locals = if debug_kind.variables_enabled() {
@@ -635,28 +713,44 @@ fn emit_entry_allocas(
         FxHashMap::default()
     };
 
-    // Pre-scan the body once: for each local whose translated slot type is a
-    // pointer, infer the address space from the *writes* into it rather than
-    // trusting Rust's declared type (which loses addrspace info for
-    // references / raw pointers).
-    let slot_addr_spaces = SlotAddrSpaceMap::analyze(body);
+    // Translate local types once up front. The address-space analyzer uses
+    // each pointer local's declared lowering as the conservative fallback for
+    // writes it cannot classify, and the allocation loop reuses the same
+    // handles below.
+    let mut mir_types = Vec::with_capacity(body.locals().len());
+    for local_decl in body.locals() {
+        let mir_ty = if types::is_rust_type_zst(&local_decl.ty) {
+            None
+        } else {
+            types::translate_type(ctx, &local_decl.ty).ok()
+        };
+        mir_types.push(mir_ty);
+    }
+    let declared_addr_spaces: Vec<Option<u32>> = mir_types
+        .iter()
+        .map(|mir_ty| {
+            mir_ty
+                .as_ref()
+                .and_then(|mir_ty| values::pointer_addr_space(ctx, *mir_ty))
+        })
+        .collect();
+
+    // Pre-scan only rustc-reachable writes. A slot is narrowed to a concrete
+    // address space only when every reachable write agrees; unknown writes
+    // retain their declared lowering (normally generic address space zero).
+    let slot_addr_spaces =
+        SlotAddrSpaceMap::analyze(body, reachable, num_args, &declared_addr_spaces);
 
     for local_idx in 0..body.locals().len() {
         let local = mir::Local::from(local_idx);
-        let local_ty = &body.locals()[local].ty;
-        if types::is_rust_type_zst(local_ty) {
+        let Some(mir_ty) = mir_types[local_idx] else {
             continue;
-        }
-        let mir_ty = match types::translate_type(ctx, local_ty) {
-            Ok(t) => t,
-            Err(_) => continue,
         };
 
         // Override the Rust-declared addrspace with the inferred one for
         // pointer slots. Non-pointer slots are untouched by
         // `align_pointer_addr_space`.
-        let rust_declared =
-            values::pointer_addr_space(ctx, mir_ty).unwrap_or(address_space::GENERIC);
+        let rust_declared = declared_addr_spaces[local_idx].unwrap_or(address_space::GENERIC);
         let target = slot_addr_spaces.effective(local, rust_declared);
         let mir_ty = values::align_pointer_addr_space(ctx, mir_ty, target);
 
@@ -703,6 +797,10 @@ fn emit_entry_allocas(
 /// * `ctx` - Pliron IR context
 /// * `body` - MIR function body
 /// * `instance` - Monomorphized instance (with concrete generic args)
+/// * `rustc_mir_block_count` - Block count recorded from the rustc MIR body
+///   before conversion to public MIR
+/// * `rustc_mono_successors` - Exact per-block successor edges computed by
+///   rustc's monomorphization rules under the device runtime-check policy
 /// * `is_kernel` - Add `gpu_kernel` attribute for kernel entry points
 /// * `is_inline_always` - Add `alwaysinline` attribute (non-kernel functions
 ///   marked `#[inline(always)]` in rustc)
@@ -711,6 +809,8 @@ pub fn translate_body(
     ctx: &mut Context,
     body: &mir::Body,
     instance: &mono::Instance,
+    rustc_mir_block_count: usize,
+    rustc_mono_successors: &[Vec<usize>],
     is_kernel: bool,
     is_inline_always: bool,
     override_name: Option<&str>,
@@ -718,6 +818,16 @@ pub fn translate_body(
     debug_kind: DebugKind,
     debug_source_scopes: Option<&DebugSourceScopeMap>,
 ) -> TranslationResult<Ptr<Operation>> {
+    // Establish and validate rustc's exact per-instance reachability before
+    // any whole-body semantic scan. Dead blocks must not influence function
+    // attributes, pointer-slot address spaces, or later code emission.
+    if let Err(error) =
+        validate_monomorphized_successors(body, rustc_mir_block_count, rustc_mono_successors)
+    {
+        return input_err_noloc!(TranslationErr::invalid_op(error));
+    }
+    let reachable = compute_reachable_blocks(body, rustc_mono_successors);
+
     // Create a value map to track MIR locals -> pliron IR values
     let num_locals = body.locals().len();
     let mut value_map = ValueMap::new(num_locals);
@@ -858,7 +968,7 @@ pub fn translate_body(
             .set(key, kernel_attr);
 
         // Detect compile-time cluster configuration from #[cluster(x,y,z)] attribute
-        if let Some(cluster_dims) = detect_cluster_config(body) {
+        if let Some(cluster_dims) = detect_cluster_config(body, &reachable) {
             use pliron::builtin::attributes::IntegerAttr;
             use pliron::builtin::types::Signedness;
             use pliron::utils::apint::APInt;
@@ -896,7 +1006,7 @@ pub fn translate_body(
         }
 
         // Detect compile-time launch bounds from #[launch_bounds(max, min)] attribute
-        let launch_bounds = match detect_launch_bounds_config(body) {
+        let launch_bounds = match detect_launch_bounds_config(body, &reachable) {
             Ok(bounds) => bounds,
             Err(error) => {
                 return input_err_noloc!(TranslationErr::invalid_op(error));
@@ -949,7 +1059,7 @@ pub fn translate_body(
     // that marker to the entry but also keeps the original in its helper, so
     // record markers on any function. mir-lower treats every marked local
     // function as a propagation root and carries the minimum to its callees.
-    if let Some(alignment) = detect_dynamic_shared_alignment(body) {
+    if let Some(alignment) = detect_dynamic_shared_alignment(body, &reachable) {
         use pliron::builtin::attributes::IntegerAttr;
         use pliron::builtin::types::Signedness;
         use pliron::utils::apint::APInt;
@@ -1027,6 +1137,7 @@ pub fn translate_body(
         &mut value_map,
         debug_kind,
         debug_source_scopes,
+        &reachable,
     );
 
     // -------------------------------------------------------------------------
@@ -1037,8 +1148,6 @@ pub fn translate_body(
     // ordering dependency and can be translated in a single index-order pass.
     // Unwind-only cleanup blocks are skipped here (see
     // [`non_unwind_successors`]) and patched with `mir.unreachable` below.
-    let reachable: std::collections::BTreeSet<usize> = compute_reachable_blocks(body);
-
     let mut blocks_processed: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     for idx in reachable.iter().copied() {
@@ -1053,6 +1162,7 @@ pub fn translate_body(
             block_ptr,
             &mut value_map,
             &block_map,
+            &rustc_mono_successors[idx],
             legaliser,
             entry_prev_op,
         )?;
@@ -1114,6 +1224,18 @@ mod tests {
         op::Op,
         operation::Operation,
     };
+
+    #[test]
+    fn collector_reachability_requires_the_same_public_mir_cfg() {
+        let valid = [vec![2], vec![], vec![3], vec![]];
+        assert!(validate_monomorphized_successor_shape(4, 4, &valid).is_ok());
+        assert!(validate_monomorphized_successor_shape(4, 5, &valid).is_err());
+        assert!(validate_monomorphized_successor_shape(4, 4, &valid[..3]).is_err());
+        assert!(
+            validate_monomorphized_successor_shape(4, 4, &[vec![4], vec![], vec![], vec![]])
+                .is_err()
+        );
+    }
 
     #[test]
     fn inline_always_flag_reaches_llvm_func_attr_before_export() {

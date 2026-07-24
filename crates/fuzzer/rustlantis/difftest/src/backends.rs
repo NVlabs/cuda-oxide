@@ -30,6 +30,15 @@ impl ClearEnv for Command {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RustcDiagnostic {
+    #[serde(rename = "$message_type")]
+    message_type: String,
+    message: String,
+    level: String,
+    rendered: Option<String>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ProcessOutput {
     pub status: ExitStatus,
@@ -109,7 +118,7 @@ pub struct BackendInitError(pub String);
 
 pub trait Backend: Send + Sync {
     fn compile(&self, _: &Source, _: &Path) -> ProcessOutput {
-        panic!("not implemented")
+        unimplemented!("this backend does not support compilation")
     }
 
     fn execute(&self, source: &Source, target: &Path) -> ExecResult {
@@ -303,6 +312,38 @@ impl Miri {
     }
 }
 
+fn parse_miri_stderr(stderr: Vec<u8>) -> (Vec<u8>, bool) {
+    let mut rendered_stderr = Vec::with_capacity(stderr.len());
+    let mut has_error = false;
+
+    for line in stderr.split_inclusive(|byte| *byte == b'\n') {
+        let json = line.strip_suffix(b"\n").unwrap_or(line);
+
+        match serde_json::from_slice::<RustcDiagnostic>(json) {
+            Ok(diagnostic) if diagnostic.message_type == "diagnostic" => {
+                has_error |= diagnostic.level == "error" || diagnostic.level.starts_with("error:");
+
+                if let Some(rendered) = diagnostic.rendered {
+                    rendered_stderr.extend_from_slice(rendered.as_bytes());
+
+                    if !rendered.ends_with('\n') {
+                        rendered_stderr.push(b'\n');
+                    }
+                } else {
+                    rendered_stderr.extend_from_slice(diagnostic.message.as_bytes());
+                    rendered_stderr.push(b'\n');
+                }
+            }
+            _ => {
+                // Preserve stderr produced by the interpreted program.
+                rendered_stderr.extend_from_slice(line);
+            }
+        }
+    }
+
+    (rendered_stderr, has_error)
+}
+
 impl Backend for Miri {
     fn execute(&self, source: &Source, _: &Path) -> ExecResult {
         debug!("Executing with Miri {source}");
@@ -318,16 +359,19 @@ impl Backend for Miri {
 
         command
             .clear_env(&["PATH", "DEVELOPER_DIR"])
-            .args([OsStr::new("--sysroot"), self.sysroot.as_os_str()]);
+            .args([OsStr::new("--sysroot"), self.sysroot.as_os_str()])
+            .arg("--error-format=json");
 
-        let miri_out = run_compile_command(command, source);
+        let mut miri_out = run_compile_command(command, source);
+        let (stderr, miri_failed) = parse_miri_stderr(miri_out.stderr);
 
-        // FIXME: we assume the source always exits with 0, and any non-zero return code
-        // came from Miri itself (e.g. UB and type check errors)
-        if !miri_out.status.success() {
-            return Err(CompExecError(miri_out.into()));
+        miri_out.stderr = stderr;
+
+        if miri_failed || miri_out.status.code().is_none() {
+            Err(CompExecError(miri_out.into()))
+        } else {
+            Ok(miri_out.into())
         }
-        Ok(miri_out.into())
     }
 }
 

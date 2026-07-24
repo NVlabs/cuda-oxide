@@ -605,7 +605,7 @@ dialect accepts only a subset:
 | `fence` | LLVM `fence` is unsupported; an NVVM memory-barrier operation is required | Rejected pending an exact ordering/scope mapping |
 | `cmpxchg` | `i32`/`i64`, plus `i128` on `compute_90+`; global/shared pointers or generic pointers known to refer there | Rejected pending type, address-space, alignment, and ordering validation |
 | `atomicrmw` | Integer `xchg`, `add`, `sub`, `and`, `or`, `xor`, `max`, `min`, `umax`, and `umin` on `i32`/`i64`; `i128 xchg` on `compute_90+`; the same address-space restriction | Rejected pending the same validation |
-| NVVM atomic intrinsics | Provide selected additional operations, including floating-point atomic add | Not yet part of generic LLVM-atomic legalization |
+| NVVM atomic intrinsics | Provide selected additional operations, including floating-point atomic add | Relaxed, device-scoped `atomicrmw fadd` on `f32`/`f64` in generic/global/shared address spaces is lowered to the exact legacy intrinsic; other atomic RMW operations remain rejected |
 
 The normal LLVM-to-PTX path keeps its existing atomic support. The limitation
 above applies only to the legacy NVVM legalizer. cuda-oxide rejects these

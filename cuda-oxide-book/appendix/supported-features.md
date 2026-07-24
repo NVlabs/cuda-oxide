@@ -32,10 +32,18 @@ roadmap, **N/A** = not applicable or no identified need.
 | `CuSimd<T, N>` SIMD Type | **Full** | Generic SIMD register type with named accessors (`x`/`y`/`z`/`w`), runtime and compile-time indexing, `to_array` conversion. |
 | ABI Scalarization | **Full** | Slices are scalarized at kernel boundaries (`&[T]` -> `(ptr, len)`, reconstructed inside the function). Structs and closures pass by value as one byval `.param`; field flattening still applies on internal device-to-device calls. |
 
-Array value constants are limited to primitive leaves (integers, `f16`,
-`f32`, `f64`) and nested arrays of those. Arrays whose elements are
-structs or other ADTs are not yet materialized as constants; they need
-layout-aware field decoding rather than the primitive byte-slicing rule.
+Array value constants support primitive leaves (integers, `f16`, `f32`,
+`f64`), nested arrays, and tuples recursively composed from supported scalar,
+enum, tuple, and zero-sized fields. Tuple element strides and field offsets
+come from rustc layout, including internal and trailing padding; direct tuple
+value constants use the same layout-aware decoder. Struct constants (direct
+and promoted-by-reference) also read every field at its rustc layout offset,
+so padded, reordered, `#[repr(C)]`, and nested shapes decode correctly, and a
+struct's stored size is its padded size, which fixes the element stride for
+arrays of padded structs inside constants. Arrays whose elements are structs
+or initialized unions are not yet materialized as constants. Pointer-bearing
+array, tuple, and struct constants are rejected with a diagnostic until
+aggregate relocations can be represented without losing provenance.
 
 ## Compiler: Closures
 
@@ -56,6 +64,7 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 | While Loops / If-Else | **Full** | Baseline control flow fully supported. |
 | Break and Continue | **Full** | `break` and `continue` in for/while loops, including early exit. |
 | Loop Unroll Annotations | **Partial** | `#[unroll]` and `#[unroll(N)]` request unrolling of explicit counted `while` loops. Nested loops and multiple `continue` paths work; full unrolling preserves `break` paths and multiple exit targets, while partial unrolling requires a positive-step `<`/`<=` loop with an invariant limit and only the normal header exit. Requests are capped at 1,024 copies, 8,192 cloned blocks, and 65,536 cloned operations. |
+| Monomorphization-Dead Branches | **Partial** | Branches that become dead after generic specialization (e.g. the const-false arm of `if M::ENABLED`) are ignored by symbol collection, panic checks, and pointer address-space inference, so panic-only hooks in dead arms compile. Only switches rustc itself folds are pruned: a constant discriminant operand or a direct single-assignment constant. Multi-step constant copy chains keep both arms, matching rustc's host monomorphization; this is deliberate, not a general constant-propagation pass. |
 
 ## Compiler: Arithmetic and Casting
 

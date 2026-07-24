@@ -99,7 +99,7 @@
 //! This matches the C ABI for GPU kernels.
 
 use dialect_mir::types::{
-    EnumCarrierKind, EnumLayoutKind, MirDisjointSliceType, MirEnumType, MirSliceType,
+    EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirSliceType,
     MirStructType, MirTupleType, MirUnionType,
 };
 use llvm_export::types as llvm_types;
@@ -1056,6 +1056,35 @@ fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
         let elem_ty = a.element_ty;
         let size = a.size;
         return mir_stored_size(ctx, elem_ty).map(|elem_size| elem_size * size);
+    }
+    None
+}
+
+/// Exact ABI alignment carried by a MIR aggregate type, when rustc layout is
+/// available.
+///
+/// LLVM aggregate types cannot encode a Rust `repr(align(N))` raise. Tuples,
+/// structs, enums, and unions therefore carry rustc's alignment explicitly in
+/// the MIR dialect. Arrays have the same ABI alignment as their element, so
+/// recurse through any number of array layers instead of relying on the
+/// converted LLVM element's structural alignment.
+pub(crate) fn mir_type_abi_align(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
+    let ty_ref = mir_ty.deref(ctx);
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+        return Some(tuple_ty.abi_align()).filter(|align| *align > 0);
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        return Some(struct_ty.abi_align).filter(|align| *align > 0);
+    }
+    if let Some(enum_ty) = ty_ref.downcast_ref::<MirEnumType>() {
+        return Some(enum_ty.abi_align()).filter(|align| *align > 0);
+    }
+    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
+        return Some(union_ty.abi_align()).filter(|align| *align > 0);
+    }
+    if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+        let element_ty = array_ty.element_type();
+        return mir_type_abi_align(ctx, element_ty);
     }
     None
 }
@@ -2114,6 +2143,40 @@ mod tests {
             .expect("expected an LLVM struct type")
             .fields()
             .collect()
+    }
+
+    #[test]
+    fn mir_abi_alignment_recurses_through_nested_arrays() {
+        let mut ctx = make_ctx();
+        let byte = mir_uint(&mut ctx, 8);
+        let marker: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Align32".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            32,
+        )
+        .into();
+        let tuple: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![marker, byte],
+            vec![0, 1],
+            vec![0, 0],
+            32,
+            32,
+        )
+        .into();
+        let inner: TypeHandle = MirArrayType::get(&mut ctx, tuple, 2).into();
+        let outer: TypeHandle = MirArrayType::get(&mut ctx, inner, 3).into();
+        let plain: TypeHandle = MirArrayType::get(&mut ctx, byte, 4).into();
+
+        assert_eq!(mir_type_abi_align(&ctx, tuple), Some(32));
+        assert_eq!(mir_type_abi_align(&ctx, inner), Some(32));
+        assert_eq!(mir_type_abi_align(&ctx, outer), Some(32));
+        assert_eq!(mir_type_abi_align(&ctx, plain), None);
     }
 
     #[test]

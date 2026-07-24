@@ -9,6 +9,7 @@ use llvm_export::{
         DebugKind, DeviceExternAttrs, DeviceExternDecl, DeviceExternType, ExportBackendConfig,
         NvvmExportConfig, NvvmIrDialect, PtxExportConfig, export_module_to_string,
         export_module_to_string_with_config, export_module_with_externs,
+        export_module_with_externs_and_roots,
     },
     op_interfaces::CastOpInterface,
     ops::{
@@ -1230,6 +1231,80 @@ fn legacy_kernel_metadata_uses_typed_function_references() {
     assert!(
         ir.contains("!{void (i8*)* @metadata_kernel, !\"kernel\", i32 1}"),
         "{ir}"
+    );
+}
+
+#[test]
+fn ptx_export_records_kernel_roots_for_internalization() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "ptx_roots".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let global = GlobalOp::new(&mut ctx, "COEFFS".try_into().unwrap(), i32_ty.into());
+    global.set_address_space(&mut ctx, 4);
+    global.get_operation().insert_at_back(module_block, &ctx);
+    let func_ty = FuncType::get(&ctx, VoidType::get(&ctx).into(), vec![], false);
+    let func = FuncOp::new(&mut ctx, "entry_kernel".try_into().unwrap(), func_ty);
+    func.get_operation().deref_mut(&ctx).attributes.set(
+        "gpu_kernel".try_into().unwrap(),
+        StringAttr::new("true".into()),
+    );
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let exported = export_module_with_externs_and_roots::<DeviceExternDecl>(
+        &ctx,
+        &module,
+        &[],
+        &PtxExportConfig,
+    )
+    .expect("PTX export succeeds");
+    let ir = exported.llvm_ir;
+    assert!(
+        ir.contains(
+            "@llvm.used = appending global [1 x ptr] [ptr @entry_kernel], section \"llvm.metadata\""
+        ),
+        "{ir}"
+    );
+    assert_eq!(exported.public_symbols, ["COEFFS", "entry_kernel"]);
+}
+
+#[test]
+fn ptx_export_records_standalone_device_function_roots_for_internalization() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "ptx_device_root".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let func_ty = FuncType::get(&ctx, VoidType::get(&ctx).into(), vec![], false);
+    let func = FuncOp::new(
+        &mut ctx,
+        "cuda_oxide_device_246e25db_standalone_export"
+            .try_into()
+            .unwrap(),
+        func_ty,
+    );
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let exported = export_module_with_externs_and_roots::<DeviceExternDecl>(
+        &ctx,
+        &module,
+        &[],
+        &PtxExportConfig,
+    )
+    .expect("standalone PTX export succeeds");
+    assert_eq!(exported.public_symbols, ["standalone_export"]);
+    assert!(
+        exported.llvm_ir.contains(
+            "@llvm.used = appending global [1 x ptr] [ptr @standalone_export], section \"llvm.metadata\""
+        ),
+        "{}",
+        exported.llvm_ir
     );
 }
 

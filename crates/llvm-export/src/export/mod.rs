@@ -55,6 +55,18 @@ pub use externs::{AsDeviceExtern, DeviceExternAttrs, DeviceExternDecl, DeviceExt
 
 use pliron::{builtin::ops::ModuleOp, context::Context};
 
+/// Textual LLVM IR plus the exporter-derived symbols consumed outside the
+/// module. The optimizer uses this semantic root set instead of reparsing the
+/// rendered LLVM syntax.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportedModule {
+    /// Rendered LLVM IR.
+    pub llvm_ir: String,
+    /// Kernel entries, standalone device exports, and defined globals whose
+    /// external linkage must survive optimization.
+    pub public_symbols: Vec<String>,
+}
+
 /// Export a module op to a String containing LLVM IR.
 ///
 /// Uses default PTX export mode. For alternate backends, use [`export_module_to_string_with_config`].
@@ -76,6 +88,17 @@ pub fn export_module_with_externs<T: AsDeviceExtern>(
     device_externs: &[T],
     config: &dyn ExportBackendConfig,
 ) -> Result<String, String> {
+    export_module_with_externs_and_roots(ctx, module, device_externs, config)
+        .map(|exported| exported.llvm_ir)
+}
+
+/// Export a module together with its semantic external-root set.
+pub fn export_module_with_externs_and_roots<T: AsDeviceExtern>(
+    ctx: &Context,
+    module: &ModuleOp,
+    device_externs: &[T],
+    config: &dyn ExportBackendConfig,
+) -> Result<ExportedModule, String> {
     let externs: Vec<DeviceExternDecl> = device_externs
         .iter()
         .map(|e| e.as_device_extern())

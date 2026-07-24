@@ -57,12 +57,13 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) launch_bounds_kernels: Vec<KernelLaunchBounds>,
     /// Track ALL kernels (for backends that require annotations for every kernel)
     pub(super) all_kernels: Vec<KernelInfo>,
-    /// Whether to track all kernels (set by backend config)
-    pub(super) track_all_kernels: bool,
     /// Whether to print `ptx_kernel` on kernel definitions.
     pub(super) emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
     pub(super) device_functions: Vec<String>,
+    /// Defined globals retain external linkage because CUDA host code can
+    /// resolve them by name (for example through `cuModuleGetGlobal`).
+    pub(super) public_globals: Vec<String>,
     /// Emitted function signatures keyed by their final, prefix-stripped name.
     pub(super) function_types: FxHashMap<String, TypeHandle>,
     /// Original pliron symbol spelling for each final exported function name.
@@ -133,7 +134,6 @@ pub(super) struct ResolvedDebugScope {
 impl<'a> ModuleExportState<'a> {
     pub(super) fn new(
         ctx: &'a pliron::context::Context,
-        track_all_kernels: bool,
         emit_ptx_kernel_keyword: bool,
         debug_kind: DebugKind,
         nvvm_ir_dialect: Option<NvvmIrDialect>,
@@ -144,9 +144,9 @@ impl<'a> ModuleExportState<'a> {
             cluster_kernels: Vec::new(),
             launch_bounds_kernels: Vec::new(),
             all_kernels: Vec::new(),
-            track_all_kernels,
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
+            public_globals: Vec::new(),
             function_types: FxHashMap::default(),
             function_source_names: FxHashMap::default(),
             function_definitions: HashSet::new(),

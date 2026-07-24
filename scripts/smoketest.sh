@@ -50,12 +50,15 @@ set -uo pipefail
 
 TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
-LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
+LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_atomic_fadd legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_tuple_array_provenance error_tuple_constant_provenance error_struct_constant_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+
+# Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
+NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
 
 classify() {
     local ex="$1" cat
@@ -367,6 +370,24 @@ verdict_error() {
                 return 1
             fi
             ;;
+        error_tuple_array_provenance)
+            if ! grep -Fq 'Array value constant contains 2 pointer relocation(s); cuda-oxide cannot yet preserve array pointer provenance' "${log}"; then
+                echo "FAIL (missing tuple-array pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_tuple_constant_provenance)
+            if ! grep -Fq 'Tuple constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve tuple pointer provenance' "${log}"; then
+                echo "FAIL (missing direct-tuple pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_struct_constant_provenance)
+            if ! grep -Fq 'Struct constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve struct pointer provenance' "${log}"; then
+                echo "FAIL (missing struct pointer-relocation diagnostic)"
+                return 1
+            fi
+            ;;
         error_generated_intrinsic_abi)
             if ! grep -Fq 'cuda-intrinsics ABI mismatch' "${log}" \
                 || ! grep -Fq '__cuda_oxide_intrinsic_abi_v2::i0001' "${log}"; then
@@ -586,10 +607,37 @@ verdict_compile() {
 
 # ---- Runner --------------------------------------------------------------
 
+# Run `cargo oxide "$@"`, appending EXTRA_RUSTFLAGS (set per-example by
+# run_cargo) to the inherited Cargo flag source. rustc resolves repeated -Z
+# options last-one-wins, and Cargo prefers CARGO_ENCODED_RUSTFLAGS over
+# RUSTFLAGS when both are present.
+EXTRA_RUSTFLAGS=""
+invoke_cargo_oxide() {
+    if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
+        if [[ -v CARGO_ENCODED_RUSTFLAGS ]]; then
+            local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
+            if [[ -n "${encoded_flags}" ]]; then
+                encoded_flags+=$'\x1f'
+            fi
+            CARGO_ENCODED_RUSTFLAGS="${encoded_flags}${EXTRA_RUSTFLAGS}" \
+                cargo oxide "$@"
+        else
+            RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${EXTRA_RUSTFLAGS}" cargo oxide "$@"
+        fi
+    else
+        cargo oxide "$@"
+    fi
+}
+
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
+    local noinline
+    EXTRA_RUSTFLAGS=""
+    for noinline in "${NOINLINE_MIR_EXAMPLES[@]}"; do
+        [[ "${ex}" == "${noinline}" ]] && EXTRA_RUSTFLAGS="-Zinline-mir=no"
+    done
     # This exact-target batch must pass both compiler routes. The second build
     # may replace the first artifact, so preserve both exit codes in one gate.
     if [[ "${cat}" == "blackwell-compile" ]]; then
@@ -1252,10 +1300,10 @@ run_cargo() {
         nvvm_arch="$(nvvm_verify_arch "${ex}")"
         local -a args=("emit-ltoir" "${ex}" "--arch=${nvvm_arch}")
         if [[ ${VERBOSE} -eq 1 ]]; then
-            cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+            invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
             CARGO_EC=${PIPESTATUS[0]}
         else
-            cargo oxide "${args[@]}" >"${log}" 2>&1
+            invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
             CARGO_EC=$?
         fi
         return
@@ -1274,21 +1322,60 @@ run_cargo() {
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_MODERN_ARCH}")
     fi
     if [[ ${VERBOSE} -eq 1 ]]; then
-        cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+        invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
         CARGO_EC=${PIPESTATUS[0]}
     else
-        cargo oxide "${args[@]}" >"${log}" 2>&1
+        invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
+    fi
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "array_constants" ]]; then
+        local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+        if ! "${shape_check}" >>"${log}" 2>&1; then
+            printf 'array_constants failed its exact unoptimized LLVM, optimized LLVM, or PTX shape assertions\n' >>"${log}"
+            CARGO_EC=1
+        fi
     fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "helper_fn" ]]; then
         local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local llvm="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
         local nested_defs entry_count
-        nested_defs="$(grep -cE '^\.visible \.func .*_RI.*nested_identity' "${ptx}" 2>/dev/null)"
+        # The nested helpers are private, so the middle-end internalizes,
+        # inlines, and deletes them from the optimized PTX. Their canonical
+        # mangling and non-kernel classification (the #358 regression) are
+        # pinned in the pre-opt LLVM IR; the PTX pins the single kernel entry.
+        nested_defs="$(grep -cE '^define .*_RI.*nested_identity' "${llvm}" 2>/dev/null)"
         entry_count="$(grep -cE '^\.visible \.entry ' "${ptx}" 2>/dev/null)"
-        if [[ ! -s "${ptx}" || ${nested_defs} -ne 2 || ${entry_count} -ne 1 ]] \
+        if [[ ! -s "${ptx}" || ! -s "${llvm}" || ${nested_defs} -ne 2 || ${entry_count} -ne 1 ]] \
             || ! grep -qF '.visible .entry vecadd_with_helper(' "${ptx}" \
+            || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${llvm}" \
             || grep -qE '(nested_identity.*_TID_|_TID_.*nested_identity)' "${ptx}"; then
-            printf 'helper_fn expected one kernel entry and two canonically mangled nested_identity device functions, with no helper _TID_ exports\n' >>"${log}"
+            printf 'helper_fn expected one kernel entry, two canonically mangled nested_identity helpers in the pre-opt LLVM IR, and no _TID_ helper symbols\n' >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "disjoint_slice_len" ]]; then
+        local llvm_ir="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+        local kernel_ir loaded_slice extracted_len
+        kernel_ir="$(
+            awk '
+                /^define ptx_kernel void @write_len\(/ { in_function = 1 }
+                in_function { print }
+                in_function && /^}/ { exit }
+            ' "${llvm_ir}" 2>/dev/null
+        )"
+        loaded_slice="$(
+            sed -nE 's/^[[:space:]]*(%[^ ]+) = load \{ ptr, i64 \}, ptr .*/\1/p' \
+                <<<"${kernel_ir}"
+        )"
+        extracted_len="$(
+            sed -nE 's/^[[:space:]]*%[^ ]+ = extractvalue \{ ptr, i64 \} (%[^,]+), 1$/\1/p' \
+                <<<"${kernel_ir}"
+        )"
+        if [[ ! -s "${llvm_ir}" || -z "${kernel_ir}" \
+            || -z "${loaded_slice}" || -z "${extracted_len}" \
+            || "$(wc -l <<<"${loaded_slice}")" -ne 1 \
+            || "${extracted_len}" != "${loaded_slice}" ]]; then
+            printf 'disjoint_slice_len must load the &DisjointSlice receiver before extracting field 1; the no-inline regression path was bypassed\n' >>"${log}"
             CARGO_EC=1
         fi
     fi

@@ -35355,7 +35355,7 @@ scope = "system"
             resolve_target_contract(
                 "tcgen05_mma",
                 &[selector("kind", "i8"), selector("scale_d", "false")],
-                &[valid.clone()],
+                std::slice::from_ref(&valid),
             )
             .unwrap_err()
             .to_string()
@@ -35380,8 +35380,12 @@ scope = "system"
             target_contract(vec![selector("kind", "f16")], &[("sm_100a", "8.60")]),
         ] {
             assert!(
-                resolve_target_contract("tcgen05_mma", &invalid.selectors, &[invalid.clone()])
-                    .is_err(),
+                resolve_target_contract(
+                    "tcgen05_mma",
+                    &invalid.selectors,
+                    std::slice::from_ref(&invalid)
+                )
+                .is_err(),
                 "{invalid:?}"
             );
         }

@@ -8,8 +8,6 @@
 //! Everything else in this file type-checks; the only error is the missing
 //! `unsafe` block.
 
-#![allow(unreachable_code, unused_variables, unused_mut)]
-
 use cuda_macros::cuda_launch;
 
 // Stand-in for the marker struct `#[kernel]` generates for a kernel
@@ -20,9 +18,10 @@ impl cuda_host::CudaKernel for __dummy_CudaKernel {
     const PTX_NAME: &'static str = "dummy";
 }
 
-fn main() {
-    let stream: std::sync::Arc<cuda_core::CudaStream> = todo!();
-    let module: std::sync::Arc<cuda_core::CudaModule> = todo!();
+fn launch_without_unsafe(
+    stream: std::sync::Arc<cuda_core::CudaStream>,
+    module: std::sync::Arc<cuda_core::CudaModule>,
+) {
     let x = 1.0f32;
 
     cuda_launch! {
@@ -34,3 +33,5 @@ fn main() {
     }
     .unwrap();
 }
+
+fn main() {}

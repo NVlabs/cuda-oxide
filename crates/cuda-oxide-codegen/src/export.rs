@@ -192,8 +192,8 @@ pub fn export_llvm_ir(
     emit_nvvm_ir: bool,
     nvvm_dialect: Option<NvvmIrDialect>,
     debug_kind: DebugKind,
-) -> Result<String, PipelineError> {
-    let llvm_ir = render_llvm_ir(
+) -> Result<llvm_export::export::ExportedModule, PipelineError> {
+    let exported = render_exported_llvm_ir(
         ctx,
         module_op_ptr,
         device_externs,
@@ -202,9 +202,9 @@ pub fn export_llvm_ir(
         debug_kind,
     )?;
 
-    std::fs::write(path, &llvm_ir).map_err(|e| PipelineError::Export(e.to_string()))?;
+    std::fs::write(path, &exported.llvm_ir).map_err(|e| PipelineError::Export(e.to_string()))?;
 
-    Ok(llvm_ir)
+    Ok(exported)
 }
 
 /// Render LLVM text without publishing an artifact.
@@ -222,10 +222,29 @@ pub fn render_llvm_ir(
     nvvm_dialect: Option<NvvmIrDialect>,
     debug_kind: DebugKind,
 ) -> Result<String, PipelineError> {
+    render_exported_llvm_ir(
+        ctx,
+        module_op_ptr,
+        device_externs,
+        emit_nvvm_ir,
+        nvvm_dialect,
+        debug_kind,
+    )
+    .map(|exported| exported.llvm_ir)
+}
+
+fn render_exported_llvm_ir(
+    ctx: &Context,
+    module_op_ptr: Ptr<Operation>,
+    device_externs: &[DeviceExternDecl],
+    emit_nvvm_ir: bool,
+    nvvm_dialect: Option<NvvmIrDialect>,
+    debug_kind: DebugKind,
+) -> Result<llvm_export::export::ExportedModule, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
-    let llvm_ir = if emit_nvvm_ir {
+    let exported = if emit_nvvm_ir {
         let dialect = nvvm_dialect.ok_or_else(|| {
             PipelineError::Export("NVVM export reached without a selected IR dialect".to_string())
         })?;
@@ -233,18 +252,28 @@ pub fn render_llvm_ir(
             inner: llvm_export::export::NvvmExportConfig::new(dialect),
             debug_kind,
         };
-        llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
-            .map_err(PipelineError::Export)?
+        llvm_export::export::export_module_with_externs_and_roots(
+            ctx,
+            &module_op,
+            device_externs,
+            &config,
+        )
+        .map_err(PipelineError::Export)?
     } else {
         let config = PipelineExportConfig {
             inner: llvm_export::export::PtxExportConfig,
             debug_kind,
         };
-        llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
-            .map_err(PipelineError::Export)?
+        llvm_export::export::export_module_with_externs_and_roots(
+            ctx,
+            &module_op,
+            device_externs,
+            &config,
+        )
+        .map_err(PipelineError::Export)?
     };
 
-    Ok(llvm_ir)
+    Ok(exported)
 }
 
 struct PipelineExportConfig<C> {

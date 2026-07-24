@@ -39,7 +39,7 @@
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
     build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
-    llvm_type_contains_i1, make_slice_struct,
+    llvm_type_contains_i1, make_slice_struct, mir_type_abi_align,
 };
 use dialect_mir::ops::{
     MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp, MirInsertFieldOp,
@@ -641,6 +641,7 @@ pub(crate) fn convert_extract_array_element(
 
     let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
     let llvm_array_ty = llvm_export::types::ArrayType::get(ctx, llvm_element_ty, array_size);
+    let abi_align = mir_type_abi_align(ctx, element_ty);
 
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     let one_val = {
@@ -653,10 +654,16 @@ pub(crate) fn convert_extract_array_element(
 
     let alloca_op = llvm::AllocaOp::new(ctx, llvm_array_ty.into(), one_val);
     rewriter.insert_operation(ctx, alloca_op.get_operation());
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, alloca_op.get_operation(), align as u32);
+    }
     let array_ptr = alloca_op.get_operation().deref(ctx).get_result(0);
 
     let store_op = llvm::StoreOp::new(ctx, array_val, array_ptr);
     rewriter.insert_operation(ctx, store_op.get_operation());
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, store_op.get_operation(), align as u32);
+    }
 
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Value(index_val)];
@@ -666,6 +673,9 @@ pub(crate) fn convert_extract_array_element(
 
     let load_op = llvm::LoadOp::new(ctx, element_ptr, llvm_element_ty);
     rewriter.insert_operation(ctx, load_op.get_operation());
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, load_op.get_operation(), align as u32);
+    }
     rewriter.replace_operation(ctx, op, load_op.get_operation());
 
     Ok(())
@@ -2097,6 +2107,62 @@ mod tests {
             },
         )
         .into()
+    }
+
+    fn over_aligned_tuple_ty(ctx: &mut Context) -> TypeHandle {
+        let byte: TypeHandle = IntegerType::get(ctx, 8, Signedness::Unsigned).into();
+        let marker: TypeHandle = MirStructType::get_with_full_layout(
+            ctx,
+            "Align32".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            32,
+        )
+        .into();
+        MirTupleType::get_with_layout(ctx, vec![marker, byte], vec![0, 1], vec![0, 0], 32, 32)
+            .into()
+    }
+
+    #[test]
+    fn dynamic_array_extract_preserves_recursive_element_alignment() {
+        let mut ctx = make_ctx();
+        let tuple_ty = over_aligned_tuple_ty(&mut ctx);
+        let inner: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
+        let outer: TypeHandle = MirArrayType::get(&mut ctx, inner, 3).into();
+        let index_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![index_ty], vec![]);
+        let index = block.deref(&ctx).get_argument(0);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, outer);
+        undef.get_operation().insert_at_back(block, &ctx);
+        let array = undef.get_operation().deref(&ctx).get_result(0);
+        let extract = Operation::new(
+            &mut ctx,
+            mir::MirExtractArrayElementOp::get_concrete_op_info(),
+            vec![inner],
+            vec![array, index],
+            vec![],
+            0,
+        );
+        extract.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).expect("expected llvm.alloca");
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).expect("expected llvm.store");
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected llvm.load");
+        for memory_op in [
+            alloca.get_operation(),
+            store.get_operation(),
+            load.get_operation(),
+        ] {
+            assert_eq!(llvm_export::ops::op_alignment(&ctx, memory_op), Some(32));
+        }
     }
 
     #[test]

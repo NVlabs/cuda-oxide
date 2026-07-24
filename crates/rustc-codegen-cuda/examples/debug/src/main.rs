@@ -181,6 +181,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
     // ====================================================================
+    // Manually invoked failing mode: `debug --fail-assert`
+    //
+    // A failing device-side assert poisons the CUDA context, so this mode
+    // runs INSTEAD of the normal test suite, never alongside it. The
+    // driver prints the assertion message (file:line: Assertion `...`
+    // failed) to stderr and the sync returns CUDA_ERROR_ASSERT (710).
+    // ====================================================================
+    if std::env::args().any(|a| a == "--fail-assert") {
+        println!("--- Failing mode: gpu_assert!() with negative input ---");
+        let input: Vec<i32> = vec![0, 1, -3, 3]; // lane 2 fails `val >= 0`
+        let n = input.len();
+        let input_dev = DeviceBuffer::from_host(&stream, &input)?;
+        let mut output_dev = DeviceBuffer::<i32>::zeroed(&stream, n)?;
+
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let launch = unsafe {
+            module.assert_test(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &input_dev,
+                &mut output_dev,
+            )
+        };
+        let result = launch.and_then(|_| stream.synchronize());
+        match result {
+            Err(e) => {
+                println!("✓ assertion failure surfaced as expected: {e:?}");
+                println!("  (assertion message printed to stderr by the CUDA driver)");
+                return Ok(());
+            }
+            Ok(()) => {
+                println!("✗ FAILED: kernel with a failing gpu_assert! completed normally");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ====================================================================
     // Test 1: Clock cycles measurement
     // ====================================================================
     println!("--- Test 1: clock64() / globaltimer() measurement ---");

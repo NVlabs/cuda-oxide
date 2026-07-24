@@ -4048,7 +4048,7 @@ fn render_raw_mod(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("}\n\n");
     }
-    output.push_str("#[cfg(test)]\nmod tests {\n");
+    output.push_str("#[cfg(test)]\n#[allow(clippy::type_complexity)]\nmod tests {\n");
     for record in &catalog.intrinsics {
         let arguments = record.rust.arguments.join(", ");
         writeln!(

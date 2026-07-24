@@ -458,12 +458,9 @@ fn const_operand_bits(operand: &mir::Operand) -> Option<u128> {
             };
             alloc.read_uint().ok()
         }
-        // Runtime check flags (`UbChecks` and friends). Device code is
-        // built with `-C debug-assertions=off`, so these evaluate to
-        // false; the statement translator lowers them to a constant
-        // false for the same reason. Folding them here lets the proof
-        // skip check-only branches instead of having to prove them.
-        mir::Operand::RuntimeChecks(_) => Some(0),
+        // Keep proof reachability synchronized with collection and operand
+        // translation through the device-wide runtime-check policy.
+        mir::Operand::RuntimeChecks(_) => Some(u128::from(crate::DEVICE_RUNTIME_CHECKS_VALUE)),
         _ => None,
     }
 }

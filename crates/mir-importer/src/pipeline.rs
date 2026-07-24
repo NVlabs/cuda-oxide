@@ -64,6 +64,12 @@ fn stderr_pipeline_trace(message: &str) {
 pub struct CollectedFunction {
     /// The monomorphized stable_mir instance (includes concrete generic args).
     pub instance: Instance,
+    /// Number of blocks in the rustc MIR body from which `instance.body()` is
+    /// converted. The importer verifies that conversion preserved the CFG.
+    pub rustc_mir_block_count: usize,
+    /// Exact per-block rustc successors for this monomorphized instance under
+    /// CUDA Oxide's device runtime-check policy.
+    pub rustc_mono_successors: Vec<Vec<usize>>,
     /// True if this is a GPU kernel entry point (has `#[kernel]` attribute).
     pub is_kernel: bool,
     /// The name to export in PTX. For kernels, this is the user-visible name.
@@ -254,6 +260,8 @@ pub fn run_pipeline(
             &mut ctx,
             &body,
             &func.instance,
+            func.rustc_mir_block_count,
+            &func.rustc_mono_successors,
             func.is_kernel,
             func.is_inline_always,
             Some(&func.export_name),

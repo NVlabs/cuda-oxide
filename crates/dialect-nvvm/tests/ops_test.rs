@@ -5,8 +5,8 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    ActiveMaskOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp, Barrier0Op,
-    ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
+    ActiveMaskOp, AssertFailOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp,
+    Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
     CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
     CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
     ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr, LdmatrixLayoutAttr,
@@ -79,6 +79,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("atomic.rs", "NvvmAtomicCmpxchgOp"),
         ("cluster.rs", "ReadPtxSregClusterIdxOp"),
         ("cluster.rs", "ReadPtxSregNclusterIdOp"),
+        ("debug.rs", "AssertFailOp"),
         ("debug.rs", "VprintfOp"),
         ("grid.rs", "GridSyncOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
@@ -4313,6 +4314,44 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
 
     let vprintf = VprintfOp::build(&mut ctx, pointer, pointer);
     assert!(VprintfOp::new(vprintf).verify(&ctx).is_ok());
+
+    let i64_signless_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let assertfail = AssertFailOp::build(&mut ctx, pointer, pointer, u32_value, pointer, u64_value);
+    assert!(AssertFailOp::new(assertfail).verify(&ctx).is_ok());
+    for (operands, results) in [
+        // message must be a MIR pointer
+        (
+            vec![u32_value, pointer, u32_value, pointer, u64_value],
+            vec![],
+        ),
+        // line must be a 32-bit integer
+        (
+            vec![pointer, pointer, u64_value, pointer, u64_value],
+            vec![],
+        ),
+        // char size must be a 64-bit integer
+        (
+            vec![pointer, pointer, u32_value, pointer, u32_value],
+            vec![],
+        ),
+        // wrong operand count
+        (vec![pointer, pointer, u32_value], vec![]),
+        // must have no results
+        (
+            vec![pointer, pointer, u32_value, pointer, u64_value],
+            vec![i64_signless_ty.into()],
+        ),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            AssertFailOp::get_concrete_op_info(),
+            results,
+            operands,
+            vec![],
+            0,
+        );
+        assert!(AssertFailOp::new(invalid).verify(&ctx).is_err());
+    }
     let bad_vprintf = Operation::new(
         &mut ctx,
         VprintfOp::get_concrete_op_info(),

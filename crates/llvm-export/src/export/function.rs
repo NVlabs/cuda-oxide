@@ -105,7 +105,9 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(ty, output)?;
             writeln!(output, ", align {alignment}").unwrap();
         } else {
-            // Internal linkage: static storage in the global's address space.
+            self.public_globals.push(name.to_string());
+            // Defined static storage in the global's address space. The LLVM
+            // definition retains external linkage for host-side symbol lookup.
             write!(output, "@{name} = addrspace({address_space}) global ").unwrap();
             self.export_type(ty, output)?;
             if let Some(hex) = global.initializer_hex(self.ctx) {
@@ -241,11 +243,19 @@ impl<'a> ModuleExportState<'a> {
         let func_ty = ft_ref
             .downcast_ref::<FuncType>()
             .ok_or("Not a function type")?;
+        let legacy_atomic_add = self.legacy_nvvm_atomic_add_signature(&fixed_func_name, func_ty)?;
+        let is_declaration = func.get_operation().deref(self.ctx).regions().count() == 0;
+        if legacy_atomic_add.is_some() && !is_declaration {
+            return Err(format!(
+                "legacy NVVM atomic-add intrinsic `@{fixed_func_name}` must be a declaration, not a definition"
+            ));
+        }
 
         self.function_types.insert(fixed_func_name.clone(), ft);
 
-        // Track ALL kernels if backend requires annotations for every kernel.
-        if is_kernel && self.track_all_kernels {
+        // Track every kernel as an external root. Backends independently decide
+        // whether to emit annotations for all of them.
+        if is_kernel {
             self.all_kernels.push(KernelInfo {
                 name: fixed_func_name.clone(),
             });
@@ -253,7 +263,6 @@ impl<'a> ModuleExportState<'a> {
 
         // Track device function definitions (not declarations) for @llvm.used
         // preservation in standalone device-function compilation.
-        let is_declaration = func.get_operation().deref(self.ctx).regions().count() == 0;
         if !is_declaration && !is_kernel && has_device_prefix(&func_name) {
             self.device_functions.push(fixed_func_name.clone());
         }
@@ -272,7 +281,13 @@ impl<'a> ModuleExportState<'a> {
                 if i > 0 {
                     write!(output, ", ").unwrap();
                 }
-                self.export_type(*arg_ty, output)?;
+                if i == 0
+                    && let Some((pointee, address_space)) = legacy_atomic_add
+                {
+                    self.export_pointer_to(pointee, address_space, output)?;
+                } else {
+                    self.export_type(*arg_ty, output)?;
+                }
             }
             write!(output, ")").unwrap();
 

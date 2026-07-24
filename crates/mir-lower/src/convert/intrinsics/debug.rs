@@ -10,6 +10,7 @@
 //! | `Clock`        | `llvm_nvvm_read_ptx_sreg_clock`         | `mov %r, %clock`        |
 //! | `Clock64`      | `llvm_nvvm_read_ptx_sreg_clock64`       | `mov %rd, %clock64`     |
 //! | `Globaltimer`  | `llvm_nvvm_read_ptx_sreg_globaltimer`   | `mov %rd, %globaltimer` |
+//! | `AssertFail`   | `call @__assertfail`                    | assertion system call   |
 //! | `Vprintf`      | `call @vprintf`                         | `call vprintf`          |
 
 use crate::helpers;
@@ -24,6 +25,55 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
+
+pub(crate) fn convert_assertfail(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 5 {
+        return pliron::input_err_noloc!(
+            "__assertfail requires 5 operands, got {}",
+            operands.len()
+        );
+    }
+
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let i8_ptr_ty = llvm_types::PointerType::get(ctx, 0);
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+
+    let func_ty = llvm_types::FuncType::get(
+        ctx,
+        void_ty.into(),
+        vec![
+            i8_ptr_ty.into(),
+            i8_ptr_ty.into(),
+            i32_ty.into(),
+            i8_ptr_ty.into(),
+            i64_ty.into(),
+        ],
+        false,
+    );
+
+    let parent_block = op.deref(ctx).get_parent_block().unwrap();
+    helpers::ensure_intrinsic_declared(ctx, parent_block, "__assertfail", func_ty)
+        .map_err(|e| pliron::input_error_noloc!("{}", e))?;
+
+    let sym_name: pliron::identifier::Identifier = "__assertfail".try_into().unwrap();
+    let callee = CallOpCallable::Direct(sym_name);
+    let call_op = llvm::CallOp::new(ctx, callee, func_ty, operands);
+    rewriter.insert_operation(ctx, call_op.get_operation());
+    // AssertFailOp has no results, so there are no uses to rewire;
+    // erase the original op, the same pattern the zero-result cp.async
+    // control ops use. replace_operation trips the result-count check
+    // because the void call carries no replacement values.
+    rewriter.erase_operation(ctx, op);
+
+    Ok(())
+}
 
 pub(crate) fn convert_vprintf(
     ctx: &mut Context,
