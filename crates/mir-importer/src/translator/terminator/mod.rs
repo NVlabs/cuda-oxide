@@ -2020,6 +2020,106 @@ fn extract_func_info(
 /// `t0 = *x; t1 = *y; *x = t1; *y = t0` is valid (the loaded SSA values are
 /// captured before either store runs). Returns a unit result + goto target.
 #[allow(clippy::too_many_arguments)]
+/// Emit `core::intrinsics::copy` (`ptr::copy`) as a `mir.memmove`.
+///
+/// rustc's intrinsic argument order is `(src, dst, count)` with `count` in
+/// pointee elements; `mir.memmove` takes `(dst, src, count)`, so the pointers
+/// are reordered here. `copy` is the overlap-safe variant, so it lowers to
+/// `llvm.memmove` (the non-overlapping `copy_nonoverlapping` instead reaches
+/// MIR as a `CopyNonOverlapping` statement and lowers to `mir.memcpy`). The
+/// intrinsic returns `()`, so a unit value is produced for the destination
+/// before branching to the target, mirroring `emit_typed_swap`.
+#[allow(clippy::too_many_arguments)]
+fn emit_ptr_memmove(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::{MirConstructTupleOp, MirMemmoveOp};
+    use dialect_mir::types::MirTupleType;
+
+    if args.len() != 3 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "ptr::copy intrinsic requires (src, dst, count) operands".to_string()
+            )
+        );
+    }
+
+    // rustc order: (src, dst, count).
+    let (src, last) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (dst, last) =
+        rvalue::translate_operand(ctx, body, &args[1], value_map, block_ptr, last, loc.clone())?;
+    let (count, last) =
+        rvalue::translate_operand(ctx, body, &args[2], value_map, block_ptr, last, loc.clone())?;
+
+    // `mir.memmove` operand order is (dst, src, count).
+    let xfer = Operation::new(
+        ctx,
+        MirMemmoveOp::get_concrete_op_info(),
+        vec![],
+        vec![dst, src, count],
+        vec![],
+        0,
+    );
+    xfer.deref_mut(ctx).set_loc(loc.clone());
+    match last {
+        Some(p) => xfer.insert_after(ctx, p),
+        None => xfer.insert_at_front(block_ptr, ctx),
+    }
+
+    // The intrinsic yields `()`; materialize it for the destination local.
+    let unit_ty = MirTupleType::get(ctx, vec![]);
+    let unit_op = Operation::new(
+        ctx,
+        MirConstructTupleOp::get_concrete_op_info(),
+        vec![unit_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    unit_op.deref_mut(ctx).set_loc(loc.clone());
+    unit_op.insert_after(ctx, xfer);
+    let unit_val = unit_op.deref(ctx).get_result(0);
+
+    let goto_prev = value_map
+        .store_local(ctx, destination.local, unit_val, block_ptr, Some(unit_op))
+        .unwrap_or(unit_op);
+
+    if let Some(target_idx) = target {
+        Ok(helpers::emit_goto(
+            ctx,
+            *target_idx,
+            goto_prev,
+            block_map,
+            loc,
+        ))
+    } else {
+        input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "ptr::copy intrinsic call without target not supported".to_string()
+            )
+        )
+    }
+}
+
 fn emit_typed_swap(
     ctx: &mut Context,
     body: &mir::Body,
@@ -2347,6 +2447,18 @@ fn try_dispatch_intrinsic(
                 name,
             )?))
         }
+        "core::intrinsics::copy" | "std::intrinsics::copy" => Ok(Some(emit_ptr_memmove(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         "core::intrinsics::volatile_load" | "std::intrinsics::volatile_load" => {
             Ok(Some(intrinsics::memory::emit_volatile_load(
                 ctx,
