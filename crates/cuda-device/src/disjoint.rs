@@ -302,15 +302,19 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// Write a value at the given index with bounds checking.
     ///
     /// This is a convenience method that combines bounds checking with
-    /// a direct write, avoiding the need for `unsafe` + `get_unchecked_mut`
+    /// a direct write, avoiding the need for `get_unchecked_mut`
     /// at every write site.
     ///
     /// Returns `true` if the write succeeded (index was in bounds),
     /// `false` otherwise.
     ///
-    /// # Data Race Safety
+    /// # Safety
     ///
-    /// The caller must ensure no two threads write to the same index.
+    /// - `idx` must be less than `self.len()` (bounds checked, but not the data race below).
+    /// - No two threads may write to the same index simultaneously.
+    /// - No thread may read an index while another thread writes to it,
+    ///   unless explicit synchronization (e.g., `sync_threads()`) separates the accesses.
+    ///
     /// This is NOT enforced by the type system (unlike `get_mut` which
     /// uses `ThreadIndex`). Use this only when the algorithm guarantees
     /// unique write indices through means other than `ThreadIndex`,
@@ -325,11 +329,13 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// // Before: verbose unsafe pattern
     /// unsafe { *output.get_unchecked_mut(row * n + col) = value; }
     ///
-    /// // After: bounds-checked write
-    /// output.write(row * n + col, value);
+    /// // After: bounds-checked unsafe write
+    /// // SAFETY: each thread writes to a unique (row, col) index.
+    /// unsafe { output.write(row * n + col, value) };
     /// ```
     #[inline]
-    pub fn write(&mut self, idx: usize, value: T) -> bool {
+    #[must_use]
+    pub unsafe fn write(&mut self, idx: usize, value: T) -> bool {
         if idx < self.len {
             // SAFETY: bounds check passed above. The caller guarantees
             // no two threads write to the same index.
@@ -346,22 +352,23 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// This reads by value (copies the element), which is appropriate for
     /// scalar types like `f32`, `u32`, etc.
     ///
-    /// # Data Race Safety
+    /// # Safety
     ///
-    /// The caller must ensure no other thread is writing to the same index
-    /// concurrently. Reading from indices that are only written by other
-    /// `DisjointSlice` instances requires synchronization (e.g.,
-    /// `sync_threads()`).
+    /// - No thread may write to the same index while this read occurs.
+    /// - If this index was written by another thread, explicit synchronization
+    ///   (e.g., `sync_threads()`) must separate the write from this read.
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// if let Some(val) = output.read(row * n + col) {
+    /// // SAFETY: no concurrent writes to this index.
+    /// if let Some(val) = unsafe { output.read(row * n + col) } {
     ///     // use val
     /// }
     /// ```
     #[inline]
-    pub fn read(&self, idx: usize) -> Option<T>
+    #[must_use]
+    pub unsafe fn read(&self, idx: usize) -> Option<T>
     where
         T: Copy,
     {
