@@ -2963,12 +2963,31 @@ pub fn setup(ctx: &Context) {
     println!("Building cuda-oxide codegen backend...");
     println!();
 
-    backend::build_backend_from_source(&ctx.codegen_crate);
+    let built_so = backend::build_backend_from_source(&ctx.codegen_crate);
 
     println!();
     println!("✓ Backend is ready. You can now use:");
     println!("  cargo oxide run <example>");
     println!("  cargo oxide build <example>");
+
+    // A project outside this repository resolves the backend through the
+    // shared cache, since `find_workspace_root` finds no
+    // `crates/rustc-codegen-cuda` above it. Publishing the build there keeps
+    // those projects on the backend that was just built instead of on whatever
+    // the cache last held.
+    match backend::publish_to_cache(&built_so) {
+        Some(path) => {
+            println!();
+            println!("✓ Published to {}", path.display());
+            println!("  Projects outside this repo will now use this build.");
+        }
+        None => {
+            eprintln!();
+            eprintln!("Warning: could not publish the backend to the shared cache.");
+            eprintln!("Projects outside this repo may keep using an older build.");
+            eprintln!("Set CUDA_OXIDE_BACKEND to this build to override.");
+        }
+    }
 }
 
 // =============================================================================
