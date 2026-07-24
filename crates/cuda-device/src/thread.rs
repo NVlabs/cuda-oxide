@@ -414,6 +414,161 @@ impl<'kernel, const N: usize, IndexSpace> DisjointBlock<'kernel, N, IndexSpace> 
     }
 }
 
+impl<'kernel, const N: usize> DisjointBlock<'kernel, N, Index1D> {
+    /// Extend one tile into `K` tiles, one per pass of the grid over the buffer.
+    ///
+    /// This is the grid-stride form: a thread handles element ranges
+    /// `[tN, tN+N)`, then `[tN + P, tN + P + N)`, and so on, where the period
+    /// `P` is the whole grid's span `G·N`. It covers the strided families the
+    /// single-tile form cannot, such as four stripes at `tid*4 + k*1024` under
+    /// 256 threads - there `G·N = 256·4 = 1024`, so the literal `1024` is not a
+    /// magic number but the period this method derives.
+    ///
+    /// # Why the period is derived and not a parameter
+    ///
+    /// Write the element index as a numeral with three digits:
+    ///
+    /// ```text
+    ///     index  =  k·(G·N)  +  t·N  +  c
+    ///                  ^          ^      ^
+    ///                 pass      thread  within-tile
+    ///
+    ///     digit   range      place value
+    ///     c       [0, N)     1
+    ///     t       [0, G)     N
+    ///     k       [0, K)     G·N
+    /// ```
+    ///
+    /// Each place value is exactly the product of the ranges of all lower
+    /// digits: `1`, then `1·N = N`, then `N·G = G·N`. That is precisely the
+    /// condition for a mixed-radix positional system to be uniquely decodable,
+    /// so the map `(k, t, c) -> index` is injective, with the inverse
+    ///
+    /// ```text
+    ///     c = index mod N
+    ///     t = (index div N) mod G
+    ///     k = index div (G·N)
+    /// ```
+    ///
+    /// Injectivity is the disjointness proof: if `t != t'`, every index from
+    /// thread `t` decodes to `t` and every index from `t'` decodes to `t'`, so
+    /// no index can belong to both. The tiles of distinct threads are therefore
+    /// pairwise disjoint, for every `k`.
+    ///
+    /// A caller-chosen period would break exactly this. Taking `S < G·N` makes
+    /// the `t` and `k` digit ranges overlap, and injectivity fails - with
+    /// `N = 1`, `G = 4`, `S = 2`:
+    ///
+    /// ```text
+    ///     (k=0, t=2)  ->  0·2 + 2  =  2
+    ///     (k=1, t=0)  ->  1·2 + 0  =  2      collision
+    /// ```
+    ///
+    /// Two threads would then hold `&mut` to the same element while each
+    /// pattern looked disjoint in isolation. Deriving `P = G·N` from the launch
+    /// geometry is what rules that out, which is why there is no
+    /// `repeat_with_stride`.
+    ///
+    /// # Scope
+    ///
+    /// Only available for [`Index1D`], where the grid extent is
+    /// `gridDim.x * blockDim.x`. Overflow in `G·N` yields an invalid witness.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Four stripes per thread, period derived from the launch.
+    /// let tiling = thread::index_1d().scale::<4>().repeat::<4>();
+    /// output.for_each_tile(tiling, |k, tile| {
+    ///     *tile = compute_stripe(k);
+    /// });
+    /// ```
+    #[inline(always)]
+    #[must_use]
+    pub fn repeat<const K: usize>(self) -> DisjointTiling<'kernel, N, K> {
+        // G = gridDim.x * blockDim.x, the number of distinct `t` digits.
+        let grid_extent = (gridDim_x() as usize).checked_mul(blockDim_x() as usize);
+        let period = match grid_extent {
+            Some(g) if self.is_valid() && K != 0 => match g.checked_mul(N) {
+                Some(period) if period != 0 && period != usize::MAX => period,
+                _ => usize::MAX,
+            },
+            _ => usize::MAX,
+        };
+        DisjointTiling {
+            start: if period == usize::MAX {
+                usize::MAX
+            } else {
+                self.start
+            },
+            period,
+            _kernel: PhantomData,
+            _not_send_sync: PhantomData,
+        }
+    }
+}
+
+/// Proof that a thread exclusively owns `K` tiles of `N` elements, one per pass
+/// of the grid.
+///
+/// Produced by [`DisjointBlock::repeat`] and consumed by
+/// [`DisjointSlice::for_each_tile`](crate::DisjointSlice::for_each_tile). The
+/// disjointness argument, including why the period is derived rather than
+/// supplied, is on [`DisjointBlock::repeat`].
+///
+/// `!Copy` and `!Clone` for the same reason as [`DisjointBlock`]: duplicating it
+/// would let one thread take the same tile twice.
+pub struct DisjointTiling<'kernel, const N: usize, const K: usize> {
+    /// First element of pass 0, i.e. `t·N`. `usize::MAX` when invalid.
+    start: usize,
+    /// Distance between passes, `G·N`. `usize::MAX` when invalid.
+    period: usize,
+    _kernel: PhantomData<fn(&'kernel mut ()) -> &'kernel mut ()>,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl<'kernel, const N: usize, const K: usize> DisjointTiling<'kernel, N, K> {
+    /// First element of pass 0.
+    #[inline(always)]
+    #[must_use]
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Distance between consecutive passes, `G·N`.
+    #[inline(always)]
+    #[must_use]
+    pub fn period(&self) -> usize {
+        self.period
+    }
+
+    /// Number of passes. Always `K`.
+    #[inline(always)]
+    #[must_use]
+    pub const fn passes(&self) -> usize {
+        K
+    }
+
+    /// Whether the originating witness was valid and the period is usable.
+    #[inline(always)]
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.start != usize::MAX && self.period != usize::MAX && N != 0 && K != 0
+    }
+}
+
+impl<const N: usize, const K: usize> core::fmt::Debug for DisjointTiling<'_, N, K> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DisjointTiling")
+            .field("start", &self.start)
+            .field("period", &self.period)
+            .field("tile_len", &N)
+            .field("passes", &K)
+            .field("valid", &self.is_valid())
+            .finish()
+    }
+}
+
 impl<const N: usize, IndexSpace> core::fmt::Debug for DisjointBlock<'_, N, IndexSpace> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DisjointBlock")

@@ -292,6 +292,75 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
         Some(unsafe { &mut *self.ptr.add(start).cast::<[T; N]>() })
     }
 
+    /// Visit each of the `K` tiles a thread owns, exactly once.
+    ///
+    /// Takes the grid-stride proof from [`DisjointBlock::repeat`] and hands the
+    /// closure one `&mut [T; N]` per pass, with the pass number. Returns how many
+    /// tiles were visited, which is `K` unless the buffer ran out first.
+    ///
+    /// ```rust,ignore
+    /// let tiling = thread::index_1d().scale::<4>().repeat::<4>();
+    /// let done = output.for_each_tile(tiling, |k, tile| {
+    ///     *tile = compute_stripe(k);
+    /// });
+    /// ```
+    ///
+    /// # Why a callback rather than an accessor
+    ///
+    /// A `get_tile_mut(&mut self, k)` taking `k` at runtime could be called
+    /// twice with the same `k`, producing two live `&mut` to the same elements -
+    /// the disjointness proof covers *different* threads and *different* passes,
+    /// not repeated access to one pass. Driving the loop here is what keeps each
+    /// tile handed out once, so the guarantee is structural rather than a rule
+    /// the caller has to follow.
+    ///
+    /// # Soundness
+    ///
+    /// Tiles are pairwise disjoint across both threads and passes, by the
+    /// mixed-radix injectivity argument on [`DisjointBlock::repeat`]. Each is
+    /// bounds-checked before the closure sees it, and iteration stops at the
+    /// first tile that does not fit, so a partially covering launch truncates
+    /// instead of writing past the end.
+    #[inline]
+    pub fn for_each_tile<'kernel, const N: usize, const K: usize>(
+        &mut self,
+        tiling: crate::thread::DisjointTiling<'kernel, N, K>,
+        mut f: impl FnMut(usize, &mut [T; N]),
+    ) -> usize {
+        if size_of::<T>() == 0 || !tiling.is_valid() {
+            return 0;
+        }
+        let (base, period) = (tiling.start(), tiling.period());
+        let mut visited = 0;
+        for k in 0..K {
+            // Checked throughout: a pass whose offset or end wraps must stop the
+            // loop, not fold into a passing bounds test.
+            let Some(offset) = period.checked_mul(k) else {
+                break;
+            };
+            let Some(start) = base.checked_add(offset) else {
+                break;
+            };
+            let Some(end) = start.checked_add(N) else {
+                break;
+            };
+            if end > self.len {
+                break;
+            }
+            // SAFETY:
+            // - The bounds check above proves `start .. start + N` is in range.
+            // - Distinct threads decode to distinct `t` digits and distinct
+            //   passes to distinct `k` digits, so this tile overlaps no other
+            //   tile handed out anywhere in the launch.
+            // - `k` is visited once per loop, so the closure cannot receive two
+            //   references to this tile.
+            // - `[T; N]` has the layout of `N` consecutive `T`.
+            f(k, unsafe { &mut *self.ptr.add(start).cast::<[T; N]>() });
+            visited += 1;
+        }
+        visited
+    }
+
     #[inline]
     pub fn get_mut<'kernel>(&mut self, idx: ThreadIndex<'kernel, IndexSpace>) -> Option<&mut T> {
         let i = idx.get();
@@ -522,5 +591,114 @@ mod block_tests {
         assert!(tile(16, 4).unwrap().1 > len);
         // And the wrapping case is rejected outright.
         assert_eq!(usize::MAX.checked_add(4), None);
+    }
+}
+
+#[cfg(test)]
+mod tiling_algebra_tests {
+    //! Tests for the mixed-radix argument behind `DisjointBlock::repeat`.
+    //!
+    //! `repeat` reads the grid extent from hardware registers, so these exercise
+    //! the arithmetic directly: `phi` below is the same index expression, and the
+    //! properties asserted are the ones the safety of `for_each_tile` rests on.
+
+    /// The index expression: `k·(G·N) + t·N + c`.
+    fn phi(k: usize, t: usize, c: usize, grid: usize, n: usize) -> usize {
+        k * (grid * n) + t * n + c
+    }
+
+    /// The claimed inverse: recover each digit by division and remainder.
+    fn decode(index: usize, grid: usize, n: usize) -> (usize, usize, usize) {
+        (index / (grid * n), (index / n) % grid, index % n)
+    }
+
+    /// `phi` is injective on the digit domain, which is the whole proof: an index
+    /// determines the thread it came from, so two threads cannot share one.
+    #[test]
+    fn index_expression_is_injective() {
+        for &(grid, n, k_max) in &[(4usize, 1usize, 3usize), (4, 4, 3), (8, 2, 4), (3, 5, 2)] {
+            for k in 0..k_max {
+                for t in 0..grid {
+                    for c in 0..n {
+                        let v = phi(k, t, c, grid, n);
+                        assert_eq!(
+                            decode(v, grid, n),
+                            (k, t, c),
+                            "decode failed for k={k} t={t} c={c} (G={grid}, N={n})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The consequence used by `for_each_tile`: tiles belonging to different
+    /// threads never overlap, across every pass.
+    #[test]
+    fn tiles_of_distinct_threads_never_overlap() {
+        let (grid, n, passes) = (8usize, 4usize, 3usize);
+        let mut owner = [usize::MAX; 8 * 4 * 3];
+        for k in 0..passes {
+            for t in 0..grid {
+                for c in 0..n {
+                    let v = phi(k, t, c, grid, n);
+                    assert_eq!(
+                        owner[v],
+                        usize::MAX,
+                        "element {v} claimed twice: by thread {} and thread {t}",
+                        owner[v]
+                    );
+                    owner[v] = t;
+                }
+            }
+        }
+        // Every element in the covered span has exactly one owner.
+        assert!(
+            owner.iter().all(|&o| o != usize::MAX),
+            "grid-stride passes must tile the span with no gaps"
+        );
+    }
+
+    /// The reason the period is derived rather than supplied. With a period
+    /// smaller than `G·N` the thread and pass digits overlap and two threads
+    /// collide on the same element - so a `repeat_with_stride` taking a
+    /// caller-chosen value would be unsound.
+    #[test]
+    fn a_period_below_grid_span_collides() {
+        let (grid, n) = (4usize, 1usize);
+        let bad_period = 2; // G·N would be 4.
+        // (k=0, t=2) and (k=1, t=0) both land on element 2.
+        let a = 0 * bad_period + 2 * n;
+        let b = 1 * bad_period + 0 * n;
+        assert_eq!(a, b, "the counterexample must actually collide");
+
+        // The derived period keeps them apart.
+        let good_period = grid * n;
+        assert_ne!(
+            0 * good_period + 2 * n,
+            1 * good_period + 0 * n,
+            "period G·N must separate the pass and thread digits"
+        );
+    }
+
+    /// A period larger than `G·N` stays injective but leaves gaps, so it is
+    /// sound yet wasteful. Recorded to show the derived period is the tight
+    /// choice, not merely a safe one.
+    #[test]
+    fn a_period_above_grid_span_is_injective_but_leaves_gaps() {
+        let (grid, n, passes) = (4usize, 1usize, 2usize);
+        let period = grid * n + 1;
+        let mut seen = [false; 16];
+        for k in 0..passes {
+            for t in 0..grid {
+                let v = k * period + t * n;
+                assert!(!seen[v], "still injective");
+                seen[v] = true;
+            }
+        }
+        let covered = seen.iter().filter(|&&s| s).count();
+        assert_eq!(covered, grid * passes);
+        // Element 4 falls in the gap: no (k, t) reaches it.
+        assert!(!seen[4], "an oversized period must leave the span gapped");
     }
 }
