@@ -205,6 +205,14 @@ pub const CALLEE_FDIV_FAST: &str = placeholder!("fdiv_fast");
 /// Placeholder call used for `core::intrinsics::frem_fast` (generic over float type).
 pub const CALLEE_FREM_FAST: &str = placeholder!("frem_fast");
 
+/// Placeholder call used for `core::intrinsics::select_unpredictable`.
+///
+/// Backs `core::hint::select_unpredictable`, which libcore reaches
+/// pervasively from branchless helpers (slice sorting, `Ord` combinators).
+/// Lowers to an LLVM `select`; the "unpredictable" branch-weight hint has
+/// no device semantics and is dropped.
+pub const CALLEE_SELECT_UNPREDICTABLE: &str = placeholder!("select_unpredictable");
+
 /// Return whether an internal placeholder lowers to a CUDA libdevice call.
 ///
 /// This is deliberately an exact allow-list. Other placeholder families lower
