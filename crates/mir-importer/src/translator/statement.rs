@@ -714,6 +714,30 @@ pub fn translate_statement(
                             loc,
                         )
                     }
+                    (
+                        mir::ProjectionElem::Index(_) | mir::ProjectionElem::ConstantIndex { .. },
+                        mir::ProjectionElem::Field(_, _),
+                    ) => {
+                        // `_local[i].field` or `_local[const].field`: index into
+                        // an array/slice element, then step into a struct field.
+                        // The walk-and-store helper resolves the full address
+                        // chain, mirroring the (Field, Index) and (Index, Index)
+                        // arms above. The store target of an assignment is always
+                        // a mutable place, so the helper's mutable-address request
+                        // is correct here.
+                        store_through_place_address(
+                            ctx,
+                            body,
+                            value_map,
+                            place,
+                            result_value,
+                            rvalue_op_opt,
+                            last_inserted,
+                            prev_op,
+                            block_ptr,
+                            loc,
+                        )
+                    }
                     _ => input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
