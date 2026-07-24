@@ -258,9 +258,22 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// ```
     ///
     /// Returning `&mut [T; N]` rather than `&mut [T]` is deliberate: the length
-    /// is static, so this is also the shape the codegen can fuse into a single
-    /// wide access when `[T; N]` carries the matching alignment (see the
-    /// `vectorization` example).
+    /// is static, so the tile is a value the caller can assign in one statement.
+    ///
+    /// It does **not** widen the access, and it is worth being explicit about
+    /// that. Measured on sm_86, whether an access becomes `LDG.E.128` /
+    /// `STG.E.128` is decided by the *alignment of the element type*, not by the
+    /// static length: a 16-byte-aligned aggregate fuses, the same payload at
+    /// 4-byte alignment does not. Since `T` here is the element type of a
+    /// `DisjointSlice<T>`, a `DisjointSlice<f32>` yields `&mut [f32; N]` with
+    /// 4-byte alignment, which stays scalar.
+    ///
+    /// To get wide accesses, make the element type aligned and use
+    /// [`Self::get_mut`] on a `DisjointSlice<F32x4>` where
+    /// `#[repr(C, align(16))] struct F32x4([f32; 4])`. That path emits one
+    /// `LDG.E.128` plus one `STG.E.128` with no `unsafe` and no inline PTX; see
+    /// the `vectorization` example. This method is about the disjointness proof
+    /// for multi-element access, not about access width.
     ///
     /// # Soundness
     ///
