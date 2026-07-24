@@ -443,6 +443,30 @@ impl RustFloatMathIntrinsic {
         }
     }
 
+    /// Return the LLVM intrinsic name for operations that can bypass libdevice.
+    ///
+    /// `abs` and `copysign` are pure bitwise operations on the IEEE 754 sign
+    /// bit. LLVM's `llvm.fabs.*` and `llvm.copysign.*` lower directly to
+    /// native PTX (`abs.f32`, `copysign.f32`), so routing them through
+    /// libdevice adds an unnecessary function call and libdevice dependency.
+    fn llvm_intrinsic_name(self, ctx: &Context, result_ty: TypeHandle) -> Option<&'static str> {
+        match self {
+            Self::Fabs => {
+                let ty_ref = result_ty.deref(ctx);
+                if ty_ref.is::<FP32Type>() {
+                    Some("llvm.fabs.f32")
+                } else if ty_ref.is::<FP64Type>() {
+                    Some("llvm.fabs.f64")
+                } else {
+                    None
+                }
+            }
+            Self::CopysignF32 => Some("llvm.copysign.f32"),
+            Self::CopysignF64 => Some("llvm.copysign.f64"),
+            _ => None,
+        }
+    }
+
     /// Return the equivalent fast-math binop kind, if this intrinsic is one.
     fn fast_binop(self) -> Option<FastFloatBinop> {
         match self {
@@ -1052,7 +1076,17 @@ fn convert_rust_float_math_intrinsic(
 
     let result_mir_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let result_ty = convert_type(ctx, result_mir_ty).map_err(anyhow_to_pliron)?;
-    let intrinsic_name = intrinsic.libdevice_name(ctx, result_ty, loc.clone())?;
+
+    // `abs` and `copysign` are pure sign-bit operations with direct LLVM
+    // intrinsic equivalents. Using `llvm.fabs.*` / `llvm.copysign.*`
+    // avoids a libdevice function call and removes the libNVVM dependency
+    // for kernels that only use these operations.
+    let intrinsic_name = if let Some(llvm_name) = intrinsic.llvm_intrinsic_name(ctx, result_ty) {
+        llvm_name
+    } else {
+        intrinsic.libdevice_name(ctx, result_ty, loc.clone())?
+    };
+
     let arg_types = args.iter().map(|arg| arg.get_type(ctx)).collect::<Vec<_>>();
     let func_ty = llvm_types::FuncType::get(ctx, result_ty, arg_types, false);
     let parent_block = op.deref(ctx).get_parent_block().ok_or_else(|| {
@@ -1759,5 +1793,54 @@ mod tests {
             "__nv_fabs"
         );
         assert!(fabs_libdevice_name(&ctx, i32_ty, loc).is_err());
+    }
+
+    /// `llvm_intrinsic_name` returns direct LLVM intrinsic names for `fabs`
+    /// and `copysign`, bypassing libdevice. Other intrinsics return `None`.
+    #[test]
+    fn test_fabs_and_copysign_use_llvm_intrinsics() {
+        let ctx = Context::new();
+        let f32_ty = FP32Type::get(&ctx).into();
+        let f64_ty = FP64Type::get(&ctx).into();
+
+        // fabs -> llvm.fabs.*
+        assert_eq!(
+            RustFloatMathIntrinsic::Fabs.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.fabs.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::Fabs.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.fabs.f64")
+        );
+
+        // copysign -> llvm.copysign.*
+        assert_eq!(
+            RustFloatMathIntrinsic::CopysignF32.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.copysign.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::CopysignF64.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.copysign.f64")
+        );
+
+        // Transcendentals still return None (they need libdevice).
+        assert_eq!(
+            RustFloatMathIntrinsic::SinF32.llvm_intrinsic_name(&ctx, f32_ty),
+            None
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::SqrtF64.llvm_intrinsic_name(&ctx, f64_ty),
+            None
+        );
+
+        // max/min still return None (NaN semantics need review).
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF32.llvm_intrinsic_name(&ctx, f32_ty),
+            None
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF64.llvm_intrinsic_name(&ctx, f64_ty),
+            None
+        );
     }
 }
