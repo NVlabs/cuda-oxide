@@ -2492,6 +2492,13 @@ pub enum ScalarMathFormat {
 pub enum ScalarMathOperation {
     Sin,
     Cos,
+    /// Deferred: no generated variant yet. LLVM 22 renamed the intrinsic to
+    /// the overloaded `llvm.nvvm.ex2.approx.f32`/`.f16` family, which the
+    /// evidence import does not resolve; the legacy `llvm.nvvm.ex2.approx.f`
+    /// and `.ftz.f` names still select directly on both llc 21 and 22, so a
+    /// future overlay entry can admit ex2 through the legacy names (or via
+    /// inline PTX like sin/cos). The variant exists so the family enum
+    /// already covers the full PTX instruction set.
     Ex2,
     Lg2,
     Rcp,

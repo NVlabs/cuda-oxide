@@ -77,7 +77,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 44;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 57;
+const OVERLAY_SHARD_SCHEMA: u32 = 58;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -107,6 +107,7 @@ const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
 const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
 const TCGEN05_CONTROL_SHARD_SCHEMA: u32 = 56;
 const TCGEN05_MMA_SHARD_SCHEMA: u32 = 57;
+const SCALAR_MATH_SHARD_SCHEMA: u32 = 58;
 pub(crate) const CATALOG_SCHEMA: u32 = 44;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
@@ -1253,6 +1254,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.scalar_arithmetic.is_none() || shard.schema >= SCALAR_ARITHMETIC_SHARD_SCHEMA,
         "compact scalar-arithmetic admission requires overlay shard schema {}",
         SCALAR_ARITHMETIC_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.scalar_math.is_none() || shard.schema >= SCALAR_MATH_SHARD_SCHEMA,
+        "compact scalar-math admission requires overlay shard schema {}",
+        SCALAR_MATH_SHARD_SCHEMA
     );
     ensure!(
         shard.extended_minmax.is_none() || shard.schema >= EXTENDED_MINMAX_SHARD_SCHEMA,
@@ -16151,7 +16157,13 @@ struct ScalarMathRecipe {
     ptx_modifiers: Vec<String>,
     ptx_isa_section: &'static str,
     ptx_isa_url: &'static str,
-    /// For some intrinsics, LLVM has no selection pattern so we must always use inline PTX.
+    /// The generator's tblgen import found no DAG selection pattern for the
+    /// intrinsic, so the lowering routes it through inline PTX. Note this is
+    /// an import limitation, not an llc one: llc still selects these
+    /// intrinsics through NVVMIntrinsic-class pattern matching, which the
+    /// evidence import cannot see. Promoting them to typed calls once the
+    /// import understands those patterns would reopen them to LLVM
+    /// optimization.
     force_inline_ptx: bool,
 }
 
@@ -16215,7 +16227,11 @@ fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
         (F64, Rcp, Rz, Preserve),
         (F64, Rcp, Rm, Preserve),
         (F64, Rcp, Rp, Preserve),
-        // rsqrt: approx only (f64 ftz produces invalid PTX)
+        // rsqrt: approx only (PTX has no rounded rsqrt). The f64+ftz variant
+        // is valid PTX (`rsqrt.approx.ftz.f64` assembles for sm_80+, and LLVM
+        // selects `llvm.nvvm.rsqrt.approx.ftz.d` directly); it is deferred
+        // only because it has not been probed under the pinned evidence
+        // profile yet, not because the instruction is invalid.
         (F32, Rsqrt, Approx, Preserve),
         (F32, Rsqrt, Approx, Ftz),
         (F64, Rsqrt, Approx, Preserve),
@@ -16268,7 +16284,11 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
         .map(str::to_owned)
         .collect::<Vec<_>>();
 
-    // Check which intrinsics lack LLVM selection patterns and need inline PTX
+    // Operations whose llvm.nvvm.* records carry no *imported* DAG selection
+    // pattern in the pinned evidence (sel=0). llc itself still selects them
+    // (via NVVMIntrinsic-class patterns the tblgen import cannot see), but
+    // the evidence-driven contract only admits typed calls backed by an
+    // imported selection, so these route through inline PTX for now.
     let force_inline_ptx = matches!(
         operation,
         ScalarMathOperation::Sin

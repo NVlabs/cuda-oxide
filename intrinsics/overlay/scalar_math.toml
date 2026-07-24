@@ -1,6 +1,6 @@
 # Reviewed scalar floating-point math (unary transcendental and reciprocal).
 
-schema = 45
+schema = 58
 family = "scalar_math"
 
 [scalar_math]
