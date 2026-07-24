@@ -126,6 +126,7 @@
 //! | Flag                                  | Purpose                | Why Required                                                                                               |
 //! |---------------------------------------|------------------------|------------------------------------------------------------------------------------------------------------|
 //! | `-Z mir-enable-passes=-JumpThreading` | Disable JumpThreading  | **CRITICAL**: JumpThreading duplicates barrier calls into branches, breaking GPU synchronization semantics |
+//! | `-Z always-encode-mir`                | Encode cross-crate MIR | Device codegen is whole-program: without it, a dependency function that is neither `#[inline]` nor generic (canonically a recursive one) is *called* by the emitted IR but never *defined*, failing with "Symbol not found" |
 //!
 //! Recommended for production:
 //!
@@ -270,6 +271,7 @@
 //!     -C opt-level=3 \
 //!     -C debug-assertions=off \
 //!     -Z mir-enable-passes=-JumpThreading \
+//!     -Z always-encode-mir \
 //!     -Z codegen-backend=./target/debug/librustc_codegen_cuda.so \
 //!     my_kernel.rs
 //! ```

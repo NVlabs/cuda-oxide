@@ -86,6 +86,7 @@ pub mod packed;
 pub mod prmt;
 pub mod scalar_arithmetic;
 pub mod scalar_conversion;
+pub mod scalar_math;
 pub mod tma;
 pub mod warp;
 pub mod wgmma;

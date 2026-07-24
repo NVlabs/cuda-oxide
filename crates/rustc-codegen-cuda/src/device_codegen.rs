@@ -749,6 +749,7 @@ pub fn generate_device_code<'tcx>(
             show_llvm_dialect: show_llvm,
             emit_nvvm_ir,
             target_arch,
+            target_arch_source: "CUDA_OXIDE_TARGET",
             device_arch_hint,
             debug_kind,
             allow_fma_contraction,

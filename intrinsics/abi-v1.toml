@@ -5474,3 +5474,226 @@ status = "active"
 catalog_id = "tcgen05_mma_ws_e2m1"
 operation_key = "tcgen05.mma.ws.tensor.e2m1"
 raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0782"
+status = "active"
+catalog_id = "sin_approx_f32"
+operation_key = "scalar.math.sin.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0783"
+status = "active"
+catalog_id = "sin_approx_ftz_f32"
+operation_key = "scalar.math.sin.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0784"
+status = "active"
+catalog_id = "cos_approx_f32"
+operation_key = "scalar.math.cos.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0785"
+status = "active"
+catalog_id = "cos_approx_ftz_f32"
+operation_key = "scalar.math.cos.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0786"
+status = "active"
+catalog_id = "lg2_approx_f32"
+operation_key = "scalar.math.lg2.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0787"
+status = "active"
+catalog_id = "lg2_approx_ftz_f32"
+operation_key = "scalar.math.lg2.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0788"
+status = "active"
+catalog_id = "rcp_approx_ftz_f32"
+operation_key = "scalar.math.rcp.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0789"
+status = "active"
+catalog_id = "rcp_rn_f32"
+operation_key = "scalar.math.rcp.rn.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0790"
+status = "active"
+catalog_id = "rcp_rn_ftz_f32"
+operation_key = "scalar.math.rcp.rn.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0791"
+status = "active"
+catalog_id = "rcp_rz_f32"
+operation_key = "scalar.math.rcp.rz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0792"
+status = "active"
+catalog_id = "rcp_rz_ftz_f32"
+operation_key = "scalar.math.rcp.rz.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0793"
+status = "active"
+catalog_id = "rcp_rm_f32"
+operation_key = "scalar.math.rcp.rm.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0794"
+status = "active"
+catalog_id = "rcp_rm_ftz_f32"
+operation_key = "scalar.math.rcp.rm.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0795"
+status = "active"
+catalog_id = "rcp_rp_f32"
+operation_key = "scalar.math.rcp.rp.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0796"
+status = "active"
+catalog_id = "rcp_rp_ftz_f32"
+operation_key = "scalar.math.rcp.rp.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0797"
+status = "active"
+catalog_id = "rcp_approx_ftz_f64"
+operation_key = "scalar.math.rcp.approx.ftz.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0798"
+status = "active"
+catalog_id = "rcp_rn_f64"
+operation_key = "scalar.math.rcp.rn.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0799"
+status = "active"
+catalog_id = "rcp_rz_f64"
+operation_key = "scalar.math.rcp.rz.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0800"
+status = "active"
+catalog_id = "rcp_rm_f64"
+operation_key = "scalar.math.rcp.rm.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0801"
+status = "active"
+catalog_id = "rcp_rp_f64"
+operation_key = "scalar.math.rcp.rp.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0802"
+status = "active"
+catalog_id = "rsqrt_approx_f32"
+operation_key = "scalar.math.rsqrt.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0803"
+status = "active"
+catalog_id = "rsqrt_approx_ftz_f32"
+operation_key = "scalar.math.rsqrt.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0804"
+status = "active"
+catalog_id = "rsqrt_approx_f64"
+operation_key = "scalar.math.rsqrt.approx.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0805"
+status = "active"
+catalog_id = "sqrt_approx_f32"
+operation_key = "scalar.math.sqrt.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0806"
+status = "active"
+catalog_id = "sqrt_approx_ftz_f32"
+operation_key = "scalar.math.sqrt.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0807"
+status = "active"
+catalog_id = "sqrt_rn_f32"
+operation_key = "scalar.math.sqrt.rn.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0808"
+status = "active"
+catalog_id = "sqrt_rn_ftz_f32"
+operation_key = "scalar.math.sqrt.rn.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0809"
+status = "active"
+catalog_id = "sqrt_rz_f32"
+operation_key = "scalar.math.sqrt.rz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0810"
+status = "active"
+catalog_id = "sqrt_rz_ftz_f32"
+operation_key = "scalar.math.sqrt.rz.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0811"
+status = "active"
+catalog_id = "sqrt_rm_f32"
+operation_key = "scalar.math.sqrt.rm.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0812"
+status = "active"
+catalog_id = "sqrt_rm_ftz_f32"
+operation_key = "scalar.math.sqrt.rm.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0813"
+status = "active"
+catalog_id = "sqrt_rp_f32"
+operation_key = "scalar.math.sqrt.rp.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0814"
+status = "active"
+catalog_id = "sqrt_rp_ftz_f32"
+operation_key = "scalar.math.sqrt.rp.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+[[entry]]
+abi_id = "i0815"
+status = "active"
+catalog_id = "sqrt_rn_f64"
+operation_key = "scalar.math.sqrt.rn.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0816"
+status = "active"
+catalog_id = "sqrt_rz_f64"
+operation_key = "scalar.math.sqrt.rz.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0817"
+status = "active"
+catalog_id = "sqrt_rm_f64"
+operation_key = "scalar.math.sqrt.rm.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+[[entry]]
+abi_id = "i0818"
+status = "active"
+catalog_id = "sqrt_rp_f64"
+operation_key = "scalar.math.sqrt.rp.f64"
+raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }

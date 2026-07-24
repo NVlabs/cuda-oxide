@@ -1192,6 +1192,10 @@ fn translate_call(
     // pre-existing semantic: the trap only makes it safe, where the bare
     // `unreachable` previously emitted here was UB that let `opt` delete
     // the whole panic path.
+    //
+    // Panic entry points additionally never get here with any statements
+    // translated ahead of them: `block::translate_block` recognizes the same
+    // shape via [`is_dropped_panic_call`] and emits the trap directly.
     if target_usize.is_none() {
         // This is a diverging call (returns !) - emit trap + unreachable
         // Examples: unwrap_failed(), panic!(), abort()
@@ -1673,6 +1677,58 @@ fn emit_unreachable_after(
         op.insert_at_front(block_ptr, ctx);
     }
     op
+}
+
+/// Returns true for the panic entry points in `core` (and the `std`
+/// re-export) that mark a basic block as a panic path.
+///
+/// This is the single source of truth for that test. The codegen collector
+/// (`rustc-codegen-cuda/src/collector.rs`) imports it so the callees it
+/// deliberately does not collect are exactly the calls this translator drops
+/// in favour of a device trap: every call this predicate accepts has to be
+/// dropped here instead of being emitted as a call to a symbol the module
+/// never defines.
+///
+/// The substring match is intentionally broad: a user function whose path
+/// contains a `panicking` module segment is also treated as a panic entry
+/// and trapped rather than translated.
+pub fn is_panic_entry_path(fn_path: &str) -> bool {
+    fn_path.contains("::panicking::") || fn_path.contains("::rt::panic")
+}
+
+/// True when `term` is a diverging call into a panic entry point, i.e. exactly
+/// the shape `translate_call` (private to this module) drops in favour of a
+/// device trap.
+///
+/// Callers use this to recognize a block that lowers to nothing but a trap,
+/// before spending any work on its contents.
+pub fn is_dropped_panic_call(term: &mir::Terminator) -> bool {
+    let mir::TerminatorKind::Call {
+        func: mir::Operand::Constant(const_op),
+        target: None,
+        ..
+    } = &term.kind
+    else {
+        return false;
+    };
+    let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, _)) =
+        const_op.const_.ty().kind()
+    else {
+        return false;
+    };
+    is_panic_entry_path(fn_def.name().as_str())
+}
+
+/// Lowers a block whose terminator [`is_dropped_panic_call`] to the device
+/// trap alone, at the panic call's source location.
+pub fn emit_dropped_panic_trap(
+    ctx: &mut Context,
+    term: &mir::Terminator,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+) -> Ptr<Operation> {
+    let loc = span_to_location(ctx, term.span);
+    emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc)
 }
 
 /// Terminates the block with `nvvm.trap` followed by `mir.unreachable`.
@@ -2758,5 +2814,67 @@ fn try_dispatch_intrinsic(
 
         // Not an intrinsic
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The importer traps exactly the calls the codegen collector declines to
+    /// collect. If the two predicates drift apart, one side emits a call to a
+    /// symbol the other never defines.
+    #[test]
+    fn panic_entry_paths_agree_with_the_collector_predicate() {
+        assert!(is_panic_entry_path("core::panicking::panic"));
+        assert!(is_panic_entry_path("core::panicking::panic_fmt"));
+        assert!(is_panic_entry_path("core::panicking::panic_bounds_check"));
+        assert!(is_panic_entry_path("std::rt::panic_fmt"));
+
+        assert!(!is_panic_entry_path(
+            "core::slice::<impl [T]>::split_at_mut"
+        ));
+        assert!(!is_panic_entry_path("my_crate::panic_helper"));
+        assert!(!is_panic_entry_path("my_crate::panicking_but_mine"));
+    }
+
+    /// A dropped panic call must leave `nvvm.trap` (carrying its ABI marker,
+    /// or the target-requirements verifier rejects it) followed by
+    /// `mir.unreachable`, and nothing else: the message-building statements
+    /// the call would have consumed are never translated.
+    #[test]
+    fn dropped_panic_block_lowers_to_marked_trap_then_unreachable() {
+        use dialect_mir::ops::MirUnreachableOp;
+        use pliron::builtin::attributes::StringAttr;
+        use pliron::identifier::Identifier;
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let block_ptr = BasicBlock::new(&mut ctx, None, vec![]);
+        emit_trap_unreachable_after(&mut ctx, block_ptr, None, Location::Unknown);
+
+        let ops: Vec<Ptr<Operation>> = block_ptr.deref(&ctx).iter(&ctx).collect();
+        assert_eq!(
+            ops.len(),
+            2,
+            "a dropped panic block holds trap + unreachable"
+        );
+        let trap = Operation::get_op::<dialect_nvvm::ops::TrapOp>(ops[0], &ctx)
+            .expect("first op is `nvvm.trap`");
+        assert!(
+            Operation::get_op::<MirUnreachableOp>(ops[1], &ctx).is_some(),
+            "second op is `mir.unreachable`"
+        );
+
+        let marker_key =
+            Identifier::try_from(cuda_oxide_codegen::__private::GENERATED_INTRINSIC_MARKER_ATTR)
+                .unwrap();
+        let trap_ref = trap.get_operation().deref(&ctx);
+        let marker: &StringAttr = trap_ref
+            .attributes
+            .get(&marker_key)
+            .expect("`nvvm.trap` carries its generated-intrinsic ABI marker");
+        assert_eq!(String::from(marker.clone()), "v1:i0295");
     }
 }

@@ -45,13 +45,14 @@ use crate::model::{
     ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
     ScalarConversion, ScalarConversionAdapter, ScalarConversionAdmission,
     ScalarConversionDestinationFormat, ScalarConversionResultRepresentation,
-    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, SparseMma,
-    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
-    SparseMmaF8F6F4Admission, SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission,
-    SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata, SparseMmaOverflow,
-    SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
-    SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
-    SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
+    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, ScalarMath,
+    ScalarMathAdmission, ScalarMathFormat, ScalarMathOperation, ScalarMathPrecision,
+    ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
+    SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
+    SparseMmaShape, SpecialRegister, SpecialRegisterAdmission, SpecialRegisterKind,
+    SpecialRegisterLlvmExclusion, SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, TargetContract, TargetSelectorBinding,
     Tcgen05, Tcgen05Adapter, Tcgen05Admission, Tcgen05Cp, Tcgen05CpAdmissionVariant,
@@ -76,7 +77,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 44;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 57;
+const OVERLAY_SHARD_SCHEMA: u32 = 58;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -106,6 +107,7 @@ const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
 const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
 const TCGEN05_CONTROL_SHARD_SCHEMA: u32 = 56;
 const TCGEN05_MMA_SHARD_SCHEMA: u32 = 57;
+const SCALAR_MATH_SHARD_SCHEMA: u32 = 58;
 pub(crate) const CATALOG_SCHEMA: u32 = 44;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
@@ -932,6 +934,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
         let scalar_conversion_admission = shard.scalar_conversion.take();
         let scalar_arithmetic_admission = shard.scalar_arithmetic.take();
+        let scalar_math_admission = shard.scalar_math.take();
         let extended_minmax_admission = shard.extended_minmax.take();
         let cluster_sreg_admission = shard.cluster_sreg.take();
         let cluster_barrier_admission = shard.cluster_barrier.take();
@@ -1057,6 +1060,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact scalar-arithmetic admission must be the only content of its shard"
             );
             shard.intrinsics = expand_scalar_arithmetic_admission(&admission)?;
+        }
+        if let Some(admission) = scalar_math_admission {
+            ensure!(
+                shard.family == "scalar_math" && shard.intrinsics.is_empty(),
+                "compact scalar-math admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_scalar_math_admission(&admission)?;
         }
         if let Some(admission) = extended_minmax_admission {
             ensure!(
@@ -1244,6 +1254,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.scalar_arithmetic.is_none() || shard.schema >= SCALAR_ARITHMETIC_SHARD_SCHEMA,
         "compact scalar-arithmetic admission requires overlay shard schema {}",
         SCALAR_ARITHMETIC_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.scalar_math.is_none() || shard.schema >= SCALAR_MATH_SHARD_SCHEMA,
+        "compact scalar-math admission requires overlay shard schema {}",
+        SCALAR_MATH_SHARD_SCHEMA
     );
     ensure!(
         shard.extended_minmax.is_none() || shard.schema >= EXTENDED_MINMAX_SHARD_SCHEMA,
@@ -1523,7 +1538,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -1547,6 +1562,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.cluster_memory,
             record.scalar_conversion,
             record.scalar_arithmetic,
+            record.scalar_math,
             record.extended_minmax,
             record.tcgen05,
         );
@@ -1961,6 +1977,10 @@ fn validate_policy(
             policy,
             declaration.context("scalar_arithmetic requires imported LLVM declaration")?,
         )?,
+        "scalar_math" => validate_scalar_math_policy(
+            policy,
+            declaration.context("scalar_math requires imported LLVM declaration")?,
+        )?,
         "extended_minmax" => validate_extended_minmax_policy(
             policy,
             declaration.context("extended_minmax requires imported LLVM declaration")?,
@@ -2100,6 +2120,11 @@ fn validate_policy(
         policy.id
     );
     ensure!(
+        (policy.family == "scalar_math") == policy.scalar_math.is_some(),
+        "{} mixes the scalar-math contract with another generated family",
+        policy.id
+    );
+    ensure!(
         (policy.family == "extended_minmax") == policy.extended_minmax.is_some(),
         "{} mixes the extended-minmax contract with another generated family",
         policy.id
@@ -2145,7 +2170,12 @@ fn validate_policy(
                         && declaration
                             .properties
                             .iter()
-                            .any(|property| property == "IntrSpeculatable")),
+                            .any(|property| property == "IntrSpeculatable"))
+                    || (policy.family == "scalar_math"
+                        && declaration
+                            .properties
+                            .iter()
+                            .any(|property| property == "IntrNoMem")),
                 "{} is marked pure, but its imported declaration is not an NVVMPureIntrinsic",
                 policy.id
             );
@@ -2216,6 +2246,16 @@ fn validate_policy(
                 && policy.tcgen05.as_ref().is_some_and(|tcgen05| {
                     tcgen05.source_contract
                         == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
+                }))
+            || (policy.family == "scalar_math"
+                && policy.scalar_math.as_ref().is_some_and(|sm| {
+                    matches!(
+                        sm.operation,
+                        ScalarMathOperation::Sin
+                            | ScalarMathOperation::Cos
+                            | ScalarMathOperation::Lg2
+                            | ScalarMathOperation::Rsqrt
+                    )
                 }));
         ensure!(
             !declaration.selections.is_empty() || selectionless_closed_family,
@@ -2303,6 +2343,19 @@ fn validate_policy(
                 2
             }
             "cluster_memory" if policy.id == "map_shared_rank" => 2,
+            "scalar_math"
+                if policy.scalar_math.as_ref().is_some_and(|sm| {
+                    matches!(
+                        sm.operation,
+                        ScalarMathOperation::Sin
+                            | ScalarMathOperation::Cos
+                            | ScalarMathOperation::Lg2
+                            | ScalarMathOperation::Rsqrt
+                    )
+                }) =>
+            {
+                0
+            }
             _ => 1,
         };
         ensure!(
@@ -2851,6 +2904,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -3314,6 +3368,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -3913,6 +3968,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -5526,6 +5582,7 @@ fn materialize_tcgen05_mma_variant(
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
+        scalar_math: None,
         extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
@@ -6410,6 +6467,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -10449,6 +10507,7 @@ fn expand_special_register_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -11084,6 +11143,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
+        scalar_math: None,
         extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
@@ -12018,6 +12078,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -14791,6 +14852,7 @@ fn packed_conversion_overlay_record(
         packed_conversion: Some(conversion.clone()),
         scalar_conversion: None,
         scalar_arithmetic: None,
+        scalar_math: None,
         extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
@@ -15283,6 +15345,7 @@ fn scalar_conversion_overlay_record(
             runtime_validation: admission.runtime_validation,
         }),
         scalar_arithmetic: None,
+        scalar_math: None,
         extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
@@ -15787,6 +15850,7 @@ fn scalar_arithmetic_overlay_record(
             saturation,
             runtime_validation: admission.runtime_validation,
         }),
+        scalar_math: None,
         extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
@@ -16072,6 +16136,502 @@ fn validate_scalar_arithmetic_policy(
     );
     validate_selected_target_predicates(policy, direct)?;
     ensure_no_other_family_contract(policy, "scalar arithmetic")?;
+    Ok(())
+}
+
+type ScalarMathVariant = (
+    ScalarMathFormat,
+    ScalarMathOperation,
+    ScalarMathPrecision,
+    ScalarMathSubnormal,
+);
+
+struct ScalarMathRecipe {
+    id: String,
+    abi_id: String,
+    operation_key: String,
+    source_record: String,
+    llvm_symbol: String,
+    rust_type: &'static str,
+    properties: Vec<&'static str>,
+    ptx_modifiers: Vec<String>,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+    /// The generator's tblgen import found no DAG selection pattern for the
+    /// intrinsic, so the lowering routes it through inline PTX. Note this is
+    /// an import limitation, not an llc one: llc still selects these
+    /// intrinsics through NVVMIntrinsic-class pattern matching, which the
+    /// evidence import cannot see. Promoting them to typed calls once the
+    /// import understands those patterns would reopen them to LLVM
+    /// optimization.
+    force_inline_ptx: bool,
+}
+
+fn scalar_math_format_name(format: ScalarMathFormat) -> &'static str {
+    match format {
+        ScalarMathFormat::F32 => "f32",
+        ScalarMathFormat::F64 => "f64",
+    }
+}
+
+fn scalar_math_operation_name(operation: ScalarMathOperation) -> &'static str {
+    match operation {
+        ScalarMathOperation::Sin => "sin",
+        ScalarMathOperation::Cos => "cos",
+        ScalarMathOperation::Lg2 => "lg2",
+        ScalarMathOperation::Rcp => "rcp",
+        ScalarMathOperation::Rsqrt => "rsqrt",
+        ScalarMathOperation::Sqrt => "sqrt",
+        ScalarMathOperation::Ex2 => unreachable!("ex2 has no generated scalar_math variant"),
+    }
+}
+
+fn scalar_math_precision_name(precision: ScalarMathPrecision) -> &'static str {
+    match precision {
+        ScalarMathPrecision::Approx => "approx",
+        ScalarMathPrecision::Rn => "rn",
+        ScalarMathPrecision::Rz => "rz",
+        ScalarMathPrecision::Rm => "rm",
+        ScalarMathPrecision::Rp => "rp",
+    }
+}
+
+fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
+    use ScalarMathFormat::{F32, F64};
+    use ScalarMathOperation::{Cos, Lg2, Rcp, Rsqrt, Sin, Sqrt};
+    use ScalarMathPrecision::{Approx, Rm, Rn, Rp, Rz};
+    use ScalarMathSubnormal::{Ftz, Preserve};
+
+    vec![
+        // sin: approx f32 only
+        (F32, Sin, Approx, Preserve),
+        (F32, Sin, Approx, Ftz),
+        // cos: approx f32 only
+        (F32, Cos, Approx, Preserve),
+        (F32, Cos, Approx, Ftz),
+        // lg2: approx f32 only (f64 approx produces invalid PTX)
+        (F32, Lg2, Approx, Preserve),
+        (F32, Lg2, Approx, Ftz),
+        // rcp: approx only with ftz, rounded for both formats
+        (F32, Rcp, Approx, Ftz),
+        (F32, Rcp, Rn, Preserve),
+        (F32, Rcp, Rn, Ftz),
+        (F32, Rcp, Rz, Preserve),
+        (F32, Rcp, Rz, Ftz),
+        (F32, Rcp, Rm, Preserve),
+        (F32, Rcp, Rm, Ftz),
+        (F32, Rcp, Rp, Preserve),
+        (F32, Rcp, Rp, Ftz),
+        (F64, Rcp, Approx, Ftz),
+        (F64, Rcp, Rn, Preserve),
+        (F64, Rcp, Rz, Preserve),
+        (F64, Rcp, Rm, Preserve),
+        (F64, Rcp, Rp, Preserve),
+        // rsqrt: approx only (PTX has no rounded rsqrt). The f64+ftz variant
+        // is valid PTX (`rsqrt.approx.ftz.f64` assembles for sm_80+, and LLVM
+        // selects `llvm.nvvm.rsqrt.approx.ftz.d` directly); it is deferred
+        // only because it has not been probed under the pinned evidence
+        // profile yet, not because the instruction is invalid.
+        (F32, Rsqrt, Approx, Preserve),
+        (F32, Rsqrt, Approx, Ftz),
+        (F64, Rsqrt, Approx, Preserve),
+        // sqrt: approx f32 only, rounded for both formats
+        (F32, Sqrt, Approx, Preserve),
+        (F32, Sqrt, Approx, Ftz),
+        (F32, Sqrt, Rn, Preserve),
+        (F32, Sqrt, Rn, Ftz),
+        (F32, Sqrt, Rz, Preserve),
+        (F32, Sqrt, Rz, Ftz),
+        (F32, Sqrt, Rm, Preserve),
+        (F32, Sqrt, Rm, Ftz),
+        (F32, Sqrt, Rp, Preserve),
+        (F32, Sqrt, Rp, Ftz),
+        (F64, Sqrt, Rn, Preserve),
+        (F64, Sqrt, Rz, Preserve),
+        (F64, Sqrt, Rm, Preserve),
+        (F64, Sqrt, Rp, Preserve),
+    ]
+}
+
+fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
+    let canonical = canonical_scalar_math_variants();
+    let index = canonical
+        .iter()
+        .position(|candidate| *candidate == variant)?;
+    let (format, operation, precision, subnormal) = variant;
+    let operation_name = scalar_math_operation_name(operation);
+    let precision_name = scalar_math_precision_name(precision);
+    let format_name = scalar_math_format_name(format);
+    let source_format = match format {
+        ScalarMathFormat::F32 => "f",
+        ScalarMathFormat::F64 => "d",
+    };
+
+    let mut modifier_names = vec![precision_name];
+    if subnormal == ScalarMathSubnormal::Ftz {
+        modifier_names.push("ftz");
+    }
+
+    let modifier_id = modifier_names.join("_");
+    let modifier_symbol = modifier_names.join(".");
+    let id = format!("{operation_name}_{modifier_id}_{format_name}");
+    let source_record = format!("int_nvvm_{operation_name}_{modifier_id}_{source_format}");
+    let llvm_symbol = format!("llvm.nvvm.{operation_name}.{modifier_symbol}.{source_format}");
+    let ptx_modifiers = modifier_names
+        .iter()
+        .copied()
+        .chain(std::iter::once(format_name))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    // Operations whose llvm.nvvm.* records carry no *imported* DAG selection
+    // pattern in the pinned evidence (sel=0). llc itself still selects them
+    // (via NVVMIntrinsic-class patterns the tblgen import cannot see), but
+    // the evidence-driven contract only admits typed calls backed by an
+    // imported selection, so these route through inline PTX for now.
+    let force_inline_ptx = matches!(
+        operation,
+        ScalarMathOperation::Sin
+            | ScalarMathOperation::Cos
+            | ScalarMathOperation::Lg2
+            | ScalarMathOperation::Rsqrt
+    );
+
+    let (ptx_isa_section, ptx_isa_url) = match operation {
+        ScalarMathOperation::Sin => (
+            "9.7.3.10 Floating Point Instructions: sin",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sin",
+        ),
+        ScalarMathOperation::Cos => (
+            "9.7.3.11 Floating Point Instructions: cos",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-cos",
+        ),
+        ScalarMathOperation::Lg2 => (
+            "9.7.3.12 Floating Point Instructions: lg2",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-lg2",
+        ),
+        ScalarMathOperation::Rcp => (
+            "9.7.3.7 Floating Point Instructions: rcp",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-rcp",
+        ),
+        ScalarMathOperation::Rsqrt => (
+            "9.7.3.14 Floating Point Instructions: rsqrt",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-rsqrt",
+        ),
+        ScalarMathOperation::Sqrt => (
+            "9.7.3.9 Floating Point Instructions: sqrt",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sqrt",
+        ),
+        ScalarMathOperation::Ex2 => unreachable!("ex2 has no generated scalar_math variant"),
+    };
+
+    Some(ScalarMathRecipe {
+        id,
+        abi_id: format!("i{:04}", 782 + index),
+        operation_key: format!("scalar.math.{operation_name}.{modifier_symbol}.{format_name}"),
+        source_record,
+        llvm_symbol,
+        rust_type: format_name,
+        properties: vec!["IntrNoMem"],
+        ptx_modifiers,
+        ptx_isa_section,
+        ptx_isa_url,
+        force_inline_ptx,
+    })
+}
+
+fn expand_scalar_math_admission(admission: &ScalarMathAdmission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "scalar-math runtime may be marked executed only with GPU evidence"
+    );
+    let expected = canonical_scalar_math_variants();
+    let actual = admission
+        .variants
+        .iter()
+        .map(|variant| {
+            (
+                variant.format,
+                variant.operation,
+                variant.precision,
+                variant.subnormal,
+            )
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        actual == expected,
+        "compact scalar-math admission must list the canonical 37 variants"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let identity = (
+                variant.format,
+                variant.operation,
+                variant.precision,
+                variant.subnormal,
+            );
+            let recipe = scalar_math_recipe(identity)
+                .context("scalar math is outside the closed recipe set")?;
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must reserve ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            scalar_math_overlay_record(recipe, admission, identity)
+        })
+        .collect()
+}
+
+fn scalar_math_overlay_record(
+    recipe: ScalarMathRecipe,
+    admission: &ScalarMathAdmission,
+    variant: ScalarMathVariant,
+) -> Result<OverlayIntrinsic> {
+    let (format, operation, precision, subnormal) = variant;
+    let ptx_operands = vec![OperandPattern::Register; 2]; // 1 result + 1 operand
+    let summary = format!(
+        "Computes unary {} with {} precision.",
+        scalar_math_operation_name(operation),
+        scalar_math_precision_name(precision),
+    );
+    Ok(OverlayIntrinsic {
+        id: recipe.id.clone(),
+        abi_id: recipe.abi_id,
+        operation_key: recipe.operation_key,
+        family: "scalar_math".into(),
+        source: None,
+        source_record: Some(recipe.source_record),
+        rust_module: "float".into(),
+        rust_name: recipe.id.clone(),
+        rust_arguments: vec![recipe.rust_type.into()],
+        rust_result: recipe.rust_type.into(),
+        safe: true,
+        must_use: true,
+        safe_allowlist_reason: Some("Scalar math has no caller obligations.".into()),
+        public_rust_path: format!("cuda_intrinsics::float::{}", recipe.id),
+        compatibility_rust_paths: vec![format!("cuda_device::float::{}", recipe.id)],
+        dialect_op_type: "ScalarMathOp".into(),
+        dialect_op_name: "nvvm.scalar_math".into(),
+        dialect_operands: vec![recipe.rust_type.into()],
+        dialect_results: vec![recipe.rust_type.into()],
+        llvm_symbol: Some(recipe.llvm_symbol),
+        resolved_llvm_symbol: None,
+        llvm_arguments: vec![recipe.rust_type.into()],
+        llvm_results: vec![recipe.rust_type.into()],
+        pure: true,
+        memory: "none".into(),
+        convergent: false,
+        execution_scope: "thread".into(),
+        minimum_ptx: "7.0".into(),
+        minimum_sm: Some("sm_80".into()),
+        ptx_result: recipe.rust_type.into(),
+        targets: "all".into(),
+        ptx_isa_version: "9.3".into(),
+        ptx_isa_section: recipe.ptx_isa_section.into(),
+        ptx_isa_url: recipe.ptx_isa_url.into(),
+        lowering: "generated_scalar_math".into(),
+        backend_lowerings: [
+            (
+                IntrinsicBackend::LlvmNvptx,
+                &admission.llvm_evidence_profile,
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                &admission.libnvvm_evidence_profile,
+            ),
+        ]
+        .into_iter()
+        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+            backend,
+            mechanism: match backend {
+                IntrinsicBackend::LlvmNvptx if recipe.force_inline_ptx => {
+                    BackendLoweringMechanism::InlinePtx
+                }
+                IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
+                IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+            },
+            evidence_profile: evidence_profile.clone(),
+            targets: None,
+            minimum_ptx: Some("7.0".into()),
+            minimum_sm: Some("sm_80".into()),
+        })
+        .collect(),
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        scalar_conversion: None,
+        scalar_arithmetic: None,
+        scalar_math: Some(ScalarMath {
+            format,
+            operation,
+            precision,
+            subnormal,
+            runtime_validation: admission.runtime_validation,
+        }),
+        extended_minmax: None,
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        movmatrix: None,
+        mbarrier_extended: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        cluster_barrier: None,
+        wgmma_control: None,
+        special_register: None,
+        debug_control: None,
+        cluster_memory: None,
+        clc: None,
+        tma: None,
+        tcgen05: None,
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: InstructionPattern {
+            mnemonic: scalar_math_operation_name(operation).into(),
+            modifiers: recipe.ptx_modifiers,
+            operands: ptx_operands,
+        },
+        summary,
+    })
+}
+
+fn validate_scalar_math_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let math = policy
+        .scalar_math
+        .as_ref()
+        .with_context(|| format!("{} has no scalar-math contract", policy.id))?;
+    let variant = (math.format, math.operation, math.precision, math.subnormal);
+    let recipe = scalar_math_recipe(variant)
+        .with_context(|| format!("{} is outside the closed scalar-math recipe", policy.id))?;
+    ensure!(
+        math.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} scalar-math runtime may be executed only with GPU evidence",
+        policy.id
+    );
+    let signature = vec![recipe.rust_type.to_owned()];
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none()
+            && policy.llvm_arguments == signature
+            && policy.llvm_results == [recipe.rust_type],
+        "{} scalar-math identity or LLVM source changed",
+        policy.id
+    );
+    let expected_properties = recipe
+        .properties
+        .iter()
+        .map(|property| (*property).to_owned())
+        .collect::<Vec<_>>();
+    ensure!(
+        declaration.properties == expected_properties,
+        "{} imported scalar-math properties changed",
+        policy.id
+    );
+    ensure!(
+        declaration.selections.len() <= 1,
+        "{} gained an unreviewed scalar-math selection",
+        policy.id
+    );
+    if let Some(direct) = declaration.selections.first() {
+        ensure!(
+            direct.predicates.is_empty() && direct.constraints.is_empty(),
+            "{} direct scalar-math selection changed",
+            policy.id
+        );
+    }
+    ensure!(
+        policy.rust_module == "float"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == signature
+            && policy.rust_result == recipe.rust_type
+            && policy.safe
+            && policy.must_use
+            && policy.compatibility_rust_paths == [format!("cuda_device::float::{}", recipe.id)]
+            && policy.dialect_op_type == "ScalarMathOp"
+            && policy.dialect_op_name == "nvvm.scalar_math"
+            && policy.dialect_operands == signature
+            && policy.dialect_results == [recipe.rust_type]
+            && policy.lowering == "generated_scalar_math",
+        "{} changed its scalar-math API, carrier, or lowering",
+        policy.id
+    );
+    ensure!(
+        policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.ptx_result == recipe.rust_type
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url,
+        "{} scalar-math effects, provenance, or target floor changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: scalar_math_operation_name(math.operation).into(),
+                modifiers: recipe.ptx_modifiers.clone(),
+                operands: vec![OperandPattern::Register; 2],
+            },
+        "{} expected scalar-math PTX changed",
+        policy.id
+    );
+    let llvm_mechanism = if recipe.force_inline_ptx {
+        BackendLoweringMechanism::InlinePtx
+    } else {
+        BackendLoweringMechanism::TypedNvvm
+    };
+    let expected_backends = [
+        (IntrinsicBackend::LlvmNvptx, llvm_mechanism),
+        (
+            IntrinsicBackend::LibNvvm,
+            BackendLoweringMechanism::InlinePtx,
+        ),
+    ];
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && expected_backends.into_iter().all(|(backend, mechanism)| {
+                policy.backend_lowerings.iter().any(|lowering| {
+                    lowering.backend == backend
+                        && lowering.mechanism == mechanism
+                        && lowering.minimum_ptx.as_deref() == Some("7.0")
+                        && lowering.minimum_sm.as_deref() == Some("sm_80")
+                        && !lowering.evidence_profile.trim().is_empty()
+                })
+            }),
+        "{} has the wrong reviewed scalar-math backend routes",
+        policy.id
+    );
+    if let Some(direct) = declaration.selections.first() {
+        validate_selected_target_predicates(policy, direct)?;
+    }
+    ensure_no_other_family_contract(policy, "scalar math")?;
     Ok(())
 }
 
@@ -16447,6 +17007,7 @@ fn extended_minmax_overlay_record(
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
+        scalar_math: None,
         extended_minmax: Some(ExtendedMinMax {
             format,
             operation,
@@ -17878,6 +18439,7 @@ fn expand_register_mma_integer_admission(
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cp_async_copy: None,
             cp_async_control: None,
@@ -18197,6 +18759,7 @@ fn expand_register_mma_f8f6f4_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -18489,6 +19052,7 @@ fn expand_register_mma_fp8_admission(
                         packed_conversion: None,
                         scalar_conversion: None,
                         scalar_arithmetic: None,
+                        scalar_math: None,
                         extended_minmax: None,
                         cp_async_copy: None,
                         cp_async_control: None,
@@ -18684,6 +19248,7 @@ fn expand_register_mma_ampere_float_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -18870,6 +19435,7 @@ fn expand_register_mma_binary_admission(
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cp_async_copy: None,
             cp_async_control: None,
@@ -19686,6 +20252,7 @@ fn sparse_mma_overlay_record(
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
+        scalar_math: None,
         extended_minmax: None,
         cp_async_copy: None,
         cp_async_control: None,
@@ -20579,6 +21146,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -20939,6 +21507,7 @@ fn expand_cluster_barrier_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -21377,6 +21946,7 @@ fn expand_debug_control_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -21755,6 +22325,7 @@ fn expand_cluster_memory_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -22585,6 +23156,7 @@ fn expand_mbarrier_extended_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -22844,6 +23416,7 @@ fn expand_wgmma_control_admission(
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
+                scalar_math: None,
                 extended_minmax: None,
                 cp_async_copy: None,
                 cp_async_control: None,
@@ -23136,6 +23709,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
             && (policy.family == "scalar_conversion") == policy.scalar_conversion.is_some()
             && (policy.family == "scalar_arithmetic") == policy.scalar_arithmetic.is_some()
+            && (policy.family == "scalar_math") == policy.scalar_math.is_some()
             && (policy.family == "extended_minmax") == policy.extended_minmax.is_some()
             && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
@@ -25346,6 +25920,7 @@ fn materialize_record(
         packed_conversion: policy.packed_conversion.clone(),
         scalar_conversion: policy.scalar_conversion.clone(),
         scalar_arithmetic: policy.scalar_arithmetic.clone(),
+        scalar_math: policy.scalar_math.clone(),
         extended_minmax: policy.extended_minmax.clone(),
         cp_async_copy: policy.cp_async_copy.clone(),
         cp_async_control: policy.cp_async_control.clone(),
@@ -25478,6 +26053,7 @@ mod tests {
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cp_async_copy: None,
             cp_async_control: None,
@@ -26938,8 +27514,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 57);
-        assert_eq!(overlay.intrinsics.len(), 781);
+        assert_eq!(overlay.shards.len(), 58);
+        assert_eq!(overlay.intrinsics.len(), 818);
         assert_eq!(
             overlay
                 .intrinsics
@@ -27729,6 +28305,7 @@ mod tests {
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -27849,6 +28426,7 @@ mod tests {
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -27890,6 +28468,7 @@ mod tests {
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: Some(test_cluster_barrier_admission()),
@@ -27932,6 +28511,7 @@ mod tests {
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -28174,6 +28754,7 @@ record_count = 14
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -29659,6 +30240,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -29792,6 +30374,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -30941,6 +31524,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -31139,6 +31723,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -31184,6 +31769,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
@@ -31626,6 +32212,7 @@ scope = "system"
             packed_conversion_fp8: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
+            scalar_math: None,
             extended_minmax: None,
             cluster_sreg: None,
             cluster_barrier: None,
