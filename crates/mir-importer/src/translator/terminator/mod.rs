@@ -853,6 +853,64 @@ fn translate_drop(
 // Call Translation (includes intrinsic dispatch)
 // ============================================================================
 
+/// True when `fn_def` is `core::ptr::drop_in_place` itself, the only
+/// function whose monomorphizations resolve to rustc's drop-glue shims.
+/// Same crate + path-segment matching idiom as the callable-trait
+/// detection below.
+fn is_drop_in_place_callee(fn_def: &rustc_public::ty::FnDef) -> bool {
+    if fn_def.krate().name.as_str() != "core" {
+        return false;
+    }
+    let method_name = fn_def.def_id().name();
+    let method = method_name.as_str().rsplit("::").next().unwrap_or("");
+    let Some(parent_def) = fn_def.def_id().parent() else {
+        return false;
+    };
+    let parent_name = parent_def.name();
+    let parent = parent_name.as_str().rsplit("::").next().unwrap_or("");
+    method == "drop_in_place" && parent == "ptr"
+}
+
+/// Emit a branch to `target` as the only effect of a call we are eliding:
+/// the callee does nothing observable and has no device definition (a UB
+/// precondition check, or provably no-op drop glue). `emit_goto` needs a
+/// prior op to anchor after, so if the block has none yet we plant a dead
+/// `false` constant first.
+fn emit_elided_call_goto(
+    ctx: &mut Context,
+    target_idx: usize,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> Ptr<Operation> {
+    let anchor = if let Some(p) = prev_op {
+        p
+    } else {
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::utils::apint::APInt;
+        use std::num::NonZeroUsize;
+
+        let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+        let dummy = Operation::new(
+            ctx,
+            MirConstantOp::get_concrete_op_info(),
+            vec![bool_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        dummy.deref_mut(ctx).set_loc(loc.clone());
+        let const_op = MirConstantOp::new(dummy);
+        let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
+        const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
+        let dummy = const_op.get_operation();
+        dummy.insert_at_front(block_ptr, ctx);
+        dummy
+    };
+    helpers::emit_goto(ctx, target_idx, anchor, block_map, loc)
+}
+
 /// Translates a MIR `Call` terminator to Pliron IR operations.
 ///
 /// This is the main entry point for function call translation. It handles:
@@ -950,6 +1008,34 @@ fn translate_call(
                 loc,
             ));
         }
+    }
+
+    // Elide a call to provably no-op drop glue. An explicit
+    // `ptr::drop_in_place::<T>` call (e.g. reached from inside another type's
+    // `Drop::drop`, or from a libcore wrapper) resolves either to rustc's
+    // empty shim for a `T` with no drop glue (`InstanceKind::DropGlue(_,
+    // None)`) or to a shim body the shared no-op proof can discharge. The
+    // collector refuses to collect exactly that set (`process_call_operand`
+    // skips DropGlue callees via the same predicate), so emitting the call
+    // would dangle as `Symbol ...drop_in_place... not found` at verification
+    // time. The glue does nothing, so drop the call and branch straight to
+    // the target -- the same elision the `Drop` terminator path performs via
+    // `drop_glue_is_noop`, consulting the same shared predicate
+    // (`drop_instance_is_noop`, whose fast path covers the empty shim) so
+    // collection and emission stay in lockstep.
+    if let Some(target_idx) = target_usize
+        && let mir::Operand::Constant(const_op) = func
+        && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(
+            fn_def,
+            ref substs,
+        )) = const_op.const_.ty().kind()
+        && is_drop_in_place_callee(&fn_def)
+        && let Ok(instance) = rustc_public::mir::mono::Instance::resolve(fn_def, substs)
+        && drop_glue::drop_instance_is_noop(&instance)
+    {
+        return Ok(emit_elided_call_goto(
+            ctx, target_idx, block_ptr, prev_op, block_map, loc,
+        ));
     }
 
     // Identify the actual core callable-trait methods. Matching text in an
