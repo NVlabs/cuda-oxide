@@ -402,6 +402,75 @@ impl Verify for MirMemcpyOp {
 }
 
 // ============================================================================
+// MirMemmoveOp
+// ============================================================================
+
+/// MIR memmove operation.
+///
+/// Identical to [`MirMemcpyOp`] but the source and destination ranges may
+/// overlap. Backs `core::intrinsics::copy` (`ptr::copy`); the non-overlapping
+/// `copy_nonoverlapping` reaches MIR as a `CopyNonOverlapping` statement and
+/// lowers to `MirMemcpyOp`. The count is element-count, not byte-count.
+///
+/// # Operands
+///
+/// ```text
+/// | Name    | Type         | Description                         |
+/// |---------|--------------|-------------------------------------|
+/// | `dst`   | MirPtrType   | Destination pointer                 |
+/// | `src`   | MirPtrType   | Source pointer                      |
+/// | `count` | Integer      | Number of pointee elements to move  |
+/// ```
+///
+/// # Verification
+///
+/// - Destination and source operands must be `MirPtrType`.
+/// - Destination and source pointee types must match.
+/// - Count operand must be an integer.
+#[pliron_op(
+    name = "mir.memmove",
+    format,
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>]
+)]
+pub struct MirMemmoveOp;
+
+impl MirMemmoveOp {
+    /// Create a new MirMemmoveOp wrapper.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MirMemmoveOp { op }
+    }
+}
+
+impl Verify for MirMemmoveOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = &*self.get_operation().deref(ctx);
+        let dst_ty = op.get_operand(0).get_type(ctx);
+        let src_ty = op.get_operand(1).get_type(ctx);
+        let count_ty = op.get_operand(2).get_type(ctx);
+
+        let dst_ty_ref = dst_ty.deref(ctx);
+        let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
+            return verify_err!(op.loc(), "MirMemmoveOp destination must be a MirPtrType");
+        };
+        let src_ty_ref = src_ty.deref(ctx);
+        let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
+            return verify_err!(op.loc(), "MirMemmoveOp source must be a MirPtrType");
+        };
+        if dst_ptr_ty.pointee != src_ptr_ty.pointee {
+            return verify_err!(
+                op.loc(),
+                "MirMemmoveOp source and destination pointee types must match"
+            );
+        }
+        if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
+            return verify_err!(op.loc(), "MirMemmoveOp count must be an integer");
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
 // MirLoadOp
 // ============================================================================
 
@@ -1046,6 +1115,7 @@ pub fn register(ctx: &mut Context) {
     MirAssignOp::register(ctx);
     MirStoreOp::register(ctx);
     MirMemcpyOp::register(ctx);
+    MirMemmoveOp::register(ctx);
     MirLoadOp::register(ctx);
     MirRefOp::register(ctx);
     MirPtrOffsetOp::register(ctx);
