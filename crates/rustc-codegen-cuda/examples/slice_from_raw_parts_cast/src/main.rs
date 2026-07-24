@@ -58,10 +58,8 @@ mod kernels {
                     *sp.add(k) = input[k];
                     k += 1;
                 }
-                let pairs = core::slice::from_raw_parts(
-                    core::ptr::addr_of!(SMEM) as *const (u64, u64),
-                    64,
-                );
+                let pairs =
+                    core::slice::from_raw_parts(core::ptr::addr_of!(SMEM) as *const (u64, u64), 64);
                 let mut s = 0u64;
                 let mut j = 0;
                 while j < 64 {
@@ -102,7 +100,8 @@ fn main() {
     let din = DeviceBuffer::from_host(&stream, &host).unwrap();
     let mut out = DeviceBuffer::<u64>::zeroed(&stream, 1).unwrap();
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-    unsafe { module.shared_pair_sum(&stream, cfg, &din, &mut out) }.expect("shared_pair_sum launch");
+    unsafe { module.shared_pair_sum(&stream, cfg, &din, &mut out) }
+        .expect("shared_pair_sum launch");
     let got_sum = out.to_host_vec(&stream).unwrap()[0];
     let want_sum: u64 = host.iter().copied().sum();
     assert_eq!(got_sum, want_sum, "shared_pair_sum");
