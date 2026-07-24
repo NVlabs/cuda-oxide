@@ -13888,11 +13888,13 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         "};\nuse llvm_export::{ops::AsmKind, types as llvm_types};\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
     );
     if cluster_memory(catalog).next().is_some() {
-        output = output
-            .replace(
+        if !output.contains("cast_to_shared_addrspace") {
+            output = output.replace(
                 "common::{call_intrinsic, ",
                 "common::{call_intrinsic, cast_to_shared_addrspace, ",
-            )
+            );
+        }
+        output = output
             .replace(
                 "use llvm_export::{ops::AsmKind, types as llvm_types};",
                 "use llvm_export::{op_interfaces::CastOpInterface, ops as llvm_ops, ops::AsmKind, types as llvm_types};",
