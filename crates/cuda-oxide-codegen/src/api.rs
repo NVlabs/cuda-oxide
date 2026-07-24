@@ -28,9 +28,6 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static COMPILATION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A validated CUDA GPU target such as `sm_80`, `sm_90a`, or `sm_120`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -695,60 +692,54 @@ impl Drop for EraseGuard<'_> {
 }
 
 struct ScratchDirectory {
-    path: PathBuf,
+    dir: tempfile::TempDir,
 }
 
 impl ScratchDirectory {
     fn new() -> Result<Self, CompileError> {
-        let root = std::env::temp_dir();
-        for _ in 0..32 {
-            let unique = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0);
-            let call = COMPILATION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = root.join(format!(
-                "cuda_oxide_codegen_{}_{}_{}",
-                std::process::id(),
-                unique,
-                call
-            ));
-            let mut builder = std::fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            match builder.create(&path) {
-                Ok(()) => return Ok(Self { path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(source) => {
-                    return Err(CompileError::Io {
-                        action: "create compilation scratch directory",
-                        path,
-                        source,
-                    });
-                }
-            }
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("cuda_oxide_codegen_");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
         }
-        Err(CompileError::Io {
-            action: "create a unique compilation scratch directory",
-            path: root,
-            source: std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "32 atomically-created names already existed",
-            ),
-        })
+        let dir = builder.tempdir().map_err(|source| CompileError::Io {
+            action: "create compilation scratch directory",
+            path: std::env::temp_dir(),
+            source,
+        })?;
+        Ok(Self { dir })
     }
 
     fn path(&self) -> &Path {
-        &self.path
+        self.dir.path()
     }
 }
 
-impl Drop for ScratchDirectory {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+#[cfg(all(test, unix))]
+mod scratch_directory_tests {
+    use super::ScratchDirectory;
+
+    /// The scratch directory holds the caller's LLVM IR and the generated PTX
+    /// in a shared temp root, so its mode is a security property.
+    /// `tempfile::Builder::permissions` is the reason this crate depends on
+    /// tempfile 3.9 or newer.
+    #[test]
+    fn scratch_directory_is_created_private_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = ScratchDirectory::new().unwrap();
+        let mode = std::fs::metadata(scratch.path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o700,
+            "scratch directory mode was {:#o}",
+            mode & 0o777
+        );
     }
 }
 
