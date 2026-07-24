@@ -445,10 +445,19 @@ impl RustFloatMathIntrinsic {
 
     /// Return the LLVM intrinsic name for operations that can bypass libdevice.
     ///
-    /// `abs` and `copysign` are pure bitwise operations on the IEEE 754 sign
-    /// bit. LLVM's `llvm.fabs.*` and `llvm.copysign.*` lower directly to
-    /// native PTX (`abs.f32`, `copysign.f32`), so routing them through
-    /// libdevice adds an unnecessary function call and libdevice dependency.
+    /// Several Rust math intrinsics have direct LLVM intrinsic equivalents
+    /// that the NVPTX backend lowers to single PTX instructions:
+    ///
+    /// - `fabs`, `copysign`: sign-bit operations (`abs.f32`, `copysign.f32`)
+    /// - `floor`, `ceil`, `trunc`, `round`, `roundeven`: rounding conversions
+    ///   (`cvt.rmi`, `cvt.rpi`, `cvt.rzi`, `cvt.rni.f32.f32`)
+    ///
+    /// Using LLVM intrinsics avoids a libdevice function call and removes
+    /// the libNVVM dependency for kernels that only use these operations.
+    ///
+    /// `max`/`min` are intentionally left on the libdevice path: LLVM 21's
+    /// `maxnum`/`minnum` propagate signaling NaNs, which contradicts Rust's
+    /// contract. These need compare/select lowering instead (see #390).
     fn llvm_intrinsic_name(self, ctx: &Context, result_ty: TypeHandle) -> Option<&'static str> {
         match self {
             Self::Fabs => {
@@ -463,6 +472,17 @@ impl RustFloatMathIntrinsic {
             }
             Self::CopysignF32 => Some("llvm.copysign.f32"),
             Self::CopysignF64 => Some("llvm.copysign.f64"),
+            // Rounding: each maps to a single PTX `cvt` instruction.
+            Self::FloorF32 => Some("llvm.floor.f32"),
+            Self::FloorF64 => Some("llvm.floor.f64"),
+            Self::CeilF32 => Some("llvm.ceil.f32"),
+            Self::CeilF64 => Some("llvm.ceil.f64"),
+            Self::TruncF32 => Some("llvm.trunc.f32"),
+            Self::TruncF64 => Some("llvm.trunc.f64"),
+            Self::RoundF32 => Some("llvm.round.f32"),
+            Self::RoundF64 => Some("llvm.round.f64"),
+            Self::RoundevenF32 => Some("llvm.roundeven.f32"),
+            Self::RoundevenF64 => Some("llvm.roundeven.f64"),
             _ => None,
         }
     }
@@ -1077,10 +1097,10 @@ fn convert_rust_float_math_intrinsic(
     let result_mir_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let result_ty = convert_type(ctx, result_mir_ty).map_err(anyhow_to_pliron)?;
 
-    // `abs` and `copysign` are pure sign-bit operations with direct LLVM
-    // intrinsic equivalents. Using `llvm.fabs.*` / `llvm.copysign.*`
-    // avoids a libdevice function call and removes the libNVVM dependency
-    // for kernels that only use these operations.
+    // Several math intrinsics have direct LLVM equivalents that the NVPTX
+    // backend lowers to single PTX instructions (abs, copysign, rounding).
+    // Using LLVM intrinsics avoids a libdevice function call and removes
+    // the libNVVM dependency for kernels that only use these operations.
     let intrinsic_name = if let Some(llvm_name) = intrinsic.llvm_intrinsic_name(ctx, result_ty) {
         llvm_name
     } else {
@@ -1795,10 +1815,10 @@ mod tests {
         assert!(fabs_libdevice_name(&ctx, i32_ty, loc).is_err());
     }
 
-    /// `llvm_intrinsic_name` returns direct LLVM intrinsic names for `fabs`
-    /// and `copysign`, bypassing libdevice. Other intrinsics return `None`.
+    /// `llvm_intrinsic_name` returns direct LLVM intrinsic names for operations
+    /// that bypass libdevice. Transcendentals still return `None`.
     #[test]
-    fn test_fabs_and_copysign_use_llvm_intrinsics() {
+    fn test_llvm_intrinsic_name_routing() {
         let ctx = Context::new();
         let f32_ty = FP32Type::get(&ctx).into();
         let f64_ty = FP64Type::get(&ctx).into();
@@ -1823,6 +1843,60 @@ mod tests {
             Some("llvm.copysign.f64")
         );
 
+        // Rounding -> llvm.floor/ceil/trunc/round/roundeven.*
+        assert_eq!(
+            RustFloatMathIntrinsic::FloorF32.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.floor.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::FloorF64.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.floor.f64")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::CeilF32.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.ceil.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::CeilF64.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.ceil.f64")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::TruncF32.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.trunc.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::TruncF64.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.trunc.f64")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::RoundF32.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.round.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::RoundF64.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.round.f64")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::RoundevenF32.llvm_intrinsic_name(&ctx, f32_ty),
+            Some("llvm.roundeven.f32")
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::RoundevenF64.llvm_intrinsic_name(&ctx, f64_ty),
+            Some("llvm.roundeven.f64")
+        );
+
+        // max/min return None: LLVM 21's maxnum/minnum propagate signaling
+        // NaNs, which contradicts Rust's contract. These need compare/select
+        // lowering instead (see #390).
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF32.llvm_intrinsic_name(&ctx, f32_ty),
+            None
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF64.llvm_intrinsic_name(&ctx, f64_ty),
+            None
+        );
+
         // Transcendentals still return None (they need libdevice).
         assert_eq!(
             RustFloatMathIntrinsic::SinF32.llvm_intrinsic_name(&ctx, f32_ty),
@@ -1830,16 +1904,6 @@ mod tests {
         );
         assert_eq!(
             RustFloatMathIntrinsic::SqrtF64.llvm_intrinsic_name(&ctx, f64_ty),
-            None
-        );
-
-        // max/min still return None (NaN semantics need review).
-        assert_eq!(
-            RustFloatMathIntrinsic::MaxNumNszF32.llvm_intrinsic_name(&ctx, f32_ty),
-            None
-        );
-        assert_eq!(
-            RustFloatMathIntrinsic::MinNumNszF64.llvm_intrinsic_name(&ctx, f64_ty),
             None
         );
     }
