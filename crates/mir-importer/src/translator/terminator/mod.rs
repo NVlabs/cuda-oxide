@@ -881,6 +881,46 @@ fn translate_drop(
 ///                         helpers::emit_function_call
 /// ```
 #[allow(clippy::too_many_arguments)]
+/// Emit a branch to `target` as the only effect of a call we are eliding:
+/// the callee does nothing observable and has no device definition (a UB
+/// precondition check, or an empty `drop_in_place` shim). `emit_goto` needs a
+/// prior op to anchor after, so if the block has none yet we plant a dead
+/// `false` constant first.
+fn emit_elided_call_goto(
+    ctx: &mut Context,
+    target_idx: usize,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> Ptr<Operation> {
+    let anchor = if let Some(p) = prev_op {
+        p
+    } else {
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::utils::apint::APInt;
+        use std::num::NonZeroUsize;
+
+        let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+        let dummy = Operation::new(
+            ctx,
+            MirConstantOp::get_concrete_op_info(),
+            vec![bool_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        dummy.deref_mut(ctx).set_loc(loc.clone());
+        let const_op = MirConstantOp::new(dummy);
+        let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
+        const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
+        let dummy = const_op.get_operation();
+        dummy.insert_at_front(block_ptr, ctx);
+        dummy
+    };
+    helpers::emit_goto(ctx, target_idx, anchor, block_map, loc)
+}
+
 fn translate_call(
     ctx: &mut Context,
     body: &mir::Body,
@@ -950,6 +990,29 @@ fn translate_call(
                 loc,
             ));
         }
+    }
+
+    // Elide a call to an EMPTY drop-glue shim. An explicit
+    // `ptr::drop_in_place::<T>` for a `T` that needs no drop (e.g. reached from
+    // inside another type's `Drop::drop`) resolves to
+    // `InstanceKind::DropGlue(_, None)`, which the device collector deliberately
+    // does not emit (it has no body). Emitting the call would dangle as
+    // `Symbol ...drop_in_place... not found` at verification time. The shim does
+    // nothing, so drop the call and branch straight to the target -- the same
+    // no-op elision the `Drop` terminator path performs via `drop_glue_is_noop`,
+    // in exact lockstep with the collector's empty-shim skip.
+    if let Some(target_idx) = target_usize
+        && let mir::Operand::Constant(const_op) = func
+        && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(
+            fn_def,
+            ref substs,
+        )) = const_op.const_.ty().kind()
+        && let Ok(instance) = rustc_public::mir::mono::Instance::resolve(fn_def, substs)
+        && instance.is_empty_shim()
+    {
+        return Ok(emit_elided_call_goto(
+            ctx, target_idx, block_ptr, prev_op, block_map, loc,
+        ));
     }
 
     // Identify the actual core callable-trait methods. Matching text in an
