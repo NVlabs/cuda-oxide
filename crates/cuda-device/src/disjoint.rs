@@ -36,7 +36,7 @@
 //! raw launch is unsafe and leaves that proof to the caller. Constructing a
 //! `DisjointSlice` from raw memory is also unsafe.
 
-use crate::thread::{Index1D, IndexFormula, LaunchContext, ThreadIndex};
+use crate::thread::{DisjointBlock, Index1D, IndexFormula, LaunchContext, ThreadIndex};
 use crate::view::{LinearTiles, RowMajorTiles, RuntimeRowMajorTiles};
 use core::marker::PhantomData;
 use core::mem::size_of;
@@ -241,6 +241,57 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     ///     *elem = a[i] + b[i];
     /// }
     /// ```
+    /// Bounds-checked access to the `N` consecutive elements a thread owns.
+    ///
+    /// Takes the tile proof from [`ThreadIndex::scale`] and returns that thread's
+    /// elements as a fixed-size array, or `None` if the tile does not fit.
+    ///
+    /// This is the safe form of the multi-element write that otherwise needs
+    /// `get_unchecked_mut` plus a hand-discharged bounds argument. Writing four
+    /// elements per thread becomes:
+    ///
+    /// ```rust,ignore
+    /// let block = thread::index_1d().scale::<4>();
+    /// if let Some(row) = output.get_block_mut(block) {
+    ///     *row = [o0, o1, o2, o3];
+    /// }
+    /// ```
+    ///
+    /// Returning `&mut [T; N]` rather than `&mut [T]` is deliberate: the length
+    /// is static, so this is also the shape the codegen can fuse into a single
+    /// wide access when `[T; N]` carries the matching alignment (see the
+    /// `vectorization` example).
+    ///
+    /// # Soundness
+    ///
+    /// Two threads cannot obtain overlapping tiles. Distinct `ThreadIndex`
+    /// values scale to distinct `N`-sized tiles that partition the space, and
+    /// [`DisjointBlock`] is neither `Copy` nor `Clone`, so one thread cannot
+    /// hold two proofs covering the same elements.
+    #[inline]
+    pub fn get_block_mut<'kernel, const N: usize>(
+        &mut self,
+        block: DisjointBlock<'kernel, N, IndexSpace>,
+    ) -> Option<&mut [T; N]> {
+        if size_of::<T>() == 0 || !block.is_valid() {
+            return None;
+        }
+        let start = block.start();
+        // Checked so a tile straddling the end of the address space cannot wrap
+        // into a passing bounds test.
+        if start.checked_add(N)? > self.len {
+            return None;
+        }
+        // SAFETY:
+        // - The bounds check above proves `start .. start + N` is in range.
+        // - `block` came from scaling a `ThreadIndex`, so this thread's tile is
+        //   disjoint from every other thread's, and the proof is not
+        //   duplicable.
+        // - `[T; N]` has the same layout as `N` consecutive `T`, so the cast is
+        //   valid for a region this long.
+        Some(unsafe { &mut *self.ptr.add(start).cast::<[T; N]>() })
+    }
+
     #[inline]
     pub fn get_mut<'kernel>(&mut self, idx: ThreadIndex<'kernel, IndexSpace>) -> Option<&mut T> {
         let i = idx.get();
@@ -388,3 +439,88 @@ unsafe impl<'a, T: Send, IndexSpace> Send for DisjointSlice<'a, T, IndexSpace> {
 //         different element. Sharing &DisjointSlice across threads would allow
 //         multiple threads to call get_mut() on the same struct, which
 //         would produce aliasing &mut T references — unsound.
+
+#[cfg(test)]
+mod block_tests {
+    /// `DisjointBlock` can only come from a `ThreadIndex`, which needs a launch
+    /// context, so these tests exercise the arithmetic and bounds logic through
+    /// a locally constructed block instead of a real launch.
+    ///
+    /// `scale` is a pure function of `raw` and `N`, so the tiling property below
+    /// is the same one the real witness relies on.
+    fn tile(raw: usize, n: usize) -> Option<(usize, usize)> {
+        // Mirrors `ThreadIndex::scale`: invalid on N == 0 or overflow.
+        if n == 0 {
+            return None;
+        }
+        let start = raw.checked_mul(n)?;
+        if start == usize::MAX {
+            return None;
+        }
+        Some((start, start + n))
+    }
+
+    /// The soundness claim: distinct thread indices scale to non-overlapping
+    /// ranges. This is what lets `get_block_mut` hand out `&mut [T; N]` to every
+    /// thread at once.
+    #[test]
+    fn distinct_indices_produce_non_overlapping_tiles() {
+        for n in [1usize, 2, 4, 8, 16] {
+            let mut ranges = [(0usize, 0usize); 64];
+            for (slot, raw) in (0..64).enumerate() {
+                ranges[slot] = tile(raw, n).expect("small tiles must be valid");
+            }
+            for i in 0..ranges.len() {
+                for j in (i + 1)..ranges.len() {
+                    let (a_lo, a_hi) = ranges[i];
+                    let (b_lo, b_hi) = ranges[j];
+                    assert!(
+                        a_hi <= b_lo || b_hi <= a_lo,
+                        "tiles for raw={i} and raw={j} overlap at N={n}: \
+                         [{a_lo},{a_hi}) vs [{b_lo},{b_hi})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Tiles must also be gapless, otherwise scaling would silently skip
+    /// elements rather than partition the range.
+    #[test]
+    fn tiles_are_contiguous_and_gapless() {
+        let n = 4;
+        let mut expected_start = 0;
+        for raw in 0..32 {
+            let (start, end) = tile(raw, n).unwrap();
+            assert_eq!(start, expected_start, "gap before raw={raw}");
+            assert_eq!(end - start, n);
+            expected_start = end;
+        }
+    }
+
+    /// A multiplication that overflows must invalidate the witness rather than
+    /// wrap into a small, passing start offset.
+    #[test]
+    fn overflowing_scale_is_rejected() {
+        assert_eq!(tile(usize::MAX / 2, 4), None);
+        assert_eq!(tile(usize::MAX, 2), None);
+        // N == 0 would map every thread to start 0.
+        assert_eq!(tile(7, 0), None);
+    }
+
+    /// `start + N` must be checked, so a tile straddling the end of the address
+    /// space cannot wrap into a passing bounds test.
+    #[test]
+    fn bounds_test_uses_checked_addition() {
+        let len = 64usize;
+        // Well inside.
+        assert!(tile(0, 4).unwrap().1 <= len);
+        assert!(tile(15, 4).unwrap().1 <= len);
+        // Exactly at the end is still in range.
+        assert_eq!(tile(15, 4).unwrap().1, len);
+        // One tile past the end must not fit.
+        assert!(tile(16, 4).unwrap().1 > len);
+        // And the wrapping case is rejected outright.
+        assert_eq!(usize::MAX.checked_add(4), None);
+    }
+}

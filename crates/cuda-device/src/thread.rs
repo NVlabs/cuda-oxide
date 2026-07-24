@@ -288,12 +288,137 @@ impl<'kernel, IndexSpace> ThreadIndex<'kernel, IndexSpace> {
     pub fn in_bounds(&self, len: usize) -> bool {
         self.is_valid() && self.raw < len
     }
+
+    /// Trade this one-element witness for one covering `N` consecutive elements.
+    ///
+    /// A [`ThreadIndex`] proves only that this thread's index differs from every
+    /// other thread's, which is a proof about a single element. Processing `N`
+    /// elements per thread is the usual way to stop wasting bandwidth, and there
+    /// was previously no way to say "index `raw * N` through `raw * N + N - 1`,
+    /// still disjoint" - so those writes went through `get_unchecked_mut` and an
+    /// `unsafe` block with the bounds argument discharged by hand.
+    ///
+    /// The proof carries because scaling *tiles* the space: if every `raw` is
+    /// distinct, the half-open ranges `[raw * N, raw * N + N)` are pairwise
+    /// disjoint. Feed the result to
+    /// [`DisjointSlice::get_block_mut`](crate::DisjointSlice::get_block_mut) for
+    /// a bounds-checked `&mut [T; N]`.
+    ///
+    /// This consumes the witness, which is what keeps it sound. [`ThreadIndex`]
+    /// is deliberately not `Copy`, so a thread cannot hold both this block proof
+    /// and the original single-element proof, or two differently scaled blocks,
+    /// and end up with two live references to the same slot.
+    ///
+    /// `N == 0` and any multiplication that overflows yield an invalid witness
+    /// rather than a wrong one.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Four elements per thread, no unsafe, no manual bounds proof.
+    /// let block = thread::index_1d().scale::<4>();
+    /// if let Some(row) = output.get_block_mut(block) {
+    ///     *row = [o0, o1, o2, o3];
+    /// }
+    /// ```
+    #[inline(always)]
+    #[must_use]
+    pub fn scale<const N: usize>(self) -> DisjointBlock<'kernel, N, IndexSpace> {
+        let start = if self.is_valid() && N != 0 {
+            match self.raw.checked_mul(N) {
+                // `usize::MAX` is the reserved invalid encoding, so a legitimate
+                // start landing exactly there is conservatively rejected.
+                Some(start) if start != usize::MAX => start,
+                _ => usize::MAX,
+            }
+        } else {
+            usize::MAX
+        };
+        DisjointBlock {
+            start,
+            _kernel: PhantomData,
+            _space: PhantomData,
+            _not_send_sync: PhantomData,
+        }
+    }
 }
 
 impl<'kernel, IndexSpace> fmt::Debug for ThreadIndex<'kernel, IndexSpace> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ThreadIndex")
             .field("raw", &self.raw)
+            .field("valid", &self.is_valid())
+            .finish()
+    }
+}
+
+/// Proof that a thread exclusively owns `N` consecutive elements.
+///
+/// Produced by [`ThreadIndex::scale`] and consumed by
+/// [`DisjointSlice::get_block_mut`](crate::DisjointSlice::get_block_mut). Where
+/// a [`ThreadIndex`] proves "this element is mine", this proves "these `N`
+/// elements, starting at `start`, are mine".
+///
+/// # Why the proof holds
+///
+/// The disjointness argument is tiling. [`ThreadIndex`] guarantees each thread's
+/// `raw` is distinct within its index space. Scaling maps `raw` to the half-open
+/// range `[raw * N, raw * N + N)`, and distinct `raw` values give ranges that
+/// cannot overlap: if `a != b` then `[a*N, a*N+N)` and `[b*N, b*N+N)` are
+/// disjoint, because the ranges partition the space into `N`-sized tiles.
+///
+/// Only *scaling* is offered, and that is deliberate. A general affine
+/// `raw * S + K` with a caller-chosen stride does not tile unless `S == N`, so
+/// two such families over one buffer could overlap while each looked disjoint
+/// on its own. Scaling is the case where the proof is unconditional.
+///
+/// Like [`ThreadIndex`], this is deliberately `!Copy`, `!Clone`, `!Send`, and
+/// `!Sync`: duplicating it would let one thread hold two live references to the
+/// same elements.
+pub struct DisjointBlock<'kernel, const N: usize, IndexSpace = Index1D> {
+    /// First element of this thread's tile, or `usize::MAX` when invalid.
+    start: usize,
+    _kernel: PhantomData<fn(&'kernel mut ()) -> &'kernel mut ()>,
+    _space: PhantomData<fn() -> IndexSpace>,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl<'kernel, const N: usize, IndexSpace> DisjointBlock<'kernel, N, IndexSpace> {
+    /// First element index of this thread's tile.
+    #[inline(always)]
+    #[must_use]
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Number of elements in the tile. Always `N`.
+    #[inline(always)]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        N
+    }
+
+    /// Whether the tile is empty, i.e. `N == 0`.
+    #[inline(always)]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        N == 0
+    }
+
+    /// Whether the originating witness was valid and the scaling did not
+    /// overflow.
+    #[inline(always)]
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.start != usize::MAX && N != 0
+    }
+}
+
+impl<const N: usize, IndexSpace> core::fmt::Debug for DisjointBlock<'_, N, IndexSpace> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DisjointBlock")
+            .field("start", &self.start)
+            .field("len", &N)
             .field("valid", &self.is_valid())
             .finish()
     }
