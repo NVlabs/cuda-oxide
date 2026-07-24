@@ -67,13 +67,13 @@
     <text x="160" y="88" text-anchor="middle" font-size="12" fill="#b1bac4">Read compiler diagnostics</text>
   </g>
 
-  <!-- ==================== BRANCH 2: Runtime trap (amber) ==================== -->
+  <!-- ==================== BRANCH 2: Runtime device failure (amber) ==================== -->
   <g transform="translate(470, 240)">
     <rect width="320" height="80" rx="12" fill="#161b22" filter="url(#shadow)"/>
     <rect width="320" height="80" rx="12" fill="none" stroke="#e8912d" stroke-width="2"/>
-    <text x="160" y="32" text-anchor="middle" font-size="16" font-weight="700" fill="#e8912d">Runtime trap</text>
-    <text x="160" y="56" text-anchor="middle" font-size="13" fill="#c9d1d9">ILLEGAL_INSTRUCTION,</text>
-    <text x="160" y="72" text-anchor="middle" font-size="13" fill="#c9d1d9">gpu_assert! failure, panic</text>
+    <text x="160" y="32" text-anchor="middle" font-size="16" font-weight="700" fill="#e8912d">Runtime device failure</text>
+    <text x="160" y="56" text-anchor="middle" font-size="13" fill="#c9d1d9">ILLEGAL_INSTRUCTION / ASSERT,</text>
+    <text x="160" y="72" text-anchor="middle" font-size="13" fill="#c9d1d9">trap, panic, gpu_assert!</text>
   </g>
 
   <line x1="630" y1="320" x2="630" y2="362" stroke="#e8912d" stroke-width="2" opacity="0.7"/>
@@ -86,7 +86,7 @@
     <text x="85" y="62" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="11" fill="#e8912d">gpu_printf!</text>
     <rect x="166" y="42" width="138" height="30" rx="6" fill="rgba(232, 145, 45, 0.12)"/>
     <text x="235" y="62" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="11" fill="#e8912d">cargo oxide debug</text>
-    <text x="160" y="88" text-anchor="middle" font-size="12" fill="#b1bac4">Print values, step in cuda-gdb</text>
+    <text x="160" y="88" text-anchor="middle" font-size="12" fill="#b1bac4">Read diagnostics, step in cuda-gdb</text>
   </g>
 
   <!-- ==================== BRANCH 3: Silent corruption (purple) ==================== -->

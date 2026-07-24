@@ -69,7 +69,8 @@ and 65,536 cloned operations. Larger requests warn and are not unrolled.
 use cuda_device::{gpu_printf, gpu_assert, ptx_asm};
 
 gpu_printf!("thread %d: val = %f\n", idx as i32, val as f64);
-gpu_assert!(val >= 0.0);
+gpu_assert!(val.is_finite());
+gpu_assert!(val >= 0.0, "expected non-negative value");
 
 let y: u32;
 unsafe {
@@ -77,11 +78,16 @@ unsafe {
 }
 ```
 
-| Macro                        | Purpose                                              |
-|:-----------------------------|:-----------------------------------------------------|
-| `gpu_printf!(fmt, args...)`  | Device-side formatted output (lowers to `vprintf`)   |
-| `gpu_assert!(condition)`     | Runtime assertion; calls `trap()` on failure         |
-| `ptx_asm!(...)`              | Unsafe CUDA inline PTX                               |
+| Macro                               | Purpose                                                           |
+|:------------------------------------|:------------------------------------------------------------------|
+| `gpu_printf!(fmt, args...)`         | Device-side formatted output (lowers to `vprintf`)                |
+| `gpu_assert!(condition)`            | Runtime assertion; calls `trap()` on failure                      |
+| `gpu_assert!(condition, "message")` | Runtime assertion with CUDA diagnostic; message must be a literal |
+| `ptx_asm!(...)`                     | Unsafe CUDA inline PTX                                            |
+
+The message form lowers to CUDA's device-side `__assertfail` system call.
+The driver reports the message and call-site metadata, and synchronization
+returns `CUDA_ERROR_ASSERT`.
 
 ---
 

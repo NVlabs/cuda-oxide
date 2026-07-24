@@ -74,6 +74,12 @@ pub fn assert_test(input: &[i32], mut output: DisjointSlice<i32>) {
 }
 ```
 
+The two forms intentionally use different failure mechanisms:
+
+- `gpu_assert!(condition)` lowers to `trap()`.
+- `gpu_assert!(condition, "message")` lowers to CUDA's device-side
+  `__assertfail` system call and reports the message and call-site metadata.
+
 ### Breakpoints (cuda-gdb)
 
 ```rust
@@ -127,8 +133,16 @@ pub fn launch_bounds_test(...) {
 ## Build and Run
 
 ```bash
+# Run the non-failing debug suite.
 cargo oxide run debug
+
+# Run the isolated assertion-failure path.
+cargo oxide run debug -- --fail-assert
 ```
+
+The failing mode runs separately because a device-side assertion leaves the
+current CUDA context in an error state. The CUDA driver prints the assertion
+diagnostic to stderr, and synchronization reports `CUDA_ERROR_ASSERT`.
 
 ## Expected Output
 
@@ -173,13 +187,14 @@ cargo oxide run debug
 
 ## Debug Functions
 
-| Function              | PTX Instruction          | Purpose            |
-|-----------------------|--------------------------|--------------------|
-| `clock64()`           | `mov.u64 %rd, %clock64`  | Cycle counter      |
-| `trap()`              | `trap`                   | Abort kernel       |
-| `gpu_assert!()`       | `trap` (on failure)      | Runtime assertion  |
-| `breakpoint()`        | `brkpt`                  | Debugger break     |
-| `prof_trigger::<N>()` | `pmevent N`              | Profiler marker    |
+| Function                            | PTX Instruction         | Purpose                               |
+|-------------------------------------|-------------------------|---------------------------------------|
+| `clock64()`                         | `mov.u64 %rd, %clock64` | Cycle counter                         |
+| `trap()`                            | `trap`                  | Abort kernel                          |
+| `gpu_assert!(condition)`            | `trap`                  | Assertion without diagnostic metadata |
+| `gpu_assert!(condition, "message")` | `call.uni __assertfail` | CUDA assertion diagnostic             |
+| `breakpoint()`                      | `brkpt`                 | Debugger break                        |
+| `prof_trigger::<N>()`               | `pmevent N`             | Profiler marker                       |
 
 ## Launch Bounds Explained
 

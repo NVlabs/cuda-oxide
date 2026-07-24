@@ -177,7 +177,7 @@ aggregate relocations can be represented without losing provenance.
 | Feature | Status | Description |
 |:--------|:-------|:------------|
 | `gpu_printf!` Macro | **Full** | Formatted GPU output with full format specifier support. Lowers to `vprintf`. |
-| `gpu_assert!` Macro | **Full** | Runtime GPU assertion. Calls `trap()` if condition is false. |
+| `gpu_assert!` Macro | **Full** | The no-message form calls `trap()` on failure. The string-literal message form calls CUDA's device-side `__assertfail`, reports message and call-site metadata, and surfaces `CUDA_ERROR_ASSERT`. |
 | Debug Intrinsics | **Full** | `clock()`, `clock64()`, `trap()`, `breakpoint()`, `prof_trigger::<N>()`. |
 
 ## Runtime Library: Kernel Launch

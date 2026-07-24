@@ -149,14 +149,27 @@ use cuda_device::{gpu_printf, gpu_assert};
 #[kernel]
 pub fn debug_kernel(data: &[f32]) {
     let idx = thread::index_1d();
-    gpu_printf!("thread %d: val = %f\n", idx.get() as i32, data[idx.get()] as f64);
-    gpu_assert!(data[idx.get()] >= 0.0);
+    let value = data[idx.get()];
+
+    gpu_printf!(
+        "thread %d: val = %f\n",
+        idx.get() as i32,
+        value as f64
+    );
+    gpu_assert!(value >= 0.0, "expected non-negative value");
 }
 ```
 
 `gpu_printf!` compiles to device-side `vprintf` with C vararg promotion.
-`gpu_assert!` traps on failure. The `debug` module also exposes GPU timing
-register reads such as `clock64()` and `globaltimer()`.
+
+`gpu_assert!(condition)` uses `trap()` when the condition is false. The
+string-literal message form, `gpu_assert!(condition, "message")`, calls CUDA's
+device-side `__assertfail` system call. The CUDA driver reports the assertion
+message and call-site metadata, and synchronization returns
+`CUDA_ERROR_ASSERT`.
+
+The `debug` module also exposes GPU timing register reads such as `clock64()`
+and `globaltimer()`.
 
 ## Proc-Macro Re-exports
 
