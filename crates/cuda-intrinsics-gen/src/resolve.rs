@@ -1977,10 +1977,7 @@ fn validate_policy(
             policy,
             declaration.context("scalar_arithmetic requires imported LLVM declaration")?,
         )?,
-        "scalar_math" => validate_scalar_math_policy(
-            policy,
-            declaration.context("scalar_math requires imported LLVM declaration")?,
-        )?,
+        "scalar_math" => validate_scalar_math_policy(policy, declaration)?,
         "extended_minmax" => validate_extended_minmax_policy(
             policy,
             declaration.context("extended_minmax requires imported LLVM declaration")?,
@@ -2249,10 +2246,13 @@ fn validate_policy(
                 }))
             || (policy.family == "scalar_math"
                 && policy.scalar_math.as_ref().is_some_and(|sm| {
+                    // Tanh is absent here only because it is PTX-native (no
+                    // imported declaration), so this check never sees it.
                     matches!(
                         sm.operation,
                         ScalarMathOperation::Sin
                             | ScalarMathOperation::Cos
+                            | ScalarMathOperation::Ex2
                             | ScalarMathOperation::Lg2
                             | ScalarMathOperation::Rsqrt
                     )
@@ -2349,6 +2349,7 @@ fn validate_policy(
                         sm.operation,
                         ScalarMathOperation::Sin
                             | ScalarMathOperation::Cos
+                            | ScalarMathOperation::Ex2
                             | ScalarMathOperation::Lg2
                             | ScalarMathOperation::Rsqrt
                     )
@@ -16146,12 +16147,35 @@ type ScalarMathVariant = (
     ScalarMathSubnormal,
 );
 
+#[derive(Clone, PartialEq, Eq)]
+enum ScalarMathRecipeSource {
+    /// Bound to a monomorphic tblgen record in the pinned import.
+    Imported {
+        source_record: String,
+        llvm_symbol: String,
+    },
+    /// Bound to an overloaded (polymorphic) tblgen record: the import
+    /// carries `anonymous_14`/`anyfloat` signature tokens and the concrete
+    /// f32 instantiation is recorded as the resolved symbol. Only ex2 uses
+    /// this (LLVM 22 models it as `int_nvvm_ex2_approx{,_ftz}` without a
+    /// per-format record).
+    ImportedOverloaded {
+        source_record: String,
+        llvm_symbol: String,
+        resolved_llvm_symbol: String,
+    },
+    /// No record exists in the pinned tblgen import at all. Only tanh uses
+    /// this: llc selects `llvm.nvvm.tanh.approx.f32` via NVVMIntrinsic-class
+    /// matching, but the import exports no record for it, so the op is
+    /// admitted directly against the PTX instruction.
+    PtxNative { instruction: String },
+}
+
 struct ScalarMathRecipe {
     id: String,
     abi_id: String,
     operation_key: String,
-    source_record: String,
-    llvm_symbol: String,
+    source: ScalarMathRecipeSource,
     rust_type: &'static str,
     properties: Vec<&'static str>,
     ptx_modifiers: Vec<String>,
@@ -16178,11 +16202,12 @@ fn scalar_math_operation_name(operation: ScalarMathOperation) -> &'static str {
     match operation {
         ScalarMathOperation::Sin => "sin",
         ScalarMathOperation::Cos => "cos",
+        ScalarMathOperation::Ex2 => "ex2",
         ScalarMathOperation::Lg2 => "lg2",
         ScalarMathOperation::Rcp => "rcp",
         ScalarMathOperation::Rsqrt => "rsqrt",
         ScalarMathOperation::Sqrt => "sqrt",
-        ScalarMathOperation::Ex2 => unreachable!("ex2 has no generated scalar_math variant"),
+        ScalarMathOperation::Tanh => "tanh",
     }
 }
 
@@ -16198,7 +16223,7 @@ fn scalar_math_precision_name(precision: ScalarMathPrecision) -> &'static str {
 
 fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
     use ScalarMathFormat::{F32, F64};
-    use ScalarMathOperation::{Cos, Lg2, Rcp, Rsqrt, Sin, Sqrt};
+    use ScalarMathOperation::{Cos, Ex2, Lg2, Rcp, Rsqrt, Sin, Sqrt, Tanh};
     use ScalarMathPrecision::{Approx, Rm, Rn, Rp, Rz};
     use ScalarMathSubnormal::{Ftz, Preserve};
 
@@ -16250,6 +16275,14 @@ fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
         (F64, Sqrt, Rz, Preserve),
         (F64, Sqrt, Rm, Preserve),
         (F64, Sqrt, Rp, Preserve),
+        // ex2: approx f32 only (PTX has no ex2.approx.f64). Appended after
+        // the original 37 so existing ABI ids stay stable.
+        (F32, Ex2, Approx, Preserve),
+        (F32, Ex2, Approx, Ftz),
+        // tanh: approx f32 only; the instruction has no ftz form (PTX ISA
+        // Table 29) and no rounded variants. Hardware floor is sm_75; the
+        // family contract gates it at the attested sm_80 evidence floor.
+        (F32, Tanh, Approx, Preserve),
     ]
 }
 
@@ -16275,8 +16308,28 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
     let modifier_id = modifier_names.join("_");
     let modifier_symbol = modifier_names.join(".");
     let id = format!("{operation_name}_{modifier_id}_{format_name}");
-    let source_record = format!("int_nvvm_{operation_name}_{modifier_id}_{source_format}");
-    let llvm_symbol = format!("llvm.nvvm.{operation_name}.{modifier_symbol}.{source_format}");
+    let source = match operation {
+        // LLVM 22 models ex2 as overloaded records without a per-format
+        // suffix (`int_nvvm_ex2_approx{,_ftz}` over anyfloat); bind those
+        // for declaration-level checks and record the concrete f32
+        // instantiation as the resolved symbol.
+        ScalarMathOperation::Ex2 => ScalarMathRecipeSource::ImportedOverloaded {
+            source_record: format!("int_nvvm_{operation_name}_{modifier_id}"),
+            llvm_symbol: format!("llvm.nvvm.{operation_name}.{modifier_symbol}"),
+            resolved_llvm_symbol: format!(
+                "llvm.nvvm.{operation_name}.{modifier_symbol}.{format_name}"
+            ),
+        },
+        // LLVM 22.1.2's tblgen export has no record for tanh at all, so the
+        // op is admitted directly against the PTX instruction.
+        ScalarMathOperation::Tanh => ScalarMathRecipeSource::PtxNative {
+            instruction: format!("{operation_name}.{modifier_symbol}.{format_name}"),
+        },
+        _ => ScalarMathRecipeSource::Imported {
+            source_record: format!("int_nvvm_{operation_name}_{modifier_id}_{source_format}"),
+            llvm_symbol: format!("llvm.nvvm.{operation_name}.{modifier_symbol}.{source_format}"),
+        },
+    };
     let ptx_modifiers = modifier_names
         .iter()
         .copied()
@@ -16293,8 +16346,10 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
         operation,
         ScalarMathOperation::Sin
             | ScalarMathOperation::Cos
+            | ScalarMathOperation::Ex2
             | ScalarMathOperation::Lg2
             | ScalarMathOperation::Rsqrt
+            | ScalarMathOperation::Tanh
     );
 
     let (ptx_isa_section, ptx_isa_url) = match operation {
@@ -16322,15 +16377,21 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
             "9.7.3.9 Floating Point Instructions: sqrt",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sqrt",
         ),
-        ScalarMathOperation::Ex2 => unreachable!("ex2 has no generated scalar_math variant"),
+        ScalarMathOperation::Ex2 => (
+            "9.7.3.13 Floating Point Instructions: ex2",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-ex2",
+        ),
+        ScalarMathOperation::Tanh => (
+            "9.7.3.15 Floating Point Instructions: tanh",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-tanh",
+        ),
     };
 
     Some(ScalarMathRecipe {
         id,
         abi_id: format!("i{:04}", 782 + index),
         operation_key: format!("scalar.math.{operation_name}.{modifier_symbol}.{format_name}"),
-        source_record,
-        llvm_symbol,
+        source,
         rust_type: format_name,
         properties: vec!["IntrNoMem"],
         ptx_modifiers,
@@ -16360,7 +16421,7 @@ fn expand_scalar_math_admission(admission: &ScalarMathAdmission) -> Result<Vec<O
         .collect::<Vec<_>>();
     ensure!(
         actual == expected,
-        "compact scalar-math admission must list the canonical 37 variants"
+        "compact scalar-math admission must list the canonical 40 variants"
     );
 
     admission
@@ -16398,13 +16459,52 @@ fn scalar_math_overlay_record(
         scalar_math_operation_name(operation),
         scalar_math_precision_name(precision),
     );
+    let (source, source_record, llvm_symbol, resolved_llvm_symbol, llvm_arguments, llvm_results) =
+        match &recipe.source {
+            ScalarMathRecipeSource::Imported {
+                source_record,
+                llvm_symbol,
+            } => (
+                None,
+                Some(source_record.clone()),
+                Some(llvm_symbol.clone()),
+                None,
+                vec![recipe.rust_type.to_owned()],
+                vec![recipe.rust_type.to_owned()],
+            ),
+            // The polymorphic signature tokens mirror the imported
+            // overloaded record verbatim (anyfloat over anonymous_14), the
+            // same shape packed_alu uses for llvm.nvvm.fabs.
+            ScalarMathRecipeSource::ImportedOverloaded {
+                source_record,
+                llvm_symbol,
+                resolved_llvm_symbol,
+            } => (
+                None,
+                Some(source_record.clone()),
+                Some(llvm_symbol.clone()),
+                Some(resolved_llvm_symbol.clone()),
+                vec!["anonymous_14".to_owned()],
+                vec!["anyfloat".to_owned()],
+            ),
+            ScalarMathRecipeSource::PtxNative { instruction } => (
+                Some(IntrinsicSource::PtxNative {
+                    instruction: instruction.clone(),
+                }),
+                None,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+            ),
+        };
     Ok(OverlayIntrinsic {
         id: recipe.id.clone(),
         abi_id: recipe.abi_id,
         operation_key: recipe.operation_key,
         family: "scalar_math".into(),
-        source: None,
-        source_record: Some(recipe.source_record),
+        source,
+        source_record,
         rust_module: "float".into(),
         rust_name: recipe.id.clone(),
         rust_arguments: vec![recipe.rust_type.into()],
@@ -16418,10 +16518,10 @@ fn scalar_math_overlay_record(
         dialect_op_name: "nvvm.scalar_math".into(),
         dialect_operands: vec![recipe.rust_type.into()],
         dialect_results: vec![recipe.rust_type.into()],
-        llvm_symbol: Some(recipe.llvm_symbol),
-        resolved_llvm_symbol: None,
-        llvm_arguments: vec![recipe.rust_type.into()],
-        llvm_results: vec![recipe.rust_type.into()],
+        llvm_symbol,
+        resolved_llvm_symbol,
+        llvm_arguments,
+        llvm_results,
         pure: true,
         memory: "none".into(),
         convergent: false,
@@ -16512,7 +16612,7 @@ fn scalar_math_overlay_record(
 
 fn validate_scalar_math_policy(
     policy: &OverlayIntrinsic,
-    declaration: &ImportedIntrinsic,
+    declaration: Option<&ImportedIntrinsic>,
 ) -> Result<()> {
     let math = policy
         .scalar_math
@@ -16527,39 +16627,78 @@ fn validate_scalar_math_policy(
         policy.id
     );
     let signature = vec![recipe.rust_type.to_owned()];
+    let source_matches = match &recipe.source {
+        ScalarMathRecipeSource::Imported {
+            source_record,
+            llvm_symbol,
+        } => {
+            policy.source.is_none()
+                && policy.source_record.as_deref() == Some(source_record.as_str())
+                && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
+                && policy.resolved_llvm_symbol.is_none()
+                && policy.llvm_arguments == signature
+                && policy.llvm_results == [recipe.rust_type]
+        }
+        ScalarMathRecipeSource::ImportedOverloaded {
+            source_record,
+            llvm_symbol,
+            resolved_llvm_symbol,
+        } => {
+            policy.source.is_none()
+                && policy.source_record.as_deref() == Some(source_record.as_str())
+                && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
+                && policy.resolved_llvm_symbol.as_deref() == Some(resolved_llvm_symbol.as_str())
+                && policy.llvm_arguments == ["anonymous_14"]
+                && policy.llvm_results == ["anyfloat"]
+        }
+        ScalarMathRecipeSource::PtxNative { instruction } => {
+            policy.source
+                == Some(IntrinsicSource::PtxNative {
+                    instruction: instruction.clone(),
+                })
+                && policy.source_record.is_none()
+                && policy.llvm_symbol.is_none()
+                && policy.resolved_llvm_symbol.is_none()
+                && policy.llvm_arguments.is_empty()
+                && policy.llvm_results.is_empty()
+        }
+    };
     ensure!(
         policy.id == recipe.id
             && policy.abi_id == recipe.abi_id
             && policy.operation_key == recipe.operation_key
-            && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
-            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
-            && policy.resolved_llvm_symbol.is_none()
-            && policy.llvm_arguments == signature
-            && policy.llvm_results == [recipe.rust_type],
+            && source_matches,
         "{} scalar-math identity or LLVM source changed",
         policy.id
     );
-    let expected_properties = recipe
-        .properties
-        .iter()
-        .map(|property| (*property).to_owned())
-        .collect::<Vec<_>>();
     ensure!(
-        declaration.properties == expected_properties,
-        "{} imported scalar-math properties changed",
+        declaration.is_none() == matches!(recipe.source, ScalarMathRecipeSource::PtxNative { .. }),
+        "{} scalar-math source kind and imported declaration disagree",
         policy.id
     );
-    ensure!(
-        declaration.selections.len() <= 1,
-        "{} gained an unreviewed scalar-math selection",
-        policy.id
-    );
-    if let Some(direct) = declaration.selections.first() {
+    if let Some(declaration) = declaration {
+        let expected_properties = recipe
+            .properties
+            .iter()
+            .map(|property| (*property).to_owned())
+            .collect::<Vec<_>>();
         ensure!(
-            direct.predicates.is_empty() && direct.constraints.is_empty(),
-            "{} direct scalar-math selection changed",
+            declaration.properties == expected_properties,
+            "{} imported scalar-math properties changed",
             policy.id
         );
+        ensure!(
+            declaration.selections.len() <= 1,
+            "{} gained an unreviewed scalar-math selection",
+            policy.id
+        );
+        if let Some(direct) = declaration.selections.first() {
+            ensure!(
+                direct.predicates.is_empty() && direct.constraints.is_empty(),
+                "{} direct scalar-math selection changed",
+                policy.id
+            );
+        }
     }
     ensure!(
         policy.rust_module == "float"
@@ -16628,7 +16767,7 @@ fn validate_scalar_math_policy(
         "{} has the wrong reviewed scalar-math backend routes",
         policy.id
     );
-    if let Some(direct) = declaration.selections.first() {
+    if let Some(direct) = declaration.and_then(|declaration| declaration.selections.first()) {
         validate_selected_target_predicates(policy, direct)?;
     }
     ensure_no_other_family_contract(policy, "scalar math")?;
@@ -24380,6 +24519,7 @@ fn materialize_evidence_record(
         &id,
         "status",
     )?;
+    let source_is_ptx_native = matches!(source, Some(IntrinsicSource::PtxNative { .. }));
     Ok(EvidenceRecord {
         id,
         source,
@@ -24405,10 +24545,17 @@ fn materialize_evidence_record(
         ptx_feature,
         status,
         stages,
-        declaration_attributes_canonicalized: template
-            .facts
-            .declaration_attributes_canonicalized
-            .or(defaults.declaration_attributes_canonicalized),
+        // Declaration canonicalization is a statement about an imported
+        // LLVM declaration; a PTX-native record has none, so the file-level
+        // default must not invent the fact for it.
+        declaration_attributes_canonicalized: if source_is_ptx_native {
+            template.facts.declaration_attributes_canonicalized
+        } else {
+            template
+                .facts
+                .declaration_attributes_canonicalized
+                .or(defaults.declaration_attributes_canonicalized)
+        },
         runtime_validation: template
             .facts
             .runtime_validation
@@ -27515,7 +27662,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 58);
-        assert_eq!(overlay.intrinsics.len(), 818);
+        assert_eq!(overlay.intrinsics.len(), 821);
         assert_eq!(
             overlay
                 .intrinsics

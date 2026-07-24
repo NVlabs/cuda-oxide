@@ -46,6 +46,14 @@ pub(crate) fn convert_generated_scalar_math(
     let backend = context::lowering_options(ctx).intrinsic_backend;
     let lowered = match backend {
         IntrinsicBackend::LlvmNvptx if !llvm_inline_ptx => {
+            // PTX-native scalar math ops (tanh) have no typed intrinsic and
+            // are always generated with llvm_inline_ptx set, so an empty
+            // name can only mean a corrupted generated table.
+            if intrinsic_name.is_empty() {
+                return pliron::input_err_noloc!(
+                    "generated scalar math op has no typed LLVM intrinsic"
+                );
+            }
             let function_ty = llvm_types::FuncType::get(ctx, result_ty, vec![result_ty], false);
             call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?
         }

@@ -5697,3 +5697,24 @@ status = "active"
 catalog_id = "sqrt_rp_f64"
 operation_key = "scalar.math.sqrt.rp.f64"
 raw_rust_signature = { safe = true, arguments = ["f64"], result = "f64" }
+
+[[entry]]
+abi_id = "i0819"
+status = "active"
+catalog_id = "ex2_approx_f32"
+operation_key = "scalar.math.ex2.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0820"
+status = "active"
+catalog_id = "ex2_approx_ftz_f32"
+operation_key = "scalar.math.ex2.approx.ftz.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0821"
+status = "active"
+catalog_id = "tanh_approx_f32"
+operation_key = "scalar.math.tanh.approx.f32"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
