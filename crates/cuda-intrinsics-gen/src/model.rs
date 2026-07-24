@@ -203,6 +203,30 @@ pub struct OverlayShardFile {
     pub tma: Option<TmaAdmission>,
     #[serde(default)]
     pub tcgen05: Option<Tcgen05Admission>,
+    #[serde(default)]
+    pub scalar_math: Option<ScalarMathAdmission>,
+}
+
+/// Compact admission for unary scalar floating-point math operations.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarMathAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ScalarMathAdmissionVariant>,
+}
+
+/// One reviewed scalar math variant.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarMathAdmissionVariant {
+    pub abi_id: String,
+    pub format: ScalarMathFormat,
+    pub operation: ScalarMathOperation,
+    pub precision: ScalarMathPrecision,
+    pub subnormal: ScalarMathSubnormal,
 }
 
 /// Compact admission for the four existing `stmatrix` stores.
@@ -915,6 +939,8 @@ pub struct OverlayIntrinsic {
     pub scalar_conversion: Option<ScalarConversion>,
     #[serde(default)]
     pub scalar_arithmetic: Option<ScalarArithmetic>,
+    #[serde(default)]
+    pub scalar_math: Option<ScalarMath>,
     #[serde(default)]
     pub extended_minmax: Option<ExtendedMinMax>,
     #[serde(default)]
@@ -2443,6 +2469,60 @@ pub enum ScalarArithmeticSaturation {
     Sat,
 }
 
+/// Closed contract for unary scalar floating-point math operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarMath {
+    pub format: ScalarMathFormat,
+    pub operation: ScalarMathOperation,
+    pub precision: ScalarMathPrecision,
+    pub subnormal: ScalarMathSubnormal,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarMathFormat {
+    F32,
+    F64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarMathOperation {
+    Sin,
+    Cos,
+    /// Deferred: no generated variant yet. LLVM 22 renamed the intrinsic to
+    /// the overloaded `llvm.nvvm.ex2.approx.f32`/`.f16` family, which the
+    /// evidence import does not resolve; the legacy `llvm.nvvm.ex2.approx.f`
+    /// and `.ftz.f` names still select directly on both llc 21 and 22, so a
+    /// future overlay entry can admit ex2 through the legacy names (or via
+    /// inline PTX like sin/cos). The variant exists so the family enum
+    /// already covers the full PTX instruction set.
+    Ex2,
+    Lg2,
+    Rcp,
+    Rsqrt,
+    Sqrt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarMathPrecision {
+    Approx,
+    Rn,
+    Rz,
+    Rm,
+    Rp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarMathSubnormal {
+    Preserve,
+    Ftz,
+}
+
 /// Closed identity and carrier contract for extended floating-point min/max.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3058,6 +3138,8 @@ pub struct CatalogIntrinsic {
     pub scalar_conversion: Option<ScalarConversion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scalar_arithmetic: Option<ScalarArithmetic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scalar_math: Option<ScalarMath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extended_minmax: Option<ExtendedMinMax>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

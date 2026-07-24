@@ -1595,11 +1595,13 @@ pub fn validate_target_features(
 #[cfg(test)]
 pub fn resolve_ptx_target(
     explicit_override: Option<&str>,
+    explicit_override_source: &'static str,
     device_hint: Option<&str>,
     detected: DetectedFeatures,
 ) -> Result<(String, &'static str), PipelineError> {
     resolve_ptx_target_with_generated(
         explicit_override,
+        explicit_override_source,
         device_hint,
         detected,
         &GeneratedModuleRequirements::default(),
@@ -1608,17 +1610,34 @@ pub fn resolve_ptx_target(
 
 pub(crate) fn resolve_ptx_target_with_generated(
     explicit_override: Option<&str>,
+    explicit_override_source: &'static str,
     device_hint: Option<&str>,
     detected: DetectedFeatures,
     generated: &GeneratedModuleRequirements,
 ) -> Result<(String, &'static str), PipelineError> {
     if let Some(target) = explicit_override {
-        let parsed = target.parse::<CudaArch>().map_err(|error| {
-            PipelineError::PtxGeneration(format!("invalid CUDA_OXIDE_TARGET `{target}`: {error}"))
+        let parsed =
+            target
+                .parse::<CudaArch>()
+                .map_err(|error| PipelineError::TargetSelection {
+                    target: target.to_string(),
+                    // `error` already reads "invalid CUDA target `x`: ...";
+                    // only the provenance needs to be added here.
+                    reason: format!("{error} (target from {explicit_override_source})"),
+                })?;
+        validate_target_features(&parsed, detected).map_err(|reason| {
+            PipelineError::TargetSelection {
+                target: parsed.sm(),
+                reason: format!("{reason} (target from {explicit_override_source})"),
+            }
         })?;
-        validate_target_features(&parsed, detected).map_err(PipelineError::PtxGeneration)?;
-        validate_generated_target(&parsed.sm(), generated).map_err(PipelineError::PtxGeneration)?;
-        return Ok((parsed.sm(), "CUDA_OXIDE_TARGET"));
+        validate_generated_target(&parsed.sm(), generated).map_err(|reason| {
+            PipelineError::TargetSelection {
+                target: parsed.sm(),
+                reason: format!("{reason} (target from {explicit_override_source})"),
+            }
+        })?;
+        return Ok((parsed.sm(), explicit_override_source));
     }
 
     if let Some(device) = device_hint.filter(|target| {
@@ -2073,6 +2092,7 @@ mod tests {
         assert_eq!(
             resolve_ptx_target_with_generated(
                 Some("sm_101a"),
+                "CUDA_OXIDE_TARGET",
                 None,
                 DetectedFeatures::Basic,
                 &llvm,
@@ -2083,6 +2103,7 @@ mod tests {
         assert!(
             resolve_ptx_target_with_generated(
                 Some("sm_103a"),
+                "CUDA_OXIDE_TARGET",
                 None,
                 DetectedFeatures::Basic,
                 &llvm,
@@ -2092,6 +2113,7 @@ mod tests {
         assert_eq!(
             resolve_ptx_target_with_generated(
                 None,
+                "CUDA_OXIDE_TARGET",
                 Some("sm_101a"),
                 DetectedFeatures::Basic,
                 &llvm,
@@ -2102,6 +2124,7 @@ mod tests {
         assert_eq!(
             resolve_ptx_target_with_generated(
                 None,
+                "CUDA_OXIDE_TARGET",
                 Some("sm_101a"),
                 DetectedFeatures::Basic,
                 &libnvvm,
@@ -2110,7 +2133,14 @@ mod tests {
             ("sm_100a".into(), "feature requirement")
         );
         assert_eq!(
-            resolve_ptx_target_with_generated(None, None, DetectedFeatures::Basic, &llvm).unwrap(),
+            resolve_ptx_target_with_generated(
+                None,
+                "CUDA_OXIDE_TARGET",
+                None,
+                DetectedFeatures::Basic,
+                &llvm
+            )
+            .unwrap(),
             ("sm_100a".into(), "feature requirement")
         );
 
@@ -2294,10 +2324,15 @@ mod tests {
         let bf16 = GeneratedModuleRequirements::from_targets(vec![bf16]);
         assert!(!generated_target_satisfied("sm_89", &bf16));
         assert!(generated_target_satisfied("sm_90", &bf16));
-        let error =
-            resolve_ptx_target_with_generated(Some("sm_89"), None, DetectedFeatures::Basic, &bf16)
-                .unwrap_err()
-                .to_string();
+        let error = resolve_ptx_target_with_generated(
+            Some("sm_89"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            DetectedFeatures::Basic,
+            &bf16,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("packed_atomic_add_bf16x2"), "{error}");
         assert!(error.contains("sm_90 or newer"), "{error}");
     }
@@ -2597,15 +2632,26 @@ mod tests {
         );
         assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
 
-        let lower_target =
-            resolve_ptx_target(Some("sm_75"), None, requirements.features).unwrap_err();
+        let lower_target = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .unwrap_err();
         assert!(
             lower_target
                 .to_string()
                 .contains("cannot lower detected feature Sm80"),
             "{lower_target}"
         );
-        let (target, _) = resolve_ptx_target(Some("sm_80"), None, requirements.features).unwrap();
+        let (target, _) = resolve_ptx_target(
+            Some("sm_80"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .unwrap();
         assert_eq!(target, "sm_80");
 
         for near_miss in [
@@ -2670,9 +2716,14 @@ mod tests {
             Some("+ptx62")
         );
         assert_eq!(
-            resolve_ptx_target(Some("sm_70"), None, DetectedFeatures::Basic)
-                .unwrap()
-                .0,
+            resolve_ptx_target(
+                Some("sm_70"),
+                "CUDA_OXIDE_TARGET",
+                None,
+                DetectedFeatures::Basic
+            )
+            .unwrap()
+            .0,
             "sm_70"
         );
 
@@ -2690,13 +2741,23 @@ mod tests {
             );
         }
         assert_eq!(select_target(DetectedFeatures::Sm90).unwrap(), "sm_90");
-        let rejected = resolve_ptx_target(Some("sm_80"), None, DetectedFeatures::Sm90)
-            .expect_err("native bf16x2 atomic add must reject sm_80")
-            .to_string();
+        let rejected = resolve_ptx_target(
+            Some("sm_80"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            DetectedFeatures::Sm90,
+        )
+        .expect_err("native bf16x2 atomic add must reject sm_80")
+        .to_string();
         assert!(rejected.contains("cannot lower detected feature Sm90"));
-        let near_miss = resolve_ptx_target(Some("sm_89"), None, DetectedFeatures::Sm90)
-            .expect_err("the architecture immediately below sm_90 must be rejected")
-            .to_string();
+        let near_miss = resolve_ptx_target(
+            Some("sm_89"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            DetectedFeatures::Sm90,
+        )
+        .expect_err("the architecture immediately below sm_90 must be rejected")
+        .to_string();
         assert!(near_miss.contains("cannot lower detected feature Sm90"));
 
         let both = "atom.global.add.noftz.f16x2 $0, [$1], $2; \
@@ -2858,15 +2919,26 @@ mod tests {
         );
         assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
 
-        let lower_target =
-            resolve_ptx_target(Some("sm_75"), None, requirements.features).unwrap_err();
+        let lower_target = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .unwrap_err();
         assert!(
             lower_target
                 .to_string()
                 .contains("cannot lower detected feature Sm80"),
             "{lower_target}"
         );
-        let (target, _) = resolve_ptx_target(Some("sm_80"), None, requirements.features).unwrap();
+        let (target, _) = resolve_ptx_target(
+            Some("sm_80"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .unwrap();
         assert_eq!(target, "sm_80");
 
         for near_miss in [
@@ -2932,7 +3004,8 @@ mod tests {
         assert_eq!(requirements.features, DetectedFeatures::Sm80);
         assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70);
         let (target, _) =
-            resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
+            resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
+                .expect("auto-resolve");
         assert_eq!(target, "sm_80");
 
         for near_miss in [
@@ -2960,9 +3033,14 @@ mod tests {
         let sm_80: CudaArch = "sm_80".parse().unwrap();
         assert!(validate_target_features(&sm_75, requirements.features).is_err());
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
-        let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
-            .expect_err("sm_75 must not accept TF32 tensor-core MMA")
-            .to_string();
+        let error = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .expect_err("sm_75 must not accept TF32 tensor-core MMA")
+        .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm80"),
             "{error}"
@@ -3028,7 +3106,8 @@ mod tests {
         );
         let requirements = detect_module_requirements_in_llvm_text(representative);
         let (target, _) =
-            resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
+            resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
+                .expect("auto-resolve");
         assert_eq!(target, "sm_80");
 
         for near_miss in [
@@ -3065,9 +3144,14 @@ mod tests {
         let sm_80: CudaArch = "sm_80".parse().unwrap();
         assert!(validate_target_features(&sm_75, requirements.features).is_err());
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
-        let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
-            .expect_err("sm_75 must not accept INT8 tensor-core MMA")
-            .to_string();
+        let error = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .expect_err("sm_75 must not accept INT8 tensor-core MMA")
+        .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm80"),
             "{error}"
@@ -3158,9 +3242,14 @@ mod tests {
         let sm_80: CudaArch = "sm_80".parse().unwrap();
         assert!(validate_target_features(&sm_75, requirements.features).is_err());
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
-        let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
-            .expect_err("sm_75 must not accept dense m16 INT4 MMA")
-            .to_string();
+        let error = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .expect_err("sm_75 must not accept dense m16 INT4 MMA")
+        .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm80"),
             "{error}"
@@ -3443,7 +3532,8 @@ mod tests {
         );
         let requirements = detect_module_requirements_in_llvm_text(representative);
         let (target, _) =
-            resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
+            resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
+                .expect("auto-resolve");
         assert_eq!(target, "sm_75");
         assert_eq!(
             required_ptx_feature("sm_75", requirements.ptx_isa),
@@ -3457,9 +3547,14 @@ mod tests {
         assert!(validate_target_features(&sm_70, requirements.features).is_err());
         assert!(validate_target_features(&sm_75, requirements.features).is_ok());
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
-        let error = resolve_ptx_target(Some("sm_70"), None, requirements.features)
-            .expect_err("sm_70 must not accept m8n8k16 INT8 MMA")
-            .to_string();
+        let error = resolve_ptx_target(
+            Some("sm_70"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .expect_err("sm_70 must not accept m8n8k16 INT8 MMA")
+        .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm75"),
             "{error}"
@@ -3514,8 +3609,13 @@ mod tests {
                 ptx_isa: PtxIsaRequirement::Ptx70,
             }
         );
-        let (target, _) = resolve_ptx_target(None, None, combined_requirements.features)
-            .expect("combined m8 and m16 MMA should auto-resolve");
+        let (target, _) = resolve_ptx_target(
+            None,
+            "CUDA_OXIDE_TARGET",
+            None,
+            combined_requirements.features,
+        )
+        .expect("combined m8 and m16 MMA should auto-resolve");
         assert_eq!(target, "sm_80");
     }
 
@@ -3594,9 +3694,14 @@ mod tests {
         assert!(validate_target_features(&sm_72, requirements.features).is_err());
         assert!(validate_target_features(&sm_75, requirements.features).is_ok());
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
-        let error = resolve_ptx_target(Some("sm_72"), None, requirements.features)
-            .expect_err("sm_72 must not accept m8n8k32 INT4 MMA")
-            .to_string();
+        let error = resolve_ptx_target(
+            Some("sm_72"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .expect_err("sm_72 must not accept m8n8k32 INT4 MMA")
+        .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm75"),
             "{error}"
@@ -3648,7 +3753,7 @@ mod tests {
         }
         assert!(!arch_satisfies("sm_72", features));
         assert_eq!(
-            resolve_ptx_target(None, Some("sm_120"), features).unwrap(),
+            resolve_ptx_target(None, "CUDA_OXIDE_TARGET", Some("sm_120"), features).unwrap(),
             ("sm_120".to_string(), "detected GPU")
         );
 
@@ -3742,9 +3847,14 @@ mod tests {
         let sm_80: CudaArch = "sm_80".parse().unwrap();
         assert!(validate_target_features(&sm_75, requirements.features).is_err());
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
-        let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
-            .expect_err("sm_75 must not accept FP64 tensor-core MMA")
-            .to_string();
+        let error = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            requirements.features,
+        )
+        .expect_err("sm_75 must not accept FP64 tensor-core MMA")
+        .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm80"),
             "{error}"
@@ -4466,8 +4576,52 @@ mod tests {
         let impossible = DetectedFeatures::Wgmma | DetectedFeatures::MatrixBlackwell;
         let error = select_target(impossible).expect_err("families have no common target");
         assert!(error.contains("do not share a compatible GPU architecture"));
-        assert!(resolve_ptx_target(Some("sm_90a"), None, impossible).is_err());
-        assert!(resolve_ptx_target(Some("sm_100a"), None, impossible).is_err());
+        assert!(resolve_ptx_target(Some("sm_90a"), "CUDA_OXIDE_TARGET", None, impossible).is_err());
+        assert!(
+            resolve_ptx_target(Some("sm_100a"), "CUDA_OXIDE_TARGET", None, impossible).is_err()
+        );
+    }
+
+    #[test]
+    fn rejected_explicit_targets_name_the_source_that_chose_them() {
+        let parse_failure = resolve_ptx_target(
+            Some("not-a-target"),
+            "PipelineConfig::target_arch",
+            None,
+            DetectedFeatures::Sm80,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            parse_failure.contains("invalid CUDA target `not-a-target`"),
+            "{parse_failure}"
+        );
+        assert!(
+            parse_failure.contains("(target from PipelineConfig::target_arch)"),
+            "{parse_failure}"
+        );
+        assert_eq!(
+            parse_failure.matches("invalid CUDA target").count(),
+            1,
+            "parse errors must not double-wrap the parser's own prefix: {parse_failure}"
+        );
+
+        let floor_rejection = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            DetectedFeatures::Sm80,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            floor_rejection.contains("cannot lower detected feature Sm80"),
+            "{floor_rejection}"
+        );
+        assert!(
+            floor_rejection.contains("(target from CUDA_OXIDE_TARGET)"),
+            "{floor_rejection}"
+        );
     }
 
     #[test]
@@ -4663,5 +4817,47 @@ mod tests {
         assert!(!arch_satisfies("sm_80", DetectedFeatures::Sm90));
         assert!(!arch_satisfies("sm_80a", DetectedFeatures::Basic));
         assert!(!arch_satisfies("sm_90f", DetectedFeatures::Tma));
+    }
+
+    #[test]
+    fn resolve_ptx_target_threads_a_caller_supplied_source_label() {
+        let (target, source) = resolve_ptx_target(
+            Some("sm_80"),
+            "the requested Target",
+            None,
+            DetectedFeatures::Basic,
+        )
+        .unwrap();
+        assert_eq!(target, "sm_80");
+        assert_eq!(source, "the requested Target");
+    }
+
+    #[test]
+    fn resolve_ptx_target_failure_does_not_assume_an_env_var_source() {
+        let error = resolve_ptx_target(
+            Some("sm_75"),
+            "the requested Target",
+            None,
+            DetectedFeatures::Wgmma,
+        )
+        .unwrap_err();
+        assert!(matches!(error, PipelineError::TargetSelection { .. }));
+        assert!(
+            !error.to_string().contains("CUDA_OXIDE_TARGET"),
+            "a standalone caller that never set CUDA_OXIDE_TARGET should not see it blamed: {error}"
+        );
+
+        let parse_error = resolve_ptx_target(
+            Some("not-a-target"),
+            "the requested Target",
+            None,
+            DetectedFeatures::Basic,
+        )
+        .unwrap_err();
+        assert!(matches!(parse_error, PipelineError::TargetSelection { .. }));
+        assert!(
+            !parse_error.to_string().contains("CUDA_OXIDE_TARGET"),
+            "{parse_error}"
+        );
     }
 }

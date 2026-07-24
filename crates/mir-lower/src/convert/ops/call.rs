@@ -520,6 +520,10 @@ pub fn convert(
         return convert_rust_float_math_intrinsic(ctx, rewriter, op, intrinsic);
     }
 
+    if callee_name == rust_intrinsics::CALLEE_SELECT_UNPREDICTABLE {
+        return convert_rust_select_unpredictable(ctx, rewriter, op);
+    }
+
     let callee_ident: pliron::identifier::Identifier = {
         let resolved_name = resolve_device_extern_symbol(&callee_name);
 
@@ -646,6 +650,38 @@ pub fn convert(
         rewriter.erase_operation(ctx, op);
     }
 
+    Ok(())
+}
+
+/// Lower the placeholder call for `select_unpredictable` to an LLVM `select`.
+///
+/// The importer emits `select_unpredictable(cond, true_val, false_val)` as a
+/// placeholder `mir.call` with exactly three operands. By this point the
+/// operands carry their converted LLVM types, so the `select` is built
+/// directly: its result type comes from `true_val` and matches both
+/// `false_val` and the intrinsic's return type. The Rust `bool` condition
+/// lowers to `i1`, which is what `SelectOp` requires. The `unpredictable`
+/// branch-weight hint is an optimization hint with no device semantics and
+/// is intentionally not represented.
+fn convert_rust_select_unpredictable(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    if op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err!(loc, "select_unpredictable call must have one result");
+    }
+    let args: Vec<Value> = op.deref(ctx).operands().collect();
+    let [cond, true_val, false_val] = args.as_slice() else {
+        return pliron::input_err!(
+            loc,
+            "select_unpredictable expects exactly three operands (cond, true, false)"
+        );
+    };
+    let select = llvm::SelectOp::new(ctx, *cond, *true_val, *false_val);
+    rewriter.insert_operation(ctx, select.get_operation());
+    rewriter.replace_operation(ctx, op, select.get_operation());
     Ok(())
 }
 

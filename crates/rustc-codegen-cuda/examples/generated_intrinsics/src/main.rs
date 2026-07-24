@@ -131,6 +131,76 @@ mod kernels {
         }
     }
 
+    /// Keeps every generated scalar math intrinsic in the module.
+    ///
+    /// This coverage kernel is compiled but not launched by the example. It
+    /// exercises both lowering paths of the scalar_math family: typed
+    /// `llvm.nvvm.*` calls (rcp/sqrt) and inline PTX (sin/cos/lg2/rsqrt).
+    #[kernel]
+    pub fn compile_scalar_math(
+        mut output_f32: DisjointSlice<f32>,
+        mut output_f64: DisjointSlice<f64>,
+        a32: f32,
+        a64: f64,
+    ) {
+        if cuda_device::thread::index_1d().get() != 0 {
+            return;
+        }
+        let values_f32 = [
+            raw_float::sin_approx_f32(a32),
+            device_float::sin_approx_ftz_f32(a32),
+            raw_float::cos_approx_f32(a32),
+            device_float::cos_approx_ftz_f32(a32),
+            raw_float::lg2_approx_f32(a32),
+            device_float::lg2_approx_ftz_f32(a32),
+            raw_float::rcp_approx_ftz_f32(a32),
+            device_float::rcp_rn_f32(a32),
+            raw_float::rcp_rn_ftz_f32(a32),
+            device_float::rcp_rz_f32(a32),
+            raw_float::rcp_rz_ftz_f32(a32),
+            device_float::rcp_rm_f32(a32),
+            raw_float::rcp_rm_ftz_f32(a32),
+            device_float::rcp_rp_f32(a32),
+            raw_float::rcp_rp_ftz_f32(a32),
+            device_float::rsqrt_approx_f32(a32),
+            raw_float::rsqrt_approx_ftz_f32(a32),
+            device_float::sqrt_approx_f32(a32),
+            raw_float::sqrt_approx_ftz_f32(a32),
+            device_float::sqrt_rn_f32(a32),
+            raw_float::sqrt_rn_ftz_f32(a32),
+            device_float::sqrt_rz_f32(a32),
+            raw_float::sqrt_rz_ftz_f32(a32),
+            device_float::sqrt_rm_f32(a32),
+            raw_float::sqrt_rm_ftz_f32(a32),
+            device_float::sqrt_rp_f32(a32),
+            raw_float::sqrt_rp_ftz_f32(a32),
+        ];
+        let values_f64 = [
+            raw_float::rcp_approx_ftz_f64(a64),
+            device_float::rcp_rn_f64(a64),
+            raw_float::rcp_rz_f64(a64),
+            device_float::rcp_rm_f64(a64),
+            raw_float::rcp_rp_f64(a64),
+            device_float::rsqrt_approx_f64(a64),
+            raw_float::sqrt_rn_f64(a64),
+            device_float::sqrt_rz_f64(a64),
+            raw_float::sqrt_rm_f64(a64),
+            device_float::sqrt_rp_f64(a64),
+        ];
+        for (index, value) in values_f32.into_iter().enumerate() {
+            if index < output_f32.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_f32.get_unchecked_mut(index) = value };
+            }
+        }
+        for (index, value) in values_f64.into_iter().enumerate() {
+            if index < output_f64.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_f64.get_unchecked_mut(index) = value };
+            }
+        }
+    }
+
     /// Keeps every generated extended min/max intrinsic in the module.
     ///
     /// This coverage kernel is compiled but not launched by the example.

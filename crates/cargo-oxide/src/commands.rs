@@ -1573,7 +1573,7 @@ pub fn emit_ltoir(
     );
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.
-    let ll_path = example_dir.join(format!("{example}.ll"));
+    let ll_path = emitted_ll_path(&example_dir, example);
     let ir = std::fs::read(&ll_path).unwrap_or_else(|e| {
         eprintln!(
             "Error: could not read emitted NVVM IR at {}: {e}",
@@ -1606,7 +1606,7 @@ pub fn emit_ltoir(
     // Step 3: write the artifact.
     let out_path = output
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| example_dir.join(format!("{example}.ltoir")));
+        .unwrap_or_else(|| default_ltoir_path(&example_dir, example));
     for metadata_path in [
         out_path.with_extension("target"),
         out_path.with_extension("options"),
@@ -2272,6 +2272,7 @@ pub fn codegen_show_pipeline(
     println!("  -C debug-assertions=off     Remove debug checks");
     println!("  -Z mir-enable-passes=-JumpThreading");
     println!("                              Prevent barrier duplication");
+    println!("  -Z always-encode-mir        Emit MIR for all reachable device deps");
     println!();
     println!("Note: panic=abort is NOT required - the codegen backend treats");
     println!("      unwind paths as unreachable (CUDA toolchain limitation, not HW).");
@@ -2637,6 +2638,29 @@ pub fn doctor(ctx: &Context) {
         println!("- not built yet (run `cargo oxide setup`)");
     }
 
+    // 3b. Shared cache. The check above reports the backend this context
+    // resolves to, which inside the repository is the local build. A project
+    // outside the repository resolves to the cache instead, so the two can
+    // disagree while every other check passes.
+    print!("Shared cache (external projects)... ");
+    match backend::cached_backend_path() {
+        Some(cached) => match backend::compare_cache_to_local(&cached, &ctx.backend_so) {
+            backend::CacheReport::Absent => {
+                println!("- empty; external projects build on first use");
+            }
+            backend::CacheReport::UpToDate => {
+                println!("✓ {}", cached.display());
+            }
+            backend::CacheReport::OlderThanLocal => {
+                println!("⚠ {}", cached.display());
+                println!("  Older than the backend built here, so projects outside this");
+                println!("  repository would load a different one. Run `cargo oxide setup`");
+                println!("  to publish, or set CUDA_OXIDE_BACKEND to pin an explicit path.");
+            }
+        },
+        None => println!("- cache directory unknown (set CARGO_HOME or HOME)"),
+    }
+
     // 4. CUDA headers (cuda.h). The host `cuda-bindings` crate cannot build
     // without them; cargo-oxide itself deliberately can, which is what makes
     // this check reachable on a toolkit-less machine instead of dying inside
@@ -2963,12 +2987,31 @@ pub fn setup(ctx: &Context) {
     println!("Building cuda-oxide codegen backend...");
     println!();
 
-    backend::build_backend_from_source(&ctx.codegen_crate);
+    let built_so = backend::build_backend_from_source(&ctx.codegen_crate);
 
     println!();
     println!("✓ Backend is ready. You can now use:");
     println!("  cargo oxide run <example>");
     println!("  cargo oxide build <example>");
+
+    // A project outside this repository resolves the backend through the
+    // shared cache, since `find_workspace_root` finds no
+    // `crates/rustc-codegen-cuda` above it. Publishing the build there keeps
+    // those projects on the backend that was just built instead of on whatever
+    // the cache last held.
+    match backend::publish_to_cache(&built_so) {
+        Some(path) => {
+            println!();
+            println!("✓ Published to {}", path.display());
+            println!("  Projects outside this repo will now use this build.");
+        }
+        None => {
+            eprintln!();
+            eprintln!("Warning: could not publish the backend to the shared cache.");
+            eprintln!("Projects outside this repo may keep using an older build.");
+            eprintln!("Set CUDA_OXIDE_BACKEND to this build to override.");
+        }
+    }
 }
 
 // =============================================================================
@@ -3337,6 +3380,19 @@ fn build_encoded_rustflags_with_existing(
     }
     flags.extend([
         "-Zmir-enable-passes=-JumpThreading".to_string(),
+        // Device codegen is whole-program: `collector` walks the call graph from
+        // each `#[kernel]` and must emit every reachable dependency function into
+        // one module. rustc encodes cross-crate MIR only for `#[inline]`/generic
+        // items, so a non-`#[inline]`, non-generic dependency function that cannot
+        // be inlined away (canonically: a recursive one) would be *called* but
+        // never *defined* -> LLVM verification fails with "Symbol <crate>__<fn>
+        // not found". Encode all MIR so any reachable dependency function is
+        // device-compilable. This applies build-wide (like the other required
+        // flags), so it also encodes MIR for host-only deps — an intentional,
+        // interim trade (rmeta size) until a surgical device-dep-scoped or
+        // per-crate device-link path lands. It matches the established approach
+        // for whole-program-MIR tools (e.g. Miri).
+        "-Zalways-encode-mir".to_string(),
         "-Csymbol-mangling-version=v0".to_string(),
     ]);
     if profile == CodegenProfilePolicy::ReleaseLikeWithDebugInfo {
@@ -3760,6 +3816,21 @@ fn touch_main_rs(example_dir: &Path) {
 /// stale artifacts forever.
 fn artifact_stem(example: &str) -> String {
     example.replace('-', "_")
+}
+
+/// Path to the NVVM IR (`.ll`) the backend emits for `example`. Named after the
+/// Cargo-normalized crate stem, so a hyphenated example resolves to the
+/// underscore-spelled file the build actually wrote. Route `emit-ltoir` reads
+/// through here rather than deriving the name from the raw example.
+fn emitted_ll_path(example_dir: &Path, example: &str) -> PathBuf {
+    example_dir.join(format!("{}.ll", artifact_stem(example)))
+}
+
+/// Default LTOIR output path for `example` when no explicit `--output` is given.
+/// Uses the same Cargo-normalized crate stem as [`emitted_ll_path`] so reads and
+/// writes agree on hyphenated examples.
+fn default_ltoir_path(example_dir: &Path, example: &str) -> PathBuf {
+    example_dir.join(format!("{}.ltoir", artifact_stem(example)))
 }
 
 /// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`, `.cubin`) from a
@@ -4256,6 +4327,26 @@ mod tests {
     fn artifact_stem_normalizes_hyphens_like_cargo() {
         assert_eq!(artifact_stem("rustlantis-smoke"), "rustlantis_smoke");
         assert_eq!(artifact_stem("vecadd"), "vecadd");
+    }
+
+    #[test]
+    fn emit_ltoir_paths_use_normalized_crate_stem() {
+        // Regression for the emit-ltoir read/write mismatch on hyphenated
+        // crates: the backend writes `rustlantis_smoke.{ll,ltoir}`, so both the
+        // NVVM IR read and the default LTOIR write must resolve to the
+        // underscore stem rather than the raw example name.
+        let dir = Path::new("/tmp/cargo-oxide-emit-ltoir");
+        assert_eq!(
+            emitted_ll_path(dir, "rustlantis-smoke"),
+            dir.join("rustlantis_smoke.ll")
+        );
+        assert_eq!(
+            default_ltoir_path(dir, "rustlantis-smoke"),
+            dir.join("rustlantis_smoke.ltoir")
+        );
+        // A non-hyphenated example is unaffected.
+        assert_eq!(emitted_ll_path(dir, "vecadd"), dir.join("vecadd.ll"));
+        assert_eq!(default_ltoir_path(dir, "vecadd"), dir.join("vecadd.ltoir"));
     }
 
     #[test]
@@ -5048,6 +5139,7 @@ path = "src/other.rs"
                 "device_test",
                 "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
                 "-Zmir-enable-passes=-JumpThreading",
+                "-Zalways-encode-mir",
                 "-Csymbol-mangling-version=v0",
             ]
         );
@@ -5111,12 +5203,13 @@ path = "src/other.rs"
         assert!(flags.contains(&"-Copt-level=0"));
         assert!(flags.contains(&"-Zcodegen-backend=llvm"));
         assert_eq!(
-            &flags[flags.len() - 5..],
+            &flags[flags.len() - 6..],
             [
                 "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
                 "-Copt-level=3",
                 "-Cdebug-assertions=off",
                 "-Zmir-enable-passes=-JumpThreading",
+                "-Zalways-encode-mir",
                 "-Csymbol-mangling-version=v0",
             ]
         );
@@ -5142,7 +5235,7 @@ path = "src/other.rs"
         );
         assert_eq!(&flags[2..4], ["-L", "native=/nix/store/cuda-cudart/lib"]);
         assert_eq!(
-            flags[flags.len() - 5],
+            flags[flags.len() - 6],
             "-Zcodegen-backend=/tmp/backend path/librustc_codegen_cuda.so"
         );
     }
@@ -5202,6 +5295,7 @@ path = "src/other.rs"
         assert!(flags.contains(&"-Cdebug-assertions=off"));
         assert!(flags.contains(&"-Cdebuginfo=2"));
         assert!(flags.contains(&"-Zmir-enable-passes=-JumpThreading"));
+        assert!(flags.contains(&"-Zalways-encode-mir"));
         assert!(flags.contains(&"-Csymbol-mangling-version=v0"));
         assert!(!flags.contains(&""));
     }

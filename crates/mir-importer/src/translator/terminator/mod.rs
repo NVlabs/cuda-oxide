@@ -853,6 +853,64 @@ fn translate_drop(
 // Call Translation (includes intrinsic dispatch)
 // ============================================================================
 
+/// True when `fn_def` is `core::ptr::drop_in_place` itself, the only
+/// function whose monomorphizations resolve to rustc's drop-glue shims.
+/// Same crate + path-segment matching idiom as the callable-trait
+/// detection below.
+fn is_drop_in_place_callee(fn_def: &rustc_public::ty::FnDef) -> bool {
+    if fn_def.krate().name.as_str() != "core" {
+        return false;
+    }
+    let method_name = fn_def.def_id().name();
+    let method = method_name.as_str().rsplit("::").next().unwrap_or("");
+    let Some(parent_def) = fn_def.def_id().parent() else {
+        return false;
+    };
+    let parent_name = parent_def.name();
+    let parent = parent_name.as_str().rsplit("::").next().unwrap_or("");
+    method == "drop_in_place" && parent == "ptr"
+}
+
+/// Emit a branch to `target` as the only effect of a call we are eliding:
+/// the callee does nothing observable and has no device definition (a UB
+/// precondition check, or provably no-op drop glue). `emit_goto` needs a
+/// prior op to anchor after, so if the block has none yet we plant a dead
+/// `false` constant first.
+fn emit_elided_call_goto(
+    ctx: &mut Context,
+    target_idx: usize,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> Ptr<Operation> {
+    let anchor = if let Some(p) = prev_op {
+        p
+    } else {
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::utils::apint::APInt;
+        use std::num::NonZeroUsize;
+
+        let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+        let dummy = Operation::new(
+            ctx,
+            MirConstantOp::get_concrete_op_info(),
+            vec![bool_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        dummy.deref_mut(ctx).set_loc(loc.clone());
+        let const_op = MirConstantOp::new(dummy);
+        let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
+        const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
+        let dummy = const_op.get_operation();
+        dummy.insert_at_front(block_ptr, ctx);
+        dummy
+    };
+    helpers::emit_goto(ctx, target_idx, anchor, block_map, loc)
+}
+
 /// Translates a MIR `Call` terminator to Pliron IR operations.
 ///
 /// This is the main entry point for function call translation. It handles:
@@ -950,6 +1008,34 @@ fn translate_call(
                 loc,
             ));
         }
+    }
+
+    // Elide a call to provably no-op drop glue. An explicit
+    // `ptr::drop_in_place::<T>` call (e.g. reached from inside another type's
+    // `Drop::drop`, or from a libcore wrapper) resolves either to rustc's
+    // empty shim for a `T` with no drop glue (`InstanceKind::DropGlue(_,
+    // None)`) or to a shim body the shared no-op proof can discharge. The
+    // collector refuses to collect exactly that set (`process_call_operand`
+    // skips DropGlue callees via the same predicate), so emitting the call
+    // would dangle as `Symbol ...drop_in_place... not found` at verification
+    // time. The glue does nothing, so drop the call and branch straight to
+    // the target -- the same elision the `Drop` terminator path performs via
+    // `drop_glue_is_noop`, consulting the same shared predicate
+    // (`drop_instance_is_noop`, whose fast path covers the empty shim) so
+    // collection and emission stay in lockstep.
+    if let Some(target_idx) = target_usize
+        && let mir::Operand::Constant(const_op) = func
+        && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(
+            fn_def,
+            ref substs,
+        )) = const_op.const_.ty().kind()
+        && is_drop_in_place_callee(&fn_def)
+        && let Ok(instance) = rustc_public::mir::mono::Instance::resolve(fn_def, substs)
+        && drop_glue::drop_instance_is_noop(&instance)
+    {
+        return Ok(emit_elided_call_goto(
+            ctx, target_idx, block_ptr, prev_op, block_map, loc,
+        ));
     }
 
     // Identify the actual core callable-trait methods. Matching text in an
@@ -1192,6 +1278,10 @@ fn translate_call(
     // pre-existing semantic: the trap only makes it safe, where the bare
     // `unreachable` previously emitted here was UB that let `opt` delete
     // the whole panic path.
+    //
+    // Panic entry points additionally never get here with any statements
+    // translated ahead of them: `block::translate_block` recognizes the same
+    // shape via [`is_dropped_panic_call`] and emits the trap directly.
     if target_usize.is_none() {
         // This is a diverging call (returns !) - emit trap + unreachable
         // Examples: unwrap_failed(), panic!(), abort()
@@ -1673,6 +1763,58 @@ fn emit_unreachable_after(
         op.insert_at_front(block_ptr, ctx);
     }
     op
+}
+
+/// Returns true for the panic entry points in `core` (and the `std`
+/// re-export) that mark a basic block as a panic path.
+///
+/// This is the single source of truth for that test. The codegen collector
+/// (`rustc-codegen-cuda/src/collector.rs`) imports it so the callees it
+/// deliberately does not collect are exactly the calls this translator drops
+/// in favour of a device trap: every call this predicate accepts has to be
+/// dropped here instead of being emitted as a call to a symbol the module
+/// never defines.
+///
+/// The substring match is intentionally broad: a user function whose path
+/// contains a `panicking` module segment is also treated as a panic entry
+/// and trapped rather than translated.
+pub fn is_panic_entry_path(fn_path: &str) -> bool {
+    fn_path.contains("::panicking::") || fn_path.contains("::rt::panic")
+}
+
+/// True when `term` is a diverging call into a panic entry point, i.e. exactly
+/// the shape `translate_call` (private to this module) drops in favour of a
+/// device trap.
+///
+/// Callers use this to recognize a block that lowers to nothing but a trap,
+/// before spending any work on its contents.
+pub fn is_dropped_panic_call(term: &mir::Terminator) -> bool {
+    let mir::TerminatorKind::Call {
+        func: mir::Operand::Constant(const_op),
+        target: None,
+        ..
+    } = &term.kind
+    else {
+        return false;
+    };
+    let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, _)) =
+        const_op.const_.ty().kind()
+    else {
+        return false;
+    };
+    is_panic_entry_path(fn_def.name().as_str())
+}
+
+/// Lowers a block whose terminator [`is_dropped_panic_call`] to the device
+/// trap alone, at the panic call's source location.
+pub fn emit_dropped_panic_trap(
+    ctx: &mut Context,
+    term: &mir::Terminator,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+) -> Ptr<Operation> {
+    let loc = span_to_location(ctx, term.span);
+    emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc)
 }
 
 /// Terminates the block with `nvvm.trap` followed by `mir.unreachable`.
@@ -2459,6 +2601,29 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
+        "core::intrinsics::select_unpredictable" | "std::intrinsics::select_unpredictable" => {
+            // `select_unpredictable(b, true_val, false_val)` is the
+            // compiler-hint form of `if b { true_val } else { false_val }`,
+            // a branchless ternary libcore emits from sorting/`Ord` helpers.
+            // Emit a placeholder call carrying the three operands; mir-lower
+            // turns it into an LLVM `select`. `bool` lowers to `i1`, exactly
+            // what the select condition needs.
+            let return_type = types::translate_type(ctx, &body.locals()[destination.local].ty)?;
+            Ok(Some(helpers::emit_function_call(
+                ctx,
+                body,
+                dialect_mir::rust_intrinsics::CALLEE_SELECT_UNPREDICTABLE,
+                args,
+                destination,
+                return_type,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
         "core::intrinsics::volatile_load" | "std::intrinsics::volatile_load" => {
             Ok(Some(intrinsics::memory::emit_volatile_load(
                 ctx,
@@ -2870,5 +3035,67 @@ fn try_dispatch_intrinsic(
 
         // Not an intrinsic
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The importer traps exactly the calls the codegen collector declines to
+    /// collect. If the two predicates drift apart, one side emits a call to a
+    /// symbol the other never defines.
+    #[test]
+    fn panic_entry_paths_agree_with_the_collector_predicate() {
+        assert!(is_panic_entry_path("core::panicking::panic"));
+        assert!(is_panic_entry_path("core::panicking::panic_fmt"));
+        assert!(is_panic_entry_path("core::panicking::panic_bounds_check"));
+        assert!(is_panic_entry_path("std::rt::panic_fmt"));
+
+        assert!(!is_panic_entry_path(
+            "core::slice::<impl [T]>::split_at_mut"
+        ));
+        assert!(!is_panic_entry_path("my_crate::panic_helper"));
+        assert!(!is_panic_entry_path("my_crate::panicking_but_mine"));
+    }
+
+    /// A dropped panic call must leave `nvvm.trap` (carrying its ABI marker,
+    /// or the target-requirements verifier rejects it) followed by
+    /// `mir.unreachable`, and nothing else: the message-building statements
+    /// the call would have consumed are never translated.
+    #[test]
+    fn dropped_panic_block_lowers_to_marked_trap_then_unreachable() {
+        use dialect_mir::ops::MirUnreachableOp;
+        use pliron::builtin::attributes::StringAttr;
+        use pliron::identifier::Identifier;
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let block_ptr = BasicBlock::new(&mut ctx, None, vec![]);
+        emit_trap_unreachable_after(&mut ctx, block_ptr, None, Location::Unknown);
+
+        let ops: Vec<Ptr<Operation>> = block_ptr.deref(&ctx).iter(&ctx).collect();
+        assert_eq!(
+            ops.len(),
+            2,
+            "a dropped panic block holds trap + unreachable"
+        );
+        let trap = Operation::get_op::<dialect_nvvm::ops::TrapOp>(ops[0], &ctx)
+            .expect("first op is `nvvm.trap`");
+        assert!(
+            Operation::get_op::<MirUnreachableOp>(ops[1], &ctx).is_some(),
+            "second op is `mir.unreachable`"
+        );
+
+        let marker_key =
+            Identifier::try_from(cuda_oxide_codegen::__private::GENERATED_INTRINSIC_MARKER_ATTR)
+                .unwrap();
+        let trap_ref = trap.get_operation().deref(&ctx);
+        let marker: &StringAttr = trap_ref
+            .attributes
+            .get(&marker_key)
+            .expect("`nvvm.trap` carries its generated-intrinsic ABI marker");
+        assert_eq!(String::from(marker.clone()), "v1:i0295");
     }
 }
