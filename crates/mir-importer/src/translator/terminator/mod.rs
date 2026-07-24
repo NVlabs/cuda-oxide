@@ -2014,12 +2014,6 @@ fn extract_func_info(
     })
 }
 
-/// Lower `core::intrinsics::typed_swap_nonoverlapping::<T>(x, y)`, the
-/// primitive behind `core::mem::swap`/`mem::replace`, as load/load/store/store.
-/// The two pointers are guaranteed non-overlapping, so the temp-free crossover
-/// `t0 = *x; t1 = *y; *x = t1; *y = t0` is valid (the loaded SSA values are
-/// captured before either store runs). Returns a unit result + goto target.
-#[allow(clippy::too_many_arguments)]
 /// Emit `core::intrinsics::copy` (`ptr::copy`) as a `mir.memmove`.
 ///
 /// rustc's intrinsic argument order is `(src, dst, count)` with `count` in
@@ -2120,6 +2114,12 @@ fn emit_ptr_memmove(
     }
 }
 
+/// Lower `core::intrinsics::typed_swap_nonoverlapping::<T>(x, y)`, the
+/// primitive behind `core::mem::swap`/`mem::replace`, as load/load/store/store.
+/// The two pointers are guaranteed non-overlapping, so the temp-free crossover
+/// `t0 = *x; t1 = *y; *x = t1; *y = t0` is valid (the loaded SSA values are
+/// captured before either store runs). Returns a unit result + goto target.
+#[allow(clippy::too_many_arguments)]
 fn emit_typed_swap(
     ctx: &mut Context,
     body: &mir::Body,

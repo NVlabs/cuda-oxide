@@ -190,7 +190,9 @@ fn convert_mem_transfer(
     let (dst, src, count) = match operands.as_slice() {
         [dst, src, count] => (*dst, *src, *count),
         _ => {
-            return pliron::input_err_noloc!("Memcpy operation requires exactly 3 operands");
+            return pliron::input_err_noloc!(
+                "{intrinsic_base} operation requires exactly 3 operands"
+            );
         }
     };
 
@@ -201,9 +203,9 @@ fn convert_mem_transfer(
                 pliron::create_error!(
                     op.deref(ctx).loc(),
                     pliron::result::ErrorKind::VerificationFailed,
-                    pliron::result::StringError(
-                        "Memcpy destination must be a MIR pointer before lowering".to_string()
-                    )
+                    pliron::result::StringError(format!(
+                        "{intrinsic_base} destination must be a MIR pointer before lowering"
+                    ))
                 )
             })?;
         dst_ptr_ty.pointee
@@ -265,7 +267,7 @@ fn convert_mem_transfer(
         pliron::create_error!(
             op.deref(ctx).loc(),
             pliron::result::ErrorKind::VerificationFailed,
-            pliron::result::StringError("Memcpy operation has no parent block".to_string())
+            pliron::result::StringError(format!("{intrinsic_base} operation has no parent block"))
         )
     })?;
     // Derive the overload suffix from the real (already type-converted)
