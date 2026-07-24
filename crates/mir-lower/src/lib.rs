@@ -138,9 +138,11 @@ use pliron::{
     irbuild::dialect_conversion::{
         DialectConversion, DialectConversionRewriter, OperandsInfo, apply_dialect_conversion,
     },
+    irbuild::{listener::Recorder, rewriter::IRRewriter},
     location::Located,
     op::{Op, op_cast},
     operation::Operation,
+    opts::simplify_cfg::remove_blocks_inside_op,
     result::Result,
     r#type::{TypeHandle, Typed, type_impls},
 };
@@ -363,6 +365,14 @@ pub fn lower_mir_to_llvm_with_options(
     // pliron's DialectConversion now reports an IRStatus (Changed/Unchanged);
     // lowering only cares about success, so discard it.
     apply_dialect_conversion(ctx, &mut conversion, module_op)?;
+    // Conversions of diverging ops (e.g. `nvvm.assertfail`) erase everything
+    // after the noreturn call, including the block's terminator. A successor
+    // whose only predecessor was that terminator is now unreachable, and if it
+    // still carries block arguments it cannot be exported (a PHI needs one
+    // incoming value per predecessor). Erase every block the entry can no
+    // longer reach.
+    let mut rewriter = IRRewriter::<Recorder>::default();
+    remove_blocks_inside_op(module_op, ctx, &mut rewriter);
     Ok(())
 }
 

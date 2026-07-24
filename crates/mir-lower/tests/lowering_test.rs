@@ -141,6 +141,150 @@ fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
 }
 
 #[test]
+fn test_assertfail_orphaned_successor_block_is_removed() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_ptr = module.get_operation();
+
+    let func_name = "kernel_func";
+    let u8_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        8,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let u32_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        32,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let u64_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        64,
+        pliron::builtin::types::Signedness::Unsigned,
+    );
+    let arg_tys: Vec<pliron::r#type::TypeHandle> = vec![
+        ptr_ty.into(),
+        ptr_ty.into(),
+        u32_ty.into(),
+        ptr_ty.into(),
+        u64_ty.into(),
+    ];
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, arg_tys.clone(), vec![]);
+
+    let func_op_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func_ty_attr = pliron::builtin::attributes::TypeAttr::new(func_ty.into());
+    let func = mir::MirFuncOp::new(&mut ctx, func_op_ptr, func_ty_attr);
+    func.set_symbol_name(&mut ctx, func_name.try_into().unwrap());
+
+    let region = func.get_operation().deref(&ctx).get_region(0);
+    let entry = {
+        let b = pliron::basic_block::BasicBlock::new(&mut ctx, None, arg_tys);
+        b.insert_at_back(region, &ctx);
+        b
+    };
+    // A block reachable only through the assert's success edge, carrying a
+    // block argument: the CFG a constant-false `gpu_assert!` leaves behind
+    // after MIR optimization folds the direct edge away.
+    let tail = {
+        let b = pliron::basic_block::BasicBlock::new(&mut ctx, None, vec![u32_ty.into()]);
+        b.insert_at_back(region, &ctx);
+        b
+    };
+
+    let message = entry.deref(&ctx).get_argument(0);
+    let file = entry.deref(&ctx).get_argument(1);
+    let line = entry.deref(&ctx).get_argument(2);
+    let function = entry.deref(&ctx).get_argument(3);
+    let char_size = entry.deref(&ctx).get_argument(4);
+
+    let assertfail_op =
+        nvvm::AssertFailOp::build(&mut ctx, message, file, line, function, char_size);
+    assertfail_op.insert_at_back(entry, &ctx);
+
+    // The success edge forwards `line` into the tail block's argument.
+    // Lowering erases this branch (the call never returns), orphaning the
+    // tail block, which then cannot be exported: a block argument needs one
+    // PHI incoming value per predecessor and there are none left.
+    let goto_op = Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![line],
+        vec![tail],
+        0,
+    );
+    goto_op.insert_at_back(entry, &ctx);
+
+    let ret_op = Operation::new(
+        &mut ctx,
+        mir::MirReturnOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    ret_op.insert_at_back(tail, &ctx);
+
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut found_kernel = false;
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != func_name {
+            continue;
+        }
+        found_kernel = true;
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        let blocks: Vec<_> = func_region.deref(&ctx).iter(&ctx).collect();
+        for block in blocks.iter().skip(1) {
+            assert!(
+                !block.preds(&ctx).is_empty(),
+                "an unreachable block survived lowering; with block arguments \
+                 it cannot be exported (a PHI needs an incoming value per \
+                 predecessor and there are none)"
+            );
+        }
+    }
+    assert!(found_kernel, "Kernel function not found");
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir =
+        llvm_export::export::export_module_to_string(&ctx, &module).map_err(anyhow::Error::msg)?;
+    let lines: Vec<_> = ir.lines().collect();
+    let call_line = lines
+        .iter()
+        .position(|line| line.contains("call void @__assertfail("))
+        .expect("expected exported __assertfail call");
+    assert_eq!(lines[call_line + 1].trim(), "unreachable", "{ir}");
+
+    Ok(())
+}
+
+#[test]
 fn test_globaltimer_lowers_to_intrinsic_call() -> Result<(), anyhow::Error> {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
