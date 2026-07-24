@@ -1621,18 +1621,20 @@ pub(crate) fn resolve_ptx_target_with_generated(
                 .parse::<CudaArch>()
                 .map_err(|error| PipelineError::TargetSelection {
                     target: target.to_string(),
-                    reason: format!("invalid CUDA target `{target}`: {error}"),
+                    // `error` already reads "invalid CUDA target `x`: ...";
+                    // only the provenance needs to be added here.
+                    reason: format!("{error} (target from {explicit_override_source})"),
                 })?;
         validate_target_features(&parsed, detected).map_err(|reason| {
             PipelineError::TargetSelection {
                 target: parsed.sm(),
-                reason,
+                reason: format!("{reason} (target from {explicit_override_source})"),
             }
         })?;
         validate_generated_target(&parsed.sm(), generated).map_err(|reason| {
             PipelineError::TargetSelection {
                 target: parsed.sm(),
-                reason,
+                reason: format!("{reason} (target from {explicit_override_source})"),
             }
         })?;
         return Ok((parsed.sm(), explicit_override_source));
@@ -4577,6 +4579,48 @@ mod tests {
         assert!(resolve_ptx_target(Some("sm_90a"), "CUDA_OXIDE_TARGET", None, impossible).is_err());
         assert!(
             resolve_ptx_target(Some("sm_100a"), "CUDA_OXIDE_TARGET", None, impossible).is_err()
+        );
+    }
+
+    #[test]
+    fn rejected_explicit_targets_name_the_source_that_chose_them() {
+        let parse_failure = resolve_ptx_target(
+            Some("not-a-target"),
+            "PipelineConfig::target_arch",
+            None,
+            DetectedFeatures::Sm80,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            parse_failure.contains("invalid CUDA target `not-a-target`"),
+            "{parse_failure}"
+        );
+        assert!(
+            parse_failure.contains("(target from PipelineConfig::target_arch)"),
+            "{parse_failure}"
+        );
+        assert_eq!(
+            parse_failure.matches("invalid CUDA target").count(),
+            1,
+            "parse errors must not double-wrap the parser's own prefix: {parse_failure}"
+        );
+
+        let floor_rejection = resolve_ptx_target(
+            Some("sm_75"),
+            "CUDA_OXIDE_TARGET",
+            None,
+            DetectedFeatures::Sm80,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            floor_rejection.contains("cannot lower detected feature Sm80"),
+            "{floor_rejection}"
+        );
+        assert!(
+            floor_rejection.contains("(target from CUDA_OXIDE_TARGET)"),
+            "{floor_rejection}"
         );
     }
 
