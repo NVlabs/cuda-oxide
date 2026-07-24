@@ -2347,6 +2347,29 @@ fn try_dispatch_intrinsic(
                 name,
             )?))
         }
+        "core::intrinsics::select_unpredictable" | "std::intrinsics::select_unpredictable" => {
+            // `select_unpredictable(b, true_val, false_val)` is the
+            // compiler-hint form of `if b { true_val } else { false_val }`,
+            // a branchless ternary libcore emits from sorting/`Ord` helpers.
+            // Emit a placeholder call carrying the three operands; mir-lower
+            // turns it into an LLVM `select`. `bool` lowers to `i1`, exactly
+            // what the select condition needs.
+            let return_type = types::translate_type(ctx, &body.locals()[destination.local].ty)?;
+            Ok(Some(helpers::emit_function_call(
+                ctx,
+                body,
+                dialect_mir::rust_intrinsics::CALLEE_SELECT_UNPREDICTABLE,
+                args,
+                destination,
+                return_type,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
         "core::intrinsics::volatile_load" | "std::intrinsics::volatile_load" => {
             Ok(Some(intrinsics::memory::emit_volatile_load(
                 ctx,
