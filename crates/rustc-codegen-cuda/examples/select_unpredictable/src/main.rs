@@ -56,8 +56,12 @@ fn main() {
     const N: usize = 256;
     let a_i32: Vec<i32> = (0..N as i32).map(|i| (i * 7 - 300) ^ 0x2c).collect();
     let b_i32: Vec<i32> = (0..N as i32).map(|i| (i * 5 - 111) ^ 0x51).collect();
-    let a_u64: Vec<u64> = (0..N as u64).map(|i| i.wrapping_mul(2654435761) & 0xffff).collect();
-    let b_u64: Vec<u64> = (0..N as u64).map(|i| i.wrapping_mul(40503) & 0xffff).collect();
+    let a_u64: Vec<u64> = (0..N as u64)
+        .map(|i| i.wrapping_mul(2654435761) & 0xffff)
+        .collect();
+    let b_u64: Vec<u64> = (0..N as u64)
+        .map(|i| i.wrapping_mul(40503) & 0xffff)
+        .collect();
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
@@ -71,7 +75,15 @@ fn main() {
     unsafe { module.select_max_i32(&stream, cfg, &da, &db, &mut out_max) }
         .expect("select_max_i32 launch");
     let got_max = out_max.to_host_vec(&stream).unwrap();
-    let want_max: Vec<i32> = (0..N).map(|i| if a_i32[i] >= b_i32[i] { a_i32[i] } else { b_i32[i] }).collect();
+    let want_max: Vec<i32> = (0..N)
+        .map(|i| {
+            if a_i32[i] >= b_i32[i] {
+                a_i32[i]
+            } else {
+                b_i32[i]
+            }
+        })
+        .collect();
     assert_eq!(got_max, want_max, "select_max_i32");
 
     let da = DeviceBuffer::from_host(&stream, &a_u64).unwrap();
@@ -81,7 +93,15 @@ fn main() {
     unsafe { module.select_min_usize(&stream, cfg, &da, &db, &mut out_min) }
         .expect("select_min_usize launch");
     let got_min = out_min.to_host_vec(&stream).unwrap();
-    let want_min: Vec<u64> = (0..N).map(|i| if a_u64[i] <= b_u64[i] { a_u64[i] } else { b_u64[i] }).collect();
+    let want_min: Vec<u64> = (0..N)
+        .map(|i| {
+            if a_u64[i] <= b_u64[i] {
+                a_u64[i]
+            } else {
+                b_u64[i]
+            }
+        })
+        .collect();
     assert_eq!(got_min, want_min, "select_min_usize");
 
     println!("PASS: select_unpredictable (i32 max, usize min)");
