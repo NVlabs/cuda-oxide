@@ -58,10 +58,12 @@ mod kernels {
         // seeding/chain kernels), distinct from the `ConstantIndex` write below.
         let m = (fill as usize).min(4);
         for i in 0..m {
-            // `i & 3` is a runtime value the compiler can prove is `< 4`, so the
-            // access stays a direct `Index` projection (no bounds-checked
-            // `index_mut` call, which would desugar to the already-handled
-            // `(Deref, Field)` form). With `m == 4`, `i & 3 == i`.
+            // Arrays use built-in indexing: `arr[k]` lowers to a MIR
+            // bounds-check `Assert` terminator plus a direct `Index` projection
+            // on the place (`[T; N]` indexing never desugars to an
+            // `IndexMut::index_mut` call). `k` is a runtime value, so these
+            // stores exercise the genuine 2-level `(Index, Field)` shape. With
+            // `m == 4`, `i & 3 == i`.
             let k = i & 3;
             arr[k].a = (tid as u64).wrapping_add(i as u64);
             arr[k].b = (tid as u64).wrapping_mul(i as u64 + 1);
@@ -93,7 +95,8 @@ fn main() {
     // SAFETY: launch shape/resources match the kernel; the buffer covers its writes.
     // `fill = 4` runs the runtime loop over all four cells (kept opaque to the
     // optimizer so `arr[i]` stays a runtime Index projection).
-    unsafe { module.fill_and_sum(&stream, cfg, &mut out, N as u32, 4) }.expect("fill_and_sum launch");
+    unsafe { module.fill_and_sum(&stream, cfg, &mut out, N as u32, 4) }
+        .expect("fill_and_sum launch");
     let got = out.to_host_vec(&stream).unwrap();
 
     // Per thread: sum a[j] = (tid+0+100)+(tid+1)+(tid+2)+(tid+3) = 4*tid + 106;
