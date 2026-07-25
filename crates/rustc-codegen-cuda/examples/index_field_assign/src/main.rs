@@ -72,6 +72,9 @@ mod kernels {
         arr[0].a = arr[0].a.wrapping_add(100);
 
         let mut s = 0u64;
+        // Indexed reads are deliberate: `arr[j].a` exercises the 2-level
+        // `Index -> Field` read projection, mirroring the writes above.
+        #[allow(clippy::needless_range_loop)]
         for j in 0..4usize {
             s = s.wrapping_add(arr[j].a).wrapping_add(arr[j].b);
         }
