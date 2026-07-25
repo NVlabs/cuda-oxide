@@ -18,14 +18,20 @@ cargo oxide run inline_ptx
 
 ## `ptx_asm!` Reference
 
+This is a quick reference. The canonical description of the macro lives in
+the [`ptx_asm!` section of the cuda-macros README](../../../cuda-macros/README.md),
+and the template syntax follows NVIDIA's
+[Inline PTX Assembly](https://docs.nvidia.com/cuda/inline-ptx-assembly/index.html)
+document. If this page ever disagrees with those, they win.
+
 ### Syntax
 
 ```rust
 unsafe {
     ptx_asm!(
         "<template>",
-        out("<constraint>") <place>,   // output operands (0..8)
-        in("<constraint>") <expr>,     // input operands (0..16)
+        out("<constraint>") <place>,   // output operands (up to 8)
+        in("<constraint>") <expr>,     // input operands (up to 16)
         clobber("<name>"),             // side-effect declarations
         options(<option>, ...),        // assembly options
     );
@@ -60,13 +66,20 @@ Output operands must appear before input operands.
 | Option          | Effect |
 |-----------------|--------|
 | `register_only` | No memory side-effects; requires at least one `out` operand, incompatible with `clobber` |
-| `may_diverge`   | Assembly may cause thread divergence (e.g., `bra`); requires `register_only` |
+| `may_diverge`   | Promises the snippet is safe to move across divergent control flow (drops the LLVM `convergent` guarantee); requires `register_only` |
+
+**Never** use `may_diverge` for `.sync` instructions, collectives, or any
+snippet whose participating lanes matter; the optimizer may move those
+snippets out of branch control flow.
 
 ### Clobbers
 
 | Clobber      | Meaning |
 |--------------|---------|
 | `"memory"`   | Assembly reads or writes memory not captured by operands |
+
+As an escape hatch, raw LLVM clobber strings of the form `clobber("~{...}")`
+are also accepted and passed through verbatim (e.g. `clobber("~{memory}")`).
 
 ### Examples
 
@@ -86,7 +99,7 @@ unsafe {
 }
 ```
 
-Float approximate math:
+Float approximate math (`tanh.approx.f32` requires `sm_75` or newer):
 
 ```rust
 let result: f32;
