@@ -68,7 +68,10 @@ fn main() {
     for (i, w) in want.iter_mut().enumerate() {
         *w = w.wrapping_add(if i < K { 1 } else { 100 });
     }
-    assert_eq!(got, want, "split_at_mut: both halves must be bumped through their own pointer");
+    assert_eq!(
+        got, want,
+        "split_at_mut: both halves must be bumped through their own pointer"
+    );
 
     println!("PASS: split_at_mut (Option<(&mut [T], &mut [T])> both pointers live)");
 }
