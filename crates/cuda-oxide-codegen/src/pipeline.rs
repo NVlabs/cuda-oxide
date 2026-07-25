@@ -459,7 +459,10 @@ pub fn compile_translated_module(
 /// Backend decision made from the typed module before MIR lowering starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PreLoweringBackendSelection {
-    /// Whether a typed MIR call requires CUDA libdevice.
+    /// Whether the lowered module will contain CUDA libdevice (`__nv_*`)
+    /// calls under the selected intrinsic backend. Rounding placeholders
+    /// count only when the LibNvvm backend is selected; on the NVPTX path
+    /// they lower to native LLVM intrinsics instead.
     needs_libdevice: bool,
     /// Whether the pipeline must stop at NVVM IR instead of invoking `llc`.
     emit_nvvm_ir: bool,
@@ -476,14 +479,39 @@ fn select_pre_lowering_backend(
     // The rustc frontend supplies typed MIR, while the standalone frontend may
     // also supply an already-lowered LLVM declaration in the same module.
     // Inspect both representations before choosing an intrinsic ABI.
-    let needs_libdevice =
+    //
+    // Two flavors of libdevice use exist:
+    //
+    // * strict: calls that lower to `__nv_*` under every intrinsic backend
+    //   (direct `__nv_*` externs and the transcendental-family placeholders);
+    // * backend-dependent: the rounding placeholders, which lower to native
+    //   LLVM intrinsics on the NVPTX path and fall back to libdevice only
+    //   when the module is emitted as NVVM IR (the legacy LLVM 7 dialect has
+    //   no `llvm.roundeven.*`).
+    //
+    // Only strict use participates in the emit-NVVM-IR decision; otherwise a
+    // rounding-only kernel would drag in the libNVVM dependency it no longer
+    // needs.
+    let uses_strict_libdevice =
         typed_mir_uses_libdevice(ctx, module) || module_uses_libdevice(ctx, module);
-    let emit_nvvm_ir = should_emit_nvvm_ir(output_policy, needs_libdevice, can_ir_link_libdevice);
+    let uses_backend_dependent_libdevice = typed_mir_calls_match(
+        ctx,
+        module,
+        &dialect_mir::rust_intrinsics::is_backend_dependent_libdevice_placeholder,
+    );
+    let emit_nvvm_ir =
+        should_emit_nvvm_ir(output_policy, uses_strict_libdevice, can_ir_link_libdevice);
     let intrinsic_backend = if emit_nvvm_ir {
         mir_lower::IntrinsicBackend::LibNvvm
     } else {
         mir_lower::IntrinsicBackend::LlvmNvptx
     };
+    // Predict the `__nv_*` symbols the lowered module will actually contain,
+    // for the post-lowering consistency check: rounding placeholders lower to
+    // `__nv_*` precisely when the LibNvvm backend was chosen (and LibNvvm is
+    // chosen exactly when NVVM IR is emitted).
+    let needs_libdevice =
+        uses_strict_libdevice || (emit_nvvm_ir && uses_backend_dependent_libdevice);
 
     PreLoweringBackendSelection {
         needs_libdevice,
@@ -492,18 +520,27 @@ fn select_pre_lowering_backend(
     }
 }
 
+/// Whether any typed MIR call in `module` requires libdevice under every
+/// intrinsic backend (a direct `__nv_*` extern or a strict placeholder).
 fn typed_mir_uses_libdevice(ctx: &Context, module: Ptr<Operation>) -> bool {
-    typed_op_uses_libdevice(ctx, module)
+    typed_mir_calls_match(ctx, module, &|callee: &str| {
+        callee.starts_with("__nv_")
+            || dialect_mir::rust_intrinsics::is_libdevice_backed_placeholder(callee)
+    })
 }
 
-fn typed_op_uses_libdevice(ctx: &Context, op: Ptr<Operation>) -> bool {
+/// Walk `op` and its regions and return whether any `mir.call` callee
+/// satisfies `matches`.
+fn typed_mir_calls_match(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    matches: &dyn Fn(&str) -> bool,
+) -> bool {
     if let Some(call) = Operation::get_op::<dialect_mir::ops::MirCallOp>(op, ctx)
         && let Some(callee_attr) = call.get_attr_callee(ctx)
     {
         let callee: String = (*callee_attr).clone().into();
-        if callee.starts_with("__nv_")
-            || dialect_mir::rust_intrinsics::is_libdevice_backed_placeholder(&callee)
-        {
+        if matches(&callee) {
             return true;
         }
     }
@@ -514,7 +551,7 @@ fn typed_op_uses_libdevice(ctx: &Context, op: Ptr<Operation>) -> bool {
         for block in region_ref.iter(ctx) {
             let block_ref = block.deref(ctx);
             for child_op in block_ref.iter(ctx) {
-                if typed_op_uses_libdevice(ctx, child_op) {
+                if typed_mir_calls_match(ctx, child_op, matches) {
                     return true;
                 }
             }
@@ -527,11 +564,17 @@ fn typed_op_uses_libdevice(ctx: &Context, op: Ptr<Operation>) -> bool {
 ///
 /// When `can_ir_link_libdevice` is true, `__nv_*` calls will be resolved by
 /// linking `libdevice.10.bc` at the LLVM IR level (via `llvm-link`), so
-/// `needs_libdevice` alone no longer forces the NVVM IR path. This avoids the
-/// legacy LLVM 7 dialect that cannot represent f16 on pre-Blackwell targets.
+/// `uses_strict_libdevice` alone no longer forces the NVVM IR path. This
+/// avoids the legacy LLVM 7 dialect that cannot represent f16 on
+/// pre-Blackwell targets.
+///
+/// Only strict libdevice use (transcendentals and direct `__nv_*` calls) is
+/// consulted. Rounding intrinsics never force the NVVM fallback: on the PTX
+/// path they lower to native LLVM intrinsics with no libdevice involvement,
+/// and they use libdevice only when NVVM IR is emitted for another reason.
 fn should_emit_nvvm_ir(
     policy: OutputPolicy,
-    needs_libdevice: bool,
+    uses_strict_libdevice: bool,
     can_ir_link_libdevice: bool,
 ) -> bool {
     match policy {
@@ -542,7 +585,7 @@ fn should_emit_nvvm_ir(
             }
             // Fall back to NVVM IR only when the kernel needs libdevice AND
             // we cannot resolve the calls via IR-level linking.
-            needs_libdevice && !can_ir_link_libdevice
+            uses_strict_libdevice && !can_ir_link_libdevice
         }
     }
 }
@@ -708,6 +751,101 @@ mod tests {
         assert!(!selection.emit_nvvm_ir);
         assert_eq!(
             selection.intrinsic_backend,
+            mir_lower::IntrinsicBackend::LlvmNvptx
+        );
+    }
+
+    /// Rounding placeholders are backend-dependent: with PTX output they
+    /// lower to native LLVM intrinsics, so a rounding-only module must not
+    /// be flagged as needing libdevice and must not fall back to NVVM IR,
+    /// regardless of whether IR-level libdevice linking is available.
+    #[test]
+    fn rounding_only_module_stays_on_self_sufficient_ptx_path() {
+        let mut ctx = Context::new();
+        let module = typed_mir_test_module(
+            &mut ctx,
+            &[
+                dialect_mir::rust_intrinsics::CALLEE_FLOOR_F32,
+                dialect_mir::rust_intrinsics::CALLEE_ROUNDEVEN_F64,
+            ],
+        );
+        for can_ir_link_libdevice in [false, true] {
+            let selection = select_pre_lowering_backend(
+                &ctx,
+                module,
+                OutputPolicy::ExternalLinkAllowed {
+                    request_nvvm_ir: false,
+                },
+                can_ir_link_libdevice,
+            );
+            assert!(!selection.needs_libdevice);
+            assert!(!selection.emit_nvvm_ir);
+            assert_eq!(
+                selection.intrinsic_backend,
+                mir_lower::IntrinsicBackend::LlvmNvptx
+            );
+        }
+    }
+
+    /// With an explicit NVVM IR request, the LibNvvm backend lowers rounding
+    /// placeholders to `__nv_*` libdevice calls (the legacy LLVM 7 dialect
+    /// has no `llvm.roundeven.*`), so the prediction must flag libdevice or
+    /// the post-lowering consistency check would abort the build.
+    #[test]
+    fn rounding_only_module_uses_libdevice_when_nvvm_ir_is_requested() {
+        let mut ctx = Context::new();
+        let module =
+            typed_mir_test_module(&mut ctx, &[dialect_mir::rust_intrinsics::CALLEE_FLOOR_F32]);
+        let selection = select_pre_lowering_backend(
+            &ctx,
+            module,
+            OutputPolicy::ExternalLinkAllowed {
+                request_nvvm_ir: true,
+            },
+            false,
+        );
+        assert!(selection.needs_libdevice);
+        assert!(selection.emit_nvvm_ir);
+        assert_eq!(
+            selection.intrinsic_backend,
+            mir_lower::IntrinsicBackend::LibNvvm
+        );
+    }
+
+    /// Mixing rounding with a strict libdevice op follows the strict op's
+    /// backend choice; rounding contributes to the libdevice prediction only
+    /// when that choice lands on NVVM IR.
+    #[test]
+    fn mixed_rounding_and_transcendental_follows_the_strict_op() {
+        let mut ctx = Context::new();
+        let module = typed_mir_test_module(
+            &mut ctx,
+            &[
+                dialect_mir::rust_intrinsics::CALLEE_FLOOR_F32,
+                dialect_mir::rust_intrinsics::CALLEE_SIN_F32,
+            ],
+        );
+        let automatic = OutputPolicy::ExternalLinkAllowed {
+            request_nvvm_ir: false,
+        };
+
+        // No IR-level linking: sin forces NVVM IR; rounding joins it on
+        // libdevice under the LibNvvm backend.
+        let no_link = select_pre_lowering_backend(&ctx, module, automatic, false);
+        assert!(no_link.needs_libdevice);
+        assert!(no_link.emit_nvvm_ir);
+        assert_eq!(
+            no_link.intrinsic_backend,
+            mir_lower::IntrinsicBackend::LibNvvm
+        );
+
+        // IR-level linking available: PTX path; sin resolves against
+        // libdevice.10.bc while rounding lowers to LLVM intrinsics.
+        let ir_link = select_pre_lowering_backend(&ctx, module, automatic, true);
+        assert!(ir_link.needs_libdevice);
+        assert!(!ir_link.emit_nvvm_ir);
+        assert_eq!(
+            ir_link.intrinsic_backend,
             mir_lower::IntrinsicBackend::LlvmNvptx
         );
     }

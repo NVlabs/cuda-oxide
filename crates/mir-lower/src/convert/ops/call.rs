@@ -1106,14 +1106,12 @@ fn convert_rust_float_math_intrinsic(
     let result_mir_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let result_ty = convert_type(ctx, result_mir_ty).map_err(anyhow_to_pliron)?;
 
-    // Several math intrinsics have direct LLVM equivalents that the NVPTX
-    // backend selects without a libdevice call (abs, copysign, rounding). See
+    // The rounding intrinsics have direct LLVM equivalents that the NVPTX
+    // backend selects without a libdevice call; everything else (and every op
+    // under the libNVVM backend) stays on libdevice. See
+    // `float_math_intrinsic_symbol` for the dispatch and
     // `llvm_intrinsic_name` for the per-op PTX mapping and instruction counts.
-    let intrinsic_name = if let Some(llvm_name) = intrinsic.llvm_intrinsic_name() {
-        llvm_name
-    } else {
-        intrinsic.libdevice_name(ctx, result_ty, loc.clone())?
-    };
+    let intrinsic_name = float_math_intrinsic_symbol(ctx, intrinsic, result_ty, loc.clone())?;
 
     let arg_types = args.iter().map(|arg| arg.get_type(ctx)).collect::<Vec<_>>();
     let func_ty = llvm_types::FuncType::get(ctx, result_ty, arg_types, false);
@@ -1134,6 +1132,39 @@ fn convert_rust_float_math_intrinsic(
     rewriter.replace_operation(ctx, op, llvm_call.get_operation());
 
     Ok(())
+}
+
+/// Resolve the callee symbol a float-math intrinsic lowers to under the
+/// active intrinsic backend.
+///
+/// * [`IntrinsicBackend::LlvmNvptx`](crate::IntrinsicBackend::LlvmNvptx):
+///   rounding ops use the native LLVM intrinsics (see
+///   [`RustFloatMathIntrinsic::llvm_intrinsic_name`]); everything else uses
+///   libdevice.
+/// * [`IntrinsicBackend::LibNvvm`](crate::IntrinsicBackend::LibNvvm): every
+///   op stays on libdevice. The legacy LLVM 7-based NVVM IR dialect predates
+///   `llvm.roundeven.*` (added in LLVM 11) and admits only a small intrinsic
+///   allow-list, so `__nv_*` calls are the only spelling that is portable
+///   across every libNVVM input dialect.
+///
+/// This dispatch mirrors the pre-lowering libdevice prediction in the
+/// pipeline (`is_libdevice_backed_placeholder` vs
+/// `is_backend_dependent_libdevice_placeholder` in
+/// `dialect_mir::rust_intrinsics`): a rounding op emits a `__nv_*` symbol
+/// precisely when the LibNvvm backend was selected.
+fn float_math_intrinsic_symbol(
+    ctx: &Context,
+    intrinsic: RustFloatMathIntrinsic,
+    result_ty: TypeHandle,
+    loc: pliron::location::Location,
+) -> Result<&'static str> {
+    match crate::context::lowering_options(ctx).intrinsic_backend {
+        crate::IntrinsicBackend::LlvmNvptx => match intrinsic.llvm_intrinsic_name() {
+            Some(llvm_name) => Ok(llvm_name),
+            None => intrinsic.libdevice_name(ctx, result_ty, loc),
+        },
+        crate::IntrinsicBackend::LibNvvm => intrinsic.libdevice_name(ctx, result_ty, loc),
+    }
 }
 
 /// Lower a `core::intrinsics::f*_fast` placeholder call to the matching
@@ -1894,5 +1925,81 @@ mod tests {
         // Transcendentals still return None (they need libdevice).
         assert_eq!(RustFloatMathIntrinsic::SinF32.llvm_intrinsic_name(), None);
         assert_eq!(RustFloatMathIntrinsic::SqrtF64.llvm_intrinsic_name(), None);
+    }
+
+    /// The resolved callee symbol follows the active intrinsic backend:
+    /// rounding uses the native LLVM intrinsics under `LlvmNvptx` but stays
+    /// on libdevice under `LibNvvm` (whose legacy LLVM 7 dialect predates
+    /// `llvm.roundeven.*`); transcendentals use libdevice under both.
+    #[test]
+    fn float_math_symbol_dispatches_on_intrinsic_backend() {
+        let mut ctx = Context::new();
+        let f32_ty = FP32Type::get(&ctx).into();
+        let loc = pliron::location::Location::Unknown;
+
+        crate::context::set_lowering_options(
+            &mut ctx,
+            crate::LoweringOptions {
+                allow_fma_contraction: true,
+                intrinsic_backend: crate::IntrinsicBackend::LlvmNvptx,
+            },
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(
+                &ctx,
+                RustFloatMathIntrinsic::FloorF32,
+                f32_ty,
+                loc.clone()
+            )
+            .unwrap(),
+            "llvm_floor_f32"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(
+                &ctx,
+                RustFloatMathIntrinsic::RoundevenF32,
+                f32_ty,
+                loc.clone()
+            )
+            .unwrap(),
+            "llvm_roundeven_f32"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(&ctx, RustFloatMathIntrinsic::SinF32, f32_ty, loc.clone())
+                .unwrap(),
+            "__nv_sinf"
+        );
+
+        crate::context::set_lowering_options(
+            &mut ctx,
+            crate::LoweringOptions {
+                allow_fma_contraction: true,
+                intrinsic_backend: crate::IntrinsicBackend::LibNvvm,
+            },
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(
+                &ctx,
+                RustFloatMathIntrinsic::FloorF32,
+                f32_ty,
+                loc.clone()
+            )
+            .unwrap(),
+            "__nv_floorf"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(
+                &ctx,
+                RustFloatMathIntrinsic::RoundevenF32,
+                f32_ty,
+                loc.clone()
+            )
+            .unwrap(),
+            "__nv_rintf"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(&ctx, RustFloatMathIntrinsic::SinF32, f32_ty, loc).unwrap(),
+            "__nv_sinf"
+        );
     }
 }
