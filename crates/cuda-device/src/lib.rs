@@ -30,6 +30,7 @@ pub mod f16x2;
 pub mod fence;
 pub mod float;
 pub mod grid;
+pub mod mma_frag;
 pub mod prmt;
 pub mod ptx;
 pub mod shared;
