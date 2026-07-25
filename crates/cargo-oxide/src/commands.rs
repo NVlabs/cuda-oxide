@@ -310,7 +310,8 @@ pub fn resolve_doctor_context() -> Context {
 ///
 /// Cleans stale artifacts, sets encoded rustc flags to point at the backend `.so`,
 /// and invokes `cargo run --release` from the example directory. Environment
-/// variables control output format (PTX / NVVM IR) and verbosity.
+/// variables control output format (PTX / NVVM IR) and verbosity. Trailing
+/// `app_args` are forwarded to the example binary after `--`.
 #[allow(clippy::too_many_arguments)]
 pub fn codegen_run(
     ctx: &Context,
@@ -322,6 +323,7 @@ pub fn codegen_run(
     bin: Option<&str>,
     no_fmad: bool,
     materialize_cubin: bool,
+    app_args: &[String],
 ) {
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
@@ -364,6 +366,7 @@ pub fn codegen_run(
             bin,
             no_fmad,
             &materialization,
+            app_args,
         );
         return;
     }
@@ -412,6 +415,9 @@ pub fn codegen_run(
     }
     if let Some(features) = features {
         cmd.args(["--features", features]);
+    }
+    if !app_args.is_empty() {
+        cmd.arg("--").args(app_args);
     }
 
     apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
@@ -598,6 +604,7 @@ fn codegen_run_interop(
     bin: Option<&str>,
     no_fmad: bool,
     materialization: &MaterializationMode,
+    app_args: &[String],
 ) {
     reject_interop_output_mode(emit_nvvm_ir, materialization);
 
@@ -622,7 +629,16 @@ fn codegen_run_interop(
         InteropDeviceBuildOptions::standard(no_fmad),
         materialization,
     );
-    run_host_cargo(ctx, example, example_dir, "run", features, bin, verbose);
+    run_host_cargo(
+        ctx,
+        example,
+        example_dir,
+        "run",
+        features,
+        bin,
+        verbose,
+        app_args,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -660,7 +676,16 @@ fn codegen_build_interop(
         InteropDeviceBuildOptions::standard(no_fmad),
         materialization,
     );
-    run_host_cargo(ctx, example, example_dir, "build", features, None, verbose);
+    run_host_cargo(
+        ctx,
+        example,
+        example_dir,
+        "build",
+        features,
+        None,
+        verbose,
+        &[],
+    );
 }
 
 fn reject_interop_output_mode(emit_nvvm_ir: bool, materialization: &MaterializationMode) {
@@ -791,6 +816,7 @@ fn build_interop_device_crate(
     println!("PTX written: {}", ptx_path.display());
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_host_cargo(
     ctx: &Context,
     example: &str,
@@ -799,6 +825,7 @@ fn run_host_cargo(
     features: Option<&str>,
     bin: Option<&str>,
     verbose: bool,
+    app_args: &[String],
 ) {
     let mut cmd = Command::new("cargo");
     cmd.arg(cargo_subcommand)
@@ -812,6 +839,9 @@ fn run_host_cargo(
     }
     if let Some(features) = features {
         cmd.args(["--features", features]);
+    }
+    if cargo_subcommand == "run" && !app_args.is_empty() {
+        cmd.arg("--").args(app_args);
     }
 
     apply_config_env(&mut cmd, ctx);

@@ -12,6 +12,7 @@
 //!
 //! ```bash
 //! cargo oxide run vecadd              # build + run an example
+//! cargo oxide run debug -- --fail-assert  # forward args to the example binary
 //! cargo oxide build vecadd            # build only
 //! cargo oxide pipeline vecadd         # verbose pipeline dump
 //! cargo oxide sanitize vecadd         # run under NVIDIA Compute Sanitizer
@@ -86,6 +87,10 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Arguments forwarded to the example binary. Use after `--`,
+        /// e.g. `cargo oxide run debug -- --fail-assert`.
+        #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
+        app_args: Vec<String>,
     },
     /// Build and run an example or project under NVIDIA Compute Sanitizer
     Sanitize {
@@ -388,6 +393,7 @@ fn main() {
             bin,
             verbose,
             no_fmad,
+            app_args,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "run");
@@ -408,6 +414,7 @@ fn main() {
                 bin.as_deref(),
                 no_fmad,
                 materialize_cubin,
+                &app_args,
             );
         }
         Commands::Sanitize {
@@ -810,6 +817,39 @@ mod tests {
             panic!("expected build command");
         };
         assert!(cargo_args.is_empty());
+    }
+
+    #[test]
+    fn run_parser_forwards_trailing_application_args() {
+        let cli = Cli::try_parse_from([
+            "cargo-oxide",
+            "run",
+            "debug",
+            "--",
+            "--fail-assert",
+            "positional",
+        ])
+        .expect("run command with trailing args should parse");
+
+        let Commands::Run {
+            example, app_args, ..
+        } = cli.command
+        else {
+            panic!("expected run command");
+        };
+        assert_eq!(example.as_deref(), Some("debug"));
+        assert_eq!(app_args, strings(&["--fail-assert", "positional"]));
+    }
+
+    #[test]
+    fn run_parser_defaults_to_no_application_args() {
+        let cli =
+            Cli::try_parse_from(["cargo-oxide", "run", "debug"]).expect("run command should parse");
+
+        let Commands::Run { app_args, .. } = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(app_args.is_empty());
     }
 
     #[test]
