@@ -25,7 +25,8 @@ execution, but reports the assertion message and call-site metadata before
 synchronization returns `CUDA_ERROR_ASSERT`.
 
 Both failures are asynchronous device errors and normally surface when the
-stream or context is synchronized.
+stream or context is synchronized. Both also leave the CUDA context unusable:
+subsequent operations on the same context keep failing until you recreate it.
 
 ## `gpu_printf!` -- printing from the GPU
 
