@@ -2521,6 +2521,22 @@ fn try_dispatch_intrinsic(
         ));
     }
 
+    if let Some(intrinsic) = intrinsics::exact_div::RustExactDivIntrinsic::from_core_path(name) {
+        return Ok(Some(intrinsics::exact_div::emit_rust_exact_div_intrinsic(
+            ctx,
+            body,
+            intrinsic,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?));
+    }
+
     if let Some(intrinsic) = intrinsics::bigint::RustBigIntIntrinsic::from_core_path(name) {
         return Ok(Some(intrinsics::bigint::emit_rust_bigint_intrinsic(
             ctx,

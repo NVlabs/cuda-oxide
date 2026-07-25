@@ -45,6 +45,13 @@ pub const CALLEE_SATURATING_ADD: &str = placeholder!("saturating_add");
 /// Placeholder call used for `core::intrinsics::saturating_sub`.
 pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 
+/// Placeholder call used for `core::intrinsics::exact_div`.
+///
+/// Division where the caller guarantees the divisor is non-zero and divides the
+/// dividend exactly. Backs `slice::as_chunks` and friends, which compute their
+/// chunk count with `exact_div(self.len(), N)`.
+pub const CALLEE_EXACT_DIV: &str = placeholder!("exact_div");
+
 /// Placeholder call used for `core::intrinsics::carrying_mul_add`.
 /// Backs the bigint helper methods `carrying_mul_add`, `carrying_mul`,
 /// and `widening_mul` on integer types.
@@ -411,6 +418,7 @@ mod tests {
         CALLEE_BITREVERSE,
         CALLEE_SATURATING_ADD,
         CALLEE_SATURATING_SUB,
+        CALLEE_EXACT_DIV,
         CALLEE_CARRYING_MUL_ADD,
         CALLEE_FADD_FAST,
         CALLEE_FSUB_FAST,
