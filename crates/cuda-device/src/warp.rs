@@ -918,6 +918,148 @@ pub fn is_elected_sync(mask: u32) -> bool {
     elect_sync(mask).1
 }
 
+// =============================================================================
+// Warp-Level Reductions (f32)
+// =============================================================================
+//
+// Butterfly shuffle reduction utilities for f32 values. These use
+// `shuffle_xor_f32` with a full-warp mask (0xFFFF_FFFF) to reduce a
+// value across all 32 lanes, producing the result in every lane.
+
+/// Reduce-sum a scalar f32 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the sum of all input values.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f32 = per_lane_value;
+/// let total = warp::reduce_sum_f32(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_sum_f32(mut val: f32) -> f32 {
+    val = val + shuffle_xor_f32(val, 16);
+    val = val + shuffle_xor_f32(val, 8);
+    val = val + shuffle_xor_f32(val, 4);
+    val = val + shuffle_xor_f32(val, 2);
+    val = val + shuffle_xor_f32(val, 1);
+    val
+}
+
+/// Reduce-max a scalar f32 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the maximum of all input values.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f32 = per_lane_value;
+/// let global_max = warp::reduce_max_f32(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_max_f32(mut val: f32) -> f32 {
+    val = f32::max(val, shuffle_xor_f32(val, 16));
+    val = f32::max(val, shuffle_xor_f32(val, 8));
+    val = f32::max(val, shuffle_xor_f32(val, 4));
+    val = f32::max(val, shuffle_xor_f32(val, 2));
+    val = f32::max(val, shuffle_xor_f32(val, 1));
+    val
+}
+
+/// Reduce-min a scalar f32 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the minimum of all input values.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f32 = per_lane_value;
+/// let global_min = warp::reduce_min_f32(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_min_f32(mut val: f32) -> f32 {
+    val = f32::min(val, shuffle_xor_f32(val, 16));
+    val = f32::min(val, shuffle_xor_f32(val, 8));
+    val = f32::min(val, shuffle_xor_f32(val, 4));
+    val = f32::min(val, shuffle_xor_f32(val, 2));
+    val = f32::min(val, shuffle_xor_f32(val, 1));
+    val
+}
+
+// =============================================================================
+// Warp-Level Reductions (f64)
+// =============================================================================
+//
+// Butterfly shuffle reduction utilities for f64 values. These use
+// `shuffle_xor_f64` with a full-warp mask (0xFFFF_FFFF) to reduce a
+// value across all 32 lanes, producing the result in every lane.
+
+/// Reduce-sum a scalar f64 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the sum of all input values.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f64 = per_lane_value;
+/// let total = warp::reduce_sum_f64(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_sum_f64(mut val: f64) -> f64 {
+    val = val + shuffle_xor_f64(val, 16);
+    val = val + shuffle_xor_f64(val, 8);
+    val = val + shuffle_xor_f64(val, 4);
+    val = val + shuffle_xor_f64(val, 2);
+    val = val + shuffle_xor_f64(val, 1);
+    val
+}
+
+/// Reduce-max a scalar f64 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the maximum of all input values.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f64 = per_lane_value;
+/// let global_max = warp::reduce_max_f64(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_max_f64(mut val: f64) -> f64 {
+    val = f64::max(val, shuffle_xor_f64(val, 16));
+    val = f64::max(val, shuffle_xor_f64(val, 8));
+    val = f64::max(val, shuffle_xor_f64(val, 4));
+    val = f64::max(val, shuffle_xor_f64(val, 2));
+    val = f64::max(val, shuffle_xor_f64(val, 1));
+    val
+}
+
+/// Reduce-min a scalar f64 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the minimum of all input values.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f64 = per_lane_value;
+/// let global_min = warp::reduce_min_f64(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_min_f64(mut val: f64) -> f64 {
+    val = f64::min(val, shuffle_xor_f64(val, 16));
+    val = f64::min(val, shuffle_xor_f64(val, 8));
+    val = f64::min(val, shuffle_xor_f64(val, 4));
+    val = f64::min(val, shuffle_xor_f64(val, 2));
+    val = f64::min(val, shuffle_xor_f64(val, 1));
+    val
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
