@@ -25,8 +25,11 @@ execution, but reports the assertion message and call-site metadata before
 synchronization returns `CUDA_ERROR_ASSERT`.
 
 Both failures are asynchronous device errors and normally surface when the
-stream or context is synchronized. Both also leave the CUDA context unusable:
-subsequent operations on the same context keep failing until you recreate it.
+stream or context is synchronized. Both also leave the CUDA context unusable,
+but recovery differs: after a device assert (`CUDA_ERROR_ASSERT`), destroy and
+recreate the context to keep using CUDA; after a hardware trap
+(`CUDA_ERROR_ILLEGAL_INSTRUCTION`), CUDA documents the whole process as
+poisoned, so terminate and relaunch it.
 
 ## `gpu_printf!` -- printing from the GPU
 
@@ -501,7 +504,7 @@ for the full profiling toolkit.
 :align: center
 :width: 100%
 
-Debugging decision tree: kernel problems fall into three categories (compile
-error, runtime trap, silent corruption), each with different diagnostic tools.
-Common fixes are shown at the bottom.
+Debugging decision tree: kernel problems fall into three branches (compile
+error, runtime device failure, silent corruption), each with different
+diagnostic tools. Common fixes are shown at the bottom.
 ```
