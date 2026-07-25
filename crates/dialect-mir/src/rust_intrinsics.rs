@@ -213,12 +213,19 @@ pub const CALLEE_FREM_FAST: &str = placeholder!("frem_fast");
 /// no device semantics and is dropped.
 pub const CALLEE_SELECT_UNPREDICTABLE: &str = placeholder!("select_unpredictable");
 
-/// Return whether an internal placeholder lowers to a CUDA libdevice call.
+/// Return whether an internal placeholder lowers to a CUDA libdevice call
+/// under every intrinsic backend.
 ///
 /// This is deliberately an exact allow-list. Other placeholder families lower
 /// to LLVM operations directly, including integer, saturating, bigint, and
 /// `f*_fast` intrinsics, so matching the common placeholder prefix would select
 /// the libNVVM backend for modules that do not need it.
+///
+/// The rounding placeholders (`floor`/`ceil`/`trunc`/`round`/`roundeven`) are
+/// intentionally NOT in this list: on the LLVM NVPTX path they lower to the
+/// native `llvm.floor.*`-family intrinsics and need no libdevice at all. They
+/// fall back to libdevice only when the pipeline emits NVVM IR; see
+/// [`is_backend_dependent_libdevice_placeholder`].
 pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
     matches!(
         callee,
@@ -248,16 +255,6 @@ pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
             | CALLEE_FMA_F64
             | CALLEE_FMULADD_F32
             | CALLEE_FMULADD_F64
-            | CALLEE_FLOOR_F32
-            | CALLEE_FLOOR_F64
-            | CALLEE_CEIL_F32
-            | CALLEE_CEIL_F64
-            | CALLEE_TRUNC_F32
-            | CALLEE_TRUNC_F64
-            | CALLEE_ROUND_F32
-            | CALLEE_ROUND_F64
-            | CALLEE_ROUNDEVEN_F32
-            | CALLEE_ROUNDEVEN_F64
             | CALLEE_FABS
             | CALLEE_COPYSIGN_F32
             | CALLEE_COPYSIGN_F64
@@ -290,44 +287,177 @@ pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
     )
 }
 
+/// Return whether an internal placeholder lowers to a CUDA libdevice call
+/// only under the libNVVM intrinsic backend.
+///
+/// The rounding placeholders lower to the native LLVM intrinsics
+/// (`llvm.floor.*`, `llvm.ceil.*`, `llvm.trunc.*`, `llvm.round.*`,
+/// `llvm.roundeven.*`) when the module is headed to LLVM's NVPTX backend, so
+/// on that path they need no libdevice at all. When the pipeline emits NVVM
+/// IR instead, the same placeholders fall back to `__nv_floorf`/... libdevice
+/// calls, because the legacy LLVM 7-based NVVM IR dialect predates
+/// `llvm.roundeven.*` (added in LLVM 11) and admits only a small intrinsic
+/// allow-list.
+///
+/// Like [`is_libdevice_backed_placeholder`], this is an exact allow-list, and
+/// the two lists are mutually disjoint: a placeholder is either always
+/// libdevice-backed, libdevice-backed only under libNVVM, or never
+/// libdevice-backed.
+pub fn is_backend_dependent_libdevice_placeholder(callee: &str) -> bool {
+    matches!(
+        callee,
+        CALLEE_FLOOR_F32
+            | CALLEE_FLOOR_F64
+            | CALLEE_CEIL_F32
+            | CALLEE_CEIL_F64
+            | CALLEE_TRUNC_F32
+            | CALLEE_TRUNC_F64
+            | CALLEE_ROUND_F32
+            | CALLEE_ROUND_F64
+            | CALLEE_ROUNDEVEN_F32
+            | CALLEE_ROUNDEVEN_F64
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Every placeholder that must be classified as libdevice-backed under
+    /// every intrinsic backend (transcendentals, fma, sign ops, max/min).
+    const ALWAYS_LIBDEVICE: &[&str] = &[
+        CALLEE_SQRT_F32,
+        CALLEE_SQRT_F64,
+        CALLEE_POWI_F32,
+        CALLEE_POWI_F64,
+        CALLEE_SIN_F32,
+        CALLEE_SIN_F64,
+        CALLEE_COS_F32,
+        CALLEE_COS_F64,
+        CALLEE_TAN_F32,
+        CALLEE_TAN_F64,
+        CALLEE_POWF_F32,
+        CALLEE_POWF_F64,
+        CALLEE_EXP_F32,
+        CALLEE_EXP_F64,
+        CALLEE_EXP2_F32,
+        CALLEE_EXP2_F64,
+        CALLEE_LOG_F32,
+        CALLEE_LOG_F64,
+        CALLEE_LOG2_F32,
+        CALLEE_LOG2_F64,
+        CALLEE_LOG10_F32,
+        CALLEE_LOG10_F64,
+        CALLEE_FMA_F32,
+        CALLEE_FMA_F64,
+        CALLEE_FMULADD_F32,
+        CALLEE_FMULADD_F64,
+        CALLEE_FABS,
+        CALLEE_COPYSIGN_F32,
+        CALLEE_COPYSIGN_F64,
+        CALLEE_MAXNUM_NSZ_F32,
+        CALLEE_MAXNUM_NSZ_F64,
+        CALLEE_MINNUM_NSZ_F32,
+        CALLEE_MINNUM_NSZ_F64,
+        CALLEE_ASIN_F32,
+        CALLEE_ASIN_F64,
+        CALLEE_ACOS_F32,
+        CALLEE_ACOS_F64,
+        CALLEE_ATAN2_F32,
+        CALLEE_ATAN2_F64,
+        CALLEE_ATAN_F32,
+        CALLEE_ATAN_F64,
+        CALLEE_CBRT_F32,
+        CALLEE_CBRT_F64,
+        CALLEE_SINH_F32,
+        CALLEE_SINH_F64,
+        CALLEE_COSH_F32,
+        CALLEE_COSH_F64,
+        CALLEE_TANH_F32,
+        CALLEE_TANH_F64,
+        CALLEE_EXPM1_F32,
+        CALLEE_EXPM1_F64,
+        CALLEE_LOG1P_F32,
+        CALLEE_LOG1P_F64,
+        CALLEE_HYPOT_F32,
+        CALLEE_HYPOT_F64,
+    ];
+
+    /// Every placeholder that is libdevice-backed only under the libNVVM
+    /// intrinsic backend (exactly the ten rounding ops).
+    const LIBNVVM_ONLY_LIBDEVICE: &[&str] = &[
+        CALLEE_FLOOR_F32,
+        CALLEE_FLOOR_F64,
+        CALLEE_CEIL_F32,
+        CALLEE_CEIL_F64,
+        CALLEE_TRUNC_F32,
+        CALLEE_TRUNC_F64,
+        CALLEE_ROUND_F32,
+        CALLEE_ROUND_F64,
+        CALLEE_ROUNDEVEN_F32,
+        CALLEE_ROUNDEVEN_F64,
+    ];
+
+    /// Callees that never lower to libdevice under any backend.
+    const NEVER_LIBDEVICE: &[&str] = &[
+        CALLEE_ROTATE_LEFT,
+        CALLEE_ROTATE_RIGHT,
+        CALLEE_CTPOP,
+        CALLEE_CTLZ,
+        CALLEE_CTLZ_NONZERO,
+        CALLEE_CTTZ,
+        CALLEE_CTTZ_NONZERO,
+        CALLEE_BSWAP,
+        CALLEE_BITREVERSE,
+        CALLEE_SATURATING_ADD,
+        CALLEE_SATURATING_SUB,
+        CALLEE_CARRYING_MUL_ADD,
+        CALLEE_FADD_FAST,
+        CALLEE_FSUB_FAST,
+        CALLEE_FMUL_FAST,
+        CALLEE_FDIV_FAST,
+        CALLEE_FREM_FAST,
+        CALLEE_SELECT_UNPREDICTABLE,
+        "__cuda_oxide_rust_intrinsic_unknown",
+        "__nv_sinf",
+    ];
+
+    /// Both predicates are exact allow-lists and mutually disjoint: every
+    /// placeholder in this module is asserted against BOTH predicates, so a
+    /// callee added to one list without a classification decision here fails
+    /// the test, and no callee can sit in both lists.
     #[test]
-    fn libdevice_placeholder_classification_is_exact() {
-        for callee in [
-            CALLEE_SQRT_F32,
-            CALLEE_POWI_F64,
-            CALLEE_SIN_F32,
-            CALLEE_FMA_F64,
-            CALLEE_FABS,
-            CALLEE_MAXNUM_NSZ_F32,
-            CALLEE_ASIN_F64,
-            CALLEE_HYPOT_F32,
-        ] {
+    fn libdevice_placeholder_classification_is_exact_and_disjoint() {
+        for callee in ALWAYS_LIBDEVICE {
             assert!(
                 is_libdevice_backed_placeholder(callee),
-                "expected `{callee}` to require libdevice"
+                "expected `{callee}` to require libdevice on every backend"
+            );
+            assert!(
+                !is_backend_dependent_libdevice_placeholder(callee),
+                "`{callee}` must not also be classified backend-dependent"
             );
         }
 
-        for callee in [
-            CALLEE_ROTATE_LEFT,
-            CALLEE_CTPOP,
-            CALLEE_SATURATING_ADD,
-            CALLEE_CARRYING_MUL_ADD,
-            CALLEE_FADD_FAST,
-            CALLEE_FSUB_FAST,
-            CALLEE_FMUL_FAST,
-            CALLEE_FDIV_FAST,
-            CALLEE_FREM_FAST,
-            "__cuda_oxide_rust_intrinsic_unknown",
-            "__nv_sinf",
-        ] {
+        for callee in LIBNVVM_ONLY_LIBDEVICE {
+            assert!(
+                is_backend_dependent_libdevice_placeholder(callee),
+                "expected `{callee}` to require libdevice only under libNVVM"
+            );
+            assert!(
+                !is_libdevice_backed_placeholder(callee),
+                "`{callee}` must not also be classified always-libdevice"
+            );
+        }
+
+        for callee in NEVER_LIBDEVICE {
             assert!(
                 !is_libdevice_backed_placeholder(callee),
                 "expected `{callee}` not to require libdevice"
+            );
+            assert!(
+                !is_backend_dependent_libdevice_placeholder(callee),
+                "expected `{callee}` not to be backend-dependent libdevice"
             );
         }
     }
