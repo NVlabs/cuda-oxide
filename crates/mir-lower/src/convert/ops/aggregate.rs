@@ -1785,6 +1785,129 @@ mod tests {
         );
     }
 
+    /// Sibling ZST field addresses off one base pointer must each lower to
+    /// their own zero-offset `i8` GEP, never to the base SSA value itself.
+    /// Forwarding the base (the pre-fix behavior) recorded the first field's
+    /// zero-field pointee type onto the base pointer's conversion history, so
+    /// the second `field_addr` resolved the base's pointee to "struct with 0
+    /// fields" and lowering aborted. This is the `iter().map(..).sum()` shape:
+    /// a composed closure holding two captureless (zero-sized) closures.
+    #[test]
+    fn sibling_zst_field_addrs_lower_to_distinct_zero_offset_geps() {
+        use llvm_export::ops::GepIndex;
+
+        let mut ctx = make_ctx();
+
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
+        let zst_f = empty_struct_ty(&mut ctx, "MapClosure");
+        let zst_g = empty_struct_ty(&mut ctx, "SumClosure");
+
+        // struct Composed { f: MapClosure (ZST), g: SumClosure (ZST), acc: i64 }
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Composed".to_string(),
+            vec!["f".to_string(), "g".to_string(), "acc".to_string()],
+            vec![zst_f, zst_g, i64_ty],
+            vec![0, 1, 2],
+            vec![0, 0, 0],
+            8,
+            8,
+        )
+        .into();
+
+        let base_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, struct_ty, true).into();
+        // Each field_addr result records the field's own pointee type; for the
+        // ZST fields that zero-field pointee is exactly what poisoned the base
+        // pointer's history when the result aliased the base.
+        let f_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, zst_f, true).into();
+        let g_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, zst_g, true).into();
+        let acc_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, i64_ty, true).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![base_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+
+        for (field_index, result_ty) in [(0u32, f_ptr_ty), (1, g_ptr_ty), (2, acc_ptr_ty)] {
+            let op = Operation::new(
+                &mut ctx,
+                MirFieldAddrOp::get_concrete_op_info(),
+                vec![result_ty],
+                vec![base],
+                vec![],
+                0,
+            );
+            MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+            op.insert_at_back(block, &ctx);
+        }
+        append_mir_return(&mut ctx, block, vec![]);
+
+        // Pre-fix this failed with "field_addr index 1 out of bounds for
+        // struct with 0 fields" on the second (sibling) ZST field_addr.
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 3, "each field_addr must lower to its own GEP");
+        assert!(
+            geps.iter().all(|gep| gep.verify(&ctx).is_ok()),
+            "every field-address GEP must satisfy LLVM dialect verification"
+        );
+
+        let zst_geps: Vec<_> = geps
+            .iter()
+            .filter(|gep| {
+                gep.src_elem_type(&ctx) == i8_ty
+                    && matches!(gep.indices(&ctx).as_slice(), [GepIndex::Constant(0)])
+            })
+            .collect();
+        assert_eq!(
+            zst_geps.len(),
+            2,
+            "both ZST field addresses must lower to zero-offset i8 GEPs"
+        );
+
+        let gep_base = |gep: &llvm::GetElementPtrOp| gep.get_operation().deref(&ctx).get_operand(0);
+        let gep_result =
+            |gep: &llvm::GetElementPtrOp| gep.get_operation().deref(&ctx).get_result(0);
+        assert_eq!(
+            gep_base(zst_geps[0]),
+            gep_base(zst_geps[1]),
+            "both ZST field addresses must be taken off the same base pointer"
+        );
+        assert_ne!(
+            gep_result(zst_geps[0]),
+            gep_base(zst_geps[0]),
+            "a ZST field address must be a value distinct from the base pointer"
+        );
+        assert_ne!(
+            gep_result(zst_geps[1]),
+            gep_base(zst_geps[1]),
+            "a ZST field address must be a value distinct from the base pointer"
+        );
+        assert_ne!(
+            gep_result(zst_geps[0]),
+            gep_result(zst_geps[1]),
+            "each sibling ZST field address must get its own GEP result"
+        );
+
+        // The non-ZST sibling still resolves the base's pointee to the struct
+        // (slot 0 holds `acc`): the base pointer's type history stayed intact.
+        let acc_geps: Vec<_> = geps
+            .iter()
+            .filter(|gep| {
+                matches!(
+                    gep.indices(&ctx).as_slice(),
+                    [GepIndex::Constant(0), GepIndex::Constant(0)]
+                )
+            })
+            .collect();
+        assert_eq!(
+            acc_geps.len(),
+            1,
+            "the non-ZST field address must index the struct's layout slot"
+        );
+    }
+
     /// Enum construction must store the declared discriminant value, not the
     /// variant index. This locks the `Ordering::Less = -1` style case as the
     /// i8 bit-pattern `255`.
