@@ -1376,8 +1376,20 @@ pub(crate) fn convert_enum_payload(
 /// The GEP field index and the struct type it indexes into both come from
 /// [`build_struct_slot_map`], so the index accounts for reordering,
 /// `[N x i8]` padding slots and stripped ZSTs (ZST-ness is decided on the
-/// converted LLVM field type, like the value-level sites). Taking the
-/// address of a ZST field forwards the struct pointer itself.
+/// converted LLVM field type, like the value-level sites).
+///
+/// Taking the address of a ZST field emits a distinct zero-offset `i8` GEP
+/// off the base pointer (a ZST field lives at byte 0 of the struct), the
+/// same idiom the union branch uses. It must NOT forward the base SSA value
+/// itself: a 1:1 `replace_operation_with_values` that aliases the op's
+/// result to an already-existing value records the result's pointee type
+/// (the ZST field's own zero-field type) onto that value's conversion type
+/// history, so a sibling `field_addr` on the same base would later resolve
+/// the base's pointee to the ZST type instead of the struct and fail with
+/// "field_addr index N out of bounds for struct with 0 fields". The
+/// distinct GEP result leaves the base pointer's recorded pointee intact
+/// and carries the field's pointee type on its own result, which is what
+/// nested projections through the field address look up.
 pub(crate) fn convert_field_addr(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
