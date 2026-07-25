@@ -100,6 +100,60 @@ pub struct DisjointSlice<'a, T, IndexSpace = Index1D> {
     _space: PhantomData<fn() -> IndexSpace>,
 }
 
+/// A thread's tile, once clipped to a logical extent.
+///
+/// Returned by
+/// [`DisjointSlice::get_block_clipped_mut`](DisjointSlice::get_block_clipped_mut).
+/// The two cases are separate variants on purpose: a boundary tile has a
+/// different length from an interior one, and collapsing both into `&mut [T]`
+/// would cost the interior case its fixed-size type for no benefit, while
+/// silently letting a caller treat a short tile as whole.
+pub enum Tile<'a, T, const N: usize> {
+    /// The tile lies wholly inside the logical extent: all `N` elements valid.
+    Full(&'a mut [T; N]),
+    /// The tile straddles the end of the logical extent. Length is in `1..N`.
+    Partial(&'a mut [T]),
+}
+
+impl<'a, T, const N: usize> Tile<'a, T, N> {
+    /// Valid elements in this tile: `N` when full, fewer when partial.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Tile::Full(_) => N,
+            Tile::Partial(s) => s.len(),
+        }
+    }
+
+    /// Whether every element of the tile is valid.
+    #[inline]
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        matches!(self, Tile::Full(_))
+    }
+
+    /// Never true: a tile with no valid elements is reported as `None` rather
+    /// than as an empty `Partial`.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The valid elements, whichever case this is.
+    ///
+    /// Use when the work is uniform per element and the distinction does not
+    /// matter; match on the variant when the full case has a faster path.
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        match self {
+            Tile::Full(a) => &mut a[..],
+            Tile::Partial(s) => s,
+        }
+    }
+}
+
 mod launch_contract_sealed {
     pub trait Sealed {}
 }
@@ -303,6 +357,80 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
         // - `[T; N]` has the same layout as `N` consecutive `T`, so the cast is
         //   valid for a region this long.
         Some(unsafe { &mut *self.ptr.add(start).cast::<[T; N]>() })
+    }
+
+    /// This thread's tile, clipped to a logical extent smaller than the buffer.
+    ///
+    /// A tile shape rarely divides the problem. Tensor-core work pads to a tile
+    /// boundary - `M = 9` against a 16-row MMA tile is the shape this fork
+    /// actually runs - so the buffer is 16 rows while only 9 carry data. Bounds
+    /// checking against the buffer accepts all 16, and the last 7 are padding
+    /// the kernel must not treat as real.
+    ///
+    /// `logical_len` is that smaller extent. The return distinguishes the two
+    /// cases rather than flattening them:
+    ///
+    /// - [`Tile::Full`] carries `&mut [T; N]`, so the common path keeps the
+    ///   fixed-size type and whatever codegen depends on it.
+    /// - [`Tile::Partial`] carries a shorter slice, so a boundary tile cannot be
+    ///   mistaken for a whole one.
+    /// - `None` means the tile starts at or past `logical_len` and has no valid
+    ///   elements at all.
+    ///
+    /// ```rust,ignore
+    /// // 9 valid rows in a buffer padded to a 16-row tile boundary.
+    /// match output.get_block_clipped_mut(block, 9) {
+    ///     Some(Tile::Full(row)) => *row = [a, b, c, d],
+    ///     Some(Tile::Partial(head)) => for (i, slot) in head.iter_mut().enumerate() {
+    ///         *slot = value(i);
+    ///     },
+    ///     None => {}
+    /// }
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// Clipping cannot introduce aliasing. It only ever *removes* elements from
+    /// a pattern that Law 1 already proved disjoint, and a subset of disjoint
+    /// sets is disjoint. So predication composes with any witness this module
+    /// accepts, and needs no separate argument.
+    ///
+    /// `logical_len` is additionally clamped to the buffer length, so passing a
+    /// value larger than the allocation cannot widen the access.
+    #[inline]
+    pub fn get_block_clipped_mut<'kernel, const N: usize>(
+        &mut self,
+        block: DisjointBlock<'kernel, N, IndexSpace>,
+        logical_len: usize,
+    ) -> Option<Tile<'_, T, N>> {
+        if size_of::<T>() == 0 || !block.is_valid() {
+            return None;
+        }
+        // A caller-supplied extent must never exceed the real allocation.
+        let limit = if logical_len < self.len {
+            logical_len
+        } else {
+            self.len
+        };
+        let start = block.start();
+        if start >= limit {
+            return None;
+        }
+        let end = start.checked_add(N)?;
+        if end <= limit {
+            // SAFETY: as `get_block_mut`; the tile lies wholly inside `limit`,
+            // which is itself within the allocation.
+            return Some(Tile::Full(unsafe {
+                &mut *self.ptr.add(start).cast::<[T; N]>()
+            }));
+        }
+        // `start < limit <= end`, so this length is in `1..N`.
+        let valid = limit - start;
+        // SAFETY: `start + valid == limit <= self.len`, so the slice is in
+        // bounds, and it is a subset of this thread's already-disjoint tile.
+        Some(Tile::Partial(unsafe {
+            core::slice::from_raw_parts_mut(self.ptr.add(start), valid)
+        }))
     }
 
     /// Visit each of the `K` tiles a thread owns, exactly once.
@@ -722,5 +850,121 @@ mod tiling_algebra_tests {
         assert_eq!(covered, grid * passes);
         // Element 4 falls in the gap: no (k, t) reaches it.
         assert!(!seen[4], "an oversized period must leave the span gapped");
+    }
+}
+
+#[cfg(test)]
+mod predication_tests {
+    //! Clipping logic for partial tiles.
+    //!
+    //! `get_block_clipped_mut` needs a real `DisjointBlock`, which needs a launch
+    //! context, so these model the clip arithmetic directly. `clip` below is the
+    //! same decision the method makes.
+
+    /// What the method decides for one thread: `None`, a full tile, or a partial
+    /// tile of the given length.
+    #[derive(Debug, PartialEq)]
+    enum Clip {
+        None,
+        Full,
+        Partial(usize),
+    }
+
+    fn clip(start: usize, n: usize, logical: usize, buf: usize) -> Clip {
+        let limit = if logical < buf { logical } else { buf };
+        if start >= limit {
+            return Clip::None;
+        }
+        match start.checked_add(n) {
+            Some(end) if end <= limit => Clip::Full,
+            _ => Clip::Partial(limit - start),
+        }
+    }
+
+    /// The shape this fork actually runs: 9 valid rows against a 16-row tile.
+    /// With one row per thread and N = 4, threads 0 and 1 are whole, thread 2
+    /// straddles the boundary, and thread 3 is entirely padding.
+    #[test]
+    fn nine_valid_rows_against_a_sixteen_row_tile() {
+        let (n, logical, buf) = (4usize, 9usize, 16usize);
+        assert_eq!(clip(0, n, logical, buf), Clip::Full);
+        assert_eq!(clip(4, n, logical, buf), Clip::Full);
+        assert_eq!(clip(8, n, logical, buf), Clip::Partial(1), "row 8 only");
+        assert_eq!(clip(12, n, logical, buf), Clip::None, "all padding");
+    }
+
+    /// Every valid element is claimed exactly once, and no padding element is
+    /// ever handed out. This is the property predication has to preserve: it may
+    /// remove elements from a disjoint pattern, never add or duplicate them.
+    #[test]
+    fn clipping_covers_the_logical_extent_exactly_once() {
+        let (n, logical, buf) = (4usize, 9usize, 16usize);
+        let mut claims = [0u8; 16];
+        let mut start = 0;
+        while start < buf {
+            match clip(start, n, logical, buf) {
+                Clip::Full => {
+                    for i in start..start + n {
+                        claims[i] += 1;
+                    }
+                }
+                Clip::Partial(len) => {
+                    for i in start..start + len {
+                        claims[i] += 1;
+                    }
+                }
+                Clip::None => {}
+            }
+            start += n;
+        }
+        for (i, &c) in claims.iter().enumerate() {
+            if i < logical {
+                assert_eq!(c, 1, "valid element {i} must be claimed exactly once");
+            } else {
+                assert_eq!(c, 0, "padding element {i} must never be claimed");
+            }
+        }
+    }
+
+    /// A logical extent beyond the allocation must not widen the access. The
+    /// buffer length is the hard limit; `logical_len` can only narrow.
+    #[test]
+    fn logical_extent_cannot_exceed_the_buffer() {
+        // Buffer of 8, caller claims 99 valid elements.
+        assert_eq!(clip(0, 4, 99, 8), Clip::Full);
+        assert_eq!(clip(4, 4, 99, 8), Clip::Full);
+        assert_eq!(clip(8, 4, 99, 8), Clip::None, "past the allocation");
+        // A tile straddling the buffer end clips to the buffer, not to 99.
+        assert_eq!(clip(6, 4, 99, 8), Clip::Partial(2));
+    }
+
+    /// A tile boundary landing exactly on the extent is full, not partial. Off
+    /// by one here would either drop a valid element or expose padding.
+    #[test]
+    fn exact_boundary_is_full_not_partial() {
+        assert_eq!(clip(4, 4, 8, 16), Clip::Full, "4..8 with extent 8");
+        assert_eq!(clip(4, 4, 7, 16), Clip::Partial(3), "4..7 with extent 7");
+        assert_eq!(clip(4, 4, 5, 16), Clip::Partial(1));
+        assert_eq!(clip(4, 4, 4, 16), Clip::None, "starts at the extent");
+    }
+
+    /// A partial tile always has between 1 and N-1 elements. Zero would mean the
+    /// method should have returned `None`; N would mean it should have been full.
+    #[test]
+    fn partial_length_is_strictly_between_zero_and_n() {
+        for n in [2usize, 4, 8, 16] {
+            for logical in 1..(3 * n) {
+                let mut start = 0;
+                while start < 3 * n {
+                    if let Clip::Partial(len) = clip(start, n, logical, 4 * n) {
+                        assert!(
+                            len >= 1 && len < n,
+                            "partial length {len} out of range for N={n}, logical={logical}"
+                        );
+                    }
+                    start += n;
+                }
+            }
+        }
     }
 }
