@@ -142,15 +142,22 @@ cargo oxide run debug -- --fail-assert
 
 The failing mode runs separately because a device-side assertion leaves the
 current CUDA context in an error state. The CUDA driver prints the assertion
-diagnostic to stderr, and synchronization reports `CUDA_ERROR_ASSERT`.
+diagnostic to stderr, and synchronization reports `CUDA_ERROR_ASSERT`:
+
+```text
+--- Failing mode: gpu_assert!() with negative input ---
+src/main.rs:117: debug::kernels: block: [0,0,0], thread: [2,0,0] Assertion `Expected non-negative value` failed.
+✓ assertion failure surfaced as expected: DriverError(710, "device-side assert triggered")
+  (assertion message printed to stderr by the CUDA driver)
+```
 
 ## Expected Output
 
 ```text
 === GPU Debug & Utility Intrinsics Test (Unified) ===
 
---- Test 1: clock64() cycle measurement ---
-  Average cycles for 100 iterations: ~500-2000
+--- Test 1: clock64() / globaltimer() measurement ---
+  Average cycles for 100 iterations: <varies by GPU>
 ✓ clock_test completed
 
 --- Test 2: trap() with valid input ---
@@ -172,7 +179,9 @@ diagnostic to stderr, and synchronization reports `CUDA_ERROR_ASSERT`.
 ✓ profiler_test PASSED
 
 --- Test 6: #[launch_bounds(128, 4)] ---
-  ✓ launch_bounds_test PASSED
+  Input:  [1, 2, 3, 4, 5, 6, 7, 8]
+  Output: [4, 7, 10, 13, 16, 19, 22, 25]
+✓ launch_bounds_test PASSED
   (Check PTX for .maxntid 128 .minnctapersm 4)
 
 === ALL DEBUG TESTS COMPLETED ===
