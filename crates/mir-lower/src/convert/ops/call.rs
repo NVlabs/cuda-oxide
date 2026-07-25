@@ -473,20 +473,25 @@ impl RustFloatMathIntrinsic {
     /// `llvm.maxnum`/`llvm.minnum` at all, because under LLVM 21 those
     /// propagate signaling NaNs and so contradict Rust's contract; #391 lowers
     /// them as an ordered compare/select instead (see #390).
+    ///
+    /// Naming: pliron identifiers cannot contain dots, so intrinsic symbols
+    /// use the underscore encoding (`llvm_floor_f32`) that the textual `.ll`
+    /// exporter decodes back to the dotted LLVM name (`llvm.floor.f32`),
+    /// exactly like the `llvm_ctpop_i*` bit-intrinsic family above.
     fn llvm_intrinsic_name(self) -> Option<&'static str> {
         match self {
             // Rounding: each maps to a single PTX `cvt` instruction, except
             // `round`; see the note above.
-            Self::FloorF32 => Some("llvm.floor.f32"),
-            Self::FloorF64 => Some("llvm.floor.f64"),
-            Self::CeilF32 => Some("llvm.ceil.f32"),
-            Self::CeilF64 => Some("llvm.ceil.f64"),
-            Self::TruncF32 => Some("llvm.trunc.f32"),
-            Self::TruncF64 => Some("llvm.trunc.f64"),
-            Self::RoundF32 => Some("llvm.round.f32"),
-            Self::RoundF64 => Some("llvm.round.f64"),
-            Self::RoundevenF32 => Some("llvm.roundeven.f32"),
-            Self::RoundevenF64 => Some("llvm.roundeven.f64"),
+            Self::FloorF32 => Some("llvm_floor_f32"),
+            Self::FloorF64 => Some("llvm_floor_f64"),
+            Self::CeilF32 => Some("llvm_ceil_f32"),
+            Self::CeilF64 => Some("llvm_ceil_f64"),
+            Self::TruncF32 => Some("llvm_trunc_f32"),
+            Self::TruncF64 => Some("llvm_trunc_f64"),
+            Self::RoundF32 => Some("llvm_round_f32"),
+            Self::RoundF64 => Some("llvm_round_f64"),
+            Self::RoundevenF32 => Some("llvm_roundeven_f32"),
+            Self::RoundevenF64 => Some("llvm_roundeven_f64"),
             _ => None,
         }
     }
@@ -1831,46 +1836,47 @@ mod tests {
             None
         );
 
-        // Rounding -> llvm.floor/ceil/trunc/round/roundeven.*
+        // Rounding -> llvm.floor/ceil/trunc/round/roundeven.* in pliron's
+        // underscore encoding (the exporter prints the dotted LLVM name).
         assert_eq!(
             RustFloatMathIntrinsic::FloorF32.llvm_intrinsic_name(),
-            Some("llvm.floor.f32")
+            Some("llvm_floor_f32")
         );
         assert_eq!(
             RustFloatMathIntrinsic::FloorF64.llvm_intrinsic_name(),
-            Some("llvm.floor.f64")
+            Some("llvm_floor_f64")
         );
         assert_eq!(
             RustFloatMathIntrinsic::CeilF32.llvm_intrinsic_name(),
-            Some("llvm.ceil.f32")
+            Some("llvm_ceil_f32")
         );
         assert_eq!(
             RustFloatMathIntrinsic::CeilF64.llvm_intrinsic_name(),
-            Some("llvm.ceil.f64")
+            Some("llvm_ceil_f64")
         );
         assert_eq!(
             RustFloatMathIntrinsic::TruncF32.llvm_intrinsic_name(),
-            Some("llvm.trunc.f32")
+            Some("llvm_trunc_f32")
         );
         assert_eq!(
             RustFloatMathIntrinsic::TruncF64.llvm_intrinsic_name(),
-            Some("llvm.trunc.f64")
+            Some("llvm_trunc_f64")
         );
         assert_eq!(
             RustFloatMathIntrinsic::RoundF32.llvm_intrinsic_name(),
-            Some("llvm.round.f32")
+            Some("llvm_round_f32")
         );
         assert_eq!(
             RustFloatMathIntrinsic::RoundF64.llvm_intrinsic_name(),
-            Some("llvm.round.f64")
+            Some("llvm_round_f64")
         );
         assert_eq!(
             RustFloatMathIntrinsic::RoundevenF32.llvm_intrinsic_name(),
-            Some("llvm.roundeven.f32")
+            Some("llvm_roundeven_f32")
         );
         assert_eq!(
             RustFloatMathIntrinsic::RoundevenF64.llvm_intrinsic_name(),
-            Some("llvm.roundeven.f64")
+            Some("llvm_roundeven_f64")
         );
 
         // max/min return None: LLVM 21's maxnum/minnum propagate signaling
