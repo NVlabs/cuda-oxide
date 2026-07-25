@@ -75,8 +75,8 @@ fn main() {
     unsafe { module.map_sum_i64(&stream, cfg, &din, &mut out) }.expect("map_sum_i64 launch");
     let got = out.to_host_vec(&stream).unwrap();
     let want_i: i64 = data_i.iter().map(|&x| x.wrapping_mul(2)).sum();
-    for tid in 0..N {
-        assert_eq!(got[tid], want_i, "map_sum_i64 thread {tid}");
+    for (tid, &g) in got.iter().enumerate() {
+        assert_eq!(g, want_i, "map_sum_i64 thread {tid}");
     }
 
     // usize map+sum.
@@ -87,8 +87,8 @@ fn main() {
     unsafe { module.map_sum_usize(&stream, cfg, &dinu, &mut outu) }.expect("map_sum_usize launch");
     let gotu = outu.to_host_vec(&stream).unwrap();
     let want_u: u64 = data_u.iter().map(|&x| x + 1).sum();
-    for tid in 0..N {
-        assert_eq!(gotu[tid], want_u, "map_sum_usize thread {tid}");
+    for (tid, &g) in gotu.iter().enumerate() {
+        assert_eq!(g, want_u, "map_sum_usize thread {tid}");
     }
 
     println!("PASS: map_sum (i64 + usize iter().map(..).sum())");
