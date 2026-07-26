@@ -189,7 +189,14 @@ def run_seed(seed: int, *, no_build: bool, keep_logs: bool) -> dict[str, object]
         return record
 
     remove_stale_ptx()
-    run_cmd = ["cargo", "oxide", "run", "rustlantis-smoke"]
+    # --no-fmad keeps the two backends comparable on float seeds. Device
+    # codegen contracts an fmul feeding an fadd into a single fma.rn by
+    # default, matching nvcc's --fmad=true, while the CPU oracle rounds the
+    # multiply and the add separately. Both are correct, so the resulting
+    # trace difference says nothing about a miscompile, and it would mask the
+    # differences that do. Contraction is worth fuzzing on its own terms, as
+    # a comparison against a contracted reference.
+    run_cmd = ["cargo", "oxide", "run", "--no-fmad", "rustlantis-smoke"]
     result = run(run_cmd, cwd=ROOT)
     status, stage, reason = classify_run(result.returncode, result.stdout)
 

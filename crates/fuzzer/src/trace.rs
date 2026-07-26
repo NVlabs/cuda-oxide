@@ -121,6 +121,24 @@ fn trace_write_char(val: char) {
     trace_write_u32(val as u32);
 }
 
+/// Floats are folded as their bit patterns, so the trace stays an exact
+/// comparison. A tolerance here would compare something other than the value
+/// the backend produced, and the mismatches worth finding are the ones a
+/// tolerance hides.
+///
+/// Every NaN the two backends produce must therefore agree bit for bit,
+/// payload included. That holds for the arithmetic rustlantis emits, and a
+/// disagreement in a NaN payload is itself a result worth reporting.
+#[inline]
+fn trace_write_f32(val: f32) {
+    trace_write_u32(val.to_bits());
+}
+
+#[inline]
+fn trace_write_f64(val: f64) {
+    trace_write_u64(val.to_bits());
+}
+
 /// Scalar values that can be folded into the trace.
 pub trait TraceValue {
     fn trace_write(self);
@@ -154,6 +172,8 @@ impl_trace_value! {
     u128 => trace_write_u128,
     usize => trace_write_usize,
     char => trace_write_char,
+    f32 => trace_write_f32,
+    f64 => trace_write_f64,
 }
 
 /// Aggregates of scalar values that can be folded into the trace in one call.
