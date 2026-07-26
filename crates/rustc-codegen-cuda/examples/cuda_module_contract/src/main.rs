@@ -92,10 +92,10 @@ mod kernels {
     pub fn strided_scale(n: usize, stride: usize, input: &[f32], mut output: DisjointSlice<f32>) {
         let index = thread::index_1d();
         let i = index.get();
-        if i < n {
-            if let Some(out) = output.get_mut(index) {
-                *out = input[i * stride] * 2.0;
-            }
+        if i < n
+            && let Some(out) = output.get_mut(index)
+        {
+            *out = input[i * stride] * 2.0;
         }
     }
 
@@ -279,7 +279,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match violation {
         Err(
             error @ cuda_core::LaunchContractError::SizeRequirementViolated {
-                relation, lhs, rhs, ..
+                relation,
+                lhs,
+                rhs,
+                ..
             },
         ) => {
             println!("rejected undersized launch on the CPU: {error}");
