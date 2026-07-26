@@ -37,7 +37,7 @@
 //! `DisjointSlice` from raw memory is also unsafe.
 
 use crate::thread::{Index1D, IndexFormula, LaunchContext, ThreadIndex};
-use crate::view::{LinearTiles, RowMajorTiles};
+use crate::view::{LinearTiles, RowMajorTiles, RuntimeRowMajorTiles};
 use core::marker::PhantomData;
 use core::mem::size_of;
 
@@ -131,6 +131,11 @@ impl<'a, T, const N: usize> __LaunchContractDisjointSlice<T, 1>
 impl<'a, T, const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize>
     __LaunchContractDisjointSlice<T, 2>
     for DisjointSlice<'a, T, RowMajorTiles<ROWS, COLS, ROW_STRIDE>>
+{
+}
+
+impl<'a, T, const ROWS: usize, const COLS: usize> __LaunchContractDisjointSlice<T, 2>
+    for DisjointSlice<'a, T, RuntimeRowMajorTiles<ROWS, COLS>>
 {
 }
 

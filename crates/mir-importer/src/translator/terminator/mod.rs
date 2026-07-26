@@ -123,12 +123,12 @@ pub fn translate_terminator(
         mir::TerminatorKind::Assert {
             cond,
             expected,
-            msg: _,
+            msg,
             target,
             unwind,
         } => translate_assert(
-            ctx, body, cond, *expected, *target, unwind, block_ptr, prev_op, value_map, block_map,
-            loc,
+            ctx, body, cond, *expected, msg, *target, unwind, block_ptr, prev_op, value_map,
+            block_map, loc,
         ),
 
         mir::TerminatorKind::Call {
@@ -352,12 +352,27 @@ fn translate_goto(
 /// If `expected == false`, the condition is negated before the assert:
 /// - `assert!(cond, expected=true)` → assert condition is true
 /// - `assert!(cond, expected=false)` → assert condition is false (negated)
+///
+/// # Unchecked indexing
+///
+/// When the body's unchecked-indexing policy is set (per-kernel
+/// `#[kernel(unchecked_indexing)]` marker or the whole-build
+/// `CUDA_OXIDE_UNCHECKED_INDEXING=1` switch), asserts whose message is
+/// `AssertMessage::BoundsCheck` are elided: control flows unconditionally to
+/// the success target and the condition is never materialized. This is legal
+/// because the success edge carries no block arguments. An out-of-bounds
+/// index then is undefined behavior, exactly like `get_unchecked`. Every
+/// other assert kind (overflow, division/remainder by zero, misaligned
+/// pointer, ...) keeps its compare-and-trap lowering, and panics that arrive
+/// as `core::panicking::*` calls (including range-indexing failures) are
+/// unaffected.
 #[allow(clippy::too_many_arguments)]
 fn translate_assert(
     ctx: &mut Context,
     body: &mir::Body,
     cond: &mir::Operand,
     expected: bool,
+    msg: &mir::AssertMessage,
     target: mir::BasicBlockIdx,
     unwind: &mir::UnwindAction,
     block_ptr: Ptr<BasicBlock>,
@@ -372,6 +387,13 @@ fn translate_assert(
     // may carry unwind edges in their MIR; those are dead code on GPU -- if a
     // panic occurs, the GPU thread traps.
     let _ = unwind;
+
+    // Opt-in bounds-check elision: replace the assert with an unconditional
+    // goto to the success target without translating the (now dead)
+    // condition. Only `BoundsCheck` messages qualify; see the doc comment.
+    if value_map.unchecked_indexing() && matches!(msg, mir::AssertMessage::BoundsCheck { .. }) {
+        return translate_goto(ctx, target, block_ptr, prev_op, block_map, loc);
+    }
 
     // Translate the condition operand.
     //
@@ -2768,21 +2790,28 @@ fn try_dispatch_intrinsic(
         "cuda_device::__launch_bounds_config"
         | "cuda_device::thread::__launch_bounds_config"
         | "cuda_device::__launch_contract_config"
-        | "cuda_device::thread::__launch_contract_config" => {
+        | "cuda_device::thread::__launch_contract_config"
+        | "cuda_device::__unchecked_indexing_config"
+        | "cuda_device::thread::__unchecked_indexing_config" => {
             let expected_marker = match name {
                 "cuda_device::__launch_bounds_config"
                 | "cuda_device::thread::__launch_bounds_config" => "__launch_bounds_config",
                 "cuda_device::__launch_contract_config"
                 | "cuda_device::thread::__launch_contract_config" => "__launch_contract_config",
+                "cuda_device::__unchecked_indexing_config"
+                | "cuda_device::thread::__unchecked_indexing_config" => {
+                    "__unchecked_indexing_config"
+                }
                 _ => unreachable!("launch metadata arm matched an unknown marker"),
             };
             if !is_cuda_device_const_marker(func, expected_marker) {
                 return Ok(None);
             }
-            // Compile-time launch metadata marker. Launch bounds are extracted
-            // in body.rs; the contract marker selects the kernel's typed launch
-            // context during macro expansion. Neither marker emits runtime code.
-            // Emit only the control-flow edge to the call's target.
+            // Compile-time metadata marker. Launch bounds and the
+            // unchecked-indexing flag are extracted in body.rs; the contract
+            // marker selects the kernel's typed launch context during macro
+            // expansion. No marker emits runtime code. Emit only the
+            // control-flow edge to the call's target.
             //
             // We need a prev_op to insert after. If none exists, create a dummy constant.
             let actual_prev_op = match prev_op {

@@ -59,6 +59,12 @@ use rustc_public::ty::{ConstantKind, RigidTy, TyKind};
 /// - ZST locals (and the unit return slot) remain `None` in `slots`.
 pub struct ValueMap {
     slots: Vec<Option<Value>>,
+    /// Per-body unchecked-indexing policy, resolved once by
+    /// [`super::body::translate_body`] from the `__unchecked_indexing_config`
+    /// marker and the `CUDA_OXIDE_UNCHECKED_INDEXING` environment switch.
+    /// When set, `translate_assert` elides `AssertMessage::BoundsCheck`
+    /// terminators (out-of-bounds indexing becomes UB, like `get_unchecked`).
+    unchecked_indexing: bool,
 }
 
 impl ValueMap {
@@ -66,7 +72,18 @@ impl ValueMap {
     pub fn new(num_locals: usize) -> Self {
         Self {
             slots: vec![None; num_locals],
+            unchecked_indexing: false,
         }
+    }
+
+    /// Record the resolved unchecked-indexing policy for this body.
+    pub fn set_unchecked_indexing(&mut self, enabled: bool) {
+        self.unchecked_indexing = enabled;
+    }
+
+    /// Whether bounds-check asserts in this body are elided.
+    pub fn unchecked_indexing(&self) -> bool {
+        self.unchecked_indexing
     }
 
     /// Return the alloca pointer backing `local`, or `None` if the local is

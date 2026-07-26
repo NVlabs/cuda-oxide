@@ -1,0 +1,5 @@
+error: signed integer parameter `n` is not supported in requires: relations are evaluated in u64 and signed widening semantics are not defined for v1; each requires relation is one comparison (`>=`, `>`, `<=`, `<`, `==`, `!=`) between expressions built from slice parameters as `<param>.len()`, unsigned integer scalar parameters (u8/u16/u32/u64/usize), integer literals, parentheses, and `+`, `-`, `*`; available operands: `input.len()`, `output.len()`
+  --> tests/compile_fail/launch_contract_requires_signed_scalar.rs:13:36
+   |
+13 |         requires = (input.len() >= n),
+   |                                    ^

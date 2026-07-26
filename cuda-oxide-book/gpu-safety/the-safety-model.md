@@ -26,7 +26,7 @@ compiler can verify:
 
 | Tier       | Description                                             | `unsafe` Required? |
 |:-----------|:--------------------------------------------------------|:-------------------|
-| **Tier 1** | Safe kernel body plus a checked `PreparedLaunch`         | No                 |
+| **Tier 1** | Safe kernel body plus a checked `PreparedLaunch`        | No                 |
 | **Tier 2** | Explicit `unsafe` with clear safety contracts           | Yes, scoped        |
 | **Tier 3** | Raw hardware intrinsics -- full user responsibility     | Yes, pervasive     |
 
@@ -119,13 +119,13 @@ launch obligations even though this rank check fails closed on the device.
 `ThreadIndex` is only as trustworthy as the functions that create it. Here
 are the constructors cuda-oxide provides:
 
-| Function                      | Formula                                 | Return Type                                            | Notes                                            |
-|:------------------------------|:----------------------------------------|:-------------------------------------------------------|:-------------------------------------------------|
-| `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`                        | Invalid when an untyped launch has active Y/Z     |
-| `index_2d::<S>()`             | `row * S + col`                         | `Option<ThreadIndex<'kernel, Index2D<S>>>`             | Const stride; mixing strides is a compile error  |
-| `unsafe index_2d_runtime(s)`  | `row * s + col`                         | `Option<ThreadIndex<'kernel, Runtime2DIndex>>`         | Caller asserts every thread used the same `s`    |
-| `index_2d_row()`              | `blockIdx.y * blockDim.y + threadIdx.y` | `usize`                                                | Component accessor, not a witness constructor    |
-| `index_2d_col()`              | `blockIdx.x * blockDim.x + threadIdx.x` | `usize`                                                | Component accessor, not a witness constructor    |
+| Function                      | Formula                                 | Return Type                                   | Notes                                            |
+|:------------------------------|:----------------------------------------|:----------------------------------------------|:-------------------------------------------------|
+| `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`               | Invalid when an untyped launch has active Y/Z    |
+| `index_2d::<S>()`             | `row * S + col`                         | `Option<ThreadIndex<'kernel, Index2D<S>>>`    | Const stride; mixing strides is a compile error  |
+| `unsafe index_2d_runtime(s)`  | `row * s + col`                         | `Option<ThreadIndex<'kernel, Runtime2DIndex>>`| Caller asserts every thread used the same `s`    |
+| `index_2d_row()`              | `blockIdx.y * blockDim.y + threadIdx.y` | `usize`                                       | Component accessor, not a witness constructor    |
+| `index_2d_col()`              | `blockIdx.x * blockDim.x + threadIdx.x` | `usize`                                       | Component accessor, not a witness constructor    |
 
 `index_2d_row()` and `index_2d_col()` return plain `usize` -- they give
 you the components for arithmetic, but cannot be used to index into a
@@ -282,6 +282,10 @@ The `if let Some` from `index_2d_runtime` replaces the manual `col < n`
 guard you'd write in CUDA C++. The `row < m` check remains because it
 guards against reading garbage from the input matrices.
 
+That covers writing the output. The *input* side of GEMM -- and the cost
+of the bounds checks on every `a[...]` read -- has its own chapter:
+[Bounds Checks: Pay Once or Opt Out](bounds-checks.md).
+
 ### What makes a kernel Tier 1
 
 A kernel and its launch are fully safe -- Tier 1 -- when:
@@ -403,6 +407,10 @@ automatically: index in bounds, no two threads share the same index. The
 difference is that you prove it yourself instead of letting the type system
 do it for you.
 
+This is per-access. To remove the checks behind ordinary `a[i]` indexing
+for a whole kernel at once, see the `unchecked_indexing` flag in
+[Bounds Checks: Pay Once or Opt Out](bounds-checks.md).
+
 ---
 
 ## Tier 3: raw hardware
@@ -511,6 +519,10 @@ extended, not reinvented:
 | **Execution-resource-aware types**    | Functions annotated with their execution level (grid / block / warp / thread). A barrier call inside a divergent branch becomes a compile-time error.             |
 | **Memory views**                      | Generalized parallel access patterns -- like `DisjointSlice` but covering blocked, striped, transposed, and composed layouts. Type-checked race-freedom at scale. |
 | **Extended borrow checking for sync** | Statically enforce that barriers cannot be forgotten, placed at divergent control flow, or duplicated by the optimizer. Convergence in the type system.           |
+
+The first pieces of the memory-views idea have landed: row and column
+read views over runtime-sized matrices, and runtime-width output tiles.
+[Bounds Checks: Pay Once or Opt Out](bounds-checks.md) covers them.
 
 All of this is compile-time analysis. The generated PTX is identical to what
 you would write by hand -- the safety net disappears at code generation.

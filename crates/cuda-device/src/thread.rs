@@ -982,6 +982,45 @@ const fn validate_launch_bounds(max_threads: u32) {
     );
 }
 
+/// Compiler marker for opt-in unchecked slice/array indexing.
+///
+/// `#[kernel(unchecked_indexing)]` inserts this call. The MIR importer records
+/// the flag and removes the call before code generation, so it emits no device
+/// instructions.
+///
+/// # Trust-me contract (same as `get_unchecked`)
+///
+/// When the flag is set, every MIR bounds-check assertion
+/// (`AssertMessage::BoundsCheck`, i.e. the check behind `a[i]` on slices and
+/// arrays) inside the kernel's translated body is **elided**. An out-of-bounds
+/// index is then **undefined behavior**, exactly as if every indexing
+/// expression had been written with [`slice::get_unchecked`]. The kernel
+/// author asserts that every index is in bounds; the compiler emits no guard
+/// and no trap for those accesses.
+///
+/// Only bounds checks are affected. Arithmetic overflow, division by zero,
+/// remainder by zero, misaligned-pointer checks, and every other assertion
+/// kind keep their normal compare-and-trap lowering. Range-indexing failures
+/// (`&a[i..j]`) and explicit panics reach the device as calls into
+/// `core::panicking::*`, not as MIR assert terminators, so they also still
+/// trap.
+///
+/// # Coverage caveat
+///
+/// The per-kernel flag covers the kernel's translated MIR body, which includes
+/// everything rustc MIR-inlined into it. Separately translated `#[device]`
+/// functions are **not** covered by the per-kernel flag; the whole-build
+/// environment switch `CUDA_OXIDE_UNCHECKED_INDEXING=1` (or
+/// `cargo oxide ... --unchecked-indexing`) covers every translated body.
+///
+/// This function should NOT be called directly; use
+/// `#[kernel(unchecked_indexing)]`.
+#[doc(hidden)]
+#[inline(never)]
+pub fn __unchecked_indexing_config<const ENABLED: bool>() {
+    // Compiler marker: deliberately empty and removed during MIR import.
+}
+
 /// Compile-time loop-unroll request marker (internal, do not call directly).
 ///
 /// The `#[kernel]` and `#[device]` macros insert this marker at the start of an

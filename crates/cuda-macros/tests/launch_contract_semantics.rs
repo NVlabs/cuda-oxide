@@ -25,4 +25,15 @@ fn launch_contract_types_are_resolved_semantically() {
     t.compile_fail("tests/compile_fail/kernel_launch_context_duplicate.rs");
     t.compile_fail("tests/compile_fail/kernel_launch_context_unknown_argument.rs");
     t.compile_fail("tests/compile_fail/kernel_launch_context_parameter_collision.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_requires_unknown_ident.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_requires_len_on_scalar.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_requires_bare_slice.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_requires_bad_operator.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_requires_signed_scalar.rs");
+    t.pass("tests/pass/launch_contract_standalone_requires.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_standalone_requires_unknown_ident.rs");
+    t.pass("tests/pass/launch_contract_standalone_generic_requires.rs");
+    t.compile_fail(
+        "tests/compile_fail/launch_contract_standalone_generic_requires_unknown_ident.rs",
+    );
 }

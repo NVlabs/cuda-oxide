@@ -220,6 +220,79 @@ fn detect_launch_bounds_config(
     Ok(detected)
 }
 
+/// Scans MIR for the `__unchecked_indexing_config::<ENABLED>()` marker
+/// injected by `#[kernel(unchecked_indexing)]` and extracts its const bool.
+///
+/// Returns `Ok(true)` when a marker with `ENABLED = true` is reachable in
+/// this body. The marker call itself is stripped later during terminator
+/// translation; this scan only records the policy.
+fn detect_unchecked_indexing_config(
+    body: &mir::Body,
+    reachable: &std::collections::BTreeSet<usize>,
+) -> Result<bool, String> {
+    use rustc_public::ty::TyConstKind;
+
+    for &block_idx in reachable {
+        let block = &body.blocks[block_idx];
+        let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
+            continue;
+        };
+        let mir::Operand::Constant(constant) = func else {
+            continue;
+        };
+        let ConstantKind::ZeroSized = constant.const_.kind() else {
+            continue;
+        };
+        let TyKind::RigidTy(RigidTy::FnDef(def_id, args)) = constant.const_.ty().kind() else {
+            continue;
+        };
+
+        let definition_name = def_id.name();
+        if def_id.krate().name.as_str() != "cuda_device"
+            || (definition_name != "__unchecked_indexing_config"
+                && !definition_name.ends_with("::__unchecked_indexing_config"))
+        {
+            continue;
+        }
+
+        if args.0.len() != 1 {
+            return Err(format!(
+                "cuda_device unchecked-indexing marker has {} generic arguments; expected exactly 1",
+                args.0.len()
+            ));
+        }
+        let rustc_public::ty::GenericArgKind::Const(value) = &args.0[0] else {
+            return Err(
+                "cuda_device unchecked-indexing marker argument is not a constant".to_string(),
+            );
+        };
+        let enabled = match value.kind() {
+            TyConstKind::Value(_, allocation) => allocation.read_bool().map_err(|error| {
+                format!("could not read unchecked-indexing marker constant: {error:?}")
+            })?,
+            _ => {
+                value.eval_target_usize().map_err(|error| {
+                    format!("could not evaluate unchecked-indexing marker constant: {error:?}")
+                })? != 0
+            }
+        };
+        if enabled {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the whole-build unchecked-indexing switch is on.
+///
+/// `CUDA_OXIDE_UNCHECKED_INDEXING=1` (or `true`) elides bounds-check asserts
+/// in every translated body, including separately translated `#[device]`
+/// functions that the per-kernel marker cannot reach.
+fn unchecked_indexing_env_enabled() -> bool {
+    std::env::var("CUDA_OXIDE_UNCHECKED_INDEXING")
+        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
 /// Scans MIR for the dynamic-shared alignment marker injected by
 /// `#[launch_contract]` and extracts its const generic argument. The importer
 /// records the value before removing the call from the executable path.
@@ -831,6 +904,24 @@ pub fn translate_body(
     // Create a value map to track MIR locals -> pliron IR values
     let num_locals = body.locals().len();
     let mut value_map = ValueMap::new(num_locals);
+
+    // Resolve the per-body unchecked-indexing policy. Like the dynamic-shared
+    // marker, the `#[kernel(unchecked_indexing)]` marker is scanned on any
+    // function: generic kernel expansion forwards it to the generated entry
+    // but also keeps the original in the `#[inline(always)]` implementation
+    // helper, and either body may be the one translated here. The whole-build
+    // environment switch additionally covers separately translated
+    // `#[device]` functions that carry no marker.
+    let unchecked_indexing = match detect_unchecked_indexing_config(body, &reachable) {
+        Ok(marker_enabled) => marker_enabled || unchecked_indexing_env_enabled(),
+        Err(error) => {
+            return input_err_noloc!(TranslationErr::invalid_op(error));
+        }
+    };
+    value_map.set_unchecked_indexing(unchecked_indexing);
+    if unchecked_indexing && std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {
+        eprintln!("  Unchecked indexing enabled: bounds-check asserts elided");
+    }
 
     // Get function argument types for the first block
     // In MIR, locals[0] is the return value, locals[1..arg_count+1] are function arguments

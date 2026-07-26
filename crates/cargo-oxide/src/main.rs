@@ -87,6 +87,11 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel
+        /// (out-of-bounds indexing becomes UB, like get_unchecked).
+        /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
         /// Arguments forwarded to the example binary. Use after `--`,
         /// e.g. `cargo oxide run debug -- --fail-assert`.
         #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
@@ -116,6 +121,11 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel
+        /// (out-of-bounds indexing becomes UB, like get_unchecked).
+        /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
         /// Additional arguments passed to compute-sanitizer before the binary.
         /// Use a second `--` inside this list to pass arguments to the target
         /// program after the binary.
@@ -142,6 +152,11 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel
+        /// (out-of-bounds indexing becomes UB, like get_unchecked).
+        /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
         /// Cargo target directory for passthrough mode
         #[arg(long)]
         cargo_target_dir: Option<PathBuf>,
@@ -202,6 +217,11 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel
+        /// (out-of-bounds indexing becomes UB, like get_unchecked).
+        /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
     },
     /// Show the full compilation pipeline (MIR -> PTX/NVVM IR) with verbose output
     Pipeline {
@@ -217,6 +237,11 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel
+        /// (out-of-bounds indexing becomes UB, like get_unchecked).
+        /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
     },
     /// Build with debug info and launch cuda-gdb
     Debug {
@@ -393,6 +418,7 @@ fn main() {
             bin,
             verbose,
             no_fmad,
+            unchecked_indexing,
             app_args,
         } => {
             let ctx = commands::resolve_context();
@@ -413,6 +439,7 @@ fn main() {
                 features.as_deref(),
                 bin.as_deref(),
                 no_fmad,
+                unchecked_indexing,
                 materialize_cubin,
                 &app_args,
             );
@@ -425,6 +452,7 @@ fn main() {
             bin,
             verbose,
             no_fmad,
+            unchecked_indexing,
             sanitizer_args,
         } => {
             let ctx = commands::resolve_context();
@@ -443,6 +471,7 @@ fn main() {
                 features.as_deref(),
                 bin.as_deref(),
                 no_fmad,
+                unchecked_indexing,
                 materialize_cubin,
             );
         }
@@ -453,6 +482,7 @@ fn main() {
             features,
             verbose,
             no_fmad,
+            unchecked_indexing,
             cargo_target_dir,
             device_codegen_crate,
             device_cfgs,
@@ -483,6 +513,7 @@ fn main() {
                     arch.as_deref(),
                     features.as_deref(),
                     no_fmad,
+                    unchecked_indexing,
                     materialize_cubin,
                 );
             } else {
@@ -511,6 +542,7 @@ fn main() {
                         device_codegen_crate: device_codegen_crate.as_deref(),
                         device_cfgs: &device_cfgs,
                         no_fmad,
+                        unchecked_indexing,
                         materialize_cubin,
                     },
                     &cargo_args,
@@ -545,6 +577,7 @@ fn main() {
                     device_codegen_crate: device_codegen_crate.as_deref(),
                     device_cfgs: &device_cfgs,
                     no_fmad: false,
+                    unchecked_indexing: false,
                     materialize_cubin,
                 },
                 &cargo_args,
@@ -557,6 +590,7 @@ fn main() {
             output,
             verbose,
             no_fmad,
+            unchecked_indexing,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "emit-ltoir");
@@ -568,6 +602,7 @@ fn main() {
                 output.as_deref(),
                 verbose,
                 no_fmad,
+                unchecked_indexing,
             );
         }
         Commands::Pipeline {
@@ -575,6 +610,7 @@ fn main() {
             emit_nvvm_ir,
             arch,
             no_fmad,
+            unchecked_indexing,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "pipeline");
@@ -591,6 +627,7 @@ fn main() {
                 emit_nvvm_ir,
                 arch.as_deref(),
                 no_fmad,
+                unchecked_indexing,
                 materialize_cubin,
             );
         }

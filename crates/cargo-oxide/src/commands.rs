@@ -322,6 +322,7 @@ pub fn codegen_run(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialize_cubin: bool,
     app_args: &[String],
 ) {
@@ -365,6 +366,7 @@ pub fn codegen_run(
             features,
             bin,
             no_fmad,
+            unchecked_indexing,
             &materialization,
             app_args,
         );
@@ -420,11 +422,12 @@ pub fn codegen_run(
         cmd.arg("--").args(app_args);
     }
 
-    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
+    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad, unchecked_indexing);
     let fingerprint = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
+        unchecked_indexing,
         emit_nvvm_ir,
         target_arch,
         detected_device_arch.as_deref(),
@@ -472,6 +475,7 @@ pub fn codegen_sanitize(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialize_cubin: bool,
 ) {
     let example_dir = if ctx.is_workspace {
@@ -508,6 +512,7 @@ pub fn codegen_sanitize(
             detected_device_arch.as_deref(),
             InteropDeviceBuildOptions {
                 no_fmad,
+                unchecked_indexing,
                 sanitizer_line_tables: true,
             },
             &materialization,
@@ -546,6 +551,7 @@ pub fn codegen_sanitize(
         features,
         bin,
         no_fmad,
+        unchecked_indexing,
         &materialization,
     );
     run_compute_sanitizer(
@@ -578,13 +584,15 @@ struct DeviceCrateConfig {
 #[derive(Clone, Copy, Debug, Default)]
 struct InteropDeviceBuildOptions {
     no_fmad: bool,
+    unchecked_indexing: bool,
     sanitizer_line_tables: bool,
 }
 
 impl InteropDeviceBuildOptions {
-    fn standard(no_fmad: bool) -> Self {
+    fn standard(no_fmad: bool, unchecked_indexing: bool) -> Self {
         Self {
             no_fmad,
+            unchecked_indexing,
             sanitizer_line_tables: false,
         }
     }
@@ -603,6 +611,7 @@ fn codegen_run_interop(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialization: &MaterializationMode,
     app_args: &[String],
 ) {
@@ -626,7 +635,7 @@ fn codegen_run_interop(
         verbose,
         arch,
         detected_device_arch,
-        InteropDeviceBuildOptions::standard(no_fmad),
+        InteropDeviceBuildOptions::standard(no_fmad, unchecked_indexing),
         materialization,
     );
     run_host_cargo(
@@ -652,6 +661,7 @@ fn codegen_build_interop(
     arch: Option<&str>,
     features: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialization: &MaterializationMode,
 ) {
     reject_interop_output_mode(emit_nvvm_ir, materialization);
@@ -673,7 +683,7 @@ fn codegen_build_interop(
         verbose,
         arch,
         None,
-        InteropDeviceBuildOptions::standard(no_fmad),
+        InteropDeviceBuildOptions::standard(no_fmad, unchecked_indexing),
         materialization,
     );
     run_host_cargo(
@@ -777,6 +787,7 @@ fn build_interop_device_crate(
         ctx,
         verbose,
         options.no_fmad,
+        options.unchecked_indexing,
         arch,
         detected_device_arch,
         &ptx_dir,
@@ -883,6 +894,7 @@ fn codegen_build_host_binary(
     features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialization: &MaterializationMode,
 ) -> PathBuf {
     let mut cmd = Command::new("cargo");
@@ -895,12 +907,13 @@ fn codegen_build_host_binary(
         cmd.args(["--features", features]);
     }
 
-    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
+    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad, unchecked_indexing);
     apply_default_sanitizer_line_tables(&mut cmd, ctx);
     let fingerprint = sanitize_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
+        unchecked_indexing,
         arch,
         detected_device_arch,
         None,
@@ -1468,6 +1481,7 @@ pub fn codegen_build(
     arch: Option<&str>,
     features: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
@@ -1491,6 +1505,7 @@ pub fn codegen_build(
             target_arch,
             features,
             no_fmad,
+            unchecked_indexing,
             &materialization,
         );
         return;
@@ -1512,11 +1527,12 @@ pub fn codegen_build(
         cmd.args(["--features", features]);
     }
 
-    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
+    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad, unchecked_indexing);
     let fingerprint = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
+        unchecked_indexing,
         emit_nvvm_ir,
         target_arch,
         None,
@@ -1558,6 +1574,7 @@ pub fn codegen_build(
 /// `arch` is required because LTOIR is architecture-specific. It accepts
 /// `sm_XX`, `compute_XX`, or a bare `XX`, all mapped to libNVVM's
 /// `-arch=compute_XX`.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_ltoir(
     ctx: &Context,
     example: &str,
@@ -1566,6 +1583,7 @@ pub fn emit_ltoir(
     output: Option<&Path>,
     verbose: bool,
     no_fmad: bool,
+    unchecked_indexing: bool,
 ) {
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
@@ -1599,6 +1617,7 @@ pub fn emit_ltoir(
         Some(&sm_arch),
         features,
         no_fmad,
+        unchecked_indexing,
         false,
     );
 
@@ -1758,6 +1777,7 @@ pub struct CargoPassthroughOptions<'a> {
     pub device_codegen_crate: Option<&'a str>,
     pub device_cfgs: &'a [String],
     pub no_fmad: bool,
+    pub unchecked_indexing: bool,
     pub materialize_cubin: bool,
 }
 
@@ -1920,6 +1940,9 @@ fn passthrough_codegen_fingerprint_with_env(
     if opts.no_fmad {
         effective_env.insert("CUDA_OXIDE_NO_FMA".to_string(), b"1".to_vec());
     }
+    if opts.unchecked_indexing {
+        effective_env.insert("CUDA_OXIDE_UNCHECKED_INDEXING".to_string(), b"1".to_vec());
+    }
     if opts.emit_nvvm_ir || materialization.enabled() {
         effective_env.insert("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), b"1".to_vec());
     }
@@ -1970,10 +1993,12 @@ fn finish_codegen_fingerprint(hash: sha2::Sha256) -> String {
 
 /// Track sanitizer-only device output settings in crates that declare device
 /// code, without invalidating their host-only dependency graph.
+#[allow(clippy::too_many_arguments)]
 fn sanitize_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
     no_fmad: bool,
+    unchecked_indexing: bool,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     ptx_dir: Option<&Path>,
@@ -1988,6 +2013,7 @@ fn sanitize_codegen_fingerprint(
         device_codegen_crate: None,
         device_cfgs: &[],
         no_fmad,
+        unchecked_indexing,
         materialize_cubin: materialization.enabled(),
     };
     let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
@@ -2005,10 +2031,12 @@ fn sanitize_codegen_fingerprint(
     finish_codegen_fingerprint(hash)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn standard_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
     no_fmad: bool,
+    unchecked_indexing: bool,
     emit_nvvm_ir: bool,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
@@ -2023,6 +2051,7 @@ fn standard_codegen_fingerprint(
         device_codegen_crate: None,
         device_cfgs: &[],
         no_fmad,
+        unchecked_indexing,
         materialize_cubin: materialization.enabled(),
     };
     let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
@@ -2040,6 +2069,7 @@ fn standard_codegen_fingerprint(
 fn pipeline_codegen_fingerprint(
     ctx: &Context,
     no_fmad: bool,
+    unchecked_indexing: bool,
     emit_nvvm_ir: bool,
     target_arch: Option<&str>,
     materialization: &MaterializationMode,
@@ -2048,6 +2078,7 @@ fn pipeline_codegen_fingerprint(
         ctx,
         true,
         no_fmad,
+        unchecked_indexing,
         emit_nvvm_ir,
         target_arch,
         None,
@@ -2070,6 +2101,7 @@ fn interop_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
     no_fmad: bool,
+    unchecked_indexing: bool,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     ptx_dir: &Path,
@@ -2080,6 +2112,7 @@ fn interop_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
+        unchecked_indexing,
         false,
         target_arch,
         detected_device_arch,
@@ -2167,7 +2200,13 @@ fn cargo_passthrough_command(
 
     // Project configuration provides defaults. Explicit wrapper flags and
     // internal compiler requirements are applied afterward and therefore win.
-    apply_common_codegen_env(&mut cmd, ctx, opts.verbose, opts.no_fmad);
+    apply_common_codegen_env(
+        &mut cmd,
+        ctx,
+        opts.verbose,
+        opts.no_fmad,
+        opts.unchecked_indexing,
+    );
     apply_codegen_configuration(
         &mut cmd,
         ctx,
@@ -2256,6 +2295,7 @@ pub fn codegen_show_pipeline(
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     no_fmad: bool,
+    unchecked_indexing: bool,
     materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
@@ -2314,8 +2354,14 @@ pub fn codegen_show_pipeline(
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
     apply_config_env(&mut cmd, ctx);
-    let fingerprint =
-        pipeline_codegen_fingerprint(ctx, no_fmad, emit_nvvm_ir, target_arch, &materialization);
+    let fingerprint = pipeline_codegen_fingerprint(
+        ctx,
+        no_fmad,
+        unchecked_indexing,
+        emit_nvvm_ir,
+        target_arch,
+        &materialization,
+    );
     apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
@@ -2329,6 +2375,9 @@ pub fn codegen_show_pipeline(
     cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
     if no_fmad {
         cmd.env("CUDA_OXIDE_NO_FMA", "1");
+    }
+    if unchecked_indexing {
+        cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
     }
 
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
@@ -2436,6 +2485,7 @@ pub fn codegen_debug(
     apply_config_env(&mut cmd, ctx);
     let fingerprint = standard_codegen_fingerprint(
         ctx,
+        false,
         false,
         false,
         false,
@@ -3579,13 +3629,22 @@ fn apply_config_env(cmd: &mut Command, ctx: &Context) {
     }
 }
 
-fn apply_common_codegen_env(cmd: &mut Command, ctx: &Context, verbose: bool, no_fmad: bool) {
+fn apply_common_codegen_env(
+    cmd: &mut Command,
+    ctx: &Context,
+    verbose: bool,
+    no_fmad: bool,
+    unchecked_indexing: bool,
+) {
     apply_config_env(cmd, ctx);
     if verbose {
         cmd.env("CUDA_OXIDE_VERBOSE", "1");
     }
     if no_fmad {
         cmd.env("CUDA_OXIDE_NO_FMA", "1");
+    }
+    if unchecked_indexing {
+        cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
     }
     apply_ld_library_path(cmd, ctx);
 }
@@ -3607,7 +3666,13 @@ fn apply_interop_device_codegen_options(
     verbose: bool,
     options: InteropDeviceBuildOptions,
 ) {
-    apply_common_codegen_env(cmd, ctx, verbose, options.no_fmad);
+    apply_common_codegen_env(
+        cmd,
+        ctx,
+        verbose,
+        options.no_fmad,
+        options.unchecked_indexing,
+    );
     if options.sanitizer_line_tables {
         apply_default_sanitizer_line_tables(cmd, ctx);
     }
@@ -4332,7 +4397,7 @@ mod tests {
         });
         let discovery = materializer_discovery_command(&ctx, Path::new("/fake/cargo-oxide"));
         let mut rustc_child = Command::new("cargo");
-        apply_common_codegen_env(&mut rustc_child, &ctx, false, false);
+        apply_common_codegen_env(&mut rustc_child, &ctx, false, false, false);
 
         for key in [
             "CUDA_OXIDE_LIBDEVICE",
@@ -4996,6 +5061,7 @@ path = "src/other.rs"
             false,
             InteropDeviceBuildOptions {
                 no_fmad: true,
+                unchecked_indexing: false,
                 sanitizer_line_tables: true,
             },
         );
@@ -5010,6 +5076,7 @@ path = "src/other.rs"
             &ctx,
             false,
             true,
+            false,
             Some("sm_80"),
             None,
             Some(Path::new("/tmp/generated-ptx")),
@@ -5040,7 +5107,7 @@ path = "src/other.rs"
             &mut cmd,
             &ctx,
             false,
-            InteropDeviceBuildOptions::standard(true),
+            InteropDeviceBuildOptions::standard(true, false),
         );
 
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
@@ -5048,10 +5115,30 @@ path = "src/other.rs"
     }
 
     #[test]
+    fn interop_codegen_forwards_unchecked_indexing() {
+        let ctx = test_context(OxideConfig::default());
+        let mut cmd = Command::new("cargo");
+
+        apply_interop_device_codegen_options(
+            &mut cmd,
+            &ctx,
+            false,
+            InteropDeviceBuildOptions::standard(false, true),
+        );
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_UNCHECKED_INDEXING").as_deref(),
+            Some("1")
+        );
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA"), None);
+    }
+
+    #[test]
     fn sanitize_fingerprint_tracks_output_affecting_settings() {
         let ctx = test_context(OxideConfig::default());
         let base = sanitize_codegen_fingerprint(
             &ctx,
+            false,
             false,
             false,
             None,
@@ -5065,6 +5152,7 @@ path = "src/other.rs"
                 &ctx,
                 false,
                 true,
+                false,
                 None,
                 Some("sm_80"),
                 None,
@@ -5072,6 +5160,17 @@ path = "src/other.rs"
             ),
             sanitize_codegen_fingerprint(
                 &ctx,
+                false,
+                false,
+                true,
+                None,
+                Some("sm_80"),
+                None,
+                &MaterializationMode::default(),
+            ),
+            sanitize_codegen_fingerprint(
+                &ctx,
+                false,
                 false,
                 false,
                 None,
@@ -5083,6 +5182,7 @@ path = "src/other.rs"
                 &ctx,
                 false,
                 false,
+                false,
                 Some("sm_80"),
                 None,
                 None,
@@ -5090,6 +5190,7 @@ path = "src/other.rs"
             ),
             sanitize_codegen_fingerprint(
                 &ctx,
+                false,
                 false,
                 false,
                 None,
@@ -5111,12 +5212,19 @@ path = "src/other.rs"
             true,
             false,
             false,
+            false,
             Some("sm_86"),
             None,
             &materialization,
         );
-        let pipeline =
-            pipeline_codegen_fingerprint(&ctx, false, false, Some("sm_86"), &materialization);
+        let pipeline = pipeline_codegen_fingerprint(
+            &ctx,
+            false,
+            false,
+            false,
+            Some("sm_86"),
+            &materialization,
+        );
 
         assert_ne!(standard, pipeline);
     }
@@ -5191,6 +5299,7 @@ path = "src/other.rs"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
         for cargo_args in [
@@ -5395,6 +5504,7 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: Some("gpu-kernels, math_gpu"),
             device_cfgs: &device_cfgs,
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
         let cargo_args = vec![
@@ -5476,6 +5586,7 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
 
@@ -5501,6 +5612,7 @@ MY_BUILD_FLAG = "configured"
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
         let base_cmd =
@@ -5646,6 +5758,7 @@ device-owner = { path = "../device-owner" }
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
 
@@ -5742,6 +5855,7 @@ device-owner = { path = "../device-owner" }
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
         let inherited_env = BTreeMap::new();
@@ -5764,6 +5878,10 @@ device-owner = { path = "../device-owner" }
         };
         let no_fmad = CargoPassthroughOptions {
             no_fmad: true,
+            ..base
+        };
+        let unchecked_indexing = CargoPassthroughOptions {
+            unchecked_indexing: true,
             ..base
         };
         let configured_ptx = test_context(OxideConfig {
@@ -5801,6 +5919,17 @@ device-owner = { path = "../device-owner" }
             passthrough_codegen_fingerprint_with_env(
                 &ctx,
                 &no_fmad,
+                None,
+                Some("sm_80"),
+                &MaterializationMode::default(),
+                &inherited_env,
+            )
+        );
+        assert_ne!(
+            base_hash,
+            passthrough_codegen_fingerprint_with_env(
+                &ctx,
+                &unchecked_indexing,
                 None,
                 Some("sm_80"),
                 &MaterializationMode::default(),
@@ -5858,6 +5987,7 @@ device-owner = { path = "../device-owner" }
             device_codegen_crate: None,
             device_cfgs: &[],
             no_fmad: false,
+            unchecked_indexing: false,
             materialize_cubin: false,
         };
         let fingerprint = |inherited_env: &BTreeMap<String, Vec<u8>>| {
@@ -5961,7 +6091,7 @@ device-owner = { path = "../device-owner" }
             ..OxideConfig::default()
         });
         let mut cmd = Command::new("cargo");
-        apply_common_codegen_env(&mut cmd, &ctx, false, false);
+        apply_common_codegen_env(&mut cmd, &ctx, false, false, false);
         cmd.env("CUDA_OXIDE_PTX_DIR", "internal-ptx");
         assert_eq!(
             command_env(&cmd, "CUDA_OXIDE_PTX_DIR").as_deref(),

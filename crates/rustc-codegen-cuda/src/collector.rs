@@ -621,7 +621,8 @@ fn is_unroll_marker_path(fn_path: &str) -> bool {
     fn_path.contains("::__unroll_config")
 }
 
-/// Returns true for zero-cost launch metadata markers planted by proc macros.
+/// Returns true for zero-cost compile-time configuration markers planted by
+/// proc macros (launch metadata and the unchecked-indexing flag).
 ///
 /// The MIR importer consumes these calls while translating their containing
 /// function. Their own empty bodies are not device functions and must not be
@@ -634,11 +635,15 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
             | "cuda_device::thread::__launch_bounds_config"
             | "cuda_device::__launch_contract_config"
             | "cuda_device::thread::__launch_contract_config"
+            | "cuda_device::__unchecked_indexing_config"
+            | "cuda_device::thread::__unchecked_indexing_config"
     ) || fn_path.strip_prefix("cuda_device::").is_some_and(|path| {
         path.starts_with("__launch_bounds_config::<")
             || path.starts_with("thread::__launch_bounds_config::<")
             || path.starts_with("__launch_contract_config::<")
             || path.starts_with("thread::__launch_contract_config::<")
+            || path.starts_with("__unchecked_indexing_config::<")
+            || path.starts_with("thread::__unchecked_indexing_config::<")
     })
 }
 

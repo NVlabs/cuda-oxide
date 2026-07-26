@@ -626,6 +626,26 @@ pub enum LaunchContractError {
         /// Stream device ordinal.
         stream_device: usize,
     },
+    /// A declared `requires` size requirement over the kernel's
+    /// parameters did not hold at launch time.
+    SizeRequirementViolated {
+        /// Kernel being launched.
+        kernel: &'static str,
+        /// Source text of the violated relation.
+        relation: &'static str,
+        /// Evaluated left-hand side of the comparison, widened to `u64`.
+        lhs: u64,
+        /// Evaluated right-hand side of the comparison, widened to `u64`.
+        rhs: u64,
+    },
+    /// Arithmetic inside a `requires` size requirement left the `u64`
+    /// range, so the relation could not be evaluated.
+    SizeRequirementOverflow {
+        /// Kernel being launched.
+        kernel: &'static str,
+        /// Source text of the relation whose arithmetic overflowed.
+        relation: &'static str,
+    },
     /// A CUDA driver query or one-time function configuration failed.
     Driver(DriverError),
 }
@@ -812,6 +832,19 @@ impl Display for LaunchContractError {
             } => write!(
                 f,
                 "{kernel}: function is on device {function_device}, stream is on device {stream_device}"
+            ),
+            Self::SizeRequirementViolated {
+                kernel,
+                relation,
+                lhs,
+                rhs,
+            } => write!(
+                f,
+                "{kernel}: size requirement `{relation}` violated: left-hand side is {lhs}, right-hand side is {rhs}"
+            ),
+            Self::SizeRequirementOverflow { kernel, relation } => write!(
+                f,
+                "{kernel}: arithmetic in size requirement `{relation}` overflowed the u64 range"
             ),
             Self::Driver(error) => Display::fmt(error, f),
         }

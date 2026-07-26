@@ -130,6 +130,7 @@ gpu-programming/error-handling-and-debugging
 :caption: Safety on the GPU
 
 gpu-safety/the-safety-model
+gpu-safety/bounds-checks
 ```
 
 ```{toctree}

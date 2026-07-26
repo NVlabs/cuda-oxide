@@ -1,0 +1,9 @@
+error[E0382]: use of moved value: `coord`
+  --> tests/compile_fail/runtime_tile_token_reuse.rs:15:43
+   |
+13 |     let coord = __internal::coord_2d_u32(launch_context);
+   |         ----- move occurs because `coord` has type `ThreadCoord2D32<'_>`, which does not implement the `Copy` trait
+14 |     let _first = unsafe { c.tile_2d32_rt(coord, 64) };
+   |                                          ----- value moved here
+15 |     let _second = unsafe { c.tile_2d32_rt(coord, 64) };
+   |                                           ^^^^^ value used here after move

@@ -154,6 +154,22 @@ mod kernels {
     pub fn contracted_const<const N: usize>(input: &[u32]) {
         let _ = (N, input);
     }
+
+    /// `requires` size requirements generate host-side checks in every
+    /// checked launcher. This kernel pins that the generated sync launcher
+    /// keeps its signature, the async launchers become fallible (relations
+    /// are proven before enqueue), and the unchecked escape hatches still
+    /// typecheck without the checks.
+    #[kernel]
+    #[launch_contract(
+        domain = 1,
+        block = (64, 1, 1),
+        dynamic_shared = 0,
+        requires = (input.len() >= n * 2, n >= 1),
+    )]
+    pub fn contracted_sizes(n: u32, input: &[u32]) {
+        let _ = (n, input);
+    }
 }
 
 #[cfg(feature = "async")]
@@ -227,6 +243,11 @@ fn generated_prepared_methods_bind_the_exact_kernel_and_specialization(
     let const_generic = module.prepare_contracted_const::<4>(LaunchConfig1D::new(1, 64, 0))?;
     module.contracted_const::<4>(stream, &const_generic, input)?;
 
+    // `requires` relations keep the sync launcher signature; violations
+    // surface through the existing LaunchContractError return.
+    let sizes = module.prepare_contracted_sizes(LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_sizes(stream, &sizes, 4, input)?;
+
     unsafe {
         module.contracted_read_unchecked(
             stream,
@@ -235,6 +256,18 @@ fn generated_prepared_methods_bind_the_exact_kernel_and_specialization(
                 block_dim: (64, 1, 1),
                 shared_mem_bytes: 0,
             },
+            input,
+        )?;
+        // The unchecked escape hatch skips the size checks and stays
+        // on the plain DriverError path.
+        module.contracted_sizes_unchecked(
+            stream,
+            LaunchConfig {
+                grid_dim: (1, 1, 1),
+                block_dim: (64, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            4,
             input,
         )?;
     }
@@ -308,6 +341,12 @@ fn generated_prepared_async_methods_are_immutable_operations(
 
     let const_generic = module.prepare_contracted_const::<4>(LaunchConfig1D::new(1, 64, 0))?;
     assert_unit_operation(module.contracted_const_async::<4>(&const_generic, async_input));
+
+    // With `requires` relations the borrowed-async launcher is fallible:
+    // every relation is proven before anything is enqueued.
+    let sizes = module.prepare_contracted_sizes(LaunchConfig1D::new(1, 64, 0))?;
+    assert_unit_operation(module.contracted_sizes_async(&sizes, 4, input)?);
+    assert_unit_operation(module.contracted_sizes_async(&sizes, 4, async_input)?);
     Ok(())
 }
 
@@ -376,6 +415,7 @@ fn generated_prepared_owned_async_methods_are_immutable_operations(
     module: &kernels::LoadedModule,
     async_input: DeviceBox<[u32]>,
     const_input: DeviceBox<[u32]>,
+    sizes_input: DeviceBox<[u32]>,
 ) -> Result<(), cuda_core::LaunchContractError> {
     let prepared = module.prepare_contracted_read(LaunchConfig1D::new(1, 64, 0))?;
     let launch = module.contracted_read_async_owned(&prepared, async_input);
@@ -383,6 +423,12 @@ fn generated_prepared_owned_async_methods_are_immutable_operations(
 
     let const_generic = module.prepare_contracted_const::<4>(LaunchConfig1D::new(1, 64, 0))?;
     let launch = module.contracted_const_async_owned::<4, _>(&const_generic, const_input);
+    assert_owned_u32_buffer(launch);
+
+    // With `requires` relations the owned-async launcher is fallible too;
+    // relations are proven before any resource is moved into the launch.
+    let sizes = module.prepare_contracted_sizes(LaunchConfig1D::new(1, 64, 0))?;
+    let launch = module.contracted_sizes_async_owned(&sizes, 4, sizes_input)?;
     assert_owned_u32_buffer(launch);
     Ok(())
 }

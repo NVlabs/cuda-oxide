@@ -1,0 +1,5 @@
+error: operator `/` is not supported in requires; each requires relation is one comparison (`>=`, `>`, `<=`, `<`, `==`, `!=`) between expressions built from slice parameters as `<param>.len()`, unsigned integer scalar parameters (u8/u16/u32/u64/usize), integer literals, parentheses, and `+`, `-`, `*`; available operands: `n`, `input.len()`, `output.len()`
+  --> tests/compile_fail/launch_contract_requires_bad_operator.rs:13:21
+   |
+13 |         requires = (input.len() / 2 >= n),
+   |                     ^^^^^^^^^^^^^^^

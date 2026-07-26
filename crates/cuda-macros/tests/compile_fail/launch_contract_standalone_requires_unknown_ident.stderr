@@ -1,0 +1,5 @@
+error: unknown identifier `n` in requires: relations may only reference this kernel's parameters; each requires relation is one comparison (`>=`, `>`, `<=`, `<`, `==`, `!=`) between expressions built from slice parameters as `<param>.len()`, unsigned integer scalar parameters (u8/u16/u32/u64/usize), integer literals, parentheses, and `+`, `-`, `*`; available operands: `input.len()`, `output.len()`
+  --> tests/compile_fail/launch_contract_standalone_requires_unknown_ident.rs:11:32
+   |
+11 |     requires = (input.len() >= n),
+   |                                ^

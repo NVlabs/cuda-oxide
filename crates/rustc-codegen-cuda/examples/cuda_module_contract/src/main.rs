@@ -76,6 +76,29 @@ mod kernels {
         }
     }
 
+    /// Size requirements: the generated checked launchers prove every
+    /// `requires` relation on the CPU before marshalling, so an undersized
+    /// buffer becomes a typed `LaunchContractError` instead of a device
+    /// fault. Evaluation is overflow-safe: operands widen to u64 and the
+    /// arithmetic uses checked ops. The `_unchecked` escape hatch skips
+    /// these checks just as it skips the geometry checks.
+    #[kernel]
+    #[launch_bounds(128)]
+    #[launch_contract(
+        domain = 1,
+        block = (128, 1, 1),
+        requires = (input.len() >= n * stride, output.len() >= n),
+    )]
+    pub fn strided_scale(n: usize, stride: usize, input: &[f32], mut output: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if i < n {
+            if let Some(out) = output.get_mut(index) {
+                *out = input[i * stride] * 2.0;
+            }
+        }
+    }
+
     /// Compile-time proof that a contract alignment is merged with alignment
     /// requested by the body. The body asks for 16 bytes; the contract raises
     /// the emitted extern-shared declaration to 128 bytes.
@@ -213,6 +236,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .all(|(index, &value)| value == index as u32 + 3),
         "generic prepared launch produced an unexpected value",
     );
+
+    // --- Size requirements (`requires`) ---
+    let n: usize = 256;
+    let stride: usize = 2;
+    let strided_input: Vec<f32> = (0..n * stride).map(|i| i as f32).collect();
+    let strided_input_dev = DeviceBuffer::from_host(&stream, &strided_input)?;
+    let mut strided_output_dev = DeviceBuffer::<f32>::zeroed(&stream, n)?;
+    let strided_launch =
+        module.prepare_strided_scale(LaunchConfig1D::new((n as u32).div_ceil(128), 128, 0))?;
+
+    // (a) Buffers satisfying every relation launch normally.
+    module.strided_scale(
+        &stream,
+        &strided_launch,
+        n,
+        stride,
+        &strided_input_dev,
+        &mut strided_output_dev,
+    )?;
+    let strided_output = strided_output_dev.to_host_vec(&stream)?;
+    assert!(
+        strided_output
+            .iter()
+            .enumerate()
+            .all(|(i, &value)| value == (i * stride) as f32 * 2.0),
+        "strided scale produced an unexpected value",
+    );
+
+    // (b) An undersized buffer fails fast on the CPU: the launcher returns a
+    // typed error carrying the violated relation's source text and both
+    // evaluated sides, and nothing reaches the GPU.
+    let undersized_dev = DeviceBuffer::from_host(&stream, &strided_input[..64])?;
+    let violation = module.strided_scale(
+        &stream,
+        &strided_launch,
+        n,
+        stride,
+        &undersized_dev,
+        &mut strided_output_dev,
+    );
+    match violation {
+        Err(
+            error @ cuda_core::LaunchContractError::SizeRequirementViolated {
+                relation, lhs, rhs, ..
+            },
+        ) => {
+            println!("rejected undersized launch on the CPU: {error}");
+            assert_eq!(relation, "input.len() >= n * stride");
+            assert_eq!(lhs, 64);
+            assert_eq!(rhs, 512);
+        }
+        other => panic!("expected SizeRequirementViolated, got {other:?}"),
+    }
+
+    // (c) Relation arithmetic is overflow-safe: an operand product leaving
+    // the u64 range is its own typed error, not a wrapped comparison.
+    let overflow = module.strided_scale(
+        &stream,
+        &strided_launch,
+        usize::MAX,
+        stride,
+        &strided_input_dev,
+        &mut strided_output_dev,
+    );
+    match overflow {
+        Err(error @ cuda_core::LaunchContractError::SizeRequirementOverflow { relation, .. }) => {
+            println!("rejected overflowing relation on the CPU: {error}");
+            assert_eq!(relation, "input.len() >= n * stride");
+        }
+        other => panic!("expected SizeRequirementOverflow, got {other:?}"),
+    }
+
+    // The two rejected launches left the stream healthy; a valid launch
+    // still succeeds afterwards.
+    module.strided_scale(
+        &stream,
+        &strided_launch,
+        n,
+        stride,
+        &strided_input_dev,
+        &mut strided_output_dev,
+    )?;
+    stream.synchronize()?;
 
     println!("SUCCESS: mixed ABI typed launch passed");
     Ok(())

@@ -16,6 +16,7 @@ help: the trait `for<'__cuda_oxide_disjoint> cuda_device::__LaunchContractDisjoi
              `cuda_device::DisjointSlice<'a, T, RowMajorTiles<ROWS, COLS, ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'a, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'a, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
+             `cuda_device::DisjointSlice<'a, T, RuntimeRowMajorTiles<ROWS, COLS>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'a, T>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
 note: required by a bound in `LoadedModule::prepare_lookalike`
   --> tests/compile_fail/launch_contract_fake_disjoint_slice.rs:15:1

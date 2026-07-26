@@ -40,4 +40,4 @@ pub mod control_flow;
 pub mod memory;
 
 #[cfg(test)]
-mod test_util;
+pub(crate) mod test_util;

@@ -1,0 +1,5 @@
+error: slice parameter `input` may only appear in requires as `input.len()`; each requires relation is one comparison (`>=`, `>`, `<=`, `<`, `==`, `!=`) between expressions built from slice parameters as `<param>.len()`, unsigned integer scalar parameters (u8/u16/u32/u64/usize), integer literals, parentheses, and `+`, `-`, `*`; available operands: `n`, `input.len()`, `output.len()`
+  --> tests/compile_fail/launch_contract_requires_bare_slice.rs:13:21
+   |
+13 |         requires = (input >= n),
+   |                     ^^^^^
