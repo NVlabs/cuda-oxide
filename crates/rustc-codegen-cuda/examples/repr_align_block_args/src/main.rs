@@ -3,18 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Targeted probes for pliron PR #182 (convert all block args up front).
+//! `repr(align(N))` recovery for values in block-arg positions.
 //!
-//! The PR converts every block argument's type BEFORE the first rewrite
-//! runs. `stamp_memory_op_alignment` executes inside the `MirFuncOp`
-//! rewrite and reads live operand types to recover `repr(align(N))`
-//! alignment from MIR aggregate types. These kernels place over-aligned
+//! The alignment lives on MIR aggregate types and is not expressible on
+//! the converted LLVM struct types. The dialect conversion driver may
+//! convert block-argument types before any per-op rewrite runs (pliron
+//! PR #182 made this eager), so mir-lower recovers the alignment of
+//! stored/referenced block args from the `OperandsInfo` conversion
+//! history at each op's own rewrite. These kernels place over-aligned
 //! aggregates in block-arg positions (function params, mem2reg join and
-//! loop-header args) so any stamp loss shows up in the emitted `.ll`
+//! loop-header args) so any recovery loss shows up in the emitted `.ll`
 //! as missing `align 16` annotations. Runtime results are also checked,
 //! but the sharp assertion is the artifact diff between pliron revisions.
 //!
-//! Run: `cargo oxide run pr182_probe`
+//! Run: `cargo oxide run repr_align_block_args`
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
@@ -94,7 +96,7 @@ mod kernels {
 }
 
 fn main() {
-    println!("=== pr182_probe (pliron PR #182 block-arg conversion) ===\n");
+    println!("=== repr_align_block_args (alignment recovery for block-arg values) ===\n");
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
