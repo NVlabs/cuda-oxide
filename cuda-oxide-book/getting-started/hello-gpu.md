@@ -36,6 +36,8 @@ This generates a ready-to-run project:
 ```text
 my_first_kernel/
 ├── Cargo.toml          # dependencies on cuda-device, cuda-host, cuda-core
+├── README.md           # doctor + run instructions
+├── .gitignore          # target/ and generated device artifacts
 ├── rust-toolchain.toml # pins the required nightly toolchain
 └── src/
     └── main.rs          # kernel + host code in one file

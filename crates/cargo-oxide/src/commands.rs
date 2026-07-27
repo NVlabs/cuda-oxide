@@ -3992,21 +3992,60 @@ channel = "nightly-2026-04-03"
 components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
 "#;
 
-/// Scaffold a new standalone cuda-oxide project.
-pub fn scaffold_new(name: &str, async_mode: bool) {
-    let project_dir = PathBuf::from(name);
-    if project_dir.exists() {
-        eprintln!("Error: directory '{}' already exists.", name);
-        std::process::exit(1);
-    }
+const SCAFFOLD_GITIGNORE: &str = "\
+/target/
+**/*.ptx
+**/*.ll
+**/*.bc
+**/*.cubin
+**/*.ltoir
+.DS_Store
+";
 
-    let src_dir = project_dir.join("src");
-    std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
-        eprintln!("Error creating directory: {}", e);
-        std::process::exit(1);
-    });
+/// File contents produced by `cargo oxide new`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ScaffoldFiles {
+    cargo_toml: String,
+    rust_toolchain_toml: String,
+    gitignore: String,
+    readme: String,
+    main_rs: String,
+}
 
-    let cargo_toml = if async_mode {
+fn scaffold_readme(name: &str, async_mode: bool) -> String {
+    let mode = if async_mode {
+        "async cuda-oxide"
+    } else {
+        "cuda-oxide"
+    };
+    format!(
+        r#"# {name}
+
+Scaffolded {mode} project.
+
+## Setup
+
+```bash
+cargo oxide doctor
+```
+
+Fix anything doctor reports before building.
+
+## Run
+
+```bash
+cargo oxide run
+```
+
+The template is a vector-add kernel. The sync template uses
+`#[launch_contract]` and `PreparedLaunch` so geometry is checked before
+launch. See the cuda-oxide book getting-started chapter for the next steps.
+"#
+    )
+}
+
+fn scaffold_cargo_toml(name: &str, async_mode: bool) -> String {
+    if async_mode {
         format!(
             r#"[package]
 name = "{name}"
@@ -4039,9 +4078,11 @@ cuda-host = {{ git = "{GIT_REPO}" }}
 cuda-core = {{ git = "{GIT_REPO}" }}
 "#
         )
-    };
+    }
+}
 
-    let main_rs = if async_mode {
+fn scaffold_main_rs(async_mode: bool) -> String {
+    if async_mode {
         r#"use cuda_device::{kernel, thread, DisjointSlice};
 use cuda_host::cuda_module;
 use cuda_async::device_context::init_device_contexts;
@@ -4138,13 +4179,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         r#"use cuda_device::{kernel, thread, DisjointSlice};
 use cuda_host::cuda_module;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 
 #[cuda_module]
 mod kernels {
     use super::*;
 
     #[kernel]
+    #[launch_bounds(256)]
+    #[launch_contract(domain = 1, block = (256, 1, 1))]
     pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let idx_raw = idx.get();
@@ -4153,34 +4196,26 @@ mod kernels {
         }
     }
 }
-fn main() {
-    let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
     const N: usize = 1024;
     let a_host: Vec<f32> = (0..N).map(|i| i as f32).collect();
     let b_host: Vec<f32> = (0..N).map(|i| (i * 2) as f32).collect();
 
-    let a_dev = DeviceBuffer::from_host(&stream, &a_host).unwrap();
-    let b_dev = DeviceBuffer::from_host(&stream, &b_host).unwrap();
-    let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
+    let a_dev = DeviceBuffer::from_host(&stream, &a_host)?;
+    let b_dev = DeviceBuffer::from_host(&stream, &b_host)?;
+    let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
 
-    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    // SAFETY: this is a 1D launch and `vecadd` guards its index against the
-    // output length before writing.
-    unsafe {
-        module.vecadd(
-            &stream,
-            LaunchConfig::for_num_elems(N as u32),
-            &a_dev,
-            &b_dev,
-            &mut c_dev,
-        )
-    }
-    .expect("Kernel launch failed");
+    // SAFETY: this package owns the embedded device bundle produced for the
+    // kernels module above.
+    let module = unsafe { kernels::load(&ctx)? };
+    let prepared = module.prepare_vecadd(LaunchConfig1D::new((N as u32).div_ceil(256), 256, 0))?;
+    module.vecadd(&stream, &prepared, &a_dev, &b_dev, &mut c_dev)?;
 
-    let c_host = c_dev.to_host_vec(&stream).unwrap();
-
+    let c_host = c_dev.to_host_vec(&stream)?;
     let errors = (0..N)
         .filter(|&i| (c_host[i] - (a_host[i] + b_host[i])).abs() > 1e-5)
         .count();
@@ -4191,21 +4226,53 @@ fn main() {
         eprintln!("FAILED: {} errors", errors);
         std::process::exit(1);
     }
+    Ok(())
 }
 "#
         .to_string()
-    };
+    }
+}
 
-    std::fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
-    std::fs::write(project_dir.join("rust-toolchain.toml"), RUST_TOOLCHAIN_TOML)
+fn scaffold_files(name: &str, async_mode: bool) -> ScaffoldFiles {
+    ScaffoldFiles {
+        cargo_toml: scaffold_cargo_toml(name, async_mode),
+        rust_toolchain_toml: RUST_TOOLCHAIN_TOML.to_string(),
+        gitignore: SCAFFOLD_GITIGNORE.to_string(),
+        readme: scaffold_readme(name, async_mode),
+        main_rs: scaffold_main_rs(async_mode),
+    }
+}
+
+/// Scaffold a new standalone cuda-oxide project.
+pub fn scaffold_new(name: &str, async_mode: bool) {
+    let project_dir = PathBuf::from(name);
+    if project_dir.exists() {
+        eprintln!("Error: directory '{}' already exists.", name);
+        std::process::exit(1);
+    }
+
+    let src_dir = project_dir.join("src");
+    std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
+        eprintln!("Error creating directory: {}", e);
+        std::process::exit(1);
+    });
+
+    let files = scaffold_files(name, async_mode);
+    std::fs::write(project_dir.join("Cargo.toml"), files.cargo_toml)
+        .expect("Failed to write Cargo.toml");
+    std::fs::write(project_dir.join("rust-toolchain.toml"), files.rust_toolchain_toml)
         .expect("Failed to write rust-toolchain.toml");
-    std::fs::write(src_dir.join("main.rs"), main_rs).expect("Failed to write src/main.rs");
+    std::fs::write(project_dir.join(".gitignore"), files.gitignore)
+        .expect("Failed to write .gitignore");
+    std::fs::write(project_dir.join("README.md"), files.readme).expect("Failed to write README.md");
+    std::fs::write(src_dir.join("main.rs"), files.main_rs).expect("Failed to write src/main.rs");
 
     let mode = if async_mode { " (async)" } else { "" };
     println!("✓ Created cuda-oxide project '{}'{}", name, mode);
     println!();
     println!("  cd {}", name);
-    println!("  cargo oxide run {}", name);
+    println!("  cargo oxide doctor");
+    println!("  cargo oxide run");
 }
 
 /// Locate an executable by name, first via `which` (PATH lookup), then by
@@ -6426,5 +6493,29 @@ device-owner = { path = "../device-owner" }
             std::env::remove_var("CUDA_OXIDE_TARGET");
         }
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn scaffold_sync_template_uses_launch_contract_and_docs() {
+        let files = scaffold_files("demo_kernel", false);
+        assert!(files.cargo_toml.contains("name = \"demo_kernel\""));
+        assert!(files.readme.contains("cargo oxide doctor"));
+        assert!(files.readme.contains("cargo oxide run"));
+        assert!(files.gitignore.contains("/target/"));
+        assert!(files.main_rs.contains("#[launch_contract(domain = 1, block = (256, 1, 1))]"));
+        assert!(files.main_rs.contains("prepare_vecadd"));
+        assert!(files.main_rs.contains("LaunchConfig1D"));
+        assert!(!files.main_rs.contains("LaunchConfig::for_num_elems"));
+    }
+
+    #[test]
+    fn scaffold_async_template_keeps_async_deps_and_docs() {
+        let files = scaffold_files("async_demo", true);
+        assert!(files.cargo_toml.contains("cuda-async"));
+        assert!(files.cargo_toml.contains("tokio"));
+        assert!(files.readme.contains("async cuda-oxide"));
+        assert!(files.readme.contains("cargo oxide doctor"));
+        assert!(files.gitignore.contains("**/*.ptx"));
+        assert!(files.main_rs.contains("vecadd_async"));
     }
 }
