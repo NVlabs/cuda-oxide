@@ -13,6 +13,13 @@
 //! matrix product. This module derives the mapping once so call sites do not
 //! have to.
 //!
+//! The mapping is not specific to the f16 instruction. Every `m16n8`
+//! accumulator shape that hands each lane four 32-bit registers distributes
+//! C/D the same way: [`crate::wmma::mma_m16n8k16_f32_bf16`],
+//! [`crate::wmma::mma_m16n8k8_f32_tf32`], and
+//! [`crate::wmma::mma_m16n8k32_s32_s8`] all document the identical C/D layout,
+//! so this module's helpers apply to their accumulators unchanged.
+//!
 //! # The layout is a mixed-radix numeral
 //!
 //! For the `m16n8k16` f32 accumulator, PTX assigns lane `l` the elements
