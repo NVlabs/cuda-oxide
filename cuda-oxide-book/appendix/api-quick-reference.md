@@ -426,6 +426,31 @@ and custom launch code.
 
 ---
 
+## Host-Side: Kernel Families
+
+| Type | Purpose |
+|:-----|:--------|
+| `KernelFamily<Id, Entry, Meta, N>` | Fixed set of ahead-of-time compiled variants |
+| `KernelVariant<Id, Entry, Meta>` | Stable ID, callable entry, and policy metadata |
+| `KernelProblem<Variant>` | Validates whether a variant is eligible |
+| `KernelSelector<Problem, Variant, Id>` | Chooses among already eligible variants |
+| `KernelSelectionCache<Problem, Id>` | Stores stable selection IDs |
+| `NoKernelSelectionCache` | Disables caching |
+| `SelectionMode::Auto` | Uses validated cache results or invokes the selector |
+| `SelectionMode::Force(id)` | Bypasses cache and selector but still validates eligibility |
+| `SelectedVariant` | Returns the selected variant and its provenance |
+| `SelectionSource` | Reports override, cache, or selector provenance |
+
+`KernelFamily::try_new` rejects empty families, blank family names, and
+duplicate variant IDs. The family name and revision form the cache namespace.
+Increment the revision whenever variant semantics, membership, ordering, or
+selection policy changes.
+
+See [Kernel Families](../gpu-programming/kernel-families.md) for the complete
+selection model and example.
+
+---
+
 ## Debug Facilities
 
 ```rust
