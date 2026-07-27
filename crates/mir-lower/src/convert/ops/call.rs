@@ -874,61 +874,6 @@ fn convert_rust_bit_intrinsic(
 /// Rust preserves signedness in the original MIR type. The converted LLVM value
 /// is signless, so this uses `operands_info` to choose `sadd/ssub` versus
 /// `uadd/usub`.
-/// Convert `core::intrinsics::exact_div` to `llvm.sdiv` or `llvm.udiv`.
-///
-/// The intrinsic's contract is that the divisor is non-zero and divides the
-/// dividend with no remainder; both are the caller's obligation, and violating
-/// either is undefined behaviour. That is exactly the contract of a bare LLVM
-/// division, so no zero check or remainder correction is emitted.
-///
-/// Signedness comes from the pre-conversion MIR operand type, the same source
-/// `mir.div` uses, because the LLVM integer type is signless by the time the
-/// operand is rewritten.
-fn convert_rust_exact_div(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    operands_info: &OperandsInfo,
-) -> Result<()> {
-    let loc = op.deref(ctx).loc();
-    if op.deref(ctx).get_num_results() != 1 {
-        return pliron::input_err!(loc, "exact_div call must have one result");
-    }
-
-    let args: Vec<Value> = op.deref(ctx).operands().collect();
-    let [dividend, divisor] = args[..] else {
-        return pliron::input_err!(loc, "exact_div requires a dividend and a divisor");
-    };
-
-    let is_signed = if let Some(int_ty) =
-        operands_info.lookup_most_recent_of_type::<IntegerType>(ctx, dividend)
-    {
-        int_ty.signedness() == Signedness::Signed
-    } else {
-        let live = dividend.get_type(ctx);
-        let live_ref = live.deref(ctx);
-        match live_ref.downcast_ref::<IntegerType>() {
-            // Signless lowers as unsigned, matching `mir.div`.
-            Some(int_ty) => int_ty.signedness() == Signedness::Signed,
-            None => return pliron::input_err!(loc, "expected integer type for exact_div"),
-        }
-    };
-
-    // A narrower divisor (for example a `usize` dividend against a `u32` count)
-    // has to match the dividend width before the division.
-    let dividend_ty = dividend.get_type(ctx);
-    let (divisor, _) = cast_integer_value_to_type(ctx, rewriter, divisor, dividend_ty, loc)?;
-
-    let llvm_op = if is_signed {
-        llvm::SDivOp::new(ctx, dividend, divisor).get_operation()
-    } else {
-        llvm::UDivOp::new(ctx, dividend, divisor).get_operation()
-    };
-    rewriter.insert_operation(ctx, llvm_op);
-    rewriter.replace_operation(ctx, op, llvm_op);
-    Ok(())
-}
-
 fn convert_rust_saturating_intrinsic(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -998,6 +943,61 @@ fn convert_rust_saturating_intrinsic(
     let replacement = final_op.unwrap_or_else(|| llvm_call.get_operation());
     rewriter.replace_operation(ctx, op, replacement);
 
+    Ok(())
+}
+
+/// Convert `core::intrinsics::exact_div` to `llvm.sdiv` or `llvm.udiv`.
+///
+/// The intrinsic's contract is that the divisor is non-zero and divides the
+/// dividend with no remainder; both are the caller's obligation, and violating
+/// either is undefined behaviour. That is exactly the contract of a bare LLVM
+/// division, so no zero check or remainder correction is emitted.
+///
+/// Signedness comes from the pre-conversion MIR operand type, the same source
+/// `mir.div` uses, because the LLVM integer type is signless by the time the
+/// operand is rewritten.
+fn convert_rust_exact_div(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    if op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err!(loc, "exact_div call must have one result");
+    }
+
+    let args: Vec<Value> = op.deref(ctx).operands().collect();
+    let [dividend, divisor] = args[..] else {
+        return pliron::input_err!(loc, "exact_div requires a dividend and a divisor");
+    };
+
+    let is_signed = if let Some(int_ty) =
+        operands_info.lookup_most_recent_of_type::<IntegerType>(ctx, dividend)
+    {
+        int_ty.signedness() == Signedness::Signed
+    } else {
+        let live = dividend.get_type(ctx);
+        let live_ref = live.deref(ctx);
+        match live_ref.downcast_ref::<IntegerType>() {
+            // Signless lowers as unsigned, matching `mir.div`.
+            Some(int_ty) => int_ty.signedness() == Signedness::Signed,
+            None => return pliron::input_err!(loc, "expected integer type for exact_div"),
+        }
+    };
+
+    // Defensive only: rustc's `exact_div` signature is `(T, T) -> T`, so both
+    // operands already have the same width and this widen path never fires.
+    let dividend_ty = dividend.get_type(ctx);
+    let (divisor, _) = cast_integer_value_to_type(ctx, rewriter, divisor, dividend_ty, loc)?;
+
+    let llvm_op = if is_signed {
+        llvm::SDivOp::new(ctx, dividend, divisor).get_operation()
+    } else {
+        llvm::UDivOp::new(ctx, dividend, divisor).get_operation()
+    };
+    rewriter.insert_operation(ctx, llvm_op);
+    rewriter.replace_operation(ctx, op, llvm_op);
     Ok(())
 }
 
