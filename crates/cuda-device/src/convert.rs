@@ -143,8 +143,8 @@ mod tests {
     #[test]
     fn unpacks_bf16_pairs() {
         // bf16 is the top 16 bits of the f32 bit pattern.
-        let one = (1.0f32.to_bits() >> 16) as u32; // 0x3F80
-        let two = (2.0f32.to_bits() >> 16) as u32; // 0x4000
+        let one = 1.0f32.to_bits() >> 16; // 0x3F80
+        let two = 2.0f32.to_bits() >> 16; // 0x4000
         let packed = (two << 16) | one;
         let (lo, hi) = cvt_f32x2_bf16x2(packed);
         assert_eq!(lo, 1.0);
