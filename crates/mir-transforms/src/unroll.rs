@@ -65,7 +65,7 @@ use pliron::operation::Operation;
 use pliron::opts::constants::sccp::sccp;
 use pliron::opts::dce::{SideEffects, dce};
 use pliron::opts::simplify_cfg::simplify_cfg;
-use pliron::pass_manager::AnalysisManager;
+use pliron::pass::AnalysisManager;
 use pliron::region::Region;
 use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed, TypedHandle};

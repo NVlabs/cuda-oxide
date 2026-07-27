@@ -106,3 +106,9 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 # optimize only SHA-256 so exact content fingerprinting remains inexpensive.
 [profile.dev.package.sha2]
 opt-level = 3
+
+# TEMPORARY (pliron PR 182/191 regression testing): use the local pliron clone.
+[patch."https://github.com/pliron-org/pliron"]
+pliron = { path = "/home/nihalp/dev/pliron" }
+pliron-derive = { path = "/home/nihalp/dev/pliron/pliron-derive" }
+pliron-llvm = { path = "/home/nihalp/dev/pliron/pliron-llvm" }

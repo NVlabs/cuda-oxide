@@ -1057,7 +1057,7 @@ fn enum_slot_map_of_operand(
         }
     };
     let abi_align = enum_ty.abi_align();
-    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty, ctx).into();
+    let mir_ty: TypeHandle = pliron::r#type::Type::instantiate(enum_ty, ctx).into();
     let map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
     Ok((map, abi_align))
 }
@@ -1110,7 +1110,7 @@ pub(crate) fn convert_set_discriminant(
     };
 
     let tag_offset = enum_ty.tag_offset();
-    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty.clone(), ctx).into();
+    let mir_ty: TypeHandle = pliron::r#type::Type::instantiate(enum_ty.clone(), ctx).into();
     let slot_map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
     let carrier_ty = slot_map.carrier_llvm_ty.ok_or_else(|| {
         pliron::input_error_noloc!("MirSetDiscriminantOp physical write has no carrier type")
@@ -1145,7 +1145,7 @@ pub(crate) fn convert_get_discriminant(
         .lookup_most_recent_of_type::<MirEnumType>(ctx, enum_val)
         .map(|ty| ty.clone())
         .ok_or_else(|| pliron::input_error_noloc!("Expected MirEnumType for discriminant read"))?;
-    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty.clone(), ctx).into();
+    let mir_ty: TypeHandle = pliron::r#type::Type::instantiate(enum_ty.clone(), ctx).into();
     let slot_map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
     let logical_ty = convert_type(ctx, enum_ty.discriminant_ty).map_err(anyhow_to_pliron)?;
     let logical_width = logical_ty

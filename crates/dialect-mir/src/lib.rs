@@ -18,7 +18,10 @@ use pliron::dialect::{Dialect, DialectName};
 pub const MIR_DIALECT_NAME: &str = "mir";
 
 pub fn register(ctx: &mut Context) {
-    Dialect::register(ctx, &DialectName::new(MIR_DIALECT_NAME));
+    Dialect::register(
+        ctx,
+        &DialectName::try_new(MIR_DIALECT_NAME).expect("valid dialect name"),
+    );
     ops::register(ctx);
     types::register(ctx);
     attributes::register(ctx);

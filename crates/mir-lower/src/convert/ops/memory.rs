@@ -1379,7 +1379,7 @@ mod tests {
         let loaded = load_op.deref(&ctx).get_result(0);
         append_mir_return(&mut ctx, block, vec![loaded]);
 
-        let mut analyses = pliron::pass_manager::AnalysisManager::default();
+        let mut analyses = pliron::pass::AnalysisManager::default();
         pliron::opts::mem2reg::mem2reg(module_ptr, &mut ctx, &mut analyses)
             .expect("mem2reg should promote the local slot");
 

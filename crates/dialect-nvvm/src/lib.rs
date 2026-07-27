@@ -16,7 +16,10 @@ use pliron::dialect::{Dialect, DialectName};
 pub const NVVM_DIALECT_NAME: &str = "nvvm";
 
 pub fn register(ctx: &mut Context) {
-    Dialect::register(ctx, &DialectName::new(NVVM_DIALECT_NAME));
+    Dialect::register(
+        ctx,
+        &DialectName::try_new(NVVM_DIALECT_NAME).expect("valid dialect name"),
+    );
 
     ops::register(ctx);
 }

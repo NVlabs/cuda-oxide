@@ -32,7 +32,7 @@ pub fn prepare_mir_module(
         return Ok(());
     }
 
-    let mut analyses = pliron::pass_manager::AnalysisManager::default();
+    let mut analyses = pliron::pass::AnalysisManager::default();
     pliron::opts::mem2reg::mem2reg(module, ctx, &mut analyses).map_err(|error| {
         PipelineError::Verification {
             name: "mem2reg".to_string(),

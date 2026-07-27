@@ -1,0 +1,24 @@
+[package]
+name = "pr182_probe"
+version = "0.1.0"
+edition = "2024"
+authors = ["Nihal Pasham <nihalp@nvidia.com>"]
+license = "Apache-2.0"
+
+# Mark as standalone crate (not part of parent workspace)
+[workspace]
+
+# Targeted probes for pliron PR #182 ("[DialectConversion] Convert all
+# block args, not just used ones"). The PR converts every block arg
+# up front, BEFORE the first rewrite runs. cuda-oxide's
+# stamp_memory_op_alignment runs inside the MirFuncOp rewrite and reads
+# live operand types to recover repr(align(N)) ABI alignment, so block-arg
+# operands (params, mem2reg join/loop args) must still be MIR-typed there.
+# These kernels put over-aligned aggregates into exactly those positions.
+# Run with:
+#   cargo oxide run pr182_probe
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

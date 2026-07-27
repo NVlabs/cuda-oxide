@@ -279,11 +279,6 @@ pub fn convert_func(
             (body, contract) => body.or(contract),
         };
 
-        // Stamp ABI alignment onto load/store/alloca/ref ops while types are
-        // still MIR — repr(align(N)) is visible on MirStructType but lost after
-        // type conversion (LLVM struct types carry no over-alignment).
-        stamp_memory_op_alignment(ctx, &mir_blocks);
-
         if let Some(align) = max_align {
             let symbol_name: pliron::identifier::Identifier =
                 format!("__dynamic_smem_{}", func_name_str)
@@ -713,14 +708,38 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
 // Alignment Pre-Pass
 // ============================================================================
 
+/// Stamp ABI alignment onto memory ops in every MIR function of the module,
+/// BEFORE dialect conversion starts.
+///
+/// This must be a whole-module pre-pass rather than part of the per-function
+/// conversion: the conversion driver converts block-argument types (function
+/// params, mem2reg join/loop args) eagerly, so by the time a function's
+/// rewrite runs, a stored/referenced block arg no longer carries the MIR
+/// type that records `repr(align(N))`.
+pub(crate) fn stamp_module_memory_op_alignments(ctx: &mut Context, module_op: Ptr<Operation>) {
+    let mut func_regions = Vec::new();
+    for region in module_op.deref(ctx).regions() {
+        for block in region.deref(ctx).iter(ctx) {
+            for op in block.deref(ctx).iter(ctx) {
+                if MirFuncOp::wrap(ctx, op).is_some() {
+                    func_regions.push(op.deref(ctx).get_region(0));
+                }
+            }
+        }
+    }
+    for func_region in func_regions {
+        let mir_blocks: Vec<_> = func_region.deref(ctx).iter(ctx).collect();
+        stamp_memory_op_alignment(ctx, &mir_blocks);
+    }
+}
+
 /// Stamp the true ABI alignment onto every `mir.load`, `mir.store`,
 /// `mir.alloca`, and `mir.ref` whose accessed/allocated type carries a
 /// rustc ABI alignment. Arrays inherit it recursively from their element.
 ///
-/// Must run BEFORE `inline_region` moves the blocks and BEFORE dialect
-/// conversion replaces MIR types with LLVM types, since the alignment
-/// information lives on the MIR types and is not expressible on LLVM
-/// struct types.
+/// Must run BEFORE dialect conversion replaces MIR types with LLVM types
+/// (including block-argument types), since the alignment information lives
+/// on the MIR types and is not expressible on LLVM struct types.
 fn stamp_memory_op_alignment(ctx: &mut Context, mir_blocks: &[Ptr<BasicBlock>]) {
     let load_id = dialect_mir::ops::MirLoadOp::get_opid_static();
     let store_id = dialect_mir::ops::MirStoreOp::get_opid_static();

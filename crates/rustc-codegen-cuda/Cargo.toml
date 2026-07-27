@@ -45,3 +45,10 @@ thiserror = "2"           # must match workspace
 
 [package.metadata.rust-analyzer]
 rustc_private = true
+
+# TEMPORARY (pliron PR 182/191 regression testing): use the local pliron clone.
+# Must mirror the root Cargo.toml patch so pliron stays one crate.
+[patch."https://github.com/pliron-org/pliron"]
+pliron = { path = "/home/nihalp/dev/pliron" }
+pliron-derive = { path = "/home/nihalp/dev/pliron/pliron-derive" }
+pliron-llvm = { path = "/home/nihalp/dev/pliron/pliron-llvm" }

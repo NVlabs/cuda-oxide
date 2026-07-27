@@ -85,26 +85,13 @@ impl MirTupleType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirTupleType {
                 types,
                 mem_to_decl,
                 field_offsets,
                 total_size,
                 abi_align,
-            },
-            ctx,
-        )
-    }
-
-    pub fn get_existing(ctx: &Context, types: Vec<TypeHandle>) -> Option<TypedHandle<Self>> {
-        Type::get_instance(
-            MirTupleType {
-                types,
-                mem_to_decl: vec![],
-                field_offsets: vec![],
-                total_size: 0,
-                abi_align: 0,
             },
             ctx,
         )
@@ -232,7 +219,7 @@ impl MirPtrType {
         is_mutable: bool,
         address_space: u32,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirPtrType {
                 pointee,
                 is_mutable,
@@ -283,21 +270,6 @@ impl MirPtrType {
         Self::get(ctx, pointee, is_mutable, address_space::TMEM)
     }
 
-    pub fn get_existing(
-        ctx: &Context,
-        pointee: TypeHandle,
-        is_mutable: bool,
-        address_space: u32,
-    ) -> Option<TypedHandle<Self>> {
-        Type::get_instance(
-            MirPtrType {
-                pointee,
-                is_mutable,
-                address_space,
-            },
-            ctx,
-        )
-    }
 
     pub fn is_mutable(&self) -> bool {
         self.is_mutable
@@ -340,11 +312,7 @@ pub struct MirSliceType {
 
 impl MirSliceType {
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Type::register_instance(MirSliceType { element_ty }, ctx)
-    }
-
-    pub fn get_existing(ctx: &Context, element_ty: TypeHandle) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirSliceType { element_ty }, ctx)
+        Type::instantiate(MirSliceType { element_ty }, ctx)
     }
 
     pub fn element_type(&self) -> TypeHandle {
@@ -373,11 +341,7 @@ pub struct MirDisjointSliceType {
 
 impl MirDisjointSliceType {
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Type::register_instance(MirDisjointSliceType { element_ty }, ctx)
-    }
-
-    pub fn get_existing(ctx: &Context, element_ty: TypeHandle) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirDisjointSliceType { element_ty }, ctx)
+        Type::instantiate(MirDisjointSliceType { element_ty }, ctx)
     }
 
     pub fn element_type(&self) -> TypeHandle {
@@ -500,7 +464,7 @@ impl MirStructType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirStructType {
                 name,
                 field_names,
@@ -509,27 +473,6 @@ impl MirStructType {
                 field_offsets,
                 total_size,
                 abi_align,
-            },
-            ctx,
-        )
-    }
-
-    /// Get an existing struct type if it exists.
-    pub fn get_existing(
-        ctx: &Context,
-        name: String,
-        field_names: Vec<String>,
-        field_types: Vec<TypeHandle>,
-    ) -> Option<TypedHandle<Self>> {
-        Type::get_instance(
-            MirStructType {
-                name,
-                field_names,
-                field_types,
-                mem_to_decl: vec![],
-                field_offsets: vec![],
-                total_size: 0,
-                abi_align: 0,
             },
             ctx,
         )
@@ -645,7 +588,7 @@ impl MirUnionType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirUnionType {
                 name,
                 field_names,
@@ -734,16 +677,7 @@ pub struct MirArrayType {
 impl MirArrayType {
     /// Create a new array type.
     pub fn get(ctx: &mut Context, element_ty: TypeHandle, size: u64) -> TypedHandle<Self> {
-        Type::register_instance(MirArrayType { element_ty, size }, ctx)
-    }
-
-    /// Get an existing array type if it exists.
-    pub fn get_existing(
-        ctx: &Context,
-        element_ty: TypeHandle,
-        size: u64,
-    ) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirArrayType { element_ty, size }, ctx)
+        Type::instantiate(MirArrayType { element_ty, size }, ctx)
     }
 
     /// Get the element type.
@@ -1163,7 +1097,7 @@ impl MirEnumType {
             all_field_sizes.extend(v.field_sizes);
         }
 
-        Type::register_instance(
+        Type::instantiate(
             MirEnumType {
                 name,
                 discriminant_ty,
