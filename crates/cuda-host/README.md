@@ -138,6 +138,13 @@ host-side maximum. For example, `prepare_transform::<SmallPolicy>` can enforce
 maximum, not an exact size; declare `block = (x, y, z)` when the full shape must
 match.
 
+An exact `block` is additionally carried into the compiled artifact as
+`.reqntid x, y, z`, which the CUDA driver enforces per axis. Preparation and
+the driver check the shape on independent paths, so a mismatch is rejected even
+when preparation is bypassed. A thread maximum gives no such guarantee: under
+`.maxntid 256, 1, 1` the driver accepts `(16, 16, 1)` as readily as
+`(256, 1, 1)`.
+
 For contracted kernels, raw `LaunchConfig` is available only through generated
 unsafe methods such as `reduce_unchecked`. Uncontracted generated methods are
 also unsafe because there is no prepared proof for their raw configuration.

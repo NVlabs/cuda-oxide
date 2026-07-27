@@ -170,6 +170,11 @@ impl KernelLaunchConfig for LaunchConfig3D {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockRequirement {
     /// The launch must use exactly these `(x, y, z)` block dimensions.
+    ///
+    /// A kernel compiled by cuda-oxide also carries this shape as PTX
+    /// `.reqntid`, so the CUDA driver rejects a differing block on any axis
+    /// independently of this check. Preparation still reports the mismatch
+    /// first, with the kernel name and both shapes.
     Exact((u32, u32, u32)),
     /// The block may contain at most this many threads in total.
     ///

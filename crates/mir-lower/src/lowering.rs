@@ -344,6 +344,9 @@ fn propagate_kernel_attrs(
             "cluster_dim_z",
             "maxntid",
             "minctasm",
+            "reqntid_x",
+            "reqntid_y",
+            "reqntid_z",
         ]
         .iter()
         .filter_map(|key_str| {

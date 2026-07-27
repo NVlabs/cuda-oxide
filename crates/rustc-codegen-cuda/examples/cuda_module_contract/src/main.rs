@@ -362,47 +362,64 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    for entry in ["aligned_dynamic_shared", "mixed_abi"] {
-        let start = ptx
-            .find(&format!(".visible .entry {entry}("))
-            .ok_or_else(|| format!("missing PTX entry {entry}"))?;
-        let rest = &ptx[start..];
-        let end = rest[1..]
-            .find(".visible .entry ")
-            .map_or(rest.len(), |offset| offset + 1);
-        if !rest[..end].contains(".maxntid 256, 1, 1") {
-            return Err(format!("PTX entry {entry} lost its launch bounds").into());
-        }
-    }
-
-    for entry in [
-        "helper_contract_32",
-        "helper_contract_256",
-        "explicit_aligned_u32",
+    // A kernel declaring an exact `block` carries that shape into PTX as
+    // `.reqntid`, which the driver enforces on every axis. A kernel bounded
+    // only by `#[launch_bounds]` keeps `.maxntid`, which bounds the thread
+    // count and permits any shape reaching it.
+    for (entry, geometry) in [
+        ("aligned_dynamic_shared", ".reqntid 256, 1, 1"),
+        ("mixed_abi", ".reqntid 256, 1, 1"),
+        ("strided_scale", ".reqntid 128, 1, 1"),
+        ("helper_contract_32", ".reqntid 32, 1, 1"),
+        ("helper_contract_256", ".reqntid 32, 1, 1"),
+        ("explicit_aligned_u32", ".maxntid 32, 1, 1"),
     ] {
-        let start = ptx
-            .find(&format!(".visible .entry {entry}("))
-            .ok_or_else(|| format!("missing PTX entry {entry}"))?;
-        let rest = &ptx[start..];
-        let end = rest[1..]
-            .find(".visible .entry ")
-            .map_or(rest.len(), |offset| offset + 1);
-        if !rest[..end].contains(".maxntid 32, 1, 1") {
-            return Err(format!("PTX entry {entry} lost its launch bounds").into());
-        }
+        verify_entry_geometry(&ptx, &format!(".visible .entry {entry}("), entry, geometry)?;
     }
 
-    let generic_start = ptx
-        .find(".visible .entry generic_aligned_TID_")
-        .ok_or("missing generic_aligned PTX specialization")?;
-    let generic_rest = &ptx[generic_start..];
-    let generic_end = generic_rest[1..]
-        .find(".visible .entry ")
-        .map_or(generic_rest.len(), |offset| offset + 1);
-    if !generic_rest[..generic_end].contains(".maxntid 64, 1, 1") {
-        return Err("generic_aligned PTX specialization lost its launch bounds".into());
-    }
+    verify_entry_geometry(
+        &ptx,
+        ".visible .entry generic_aligned_TID_",
+        "generic_aligned specialization",
+        ".maxntid 64, 1, 1",
+    )?;
 
     println!("SUCCESS: prepared-launch PTX contract verified");
+    Ok(())
+}
+
+/// Assert one entry's launch geometry, and that it declares exactly one of the
+/// two mutually exclusive directives.
+///
+/// ptxas rejects an entry carrying both `.maxntid` and `.reqntid`
+/// ("Conflicting directives: .maxntid and .reqntid cannot both be specified"),
+/// so a kernel with an exact block emits `.reqntid` in place of the thread
+/// maximum. Every kernel here declares `#[launch_bounds]`, so this is the case
+/// that would regress if the exporter stopped suppressing one of them.
+fn verify_entry_geometry(
+    ptx: &str,
+    anchor: &str,
+    entry: &str,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = ptx
+        .find(anchor)
+        .ok_or_else(|| format!("missing PTX entry {entry}"))?;
+    let rest = &ptx[start..];
+    let end = rest[1..]
+        .find(".visible .entry ")
+        .map_or(rest.len(), |offset| offset + 1);
+    let body = &rest[..end];
+
+    if !body.contains(expected) {
+        return Err(format!("PTX entry {entry} lost its launch geometry `{expected}`").into());
+    }
+    if body.contains(".maxntid") && body.contains(".reqntid") {
+        return Err(format!(
+            "PTX entry {entry} declares both .maxntid and .reqntid, which ptxas rejects"
+        )
+        .into());
+    }
+
     Ok(())
 }

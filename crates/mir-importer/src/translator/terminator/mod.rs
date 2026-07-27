@@ -2791,6 +2791,8 @@ fn try_dispatch_intrinsic(
         | "cuda_device::thread::__launch_bounds_config"
         | "cuda_device::__launch_contract_config"
         | "cuda_device::thread::__launch_contract_config"
+        | "cuda_device::__launch_contract_block_config"
+        | "cuda_device::thread::__launch_contract_block_config"
         | "cuda_device::__unchecked_indexing_config"
         | "cuda_device::thread::__unchecked_indexing_config" => {
             let expected_marker = match name {
@@ -2798,6 +2800,10 @@ fn try_dispatch_intrinsic(
                 | "cuda_device::thread::__launch_bounds_config" => "__launch_bounds_config",
                 "cuda_device::__launch_contract_config"
                 | "cuda_device::thread::__launch_contract_config" => "__launch_contract_config",
+                "cuda_device::__launch_contract_block_config"
+                | "cuda_device::thread::__launch_contract_block_config" => {
+                    "__launch_contract_block_config"
+                }
                 "cuda_device::__unchecked_indexing_config"
                 | "cuda_device::thread::__unchecked_indexing_config" => {
                     "__unchecked_indexing_config"

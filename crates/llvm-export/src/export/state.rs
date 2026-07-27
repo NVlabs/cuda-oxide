@@ -29,10 +29,29 @@ pub(super) struct KernelClusterConfig {
     pub(super) dim_z: u32,
 }
 
-/// Launch bounds for a kernel (from `#[launch_bounds(max, min)]` attribute).
+/// Block geometry declared for a kernel entry.
+///
+/// ptxas rejects an entry carrying both `.maxntid` and `.reqntid`, so an entry
+/// declares one or the other. An exact shape is the stronger statement and
+/// displaces a thread maximum, which is why these are alternatives rather than
+/// two fields.
+#[derive(Clone, Copy)]
+pub(super) enum KernelBlockGeometry {
+    /// Maximum threads per block from `#[launch_bounds(max, _)]`, emitted as
+    /// `maxntid*`. Bounds the product `x * y * z` and says nothing per axis.
+    MaxThreads(u32),
+    /// Exact block shape from `#[launch_contract(block = (x, y, z))]`, emitted
+    /// as `reqntid*`. The CUDA driver enforces it per axis at launch.
+    ExactBlock(u32, u32, u32),
+}
+
+/// Launch geometry for a kernel, from `#[launch_bounds(max, min)]` and from an
+/// exact `#[launch_contract(block = (x, y, z))]`.
+///
+/// A kernel declaring neither is never recorded.
 pub(super) struct KernelLaunchBounds {
     pub(super) name: String,
-    pub(super) max_threads: u32,
+    pub(super) geometry: KernelBlockGeometry,
     pub(super) min_blocks: Option<u32>, // None if not specified (0 in attribute)
 }
 

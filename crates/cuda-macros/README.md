@@ -143,7 +143,18 @@ reduce_unchecked: raw LaunchConfig             -> unsafe expert path
 
 `block` is exact. If it is omitted, `#[launch_bounds]` supplies the compiled
 maximum total threads per block. For example, a limit of 256 accepts both
-`(256, 1, 1)` and `(16, 16, 1)`. Dynamic shared memory is either exact
+`(256, 1, 1)` and `(16, 16, 1)`.
+
+An exact `block` also reaches the device compiler, which emits
+`.reqntid x, y, z` in place of `.maxntid`. The CUDA driver enforces that per
+axis, so a launch whose block differs is refused even when it never passed
+through preparation. Preparation and the driver therefore check the same
+requirement on independent paths, and the raw `_unchecked` path is covered by
+the second. The two directives cannot coexist on one entry, so a kernel
+declaring both `#[launch_bounds]` and an exact `block` emits `.reqntid` alone.
+The occupancy hint `.minnctapersm` is unaffected.
+
+Dynamic shared memory is either exact
 (`dynamic_shared = BYTES`) or an inclusive range. The byte extent is an author
 promise; the alignment is a compiler-visible minimum and is merged with any
 higher `DynamicSharedArray<T, ALIGN>` request in the body or a reachable local

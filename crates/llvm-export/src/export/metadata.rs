@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use super::state::ModuleExportState;
+use super::state::{KernelBlockGeometry, ModuleExportState};
 
 pub(super) fn needs_nvvm_annotations(
     state: &ModuleExportState,
@@ -82,11 +82,19 @@ pub(super) fn emit_nvvm_annotations(
     let launch_bounds_kernels: Vec<_> = state
         .launch_bounds_kernels
         .iter()
-        .map(|bounds| (bounds.name.clone(), bounds.max_threads, bounds.min_blocks))
+        .map(|bounds| (bounds.name.clone(), bounds.geometry, bounds.min_blocks))
         .collect();
 
-    for (name, max_threads, min_blocks) in launch_bounds_kernels {
-        for (key, value) in [("maxntidx", max_threads), ("maxntidy", 1), ("maxntidz", 1)] {
+    for (name, geometry, min_blocks) in launch_bounds_kernels {
+        let annotations = match geometry {
+            KernelBlockGeometry::ExactBlock(x, y, z) => {
+                [("reqntidx", x), ("reqntidy", y), ("reqntidz", z)]
+            }
+            KernelBlockGeometry::MaxThreads(max_threads) => {
+                [("maxntidx", max_threads), ("maxntidy", 1), ("maxntidz", 1)]
+            }
+        };
+        for (key, value) in annotations {
             let md_id = state.alloc_metadata_id();
             write!(output, "!{md_id} = !{{").unwrap();
             emit_function_reference(output, state, &name)?;
@@ -149,7 +157,7 @@ mod tests {
     use super::*;
     use crate::export::config::DebugKind;
     use crate::export::state::{
-        KernelClusterConfig, KernelInfo, KernelLaunchBounds, ModuleExportState,
+        KernelBlockGeometry, KernelClusterConfig, KernelInfo, KernelLaunchBounds, ModuleExportState,
     };
     use pliron::context::Context;
 
@@ -189,7 +197,7 @@ mod tests {
         });
         state.launch_bounds_kernels.push(KernelLaunchBounds {
             name: "bounded".into(),
-            max_threads: 256,
+            geometry: KernelBlockGeometry::MaxThreads(256),
             min_blocks: Some(2),
         });
 
@@ -230,7 +238,7 @@ mod tests {
         });
         state.launch_bounds_kernels.push(KernelLaunchBounds {
             name: "clustered_bounded".into(),
-            max_threads: 128,
+            geometry: KernelBlockGeometry::MaxThreads(128),
             min_blocks: None,
         });
 
@@ -244,6 +252,58 @@ mod tests {
         assert!(output.contains("!1 = !{ptr @clustered_bounded, !\"maxntidx\", i32 128}"));
         assert!(output.contains("!2 = !{ptr @clustered_bounded, !\"maxntidy\", i32 1}"));
         assert!(output.contains("!3 = !{ptr @clustered_bounded, !\"maxntidz\", i32 1}"));
+        assert_eq!(state.next_metadata_id(), 4);
+    }
+
+    #[test]
+    fn exact_block_emits_reqntid_and_suppresses_maxntid() {
+        let ctx = Context::new();
+        let mut state = test_state(&ctx);
+        state.all_kernels.push(KernelInfo {
+            name: "exact".into(),
+        });
+        // The kernel carries both `#[launch_bounds(256, 2)]` and an exact
+        // `#[launch_contract(block = ...)]`, which is the shape of the
+        // `cuda_module_contract` example. ptxas rejects an entry declaring both
+        // `.maxntid` and `.reqntid`, so only `.reqntid` may survive. The
+        // occupancy hint is independent and stays.
+        state.launch_bounds_kernels.push(KernelLaunchBounds {
+            name: "exact".into(),
+            geometry: KernelBlockGeometry::ExactBlock(256, 1, 1),
+            min_blocks: Some(2),
+        });
+
+        let mut output = String::new();
+        emit_nvvm_annotations(&mut output, &mut state, true).unwrap();
+
+        assert!(output.contains("!1 = !{ptr @exact, !\"reqntidx\", i32 256}"));
+        assert!(output.contains("!2 = !{ptr @exact, !\"reqntidy\", i32 1}"));
+        assert!(output.contains("!3 = !{ptr @exact, !\"reqntidz\", i32 1}"));
+        assert!(output.contains("!4 = !{ptr @exact, !\"minctasm\", i32 2}"));
+        assert!(!output.contains("maxntid"));
+        assert_eq!(state.next_metadata_id(), 5);
+    }
+
+    #[test]
+    fn exact_block_without_launch_bounds_still_emits_reqntid() {
+        let ctx = Context::new();
+        let mut state = test_state(&ctx);
+        state.all_kernels.push(KernelInfo {
+            name: "contract_only".into(),
+        });
+        state.launch_bounds_kernels.push(KernelLaunchBounds {
+            name: "contract_only".into(),
+            geometry: KernelBlockGeometry::ExactBlock(16, 16, 1),
+            min_blocks: None,
+        });
+
+        let mut output = String::new();
+        emit_nvvm_annotations(&mut output, &mut state, true).unwrap();
+
+        assert!(output.contains("!1 = !{ptr @contract_only, !\"reqntidx\", i32 16}"));
+        assert!(output.contains("!2 = !{ptr @contract_only, !\"reqntidy\", i32 16}"));
+        assert!(output.contains("!3 = !{ptr @contract_only, !\"reqntidz\", i32 1}"));
+        assert!(!output.contains("maxntid"));
         assert_eq!(state.next_metadata_id(), 4);
     }
 
