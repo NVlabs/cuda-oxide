@@ -114,6 +114,9 @@ See the `async_mlp` example and `crates/cuda-async/README.md` for the full async
 # Build and run an example
 cargo oxide run host_closure
 
+# Build and print the generated PTX
+cargo oxide inspect vecadd
+
 # Show full compilation pipeline (Rust MIR → dialect-mir → mem2reg → LLVM dialect → LLVM IR → PTX)
 cargo oxide pipeline vecadd
 

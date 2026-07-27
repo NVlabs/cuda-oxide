@@ -59,24 +59,49 @@ fn prepare_materialization(
     )
 }
 
+fn nvvm_ir_requested(ctx: &Context) -> Result<bool, String> {
+    const EMIT_NVVM_IR_ENV: &str = "CUDA_OXIDE_EMIT_NVVM_IR";
+
+    if let Some(value) = std::env::var_os(EMIT_NVVM_IR_ENV) {
+        let value = value
+            .into_string()
+            .map_err(|_| format!("{EMIT_NVVM_IR_ENV} is not valid Unicode"))?;
+        return parse_strict_bool(EMIT_NVVM_IR_ENV, &value);
+    }
+
+    if let Some(value) = project_config_env(ctx, EMIT_NVVM_IR_ENV) {
+        return parse_strict_bool(EMIT_NVVM_IR_ENV, value);
+    }
+
+    Ok(false)
+}
+
+fn materialization_requested(ctx: &Context, cli_requested: bool) -> Result<bool, String> {
+    if cli_requested {
+        return Ok(true);
+    }
+
+    if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
+        let value = value
+            .into_string()
+            .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
+        return parse_strict_bool(MATERIALIZE_ENV, &value);
+    }
+
+    if let Some(value) = project_config_env(ctx, MATERIALIZE_ENV) {
+        return parse_strict_bool(MATERIALIZE_ENV, value);
+    }
+
+    Ok(false)
+}
+
 fn prepare_materialization_result(
     ctx: &Context,
     cli_requested: bool,
     cli_arch: Option<&str>,
     emit_nvvm_ir: bool,
 ) -> Result<MaterializationMode, String> {
-    let enabled = if cli_requested {
-        true
-    } else if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
-        let value = value
-            .into_string()
-            .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
-        parse_strict_bool(MATERIALIZE_ENV, &value)?
-    } else if let Some(value) = project_config_env(ctx, MATERIALIZE_ENV) {
-        parse_strict_bool(MATERIALIZE_ENV, value)?
-    } else {
-        false
-    };
+    let enabled = materialization_requested(ctx, cli_requested)?;
     if !enabled {
         return Ok(MaterializationMode::default());
     }
@@ -736,6 +761,23 @@ fn build_interop_device_crates(
     }
 }
 
+fn interop_device_artifact_name(manifest_path: &Path, device_crate: &DeviceCrateConfig) -> String {
+    device_crate
+        .artifact_name
+        .clone()
+        .unwrap_or_else(|| normalize_crate_name(&package_name_from_manifest(manifest_path)))
+}
+
+fn interop_device_ptx_path(
+    example_dir: &Path,
+    device_crate: &DeviceCrateConfig,
+    artifact_name: &str,
+) -> PathBuf {
+    example_dir
+        .join(&device_crate.ptx_dir)
+        .join(format!("{}.ptx", artifact_stem(artifact_name)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_interop_device_crate(
     ctx: &Context,
@@ -767,11 +809,7 @@ fn build_interop_device_crate(
         std::process::exit(1);
     });
 
-    let package_name = package_name_from_manifest(&manifest_path);
-    let artifact_name = device_crate
-        .artifact_name
-        .clone()
-        .unwrap_or_else(|| normalize_crate_name(&package_name));
+    let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
     clean_generated_files(&ptx_dir, &artifact_name);
     touch_main_rs(device_dir);
 
@@ -816,7 +854,7 @@ fn build_interop_device_crate(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let ptx_path = ptx_dir.join(format!("{}.ptx", artifact_stem(&artifact_name)));
+    let ptx_path = interop_device_ptx_path(example_dir, device_crate, &artifact_name);
     if !ptx_path.exists() {
         eprintln!(
             "Error: device crate build succeeded but did not produce {}",
@@ -1554,6 +1592,67 @@ pub fn codegen_build(
     if !status.success() {
         eprintln!("\nBuild failed with exit code: {:?}", status.code());
         std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+// =============================================================================
+// Inspect command
+// =============================================================================
+
+/// Build an example as PTX and print the generated artifact.
+#[allow(clippy::too_many_arguments)]
+pub fn codegen_inspect_ptx(
+    ctx: &Context,
+    example: &str,
+    arch: Option<&str>,
+    features: Option<&str>,
+    verbose: bool,
+    no_fmad: bool,
+    unchecked_indexing: bool,
+) {
+    let materialization_enabled = materialization_requested(ctx, false).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    });
+
+    if materialization_enabled {
+        eprintln!("Error: inspect requires PTX output, but {MATERIALIZE_ENV} is enabled");
+        std::process::exit(2);
+    }
+
+    let nvvm_ir_enabled = nvvm_ir_requested(ctx).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    });
+
+    if nvvm_ir_enabled {
+        eprintln!("Error: inspect requires PTX output, but CUDA_OXIDE_EMIT_NVVM_IR is enabled");
+        std::process::exit(2);
+    }
+
+    codegen_build(
+        ctx,
+        example,
+        verbose,
+        false,
+        arch,
+        features,
+        no_fmad,
+        unchecked_indexing,
+        false,
+    );
+
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
+
+    for path in ptx_artifact_paths(&example_dir, example) {
+        print_ptx_artifact(&path).unwrap_or_else(|error| {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        });
     }
 }
 
@@ -3911,6 +4010,54 @@ fn touch_main_rs(example_dir: &Path) {
 /// stale artifacts forever.
 fn artifact_stem(example: &str) -> String {
     example.replace('-', "_")
+}
+
+/// Return the PTX artifacts generated for a regular or metadata-interop project.
+fn ptx_artifact_paths(example_dir: &Path, example: &str) -> Vec<PathBuf> {
+    if let Some(interop) =
+        load_interop_config(example_dir).filter(|config| !config.device_crates.is_empty())
+    {
+        return interop
+            .device_crates
+            .iter()
+            .map(|device_crate| {
+                let manifest_path = example_dir.join(&device_crate.manifest_path);
+                let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
+
+                interop_device_ptx_path(example_dir, device_crate, &artifact_name)
+            })
+            .collect();
+    }
+
+    let stem = artifact_stem(example);
+    vec![example_dir.join(format!("{stem}.ptx"))]
+}
+
+fn read_ptx_artifact(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read generated PTX {}: {error}", path.display()))
+}
+
+/// Print one generated PTX artifact.
+fn print_ptx_artifact(path: &Path) -> Result<(), String> {
+    let content = read_ptx_artifact(path)?;
+
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+
+    println!();
+    println!("=========================================");
+    println!("PTX ({name})");
+    println!("=========================================");
+    print!("{content}");
+
+    if !content.ends_with('\n') {
+        println!();
+    }
+
+    Ok(())
 }
 
 /// Path to the NVVM IR (`.ll`) the backend emits for `example`. Named after the
@@ -6426,5 +6573,131 @@ device-owner = { path = "../device-owner" }
             std::env::remove_var("CUDA_OXIDE_TARGET");
         }
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn ptx_artifact_paths_normalize_hyphenated_example_names() {
+        let root = unique_temp_dir("cargo_oxide_inspect_regular");
+        std::fs::create_dir_all(&root).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "demo-app"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ptx_artifact_paths(&root, "demo-app"),
+            vec![root.join("demo_app.ptx")]
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ptx_artifact_paths_resolve_interop_device_artifacts() {
+        let root = unique_temp_dir("cargo_oxide_inspect_interop");
+        let device_dir = root.join("device");
+        std::fs::create_dir_all(&device_dir).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "host-app"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.cuda-oxide]
+interop = "device"
+
+[[package.metadata.cuda-oxide.device-crates]]
+manifest-path = "device/Cargo.toml"
+ptx-dir = "generated"
+artifact-name = "custom-device"
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            device_dir.join("Cargo.toml"),
+            r#"[package]
+name = "device-app"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ptx_artifact_paths(&root, "host-app"),
+            vec![root.join("generated/custom_device.ptx")]
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn read_ptx_artifact_returns_exact_contents() {
+        let root = unique_temp_dir("cargo_oxide_read_ptx");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("demo.ptx");
+        std::fs::write(&path, ".version 8.0\n.target sm_90\n").unwrap();
+
+        assert_eq!(
+            read_ptx_artifact(&path).unwrap(),
+            ".version 8.0\n.target sm_90\n"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn read_ptx_artifact_reports_missing_file() {
+        let root = unique_temp_dir("cargo_oxide_missing_ptx");
+        let path = root.join("missing.ptx");
+
+        let error = read_ptx_artifact(&path).unwrap_err();
+
+        assert!(error.contains("could not read generated PTX"));
+        assert!(error.contains("missing.ptx"));
+    }
+
+    #[test]
+    fn nvvm_ir_requested_reads_project_configuration() {
+        let ctx = Context {
+            workspace_root: PathBuf::from("/tmp/project"),
+            codegen_crate: PathBuf::from("/tmp/project"),
+            examples_dir: PathBuf::from("/tmp/project"),
+            backend_so: PathBuf::from("/tmp/backend.so"),
+            is_workspace: false,
+            config: OxideConfig {
+                env: vec![("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), "true".to_string())],
+                ..OxideConfig::default()
+            },
+        };
+
+        assert_eq!(nvvm_ir_requested(&ctx), Ok(true));
+    }
+
+    #[test]
+    fn nvvm_ir_requested_accepts_disabled_project_configuration() {
+        let ctx = Context {
+            workspace_root: PathBuf::from("/tmp/project"),
+            codegen_crate: PathBuf::from("/tmp/project"),
+            examples_dir: PathBuf::from("/tmp/project"),
+            backend_so: PathBuf::from("/tmp/backend.so"),
+            is_workspace: false,
+            config: OxideConfig {
+                env: vec![("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), "false".to_string())],
+                ..OxideConfig::default()
+            },
+        };
+
+        assert_eq!(nvvm_ir_requested(&ctx), Ok(false));
     }
 }
