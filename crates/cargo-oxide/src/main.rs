@@ -21,6 +21,7 @@
 //! cargo oxide new my_kernel --async   # scaffold with async template
 //! cargo oxide fmt                     # format all crates
 //! cargo oxide doctor                  # check environment
+//! cargo oxide clean                   # remove local build outputs
 //! cargo oxide setup                   # explicitly build/install backend
 //! ```
 
@@ -280,6 +281,8 @@ enum Commands {
         #[arg(long = "async")]
         async_mode: bool,
     },
+    /// Remove project-local build outputs and generated cuda-oxide artifacts
+    Clean,
     /// Check that your environment is set up correctly
     Doctor,
     /// Build and cache the codegen backend
@@ -367,6 +370,10 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
         ),
         Commands::New { .. } => Err(
             "--materialize-cubin cannot be used with new because new does not compile device code"
+                .to_string(),
+        ),
+        Commands::Clean => Err(
+            "--materialize-cubin cannot be used with clean because clean does not compile device code"
                 .to_string(),
         ),
         Commands::Doctor => Err(
@@ -660,10 +667,14 @@ fn main() {
         Commands::New { name, async_mode } => {
             commands::scaffold_new(&name, async_mode);
         }
+        Commands::Clean => {
+            let ctx = commands::resolve_passive_context();
+            commands::clean(&ctx);
+        }
         Commands::Doctor => {
             // Side-effect-free resolver: doctor must never build the backend
             // (or clone anything) before it can diagnose the environment.
-            let ctx = commands::resolve_doctor_context();
+            let ctx = commands::resolve_passive_context();
             commands::doctor(&ctx);
         }
         Commands::Setup => {
@@ -738,6 +749,14 @@ mod tests {
     }
 
     #[test]
+    fn clean_parser_accepts_command_without_arguments() {
+        let cli =
+            Cli::try_parse_from(["cargo-oxide", "clean"]).expect("clean command should parse");
+
+        assert!(matches!(cli.command, Commands::Clean));
+    }
+
+    #[test]
     fn build_parser_preserves_nested_cargo_and_test_separators() {
         let args = strings(&[
             "cargo-oxide",
@@ -803,6 +822,7 @@ mod tests {
             &["cargo-oxide", "new", "demo", "--materialize-cubin"],
             &["cargo-oxide", "doctor", "--materialize-cubin"],
             &["cargo-oxide", "setup", "--materialize-cubin"],
+            &["cargo-oxide", "clean", "--materialize-cubin"],
             &[
                 "cargo-oxide",
                 "emit-ltoir",

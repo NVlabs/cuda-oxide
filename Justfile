@@ -35,11 +35,9 @@ doc-check:
 # Run all checks (fmt + clippy + test + docs)
 check: fmt-check clippy test doc-check
 
-# Clean local Rust build outputs and generated example IR/PTX artifacts
+# Clean project-local Cargo outputs and known cuda-oxide artifacts
 clean-artifacts:
-    cargo clean
-    (cd crates/rustc-codegen-cuda && cargo clean)
-    for manifest in crates/rustc-codegen-cuda/examples/*/Cargo.toml; do example_dir="$(dirname "$manifest")"; (cd "$example_dir" && cargo clean); rm -f "$example_dir"/*.ll "$example_dir"/*.ptx; done
+    cargo oxide clean
 
 # Build an example (compile only)
 build example:

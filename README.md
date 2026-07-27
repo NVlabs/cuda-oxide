@@ -117,6 +117,9 @@ cargo oxide run host_closure
 # Show full compilation pipeline (Rust MIR → dialect-mir → mem2reg → LLVM dialect → LLVM IR → PTX)
 cargo oxide pipeline vecadd
 
+# Remove project-local build outputs and generated artifacts
+cargo oxide clean
+
 # Run CUDA correctness checks
 cargo oxide sanitize vecadd --tool memcheck
 

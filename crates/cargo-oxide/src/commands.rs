@@ -253,15 +253,14 @@ pub fn resolve_context() -> Context {
     std::process::exit(1);
 }
 
-/// Resolve a context for `cargo oxide doctor` with NO side effects.
+/// Resolve a context for commands that must not build or fetch the backend.
 ///
 /// Identical discovery to [`resolve_context`], except the backend `.so` is
-/// only *located* (via [`backend::backend_so_candidate`]), never built and
-/// never cloned. A diagnostic command must be runnable on a machine where
-/// nothing is set up yet; gating it behind a multi-minute backend build (or
-/// a network clone) would hide the very problems it exists to report.
+/// only located via [`backend::backend_so_candidate`], never built and never
+/// cloned. Passive commands such as `doctor` and `clean` must remain usable
+/// without triggering backend setup or network access.
 /// `run`/`build`/`pipeline`/`setup` still build the backend on demand.
-pub fn resolve_doctor_context() -> Context {
+pub fn resolve_passive_context() -> Context {
     if let Some(workspace_root) = backend::find_workspace_root() {
         let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
         let examples_dir = codegen_crate.join("examples");
@@ -2670,7 +2669,7 @@ fn run_cargo_fmt(dir: &Path, check: bool) -> bool {
 ///
 /// Doctor itself needs neither the CUDA toolkit nor a driver: every check
 /// is a subprocess, a filesystem probe, or a runtime `dlopen`, and the
-/// caller resolves the context via [`resolve_doctor_context`] so nothing is
+/// caller resolves the context via [`resolve_passive_context`] so nothing is
 /// built first. This is what lets it diagnose a bare machine (issue #87).
 pub fn doctor(ctx: &Context) {
     println!("cargo-oxide environment check");
@@ -3052,6 +3051,232 @@ fn cuda_header_candidates(toolkit: &str, arch: &str) -> Vec<PathBuf> {
         candidates.push(base.join("targets").join(dir).join("include/cuda.h"));
     }
     candidates
+}
+
+// =============================================================================
+// Clean command
+// =============================================================================
+
+pub fn clean(ctx: &Context) {
+    match clean_context(ctx) {
+        Ok(summary) if summary.removed_directories == 0 && summary.removed_files == 0 => {
+            println!("Nothing to clean.");
+        }
+        Ok(summary) => {
+            println!(
+                "Removed {} directories and {} generated artifacts.",
+                summary.removed_directories, summary.removed_files
+            );
+        }
+        Err(error) => {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct CleanSummary {
+    removed_directories: usize,
+    removed_files: usize,
+}
+
+fn clean_context(ctx: &Context) -> Result<CleanSummary, String> {
+    let mut summary = CleanSummary::default();
+
+    if ctx.is_workspace {
+        clean_workspace(ctx, &mut summary)?;
+    } else {
+        clean_standalone_project(&ctx.workspace_root, &mut summary)?;
+    }
+
+    Ok(summary)
+}
+
+fn clean_standalone_project(project_dir: &Path, summary: &mut CleanSummary) -> Result<(), String> {
+    let manifest_path = project_dir.join("Cargo.toml");
+    let package_name = package_name_for_clean(&manifest_path)?;
+
+    if remove_local_target(project_dir)? {
+        summary.removed_directories += 1;
+    }
+
+    summary.removed_files += remove_generated_artifacts(project_dir, &package_name)?;
+
+    Ok(())
+}
+
+fn clean_workspace(ctx: &Context, summary: &mut CleanSummary) -> Result<(), String> {
+    if remove_local_target(&ctx.workspace_root)? {
+        summary.removed_directories += 1;
+    }
+
+    if remove_local_target(&ctx.codegen_crate)? {
+        summary.removed_directories += 1;
+    }
+
+    let entries = std::fs::read_dir(&ctx.examples_dir).map_err(|error| {
+        format!(
+            "could not read examples directory {}: {error}",
+            ctx.examples_dir.display()
+        )
+    })?;
+
+    let mut example_dirs = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read an entry in {}: {error}",
+                ctx.examples_dir.display()
+            )
+        })?;
+
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "could not inspect example entry {}: {error}",
+                entry.path().display()
+            )
+        })?;
+
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let example_dir = entry.path();
+        if example_dir.join("Cargo.toml").is_file() {
+            example_dirs.push(example_dir);
+        }
+    }
+
+    example_dirs.sort();
+
+    for example_dir in example_dirs {
+        clean_example(&example_dir, summary)?;
+    }
+
+    Ok(())
+}
+
+fn clean_example(example_dir: &Path, summary: &mut CleanSummary) -> Result<(), String> {
+    let manifest_path = example_dir.join("Cargo.toml");
+    let package_name = package_name_for_clean(&manifest_path)?;
+
+    if remove_local_target(example_dir)? {
+        summary.removed_directories += 1;
+    }
+
+    summary.removed_files += remove_generated_artifacts(example_dir, &package_name)?;
+
+    Ok(())
+}
+
+fn package_name_for_clean(manifest_path: &Path) -> Result<String, String> {
+    let source = std::fs::read_to_string(manifest_path).map_err(|error| {
+        format!(
+            "could not read manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+
+    let document: toml::Value = toml::from_str(&source).map_err(|error| {
+        format!(
+            "could not parse manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+
+    document
+        .get("package")
+        .and_then(|value| value.get("name"))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!(
+                "manifest {} is missing package.name",
+                manifest_path.display()
+            )
+        })
+}
+
+fn remove_local_target(project_dir: &Path) -> Result<bool, String> {
+    let target_dir = project_dir.join("target");
+
+    let metadata = match std::fs::symlink_metadata(&target_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(false);
+        }
+        Err(error) => {
+            return Err(format!(
+                "could not inspect {}: {error}",
+                target_dir.display()
+            ));
+        }
+    };
+
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "refusing to remove symlinked target directory {}",
+            target_dir.display()
+        ));
+    }
+
+    if !metadata.is_dir() {
+        return Err(format!(
+            "expected {} to be a directory",
+            target_dir.display()
+        ));
+    }
+
+    std::fs::remove_dir_all(&target_dir).map_err(|error| {
+        format!(
+            "could not remove target directory {}: {error}",
+            target_dir.display()
+        )
+    })?;
+
+    println!("Removed {}", target_dir.display());
+
+    Ok(true)
+}
+
+fn remove_generated_artifacts(project_dir: &Path, package_name: &str) -> Result<usize, String> {
+    let mut removed = 0;
+
+    for path in generated_artifact_paths(project_dir, package_name) {
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                continue;
+            }
+            Err(error) => {
+                return Err(format!("could not inspect {}: {error}", path.display()));
+            }
+        };
+
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "refusing to remove symlinked generated artifact {}",
+                path.display()
+            ));
+        }
+
+        if !metadata.is_file() {
+            return Err(format!(
+                "expected generated artifact {} to be a file",
+                path.display()
+            ));
+        }
+
+        std::fs::remove_file(&path)
+            .map_err(|error| format!("could not remove {}: {error}", path.display()))?;
+
+        println!("Removed {}", path.display());
+        removed += 1;
+    }
+
+    Ok(removed)
 }
 
 // =============================================================================
@@ -3928,23 +4153,32 @@ fn default_ltoir_path(example_dir: &Path, example: &str) -> PathBuf {
     example_dir.join(format!("{}.ltoir", artifact_stem(example)))
 }
 
+const GENERATED_ARTIFACT_SUFFIXES: &[&str] = &[
+    "ptx",
+    "ll",
+    "opt.ll",
+    "ltoir",
+    "cubin",
+    "target",
+    "options",
+    "cubin.target",
+];
+
+fn generated_artifact_paths(project_dir: &Path, package_name: &str) -> Vec<PathBuf> {
+    let stem = artifact_stem(package_name);
+
+    GENERATED_ARTIFACT_SUFFIXES
+        .iter()
+        .map(|suffix| project_dir.join(format!("{stem}.{suffix}")))
+        .collect()
+}
+
 /// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`, `.cubin`) from a
 /// previous run so we can verify the build produces fresh output.
 fn clean_generated_files(example_dir: &Path, example: &str) {
-    let stem = artifact_stem(example);
-    for ext in &[
-        "ptx",
-        "ll",
-        "opt.ll",
-        "ltoir",
-        "cubin",
-        "target",
-        "options",
-        "cubin.target",
-    ] {
-        let file = example_dir.join(format!("{}.{}", stem, ext));
+    for file in generated_artifact_paths(example_dir, example) {
         if file.exists() {
-            let _ = std::fs::remove_file(&file);
+            let _ = std::fs::remove_file(file);
         }
     }
 }
@@ -4474,6 +4708,154 @@ mod tests {
             b"persistent cache entry"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clean_removes_only_local_target_and_matching_artifacts() {
+        let root = unique_temp_dir("cargo_oxide_clean_standalone");
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "my-kernel"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        for suffix in GENERATED_ARTIFACT_SUFFIXES {
+            std::fs::write(root.join(format!("my_kernel.{suffix}")), b"generated").unwrap();
+        }
+
+        let unrelated_artifact = root.join("other_kernel.ptx");
+        std::fs::write(&unrelated_artifact, b"preserve").unwrap();
+
+        let cached_cubin =
+            root.join(".oxide-artifacts/ltoir-cubin-cache/v1/entries/key/image.cubin");
+        std::fs::create_dir_all(cached_cubin.parent().unwrap()).unwrap();
+        std::fs::write(&cached_cubin, b"persistent cache").unwrap();
+
+        let ctx = Context {
+            workspace_root: root.clone(),
+            codegen_crate: root.clone(),
+            examples_dir: root.clone(),
+            backend_so: root.join("unused-backend.so"),
+            is_workspace: false,
+            config: OxideConfig::default(),
+        };
+
+        let summary = clean_context(&ctx).unwrap();
+
+        assert_eq!(summary.removed_directories, 1);
+        assert_eq!(summary.removed_files, GENERATED_ARTIFACT_SUFFIXES.len());
+        assert!(!root.join("target").exists());
+
+        for suffix in GENERATED_ARTIFACT_SUFFIXES {
+            assert!(!root.join(format!("my_kernel.{suffix}")).exists());
+        }
+
+        assert_eq!(std::fs::read(&unrelated_artifact).unwrap(), b"preserve");
+        assert_eq!(std::fs::read(&cached_cubin).unwrap(), b"persistent cache");
+
+        let second_summary = clean_context(&ctx).unwrap();
+
+        assert_eq!(second_summary, CleanSummary::default());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_clean_removes_root_backend_and_example_targets() {
+        let root = unique_temp_dir("cargo_oxide_clean_workspace");
+        let codegen_crate = root.join("crates/rustc-codegen-cuda");
+        let examples_dir = codegen_crate.join("examples");
+        let example_dir = examples_dir.join("demo");
+
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::create_dir_all(codegen_crate.join("target/debug")).unwrap();
+        std::fs::create_dir_all(example_dir.join("target/debug")).unwrap();
+
+        std::fs::write(
+            example_dir.join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(example_dir.join("demo.ptx"), b"generated").unwrap();
+
+        let ctx = Context {
+            workspace_root: root.clone(),
+            codegen_crate: codegen_crate.clone(),
+            examples_dir,
+            backend_so: root.join("unused-backend.so"),
+            is_workspace: true,
+            config: OxideConfig::default(),
+        };
+
+        let summary = clean_context(&ctx).unwrap();
+
+        assert_eq!(summary.removed_directories, 3);
+        assert_eq!(summary.removed_files, 1);
+        assert!(!root.join("target").exists());
+        assert!(!codegen_crate.join("target").exists());
+        assert!(!example_dir.join("target").exists());
+        assert!(!example_dir.join("demo.ptx").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_refuses_symlinked_target_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_dir("cargo_oxide_clean_symlink");
+        let external = unique_temp_dir("cargo_oxide_clean_external");
+
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(external.join("sentinel"), b"preserve").unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "symlink-test"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        symlink(&external, root.join("target")).unwrap();
+
+        let ctx = Context {
+            workspace_root: root.clone(),
+            codegen_crate: root.clone(),
+            examples_dir: root.clone(),
+            backend_so: root.join("unused-backend.so"),
+            is_workspace: false,
+            config: OxideConfig::default(),
+        };
+
+        let error = clean_context(&ctx).unwrap_err();
+
+        assert!(error.contains("symlinked target directory"), "{error}");
+        assert_eq!(
+            std::fs::read(external.join("sentinel")).unwrap(),
+            b"preserve"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(external).unwrap();
     }
 
     #[test]
