@@ -49,7 +49,9 @@
 //! ```
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
-use crate::convert::types::{convert_type, get_type_size, validate_initialized_global_layout};
+use crate::convert::types::{
+    convert_type, get_type_size, mir_type_abi_align, validate_initialized_global_layout,
+};
 use crate::helpers;
 use dialect_mir::types::MirPtrType;
 use llvm_export::attributes::IntegerOverflowFlagsAttr;
@@ -74,6 +76,7 @@ use pliron::operation::Operation;
 use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apint::APInt;
+use pliron::value::Value;
 
 fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     pliron::create_error!(
@@ -91,7 +94,7 @@ pub(crate) fn convert_store(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
@@ -106,21 +109,31 @@ pub(crate) fn convert_store(
     if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
     }
-    copy_alignment(ctx, op, llvm_store.get_operation());
+    if let Some(align) = value_abi_align(ctx, operands_info, val) {
+        llvm_export::ops::set_op_alignment(ctx, llvm_store.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
 
-/// Copy the ABI alignment stamped on a MIR memory op onto its lowered LLVM op.
+/// Recover the `repr(align(N))` ABI alignment of `value` at conversion time.
 ///
-/// The alignment is stamped by the pre-pass in `lowering.rs` while types are
-/// still MIR; this helper transfers it to the newly created LLVM op so the
-/// exporter can emit `align N`.
-fn copy_alignment(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
-    if let Some(align) = llvm_export::ops::op_alignment(ctx, mir_op) {
-        llvm_export::ops::set_op_alignment(ctx, llvm_op, align);
-    }
+/// The alignment lives on MIR aggregate types (`abi_align`); the converted
+/// LLVM struct types cannot express over-alignment. The conversion driver may
+/// already have converted the value's type (block arguments are converted
+/// before any rewrite runs; replaced op results carry the new type), but it
+/// records every such change. So check the current type first, then walk the
+/// value's conversion history, newest first, for a MIR type that records an
+/// alignment.
+fn value_abi_align(ctx: &Context, operands_info: &OperandsInfo, value: Value) -> Option<u64> {
+    mir_type_abi_align(ctx, value.get_type(ctx)).or_else(|| {
+        operands_info
+            .lookup_operand_history(value)
+            .iter()
+            .rev()
+            .find_map(|ty| mir_type_abi_align(ctx, *ty))
+    })
 }
 
 fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
@@ -330,7 +343,12 @@ pub(crate) fn convert_load(
     if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_load.get_operation(), true);
     }
-    copy_alignment(ctx, op, llvm_load.get_operation());
+    // The loaded value's ABI alignment comes from this op's own result type,
+    // which is still the MIR type: result types are only converted by the
+    // op's own rewrite.
+    if let Some(align) = mir_type_abi_align(ctx, result_ty) {
+        llvm_export::ops::set_op_alignment(ctx, llvm_load.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
@@ -394,7 +412,11 @@ pub(crate) fn convert_alloca(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val);
-    copy_alignment(ctx, op, alloca.get_operation());
+    // The allocated type's ABI alignment comes from this op's own result
+    // pointee, which is still the MIR type at rewrite time.
+    if let Some(align) = mir_type_abi_align(ctx, mir_pointee) {
+        llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align as u32);
+    }
     copy_debug_local_variable(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
@@ -412,10 +434,11 @@ pub(crate) fn convert_ref(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let operand = op.deref(ctx).get_operand(0);
     let operand_ty = operand.get_type(ctx);
+    let abi_align = value_abi_align(ctx, operands_info, operand);
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let one_apint =
@@ -426,15 +449,19 @@ pub(crate) fn convert_ref(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, operand_ty, one_val);
-    // Propagate alignment stamped by the pre-pass (covers repr(align(N))
-    // structs). Without this, the synthesised alloca would be under-aligned
-    // relative to any loads/stores that claim the struct's true alignment.
-    copy_alignment(ctx, op, alloca.get_operation());
+    // Honour the referent's repr(align(N)) ABI alignment. Without this, the
+    // synthesised alloca would be under-aligned relative to any loads/stores
+    // that claim the struct's true alignment.
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, alloca.get_operation());
     let alloca_ptr = alloca.get_operation().deref(ctx).get_result(0);
 
     let store = llvm::StoreOp::new(ctx, operand, alloca_ptr);
-    copy_alignment(ctx, op, store.get_operation());
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, store.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, store.get_operation());
 
     rewriter.replace_operation_with_values(ctx, op, vec![alloca_ptr]);

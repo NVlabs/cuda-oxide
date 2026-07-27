@@ -358,11 +358,6 @@ pub fn lower_mir_to_llvm_with_options(
     // every kernel-to-helper requirement while the complete MIR call graph is
     // still available; function conversion removes that graph incrementally.
     lowering::propagate_kernel_dynamic_shared_alignments(ctx, module_op);
-    // Stamp repr(align(N)) ABI alignment onto memory ops while every value,
-    // including block arguments, still carries its MIR type. The conversion
-    // driver converts block-arg types before per-op rewrites run, so this
-    // cannot happen inside the conversion itself.
-    lowering::stamp_module_memory_op_alignments(ctx, module_op);
     let mut conversion = MirToLlvmConversionDriver {
         shared_globals: FxHashMap::default(),
         device_globals: FxHashMap::default(),
