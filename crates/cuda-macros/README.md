@@ -402,7 +402,7 @@ unsafe {
 }
 ```
 
-The surface supports up to 8 `out` operands, up to 16 `in` operands, and
+The surface supports up to 16 `out` operands, up to 16 `in` operands, and
 `clobber("memory")`. Every `out` constraint must be `=`-prefixed (e.g.
 `"=r"`); with two or more `out` operands the snippet returns a tuple under
 the hood, destructured into the output places in declaration order:
@@ -424,7 +424,7 @@ unsafe {
 
 `options(register_only)` requires an `out` operand and cannot be combined
 with clobbers. `options(may_diverge)` must be paired with `register_only`.
-More than 8 outputs, read-write operands, and the `"C"` constraint are not
+More than 16 outputs, read-write operands, and the `"C"` constraint are not
 implemented yet.
 
 ## Source Layout

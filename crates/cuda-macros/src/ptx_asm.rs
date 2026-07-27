@@ -12,7 +12,7 @@ use syn::{
 };
 
 const MAX_PTX_ASM_INPUTS: usize = 16;
-const MAX_PTX_ASM_OUTPUTS: usize = 8;
+const MAX_PTX_ASM_OUTPUTS: usize = 16;
 const REGISTER_ONLY_OPTION: &str = "register_only";
 const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
@@ -522,12 +522,19 @@ mod tests {
     #[test]
     fn rejects_too_many_outputs() {
         let input: PtxAsmInput = syn::parse_str(
-            r#""nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("=r") i"#,
+            r#""nop;",
+            out("=r") a, out("=r") b, out("=r") c, out("=r") d,
+            out("=r") e, out("=r") f, out("=r") g, out("=r") h,
+            out("=r") i, out("=r") j, out("=r") k, out("=r") l,
+            out("=r") m, out("=r") n, out("=r") o, out("=r") p,
+            out("=r") q"#,
         )
         .unwrap();
+
         let err = build_ptx_asm(input).unwrap_err();
+
         assert!(
-            err.to_string().contains("at most 8 output operands"),
+            err.to_string().contains("at most 16 output operands"),
             "unexpected error: {err}"
         );
     }
