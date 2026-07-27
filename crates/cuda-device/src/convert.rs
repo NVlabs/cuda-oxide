@@ -26,6 +26,10 @@ include!("generated/convert.rs");
 // wide global loads: reading weights as `u32`/`u64` and unpacking in registers
 // beats four scalar `f16` loads. Doing that inline at every call site is where
 // the manual `from_bits`/shift/mask arithmetic came from.
+//
+// Names follow this module's generated convention, `cvt_<dst>_<src>`: the
+// destination comes first, so `cvt_f32x2_f16x2` reads "two f32 from a packed
+// f16x2".
 
 /// Unpacks a packed `f16x2` into its two `f32` values, low half first.
 ///
@@ -70,6 +74,14 @@ pub fn cvt_f32_f16x2_hi(packed: u32) -> f32 {
 /// This is the inverse of [`cvt_rz_bf16x2_f32`]. `bf16` shares `f32`'s exponent
 /// range, so widening is an exact shift into the high half of the mantissa
 /// rather than a conversion.
+///
+/// # Warning
+///
+/// `cuda_device::tcgen05::cvt_f32x2_bf16x2` is a **different function** with
+/// the same identifier and the opposite direction: it packs two `f32` into a
+/// `bf16x2` `u32`. Its name comes from the LLVM `ff2bf16x2` record family,
+/// which is source-first, whereas names in this module are destination-first
+/// (`cvt_<dst>_<src>`).
 #[must_use]
 #[inline(always)]
 pub fn cvt_f32x2_bf16x2(packed: u32) -> (f32, f32) {
@@ -79,15 +91,34 @@ pub fn cvt_f32x2_bf16x2(packed: u32) -> (f32, f32) {
     )
 }
 
+/// Unpacks the low half of a packed `bf16x2` to `f32`.
+///
+/// Prefer [`cvt_f32x2_bf16x2`] when both halves are needed; this exists for the
+/// case where only one is, so the other conversion is not emitted at all.
+#[must_use]
+#[inline(always)]
+pub fn cvt_f32_bf16x2_lo(packed: u32) -> f32 {
+    f32::from_bits(packed << 16)
+}
+
+/// Unpacks the high half of a packed `bf16x2` to `f32`.
+///
+/// See [`cvt_f32_bf16x2_lo`].
+#[must_use]
+#[inline(always)]
+pub fn cvt_f32_bf16x2_hi(packed: u32) -> f32 {
+    f32::from_bits(packed & 0xFFFF_0000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Round-trips through the generated packer so the halves cannot silently
-    /// swap: `cvt_f16x2_f32` documents the first argument as the low half.
+    /// Pins the half ordering so the halves cannot silently swap:
+    /// `cvt_f16x2_f32` documents the first argument as the low half.
     ///
-    /// The packer is a device intrinsic and panics on the host, so the packed
-    /// words here are written out by hand instead.
+    /// The generated packer is device-only and panics on the host, so the
+    /// packed words here are hand-written constants rather than packer output.
     #[test]
     fn unpacks_halves_in_the_documented_order() {
         // 1.0 = 0x3C00, 2.0 = 0x4000 in f16.
@@ -118,12 +149,27 @@ mod tests {
         let (lo, hi) = cvt_f32x2_bf16x2(packed);
         assert_eq!(lo, 1.0);
         assert_eq!(hi, 2.0);
+        assert_eq!(cvt_f32_bf16x2_lo(packed), 1.0);
+        assert_eq!(cvt_f32_bf16x2_hi(packed), 2.0);
     }
 
-    /// Every f16 bit pattern that is not a NaN must survive the trip, including
-    /// subnormals and both zeroes.
+    /// Same guard as the f16 sign test: a negative half must not bleed into
+    /// the other half through the shift or the mask.
     #[test]
-    fn every_finite_f16_pattern_round_trips() {
+    fn bf16_sign_bits_stay_in_their_own_half() {
+        // -1.0 = 0xBF80 in the high half, 1.0 = 0x3F80 in the low half.
+        let packed = 0xBF80_3F80;
+        let (lo, hi) = cvt_f32x2_bf16x2(packed);
+        assert_eq!(lo, 1.0);
+        assert_eq!(hi, -1.0);
+        assert_eq!(cvt_f32_bf16x2_lo(packed), 1.0);
+        assert_eq!(cvt_f32_bf16x2_hi(packed), -1.0);
+    }
+
+    /// Every f16 bit pattern that is not a NaN must survive the trip,
+    /// including subnormals, both zeroes, and both infinities.
+    #[test]
+    fn every_non_nan_f16_pattern_round_trips() {
         for bits in 0u16..=u16::MAX {
             let expected = f16::from_bits(bits);
             if expected.is_nan() {
