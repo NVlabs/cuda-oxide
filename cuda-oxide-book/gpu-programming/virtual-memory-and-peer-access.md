@@ -32,6 +32,7 @@ The corresponding implementations are:
 
 * [`crates/cuda-core/src/vmm.rs`](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-core/src/vmm.rs)
 * [`crates/cuda-core/src/peer.rs`](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-core/src/peer.rs)
+:::
 
 ## VMM and P2P solve different problems
 
