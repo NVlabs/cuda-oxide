@@ -33,9 +33,13 @@ PASS
 and combines them with distinct weights, so a wrong chunk boundary or a
 permutation inside a chunk produces a wrong value rather than passing.
 
-`exact_div_direct` exercises the intrinsic away from `as_chunks`, on both a
-signed and an unsigned dividend, since the lowering picks `sdiv` or `udiv` from
-the operand's signedness.
+`exact_div_direct` calls `core::intrinsics::exact_div` itself (via
+`#![feature(core_intrinsics)]`), away from `as_chunks`. The lowering picks
+`udiv` or `sdiv` from the operand's signedness, so the kernel covers both
+arms: an unsigned `u64` division (`((i + 1) * 256) / 4`) and a signed `i64`
+division with a negative dividend (`-((i + 1) * 128) / 4`). Every dividend is
+a nonzero exact multiple of its divisor; anything else is undefined behaviour
+under the intrinsic's contract.
 
 ## Note on codegen
 
