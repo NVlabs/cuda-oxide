@@ -16,6 +16,7 @@ pub mod async_copy;
 pub mod atomic;
 pub mod barrier;
 pub mod bf16x2;
+pub mod block;
 pub mod clc;
 pub mod cluster;
 pub mod config;
