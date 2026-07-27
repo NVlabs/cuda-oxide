@@ -91,6 +91,111 @@ returns `CUDA_ERROR_ASSERT`.
 
 ---
 
+## Compile-time policy configuration
+
+```rust
+use cuda_device::config::{
+    Atom, AtomKind, AtomSpec, Block, Cluster, ColumnMajor, Global, Layout,
+    MemorySpace, Policy, PolicyId, Register, RowMajor, Scope, Shape, Shape1,
+    Shape2, Shape3, Shared, TensorMemory, Thread, Tile, TileSpec, Warp,
+    WarpGroup,
+};
+```
+
+Policies describe compile-time kernel configurations using zero-sized Rust
+types. A generic kernel is monomorphized once for every concrete policy type;
+the policy is not passed as a runtime kernel argument.
+
+```rust
+trait VectorPolicy: Policy {
+    type BlockTile: TileSpec;
+    type ElementAtom: AtomSpec;
+
+    const MAX_THREADS: u32;
+    const MIN_BLOCKS: u32;
+    const UNROLL: u32;
+}
+
+enum SmallTilePolicy {}
+
+impl Policy for SmallTilePolicy {
+    const ID: PolicyId =
+        PolicyId::new(0x706f_6c69_6379_5f63, 1);
+}
+```
+
+| API                  | Description                                                                             |
+| :------------------- |:----------------------------------------------------------------------------------------|
+| `Policy`             | Minimal base trait for a named compile-time kernel policy                               |
+| `PolicyId`           | Explicit stable identity containing a project-specific namespace and policy-local value |
+| `Shape`              | Trait exposing a static shape's rank, extents, and checked element count                |
+| `Shape1<D0>`         | One-dimensional compile-time shape                                                      |
+| `Shape2<D0, D1>`     | Two-dimensional compile-time shape                                                      |
+| `Shape3<D0, D1, D2>` | Three-dimensional compile-time shape                                                    |
+| `Tile<S, L, M, Q>`   | Metadata-only description combining shape, layout, memory space, and execution scope    |
+| `TileSpec`           | Type-level access to the components of a tile description                               |
+| `Atom<K, S, Q>`      | Metadata-only description of an operation, logical footprint, and participating threads |
+| `AtomKind`           | Open marker trait identifying a domain-specific operation                               |
+| `AtomSpec`           | Type-level access to an atom's operation kind, shape, and scope                         |
+| `Layout`             | Open trait for memory-order metadata                                                    |
+| `RowMajor`           | Layout whose rightmost coordinate is contiguous                                         |
+| `ColumnMajor`        | Layout whose leftmost coordinate is contiguous                                          |
+| `MemorySpace`        | Open trait describing a CUDA storage location                                           |
+| `Global`             | Device global-memory marker                                                             |
+| `Shared`             | Per-block shared-memory marker                                                          |
+| `Register`           | Thread-local register-storage marker                                                    |
+| `TensorMemory`       | Hardware tensor-memory marker                                                           |
+| `Scope`              | Open trait describing the threads cooperating on an operation                           |
+| `Thread`             | Single-thread execution scope                                                           |
+| `Warp`               | Single-warp execution scope                                                             |
+| `WarpGroup`          | Hardware warpgroup execution scope                                                      |
+| `Block`              | Thread-block execution scope                                                            |
+| `Cluster`            | Thread-block-cluster execution scope                                                    |
+
+`Tile` and `Atom` are descriptions only. They do not allocate storage, provide
+pointer access, emit GPU instructions, synchronize threads, or establish a
+safety property. A domain-specific policy trait gives those descriptors
+meaning and validates supported combinations.
+
+`PolicyId` values are supplied explicitly by the policy library. They are not
+derived from Rust `TypeId`, type names, compiler mangling, or hashes. Keep an ID
+stable while the policy's generated behavior remains unchanged and allocate a
+new value when that behavior changes.
+
+Policy-associated constants can currently be used in compile-time
+`launch_bounds` and partial-loop `unroll` expressions:
+
+```rust
+use cuda_device::{kernel, launch_bounds};
+
+#[kernel]
+#[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+pub unsafe fn transform<P: VectorPolicy>(
+    input: *const u32,
+    output: *mut u32,
+    count: u32,
+) {
+    let mut lane = 0;
+
+    #[unroll(P::UNROLL)]
+    while lane < count {
+        // ...
+        lane += 1;
+    }
+}
+```
+
+Generic policy expressions require `#![feature(generic_const_exprs)]`.
+`launch_contract` fields, cluster dimensions, and dynamic shared-memory sizes
+currently remain literal.
+
+See the
+[`policy_config`](https://github.com/NVlabs/cuda-oxide/tree/main/crates/rustc-codegen-cuda/examples/policy_config)
+example for two concrete policies that generate independent PTX
+specializations and policy-specific prepared launches.
+
+---
+
 ## Thread Identification
 
 ```rust
@@ -447,6 +552,7 @@ debug::prof_trigger::<7>();     // Nsight profiler trigger
 | Module               | Description                                                      | Min SM   |
 |:---------------------|:-----------------------------------------------------------------|:---------|
 | `thread`             | Thread/block IDs, `index_1d`, `sync_threads`                     | All      |
+| `config`             | Compile-time policies, shapes, tiles, atoms, layouts, memory spaces, and scopes | All |
 | `disjoint`           | `DisjointSlice<T>` — typed writes completed by a launch proof    | All      |
 | `shared`             | `SharedArray<T, N>`, `DynamicSharedArray<T>`                     | All      |
 | `warp`               | Shuffle, vote, match, lane/warp ID                               | All      |
