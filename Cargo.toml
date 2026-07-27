@@ -51,7 +51,9 @@ repository = "https://github.com/NVlabs/cuda-oxide.git"
 # resolves to two distinct crates and types stop unifying.
 pliron = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854" }
 pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854" }
-pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854", default-features = false }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854", default-features = false, features = [
+    "std",
+] }
 
 # Internal crates
 llvm-export = { path = "crates/llvm-export" }
