@@ -36,6 +36,7 @@ pub mod shared;
 pub mod tcgen05;
 pub mod thread;
 pub mod tma;
+pub mod uniform;
 pub mod view;
 pub mod warp;
 pub mod wgmma;
@@ -74,6 +75,9 @@ pub use tcgen05::{
 };
 pub use thread::*;
 pub use tma::TmaDescriptor;
+#[doc(hidden)]
+pub use uniform::__LaunchContractUniform;
+pub use uniform::Uniform;
 pub use view::{
     ColView32, ColViewIter32, InBounds32, InBoundsMut32, LinearTiles, LocalIndex32, MatrixView32,
     RowMajorTiles, RowView32, RowViewIter32, RuntimeRowMajorTiles, RuntimeTileMut32,

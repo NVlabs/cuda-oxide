@@ -21,6 +21,7 @@
 
 use crate::DisjointSlice;
 use crate::thread::{Index1D, ThreadCoord2D32, ThreadIndex32};
+use crate::uniform::Uniform;
 use core::marker::PhantomData;
 use core::mem::size_of;
 
@@ -1088,29 +1089,38 @@ impl<'a, T, const ROWS: usize, const COLS: usize>
     /// Zero-sized element types are rejected, as for every mutable view:
     /// distinct threads would otherwise share one address.
     ///
-    /// # Safety
+    /// # Why the stride is a [`Uniform<u32>`]
     ///
-    /// `stride` must be the same value in **every** thread of the launch, and
-    /// it must be the row width actually used for this slice. Passing a
-    /// kernel scalar argument (such as `n`) satisfies this automatically:
-    /// every thread reads the same argument. The danger is a stride computed
-    /// per thread. Two threads that disagree about the row width describe
-    /// two different grids over the same memory, and their "disjoint" tiles
-    /// can land on the same elements. With 1x1 tiles: thread `(1, 0)` with
-    /// stride 5 resolves flat index `1*5 + 0 = 5`, while thread `(0, 5)`
-    /// with stride 100 resolves `0*100 + 5 = 5`. Same element, two `&mut`, a
-    /// data race. This is the same obligation as
-    /// [`crate::thread::index_2d_runtime`]; when the row width is known at
-    /// compile time, prefer the fully safe [`tile_2d32`], which makes a
-    /// mismatch a type error.
+    /// Two threads that disagree about the row width describe two different
+    /// grids over the same memory, and their "disjoint" tiles can land on the
+    /// same elements. With 1x1 tiles: thread `(1, 0)` with stride 5 resolves
+    /// flat index `1*5 + 0 = 5`, while thread `(0, 5)` with stride 100
+    /// resolves `0*100 + 5 = 5`. Same element, two `&mut`, a data race.
+    ///
+    /// A [`Uniform<u32>`] rules that out. Its only safe source is a kernel
+    /// scalar parameter, which the host marshals once into the launch packet,
+    /// so every thread reads the same value. Under a uniform stride the
+    /// `last_col < stride` check below keeps each tile inside one logical row,
+    /// which makes the coordinate-to-offset mapping injective and the tiles of
+    /// distinct threads disjoint.
+    ///
+    /// The stride still has to be the row width this slice actually uses for
+    /// the kernel to compute the intended result. That is a correctness
+    /// requirement rather than a safety one: a uniform stride that misdescribes
+    /// the layout gives wrong answers inside the slice, never aliasing or an
+    /// out-of-bounds access.
+    ///
+    /// When the row width is known at compile time, prefer [`tile_2d32`],
+    /// which makes a mismatch a type error.
     ///
     /// [`tile_2d32`]: DisjointSlice::tile_2d32
     #[inline(always)]
-    pub unsafe fn tile_2d32_rt<'kernel>(
+    pub fn tile_2d32_rt<'kernel>(
         &mut self,
         thread: ThreadCoord2D32<'kernel>,
-        stride: u32,
+        stride: Uniform<u32>,
     ) -> Option<RuntimeTileMut32<'_, T, ROWS, COLS>> {
+        let stride = stride.get();
         let start = checked_runtime_tile_start::<T, ROWS, COLS>(
             thread.row(),
             thread.col(),
@@ -1124,7 +1134,7 @@ impl<'a, T, const ROWS: usize, const COLS: usize>
         // SAFETY: the scalar-only helper checked the complete rectangle.
         // The `&mut self` borrow keeps at most one tile live per thread, and
         // a re-minted coordinate re-derives the same rectangle. Across
-        // threads, the caller asserts a launch-uniform pitch, under which
+        // threads, `Uniform<u32>` proves a launch-uniform pitch, under which
         // distinct hardware coordinates map to disjoint row and column bands.
         Some(unsafe {
             RuntimeTileMut32::from_checked_ptr(self.as_mut_ptr().add(start as usize), stride)

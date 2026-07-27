@@ -760,6 +760,11 @@ struct CudaModuleParam {
     mutable_slice: bool,
     disjoint_slice_ty: Option<Type>,
     disjoint_slice_elem: Option<TokenStream2>,
+    /// Declared type and carried scalar of a `Uniform<T>` parameter, used to
+    /// bound the generated impl by the sealed proof trait so a local type also
+    /// named `Uniform` cannot borrow the scalar host ABI.
+    uniform_ty: Option<Type>,
+    uniform_scalar: Option<TokenStream2>,
     /// Integer classification of a scalar parameter's declared type, used to
     /// decide which scalars may appear in `requires` relations. Always
     /// `Other` for non-scalar parameters.
@@ -788,6 +793,15 @@ enum ScalarIntClass {
 }
 
 fn scalar_int_class(ty: &Type) -> ScalarIntClass {
+    // A `Uniform<T>` parameter is marshalled as `T` and is evaluated as `T` on
+    // the host, so a relation over it has the same widening behaviour as one
+    // over the bare scalar.
+    if let Some(scalar) = cuda_module_uniform_scalar(ty)
+        && let Ok(scalar) = syn::parse2::<Type>(scalar)
+    {
+        return scalar_int_class(&scalar);
+    }
+
     let Type::Path(type_path) = ty else {
         return ScalarIntClass::Other;
     };
@@ -1325,6 +1339,9 @@ fn cuda_module_kernel(
     if let Some(contract) = launch_contract.as_ref() {
         add_cuda_module_disjoint_contract_bounds(&mut generics, &params, contract.domain);
     }
+    // A `Uniform` parameter carries its proof with or without a launch
+    // contract, so this bound is not conditional on one.
+    add_cuda_module_uniform_bounds(&mut generics, &params);
     let is_generic = has_codegen_generics(&item_fn.sig.generics);
     let cfg_attrs = cuda_module_cfg_attrs(&item_fn.attrs)?;
     let mut effective_cfg_attrs = ancestor_cfg_attrs.to_vec();
@@ -2532,6 +2549,10 @@ fn cuda_module_param_from_typed(pat_type: &syn::PatType) -> syn::Result<CudaModu
     let disjoint_slice_ty = disjoint_slice_elem
         .as_ref()
         .map(|_| pat_type.ty.as_ref().clone());
+    let uniform_scalar = cuda_module_uniform_scalar(&pat_type.ty);
+    let uniform_ty = uniform_scalar
+        .as_ref()
+        .map(|_| pat_type.ty.as_ref().clone());
     Ok(CudaModuleParam {
         name,
         sync_host_ty,
@@ -2540,6 +2561,8 @@ fn cuda_module_param_from_typed(pat_type: &syn::PatType) -> syn::Result<CudaModu
         mutable_slice,
         disjoint_slice_ty,
         disjoint_slice_elem,
+        uniform_ty,
+        uniform_scalar,
         scalar_int: scalar_int_class(&pat_type.ty),
     })
 }
@@ -2582,6 +2605,17 @@ fn cuda_module_host_type(
         ));
     }
 
+    // A `Uniform<T>` parameter is marshalled exactly like `T`. The host takes
+    // the bare scalar because the host is what makes the value uniform: one
+    // marshalled value reaches every thread of the launch.
+    if let Some(scalar) = cuda_module_uniform_scalar(ty) {
+        return Ok((
+            quote! { #scalar },
+            quote! { #scalar },
+            CudaModuleParamMarshal::Scalar,
+        ));
+    }
+
     if matches!(ty, Type::Reference(_)) {
         return Err(syn::Error::new_spanned(
             ty,
@@ -2605,6 +2639,31 @@ fn cuda_module_slice_elem(ty: &Type) -> Option<(TokenStream2, bool)> {
     };
     let elem = &slice.elem;
     Some((quote! { #elem }, type_ref.mutability.is_some()))
+}
+
+/// Scalar carried by a `Uniform<T>` kernel parameter, if the type is spelled
+/// that way.
+///
+/// The host method takes the bare `T`: the host is the source of the
+/// uniformity proof, since it marshals one value into the launch packet for
+/// the whole grid. `Uniform<T>` is `#[repr(transparent)]`, so the launch packet
+/// is byte-identical either way.
+fn cuda_module_uniform_scalar(ty: &Type) -> Option<TokenStream2> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Uniform" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let scalar = args.args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    })?;
+    Some(quote! { #scalar })
 }
 
 fn cuda_module_disjoint_slice_elem(ty: &Type) -> Option<TokenStream2> {
@@ -2651,6 +2710,22 @@ fn add_cuda_module_disjoint_contract_bounds(
         generics.make_where_clause().predicates.push(parse_quote! {
             for<#bound_lifetime> #device_ty:
                 ::cuda_device::__LaunchContractDisjointSlice<#element_ty, #domain>
+        });
+    }
+}
+
+/// Requires every `Uniform<T>` parameter to be cuda-device's own type.
+///
+/// The host ABI for these parameters is chosen from the spelling `Uniform<T>`,
+/// so without this bound a local type of the same name would be marshalled as
+/// a bare `T` while presenting whatever layout it liked.
+fn add_cuda_module_uniform_bounds(generics: &mut syn::Generics, params: &[CudaModuleParam]) {
+    for param in params {
+        let (Some(device_ty), Some(scalar_ty)) = (&param.uniform_ty, &param.uniform_scalar) else {
+            continue;
+        };
+        generics.make_where_clause().predicates.push(parse_quote! {
+            #device_ty: ::cuda_device::__LaunchContractUniform<#scalar_ty>
         });
     }
 }
@@ -5773,6 +5848,8 @@ fn requires_params_from_inputs(
             mutable_slice: false,
             disjoint_slice_ty: None,
             disjoint_slice_elem: None,
+            uniform_ty: None,
+            uniform_scalar: None,
             scalar_int: scalar_int_class(ty),
         });
         params.push(param);

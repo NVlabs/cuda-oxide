@@ -250,6 +250,47 @@ runtime strides have the same type. If you can pin the stride at compile
 time, prefer `index_2d::<S>()`. If you can't, the `unsafe` keyword on
 `index_2d_runtime` is the marker that the safety obligation is yours.
 
+#### Discharging uniformity with `Uniform<T>`
+
+The *launch* establishes "every thread passed the same value": the host
+marshals one scalar into the launch packet, and every thread of every block
+reads those same bytes. A kernel body has no comparable way to establish it
+about one of its own locals.
+
+`Uniform<T>` is that fact as a type. Declare the parameter and the obligation is
+discharged by the kernel ABI:
+
+```rust
+#[kernel(launch_context = lc)]
+#[launch_contract(domain = 2, coordinates = u32, block = (16, 16, 1))]
+pub fn write_c(n: Uniform<u32>, mut c: DisjointSlice<f32, RuntimeRowMajorTiles<1, 1>>) {
+    let coord = thread::coord_2d_u32(lc);
+    // No `unsafe`: `n` proves its own launch-uniformity.
+    if let Some(mut cell) = c.tile_2d32_rt(coord, n) {
+        cell.at_const::<0, 0>().write(1.0);
+    }
+}
+```
+
+The host method still takes a plain `u32`; `#[cuda_module]` wraps it, and
+`#[repr(transparent)]` keeps the launch packet byte-identical. There is no
+constructor, so device code cannot promote a per-thread value into a witness.
+`Uniform::new_unchecked` remains for a value proven uniform some other way, and
+`block_dim_x()` and its siblings return witnesses directly, since a launch has
+one block shape.
+
+Why this is enough for `tile_2d32_rt`: under a uniform stride the
+`last_col < stride` check keeps each tile inside one logical row, which makes
+the coordinate-to-offset mapping injective, so distinct threads own disjoint
+elements. Two threads disagreeing about the pitch is exactly the case that
+breaks it. With 1x1 tiles, thread `(1, 0)` at stride 5 resolves flat index 5,
+and thread `(0, 5)` at stride 100 also resolves 5: one element, two `&mut`.
+
+The stride still has to be the row width the buffer actually uses for the
+kernel to compute the intended result. That is a correctness requirement rather
+than a safety one; a uniform stride that misdescribes the layout gives wrong
+answers inside the slice, never aliasing or an out-of-bounds access.
+
 ### The GEMM pattern
 
 For const-stride 2D kernels (the common case -- tiled GEMM, stencil

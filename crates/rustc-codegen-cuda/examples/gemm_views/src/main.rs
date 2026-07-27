@@ -16,7 +16,7 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig2D};
 use cuda_device::{
-    ColView32, DisjointSlice, MatrixView32, RowView32, RuntimeRowMajorTiles, SharedArray,
+    ColView32, DisjointSlice, MatrixView32, RowView32, RuntimeRowMajorTiles, SharedArray, Uniform,
     cuda_module, kernel, launch_bounds, launch_contract, thread,
 };
 
@@ -84,7 +84,7 @@ mod kernels {
         requires = (k >= 1, a.len() >= m * k, b.len() >= k * n, c.len() >= m * n))]
     pub fn sgemm_naive_views(
         m: u32,
-        n: u32,
+        n: Uniform<u32>,
         k: u32,
         alpha: f32,
         a: &[f32], // M x K matrix
@@ -96,12 +96,12 @@ mod kernels {
         let row = coord.row();
         let col = coord.col();
         // No barriers in this kernel, so out-of-range threads may leave early.
-        if row >= m || col >= n {
+        if row >= m || col >= n.get() {
             return;
         }
 
         let a_mat = MatrixView32::new(a, k);
-        let b_mat = MatrixView32::new(b, n);
+        let b_mat = MatrixView32::new(b, n.get());
         // The `requires` contract proves the buffer sizes and `k >= 1` on
         // the host, so for a contracted launch every proof below succeeds and
         // the beta epilogue always runs.
@@ -113,9 +113,9 @@ mod kernels {
             for (x, y) in pair {
                 sum += x * y;
             }
-            // SAFETY: `n` is a kernel scalar argument, so every thread of the
-            // launch passes the same value, and `n` is C's actual row width.
-            if let Some(mut cell) = unsafe { c.tile_2d32_rt(coord, n) } {
+            // `n` is a `Uniform<u32>`, so its launch-uniformity is proven by
+            // the kernel ABI and no `unsafe` is needed here.
+            if let Some(mut cell) = c.tile_2d32_rt(coord, n) {
                 let previous = cell.at_const::<0, 0>().read();
                 cell.at_const::<0, 0>().write(alpha * sum + beta * previous);
             }
@@ -206,7 +206,7 @@ mod kernels {
         requires = (k >= 1, a.len() >= m * k, b.len() >= k * n, c.len() >= m * n))]
     pub fn sgemm_tiled_views(
         m: u32,
-        n: u32,
+        n: Uniform<u32>,
         k: u32,
         alpha: f32,
         a: &[f32], // M x K matrix
@@ -225,7 +225,7 @@ mod kernels {
         let ty = thread::threadIdx_y();
 
         let a_mat = MatrixView32::new(a, k);
-        let b_mat = MatrixView32::new(b, n);
+        let b_mat = MatrixView32::new(b, n.get());
         let a_row = a_mat.row(row, k).unwrap_or(RowView32::empty());
         let b_col = b_mat.col(col, k).unwrap_or(ColView32::empty());
 
@@ -263,9 +263,9 @@ mod kernels {
 
         // Epilogue after the final barrier: one rectangle proof for this
         // thread's C cell. Out-of-range threads get `None` and simply skip.
-        // SAFETY: `n` is a kernel scalar argument, so every thread of the
-        // launch passes the same value, and `n` is C's actual row width.
-        if let Some(mut cell) = unsafe { c.tile_2d32_rt(coord, n) } {
+        // `n` is a `Uniform<u32>`, so its launch-uniformity is proven by the
+        // kernel ABI and no `unsafe` is needed here.
+        if let Some(mut cell) = c.tile_2d32_rt(coord, n) {
             let previous = cell.at_const::<0, 0>().read();
             cell.at_const::<0, 0>().write(alpha * sum + beta * previous);
         }

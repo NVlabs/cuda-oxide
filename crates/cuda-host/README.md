@@ -73,7 +73,14 @@ Kernel parameters are mapped into host launch parameters:
 | `&[T]` | `&DeviceBuffer<T>` |
 | `&mut [T]` | `&mut DeviceBuffer<T>` |
 | `DisjointSlice<T>` | `&mut DeviceBuffer<T>` |
+| `Uniform<T>` | `T` |
 | `Copy` scalar, struct, closure, or raw pointer | unchanged |
+
+A `Uniform<T>` parameter takes the bare scalar on the host because the host is
+what makes the value uniform: one marshalled value reaches every thread of the
+launch. The device side receives the witness, which is what device APIs needing
+a launch-uniform scalar (such as `DisjointSlice::tile_2d32_rt`) require in place
+of an `unsafe` assertion.
 
 Because the launches are ordinary methods, rust-analyzer and rustc can complete
 kernel names, show argument names, and type-check arguments before the program
