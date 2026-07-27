@@ -904,13 +904,13 @@ mod predication_tests {
         while start < buf {
             match clip(start, n, logical, buf) {
                 Clip::Full => {
-                    for i in start..start + n {
-                        claims[i] += 1;
+                    for c in &mut claims[start..start + n] {
+                        *c += 1;
                     }
                 }
                 Clip::Partial(len) => {
-                    for i in start..start + len {
-                        claims[i] += 1;
+                    for c in &mut claims[start..start + len] {
+                        *c += 1;
                     }
                 }
                 Clip::None => {}
