@@ -456,14 +456,15 @@ The VMM wrapper types own CUDA resources through RAII:
 The dependency order is:
 
 ```text
-PhysicalAllocation
-        ^
-        |
-VirtualReservation
-        ^
-        |
-Mapping
+PhysicalAllocation   VirtualReservation
+        ^                    ^
+         \                  /
+          \                /
+               Mapping
 ```
+
+A `Mapping` consumes one `PhysicalAllocation` and one `VirtualReservation`,
+so both must outlive it.
 
 Destroy resources in the reverse order:
 
