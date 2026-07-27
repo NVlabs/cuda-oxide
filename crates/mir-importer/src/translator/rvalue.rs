@@ -1888,6 +1888,25 @@ pub fn translate_operand(
                 );
             }
 
+            // A fully-uninitialized constant allocation (`MaybeUninit::uninit()`
+            // and similar: every byte uninit, no provenance) has no defined
+            // bytes to materialize for any type; its value is `undef`.
+            if let ConstantKind::Allocated(alloc) = constant.const_.kind()
+                && !alloc.bytes.is_empty()
+                && alloc.bytes.iter().all(|b| b.is_none())
+                && alloc.provenance.ptrs.is_empty()
+            {
+                use dialect_mir::ops::MirUndefOp;
+                let op = MirUndefOp::new(ctx, const_ty_ptr).get_operation();
+                op.deref_mut(ctx).set_loc(loc);
+                if let Some(prev) = prev_op {
+                    op.insert_after(ctx, prev);
+                } else {
+                    op.insert_at_front(block_ptr, ctx);
+                }
+                return Ok((op.deref(ctx).get_result(0), Some(op)));
+            }
+
             // Check if this is a struct type (non-ZST)
             // For struct constants, we need to construct the struct from its field values.
             let is_struct = const_ty_ptr
