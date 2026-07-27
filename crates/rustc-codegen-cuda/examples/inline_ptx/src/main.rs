@@ -34,6 +34,30 @@ mod kernels {
         }
     }
 
+    #[kernel]
+    pub fn inline_ptx_c_constraint_kernel(mut out: DisjointSlice<u64>) {
+        if let Some((slot, idx)) = out.get_mut_indexed() {
+            const MODE: &[u8; 6] = b".wide\0";
+
+            let x = idx.get() as u32 + 65_537;
+            let y = idx.get() as u32 + 3;
+            let product: u64;
+
+            unsafe {
+                ptx_asm!(
+                "mul%1.u32 %0, %2, %3;",
+                out("=l") product,
+                in("C") MODE,
+                in("r") x,
+                in("r") y,
+                options(register_only),
+            );
+            }
+
+            *slot = product;
+        }
+    }
+
     /// Multi-output `ptx_asm!`: one asm block yields both the sum and the
     /// product of two thread-dependent values. The asymmetric data flow
     /// (sum != product) catches swapped register binding between the two
@@ -122,6 +146,29 @@ fn main() {
             );
             std::process::exit(1);
         }
+    }
+
+    let mut products_dev = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
+
+    // SAFETY: launch shape/resources match the kernel; the output buffer covers
+    // every thread-dependent access.
+    unsafe {
+        module.inline_ptx_c_constraint_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &mut products_dev,
+        )
+    }
+        .expect("C-constraint kernel launch failed");
+
+    let products = products_dev.to_host_vec(&stream).unwrap();
+
+    for (i, got) in products.iter().copied().enumerate() {
+        let x = i as u64 + 65_537;
+        let y = i as u64 + 3;
+        let expected = x * y;
+
+        assert_eq!(got, expected, "C-constraint mismatch at {i}");
     }
 
     println!("SUCCESS: inline PTX results are correct");

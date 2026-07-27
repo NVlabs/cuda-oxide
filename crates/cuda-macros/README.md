@@ -374,10 +374,11 @@ gpu_printf!("thread %d: val = %f\n", tid as i32, val as f64);
 ## `ptx_asm!` -- Inline PTX
 
 Supports CUDA inline PTX with `%0` operands, `in` / `out` operands, CUDA
-register constraints `"h"`, `"r"`, `"l"`, `"q"`, `"f"`, and `"d"`, and
-immediate integer constraint `"n"`. The template follows CUDA's `%` convention
-(`%0` operands, `%%laneid` literal registers), and `$` labels can be written
-normally. For the source syntax, see CUDA's
+register constraints `"h"`, `"r"`, `"l"`, `"q"`, `"f"`, and `"d"`,
+immediate integer constraint `"n"`, and compile-time string constraint `"C"`.
+The template follows CUDA's `%` convention (`%0` operands, `%%laneid` literal
+registers), and `$` labels can be written normally. For the source syntax, see
+CUDA's
 [Inline PTX Assembly](https://docs.nvidia.com/cuda/inline-ptx-assembly/index.html)
 reference.
 
@@ -422,10 +423,32 @@ unsafe {
 }
 ```
 
+```rust
+const MUL_MODE: &[u8; 6] = b".wide\0";
+
+let product: u64;
+
+unsafe {
+    ptx_asm!(
+        "mul%1.u32 %0, %2, %3;",
+        out("=l") product,
+        in("C") MUL_MODE,
+        in("r") lhs,
+        in("r") rhs,
+        options(register_only),
+    );
+}
+```
+
+`in("C")` requires a compile-time byte string containing valid UTF-8. The
+referenced operand is substituted directly into the PTX template and does not
+become a runtime LLVM inline-assembly operand. One trailing zero byte is
+removed when present. Constraint modifiers such as `"=C"` and `"+C"` are not
+supported. `"C"` operands count toward the 16-input limit.
+
 `options(register_only)` requires an `out` operand and cannot be combined
 with clobbers. `options(may_diverge)` must be paired with `register_only`.
-More than 8 outputs, read-write operands, and the `"C"` constraint are not
-implemented yet.
+More than 8 outputs and read-write operands are not implemented yet.
 
 ## Source Layout
 

@@ -1,5 +1,5 @@
-error: unsupported `in` constraint `C`; expected one of ["h", "r", "l", "q", "f", "d", "n"]
+error: unsupported `in` constraint `x`; expected one of ["h", "r", "l", "q", "f", "d", "n", "C"]
   --> tests/compile_fail/ptx_asm_unsupported_constraint.rs:14:16
    |
-14 |             in("C") x,
+14 |             in("x") x,
    |                ^^^

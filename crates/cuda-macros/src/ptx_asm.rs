@@ -16,7 +16,7 @@ const MAX_PTX_ASM_OUTPUTS: usize = 8;
 const REGISTER_ONLY_OPTION: &str = "register_only";
 const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
-const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n"];
+const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n", "C"];
 const SUPPORTED_OUTPUT_CONSTRAINTS: &[&str] = &["=h", "=r", "=l", "=q", "=f", "=d"];
 
 pub struct PtxAsmInput {
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_cuda_constraints() {
-        for constraint in ["", "C", "x", "rf"] {
+        for constraint in ["", "x", "rf"] {
             let input = LitStr::new(constraint, proc_macro2::Span::call_site());
             let err = validate_input_constraint(&input).unwrap_err();
             assert!(
@@ -516,6 +516,17 @@ mod tests {
                 err.to_string().contains("unsupported `out` constraint"),
                 "unexpected error for `{constraint}`: {err}"
             );
+        }
+    }
+
+    #[test]
+    fn accepts_compile_time_string_input_constraint() {
+        let input = LitStr::new("C", proc_macro2::Span::call_site());
+        assert!(validate_input_constraint(&input).is_ok());
+
+        for constraint in ["=C", "+C"] {
+            let invalid = LitStr::new(constraint, proc_macro2::Span::call_site());
+            assert!(validate_input_constraint(&invalid).is_err());
         }
     }
 
