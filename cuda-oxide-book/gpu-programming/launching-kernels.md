@@ -152,6 +152,14 @@ cannot represent active Y/Z dimensions, and `PreparedLaunch<vecadd>` cannot be
 used with another kernel. Preparation may fail; once it succeeds, the branded
 launch can be reused safely.
 
+Cluster and cooperative attributes may be declared together
+(`#[cluster_launch(...)]` + `#[cooperative_launch]`). Preparation proves the
+cluster shape with `cuOccupancyMaxActiveClusters`, then requires the whole
+grid to fit in that concurrent cluster capacity so a cooperative
+`grid::sync()` cannot hang on non-resident blocks. An oversized grid fails
+preparation with `LaunchContractError::CooperativeGridTooLarge` (or a related
+cluster residency error) instead of submitting an unsound launch.
+
 For a contracted kernel, the raw escape hatch is named `vecadd_unchecked` and
 remains unsafe. Uncontracted kernels expose only unsafe raw launch methods.
 

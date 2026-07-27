@@ -602,12 +602,6 @@ pub enum LaunchContractError {
         /// Requested cluster dimensions.
         cluster: (u32, u32, u32),
     },
-    /// Safe cooperative-residency validation for clustered launches is not
-    /// available through the non-cluster occupancy query.
-    ClusteredCooperativeValidationUnsupported {
-        /// Kernel being prepared.
-        kernel: &'static str,
-    },
     /// A cooperative grid cannot be fully resident on the device.
     CooperativeGridTooLarge {
         /// Kernel being prepared.
@@ -813,10 +807,6 @@ impl Display for LaunchContractError {
                 f,
                 "{kernel}: no cluster with shape {cluster:?} can be resident"
             ),
-            Self::ClusteredCooperativeValidationUnsupported { kernel } => write!(
-                f,
-                "{kernel}: clustered cooperative residency cannot be validated by this API"
-            ),
             Self::CooperativeGridTooLarge {
                 kernel,
                 blocks,
@@ -962,13 +952,6 @@ impl<C: KernelLaunchContract> PreparedLaunch<C> {
                 C::SPEC.kernel_name,
                 context.supports_cooperative_launch()?,
             )?;
-            if C::SPEC.cluster.is_some() {
-                return Err(
-                    LaunchContractError::ClusteredCooperativeValidationUnsupported {
-                        kernel: C::SPEC.kernel_name,
-                    },
-                );
-            }
         }
 
         // Perform the only persistent function mutation after all checks that
@@ -978,6 +961,12 @@ impl<C: KernelLaunchContract> PreparedLaunch<C> {
         if contract_dynamic_max > function_max_dynamic {
             function.set_max_dynamic_shared_memory_bytes(contract_dynamic_max)?;
         }
+
+        // Cluster occupancy is reused for cooperative residency when both
+        // modes are declared: a cooperative clustered grid must fit entirely
+        // in the concurrent cluster capacity reported by
+        // `cuOccupancyMaxActiveClusters`.
+        let mut clustered_resident_blocks: Option<u64> = None;
 
         if let Some(cluster) = C::SPEC.cluster {
             let max_cluster_size = function.max_potential_cluster_size(
@@ -1007,16 +996,30 @@ impl<C: KernelLaunchContract> PreparedLaunch<C> {
                 Err(error) => return Err(error.into()),
             };
             validate_cluster_residency(C::SPEC.kernel_name, cluster, active_clusters)?;
+            clustered_resident_blocks = Some(
+                u64::from(active_clusters)
+                    .checked_mul(cluster_blocks)
+                    .ok_or(LaunchContractError::DimensionProductOverflow {
+                        kernel: C::SPEC.kernel_name,
+                        dimension: LaunchDimension::Cluster,
+                    })?,
+            );
         }
 
         if C::SPEC.cooperative {
-            let block_threads =
-                shape_product(C::SPEC.kernel_name, LaunchDimension::Block, raw.block_dim)?;
-            let active_per_sm = function
-                .max_active_blocks_per_multiprocessor(block_threads as u32, raw.shared_mem_bytes)?;
-            let multiprocessors = context.multiprocessor_count()?;
-            let resident_capacity = u64::from(active_per_sm) * u64::from(multiprocessors);
             let blocks = shape_product(C::SPEC.kernel_name, LaunchDimension::Grid, raw.grid_dim)?;
+            let resident_capacity = if let Some(capacity) = clustered_resident_blocks {
+                capacity
+            } else {
+                let block_threads =
+                    shape_product(C::SPEC.kernel_name, LaunchDimension::Block, raw.block_dim)?;
+                let active_per_sm = function.max_active_blocks_per_multiprocessor(
+                    block_threads as u32,
+                    raw.shared_mem_bytes,
+                )?;
+                let multiprocessors = context.multiprocessor_count()?;
+                u64::from(active_per_sm) * u64::from(multiprocessors)
+            };
             validate_cooperative_residency(C::SPEC.kernel_name, blocks, resident_capacity)?;
         }
 
@@ -1823,6 +1826,43 @@ mod tests {
                 resident_capacity: 80,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn clustered_cooperative_residency_uses_active_cluster_capacity() {
+        // A (2,1,1) cluster with 4 concurrent clusters can host 8 blocks.
+        // A fully-resident cooperative grid of 8 blocks therefore passes, while
+        // 10 blocks (5 clusters) must fail with CooperativeGridTooLarge.
+        let cluster_blocks = 2u64;
+        let active_clusters = 4u64;
+        let resident_capacity = active_clusters * cluster_blocks;
+
+        assert!(validate_cooperative_residency(KERNEL, 8, resident_capacity).is_ok());
+        assert!(matches!(
+            validate_cooperative_residency(KERNEL, 10, resident_capacity),
+            Err(LaunchContractError::CooperativeGridTooLarge {
+                blocks: 10,
+                resident_capacity: 8,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn combined_cluster_cooperative_spec_is_expressible() {
+        let spec = exact_spec((128, 1, 1))
+            .with_cluster((2, 1, 1))
+            .with_cooperative();
+        assert_eq!(spec.cluster(), Some((2, 1, 1)));
+        assert!(spec.cooperative());
+
+        // Static geometry still requires the grid to be an integer number of
+        // clusters even when cooperative residency is also required.
+        assert!(validate_static(spec, raw((4, 1, 1), (128, 1, 1), 0)).is_ok());
+        assert!(matches!(
+            validate_static(spec, raw((3, 1, 1), (128, 1, 1), 0)),
+            Err(LaunchContractError::ClusterDoesNotDivideGrid { .. })
         ));
     }
 

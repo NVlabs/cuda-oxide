@@ -6934,14 +6934,6 @@ impl Parse for CudaLaunchInput {
             let _ = input.parse::<Token![,]>();
         }
 
-        if cluster_dim.is_some() && cooperative.is_some() {
-            return Err(syn::Error::new(
-                input.span(),
-                "cuda_launch!: `cluster_dim` and `cooperative` are mutually exclusive — \
-                 cooperative cluster launches are not yet supported by this macro",
-            ));
-        }
-
         Ok(CudaLaunchInput {
             kernel: kernel.ok_or_else(|| syn::Error::new(input.span(), "missing 'kernel'"))?,
             stream: stream.ok_or_else(|| syn::Error::new(input.span(), "missing 'stream'"))?,
@@ -7018,7 +7010,9 @@ impl Parse for CudaLaunchInput {
 /// | `cooperative` | `bool`            | *(optional)* Set `true` to launch via `cuLaunchKernelEx` with `CU_LAUNCH_ATTRIBUTE_COOPERATIVE` (required for `grid::sync()`) |
 /// | `args`        | `[arg, ...]`      | Kernel arguments (see below)                  |
 ///
-/// `cluster_dim` and `cooperative` are mutually exclusive at this layer.
+/// `cluster_dim` and `cooperative` may be combined. When both are set and
+/// `cooperative` is `true`, the expansion calls
+/// [`cuda_core::launch_kernel_ex_cooperative_on_stream`].
 ///
 /// # Argument forms
 ///
@@ -7037,7 +7031,10 @@ impl Parse for CudaLaunchInput {
 pub fn cuda_launch(input: TokenStream) -> TokenStream {
     track_codegen_environment();
     let input = parse_macro_input!(input as CudaLaunchInput);
+    expand_cuda_launch(input).into()
+}
 
+fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
     let stream = &input.stream;
     let module = &input.module;
     let config = &input.config;
@@ -7147,13 +7144,40 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base),
     );
 
-    // Generate the launch call — regular, cluster, or cooperative.
+    // Generate the launch call — regular, cluster, cooperative, or both.
     //
     // All paths use the stream-aware cuda_core helpers. Those helpers bind the
     // stream's owning CUDA context to the calling thread and then delegate to
     // the raw cuLaunchKernel/cuLaunchKernelEx wrappers.
-    let launch_call = if let Some(cdim) = cluster_dim {
-        quote! {
+    let launch_call = match (&cluster_dim, &cooperative) {
+        (Some(cdim), Some(coop)) => quote! {
+            {
+                let #config_ident = #config;
+                let #cooperative_ident: bool = #coop;
+                if #cooperative_ident {
+                    cuda_core::launch_kernel_ex_cooperative_on_stream(
+                        &#function_ident,
+                        #config_ident.grid_dim,
+                        #config_ident.block_dim,
+                        #config_ident.shared_mem_bytes,
+                        #cdim,
+                        (#stream).as_ref(),
+                        &mut #args_ident,
+                    )
+                } else {
+                    cuda_core::launch_kernel_ex_on_stream(
+                        &#function_ident,
+                        #config_ident.grid_dim,
+                        #config_ident.block_dim,
+                        #config_ident.shared_mem_bytes,
+                        #cdim,
+                        (#stream).as_ref(),
+                        &mut #args_ident,
+                    )
+                }
+            }
+        },
+        (Some(cdim), None) => quote! {
             {
                 let #config_ident = #config;
                 cuda_core::launch_kernel_ex_on_stream(
@@ -7166,9 +7190,8 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                     &mut #args_ident,
                 )
             }
-        }
-    } else if let Some(coop) = cooperative {
-        quote! {
+        },
+        (None, Some(coop)) => quote! {
             {
                 let #config_ident = #config;
                 let #cooperative_ident: bool = #coop;
@@ -7192,9 +7215,8 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                     )
                 }
             }
-        }
-    } else {
-        quote! {
+        },
+        (None, None) => quote! {
             {
                 let #config_ident = #config;
                 cuda_core::launch_kernel_on_stream(
@@ -7206,7 +7228,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                     &mut #args_ident,
                 )
             }
-        }
+        },
     };
 
     let expanded = if has_closure {
@@ -7279,7 +7301,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    expanded
 }
 
 // ============================================================================
@@ -7871,6 +7893,31 @@ mod tests {
         assert!(
             !expanded.contains("launch_kernel_ex_on_stream"),
             "cluster-only call should be replaced by the combined one:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn cuda_launch_accepts_combined_cluster_and_cooperative() {
+        let input: CudaLaunchInput = parse_quote! {
+            kernel: clustered_grid_sync_kernel,
+            stream: stream,
+            module: module,
+            config: config,
+            cluster_dim: (2, 1, 1),
+            cooperative: true,
+            args: []
+        };
+        assert!(input.cluster_dim.is_some());
+        assert!(input.cooperative.is_some());
+
+        let expanded = expand_cuda_launch(input).to_string().replace(' ', "");
+        assert!(
+            expanded.contains("launch_kernel_ex_cooperative_on_stream"),
+            "expected combined cluster+cooperative cuda_launch expansion:\n{expanded}"
+        );
+        assert!(
+            !expanded.contains("launch_kernel_cooperative_on_stream"),
+            "non-cluster cooperative helper must not be used when cluster_dim is set:\n{expanded}"
         );
     }
 

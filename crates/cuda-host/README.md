@@ -160,10 +160,11 @@ the marker emitted by `#[launch_contract]` is merged with alignment requests in
 the body and reachable local helpers, and the stronger value reaches PTX.
 Prelinked external helpers keep the alignment recorded when they were compiled.
 
-Cluster and cooperative contracts are validated separately. A contract that
-combines both currently fails preparation because the available occupancy query
-cannot prove the combined residency rule; the unsafe launch method remains the
-explicit expert escape hatch.
+Cluster and cooperative contracts may be declared together. Preparation proves
+cluster geometry first (`cuOccupancyMaxActiveClusters`), then checks that the
+full grid fits in that concurrent cluster capacity so a cooperative
+`grid::sync()` cannot hang waiting for non-resident blocks. Oversized grids
+fail with `LaunchContractError::CooperativeGridTooLarge`.
 
 This closes the unsafe gap from issue #115. A 1-D contract rejects a 2-D launch
 in safe code, while an uncontracted or deliberately mismatched launch requires
