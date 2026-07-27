@@ -358,12 +358,17 @@ Selectors can implement policies such as:
 A selector must return an ID from the provided eligible slice. `KernelFamily`
 checks this requirement and rejects invalid selector output.
 
-Closures can also act as selectors when their signature matches the trait:
+Closures can also act as selectors when their signature matches the trait.
+Annotate every closure parameter type. Without the annotations, closure
+lifetime inference can fix the borrows to one specific call and rustc rejects
+the closure with "implementation of `FnMut` is not general enough". A
+selector that cannot fail can use `std::convert::Infallible` as its error
+type:
 
 ```rust
 let mut selector =
-    |_family, _problem, eligible: &[&Variant]| -> Result<VariantId, MyError> {
-        Ok(*eligible[0].id())
+    |_: KernelFamilyId, _: &CopyProblem, eligible: &[&Variant]| {
+        Ok::<_, Infallible>(*eligible[0].id())
     };
 ```
 
