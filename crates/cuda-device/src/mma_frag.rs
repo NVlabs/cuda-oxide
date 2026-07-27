@@ -45,9 +45,10 @@
 //! warp's fragments therefore tile the output exactly, with no overlap and no
 //! gap.
 //!
-//! This is the same argument that underpins [`crate::thread::DisjointBlock`] and
-//! [`crate::thread::DisjointTiling`]; the only difference is where the digits
-//! come from. What makes this instance awkward to write by hand is that the
+//! The no-overlap half is the same guarantee that
+//! [`crate::disjoint::DisjointSlice`] builds into the type system for parallel
+//! writes; here it falls out of the numeral structure instead of thread
+//! indexing. What makes this instance awkward to write by hand is that the
 //! fragment index is *split across two non-adjacent digit positions*, at place
 //! values 1 and 64, interleaved with the two lane digits.
 
