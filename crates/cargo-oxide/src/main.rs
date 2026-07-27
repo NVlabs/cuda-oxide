@@ -17,8 +17,10 @@
 //! cargo oxide pipeline vecadd         # verbose pipeline dump
 //! cargo oxide sanitize vecadd         # run under NVIDIA Compute Sanitizer
 //! cargo oxide debug vecadd --tui      # build + cuda-gdb
-//! cargo oxide new my_kernel            # scaffold a standalone project
+//! cargo oxide new my_kernel           # scaffold a standalone project
 //! cargo oxide new my_kernel --async   # scaffold with async template
+//! cargo oxide list                    # list bundled examples
+//! cargo oxide list --json             # machine-readable output
 //! cargo oxide fmt                     # format all crates
 //! cargo oxide doctor                  # check environment
 //! cargo oxide setup                   # explicitly build/install backend
@@ -266,6 +268,12 @@ enum Commands {
         #[arg(long)]
         tui: bool,
     },
+    /// List the examples bundled with the cuda-oxide workspace
+    List {
+        /// Emit stable machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Format all crates (root workspace, codegen backend, examples)
     Fmt {
         /// Check formatting without modifying files
@@ -359,6 +367,10 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
         | Commands::Debug { .. } => Ok(()),
         Commands::EmitLtoir { .. } => Err(
             "--materialize-cubin cannot be combined with emit-ltoir; one emits a final cubin and the other emits linkable LTOIR"
+                .to_string(),
+        ),
+        Commands::List { .. } => Err(
+            "--materialize-cubin cannot be used with list because list does not compile device code"
                 .to_string(),
         ),
         Commands::Fmt { .. } => Err(
@@ -652,6 +664,10 @@ fn main() {
                 tui,
                 materialize_cubin,
             );
+        }
+        Commands::List { json } => {
+            let ctx = commands::resolve_doctor_context();
+            commands::list_examples(&ctx, json);
         }
         Commands::Fmt { check } => {
             let ctx = commands::resolve_context();
@@ -986,5 +1002,40 @@ mod tests {
         assert!(use_build_passthrough(false, false, true, false, false));
         assert!(use_build_passthrough(false, false, false, true, false));
         assert!(use_build_passthrough(false, false, false, false, true));
+    }
+
+    #[test]
+    fn list_parser_defaults_to_human_output() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "list"]).expect("list command should parse");
+
+        let Commands::List { json } = cli.command else {
+            panic!("expected list command");
+        };
+
+        assert!(!json);
+    }
+
+    #[test]
+    fn list_parser_accepts_json_output() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "list", "--json"])
+            .expect("list --json should parse");
+
+        let Commands::List { json } = cli.command else {
+            panic!("expected list command");
+        };
+
+        assert!(json);
+    }
+
+    #[test]
+    fn materialize_cubin_rejects_list() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "list", "--materialize-cubin"])
+            .expect("global option should parse");
+
+        let error =
+            validate_materialization_cli(&cli).expect_err("list must reject materialization");
+
+        assert!(error.contains("--materialize-cubin"));
+        assert!(error.contains("list"));
     }
 }
