@@ -679,17 +679,26 @@ mod tiling_algebra_tests {
     #[test]
     fn a_period_below_grid_span_collides() {
         let (grid, n) = (4usize, 1usize);
-        let bad_period = 2; // G·N would be 4.
-        // (k=0, t=2) and (k=1, t=0) both land on element 2.
-        let a = 0 * bad_period + 2 * n;
-        let b = 1 * bad_period + 0 * n;
-        assert_eq!(a, b, "the counterexample must actually collide");
 
-        // The derived period keeps them apart.
+        // `phi` with the period supplied rather than derived, so a wrong period
+        // can be expressed at all. Written as a call so the (k, t) digit pair
+        // stays visible at each use.
+        fn at(k: usize, t: usize, period: usize, n: usize) -> usize {
+            k * period + t * n
+        }
+
+        let bad_period = 2; // G·N would be 4.
+        assert_eq!(
+            at(0, 2, bad_period, n),
+            at(1, 0, bad_period, n),
+            "with a period below G·N, (k=0,t=2) and (k=1,t=0) must collide"
+        );
+
+        // The derived period keeps the same two apart.
         let good_period = grid * n;
         assert_ne!(
-            0 * good_period + 2 * n,
-            1 * good_period + 0 * n,
+            at(0, 2, good_period, n),
+            at(1, 0, good_period, n),
             "period G·N must separate the pass and thread digits"
         );
     }
