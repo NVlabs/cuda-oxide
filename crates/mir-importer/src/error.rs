@@ -10,15 +10,19 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use pliron::input_err;
-//! use crate::error::TranslationErr;
+//! ```rust,no_run
+//! use mir_importer::{TranslationErr, TranslationResult};
+//! use pliron::{input_err, input_err_noloc, location::Location};
 //!
-//! // With location (preferred - shows where in MIR the error occurred):
-//! return input_err!(loc, TranslationErr::unsupported("f16 type"));
+//! // With location (preferred because it identifies the MIR source):
+//! fn reject_unsupported_construct(loc: Location) -> TranslationResult<()> {
+//!     input_err!(loc, TranslationErr::unsupported("f16 type"))
+//! }
 //!
-//! // Without location (when source span isn't available):
-//! return input_err_noloc!(TranslationErr::type_error("expected i32, got f32"));
+//! // Without location when no source span is available:
+//! fn reject_type_mismatch() -> TranslationResult<()> {
+//!     input_err_noloc!(TranslationErr::type_error("expected i32, got f32"))
+//! }
 //! ```
 
 use thiserror::Error;

@@ -153,6 +153,20 @@ impl RustSaturatingIntrinsic {
     }
 }
 
+/// Internal placeholder for `core::intrinsics::exact_div`.
+///
+/// The caller has promised the divisor is non-zero and divides the dividend
+/// exactly, so this lowers to a plain `sdiv`/`udiv` with no zero check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RustExactDivIntrinsic;
+
+impl RustExactDivIntrinsic {
+    /// Convert an importer placeholder name back into the intrinsic it represents.
+    fn from_placeholder_callee(callee: &str) -> Option<Self> {
+        (callee == rust_intrinsics::CALLEE_EXACT_DIV).then_some(Self)
+    }
+}
+
 /// Internal placeholder for rustc bigint helper intrinsics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RustBigIntIntrinsic {
@@ -563,6 +577,10 @@ pub fn convert(
         return convert_rust_saturating_intrinsic(ctx, rewriter, op, operands_info, intrinsic);
     }
 
+    if RustExactDivIntrinsic::from_placeholder_callee(&callee_name).is_some() {
+        return convert_rust_exact_div(ctx, rewriter, op, operands_info);
+    }
+
     if let Some(RustBigIntIntrinsic::CarryingMulAdd) =
         RustBigIntIntrinsic::from_placeholder_callee(&callee_name)
     {
@@ -925,6 +943,61 @@ fn convert_rust_saturating_intrinsic(
     let replacement = final_op.unwrap_or_else(|| llvm_call.get_operation());
     rewriter.replace_operation(ctx, op, replacement);
 
+    Ok(())
+}
+
+/// Convert `core::intrinsics::exact_div` to `llvm.sdiv` or `llvm.udiv`.
+///
+/// The intrinsic's contract is that the divisor is non-zero and divides the
+/// dividend with no remainder; both are the caller's obligation, and violating
+/// either is undefined behaviour. That is exactly the contract of a bare LLVM
+/// division, so no zero check or remainder correction is emitted.
+///
+/// Signedness comes from the pre-conversion MIR operand type, the same source
+/// `mir.div` uses, because the LLVM integer type is signless by the time the
+/// operand is rewritten.
+fn convert_rust_exact_div(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    if op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err!(loc, "exact_div call must have one result");
+    }
+
+    let args: Vec<Value> = op.deref(ctx).operands().collect();
+    let [dividend, divisor] = args[..] else {
+        return pliron::input_err!(loc, "exact_div requires a dividend and a divisor");
+    };
+
+    let is_signed = if let Some(int_ty) =
+        operands_info.lookup_most_recent_of_type::<IntegerType>(ctx, dividend)
+    {
+        int_ty.signedness() == Signedness::Signed
+    } else {
+        let live = dividend.get_type(ctx);
+        let live_ref = live.deref(ctx);
+        match live_ref.downcast_ref::<IntegerType>() {
+            // Signless lowers as unsigned, matching `mir.div`.
+            Some(int_ty) => int_ty.signedness() == Signedness::Signed,
+            None => return pliron::input_err!(loc, "expected integer type for exact_div"),
+        }
+    };
+
+    // Defensive only: rustc's `exact_div` signature is `(T, T) -> T`, so both
+    // operands already have the same width and this widen path never fires.
+    let dividend_ty = dividend.get_type(ctx);
+    let (divisor, _) = cast_integer_value_to_type(ctx, rewriter, divisor, dividend_ty, loc)?;
+
+    let llvm_op = if is_signed {
+        llvm::SDivOp::new(ctx, dividend, divisor).get_operation()
+    } else {
+        llvm::UDivOp::new(ctx, dividend, divisor).get_operation()
+    };
+    rewriter.insert_operation(ctx, llvm_op);
+    rewriter.replace_operation(ctx, op, llvm_op);
     Ok(())
 }
 
@@ -1653,6 +1726,32 @@ mod tests {
         // (mutual-exclusion guarantee from reserved-oxide-symbols).
         let kernel_name = kernel_symbol("my_kernel");
         assert_eq!(resolve_device_extern_symbol(&kernel_name), kernel_name);
+    }
+
+    /// The `exact_div` placeholder is recognized, and nothing else is.
+    ///
+    /// The negative half matters: `unchecked_div` carries a weaker promise (the
+    /// divisor is non-zero, but the remainder is discarded), so folding it into
+    /// this path would silently drop the exactness obligation.
+    #[test]
+    fn test_exact_div_placeholder_round_trip() {
+        assert!(
+            RustExactDivIntrinsic::from_placeholder_callee(rust_intrinsics::CALLEE_EXACT_DIV)
+                .is_some()
+        );
+
+        for other in [
+            rust_intrinsics::CALLEE_SATURATING_ADD,
+            rust_intrinsics::CALLEE_SATURATING_SUB,
+            rust_intrinsics::CALLEE_CARRYING_MUL_ADD,
+            rust_intrinsics::CALLEE_SQRT_F32,
+            "core::intrinsics::unchecked_div",
+        ] {
+            assert!(
+                RustExactDivIntrinsic::from_placeholder_callee(other).is_none(),
+                "`{other}` must not be treated as exact_div"
+            );
+        }
     }
 
     /// Sample of the Rust float-math placeholder → libdevice symbol mapping.

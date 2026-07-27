@@ -426,6 +426,37 @@ and custom launch code.
 
 ---
 
+## Host-Side: Virtual Memory Management
+
+### VMM lifecycle
+
+| API                                         | Purpose                                     |
+|:--------------------------------------------|:--------------------------------------------|
+| `vmm::allocation_granularity(device)`       | Query the required allocation granularity   |
+| `vmm::align_size(size, granularity)`        | Round a size to the required granularity    |
+| `PhysicalAllocation::new(device, size)`     | Allocate physical memory                    |
+| `VirtualReservation::new(size, alignment)`  | Reserve a virtual address range             |
+| `Mapping::new(va, size, &physical, offset)` | Map physical memory into a VA range         |
+| `vmm::set_access(va, size, devices)`        | Grant read/write access to selected devices |
+
+Mappings must be dropped before their virtual reservations and physical
+allocations.
+
+---
+
+## Host-Side: Peer Access
+
+| API                                   | Purpose                                           |
+|:--------------------------------------|:--------------------------------------------------|
+| `peer::can_access_peer(from, to)`     | Query whether the topology supports direct access |
+| `peer::enable_peer_access(from, to)`  | Enable one-directional peer access                |
+| `peer::disable_peer_access(from, to)` | Disable one-directional peer access               |
+
+Peer access is directional. Enable both directions when both devices must
+initiate accesses.
+
+---
+
 ## Host-Side: Kernel Families
 
 | Type | Purpose |
@@ -495,7 +526,7 @@ debug::prof_trigger::<7>();     // Nsight profiler trigger
 | `cuda-device`     | Device intrinsics and types (`#![no_std]`)                             |
 | `cuda-macros`     | Proc macros (`#[kernel]`, `#[device]`, `gpu_printf!`, `ptx_asm!`)      |
 | `cuda-host`       | Typed module loading plus low-level launch helpers                     |
-| `cuda-core`       | Safe RAII wrappers (`CudaContext`, `CudaStream`, `DeviceBuffer<T>`)    |
+| `cuda-core`       | Safe RAII wrappers for contexts, streams, buffers, VMM, and P2P        |
 | `cuda-async`      | `DeviceOperation`, `DeviceFuture`, `DeviceBox<T>`                      |
 | `cuda-bindings`   | Raw `bindgen` FFI to `cuda.h`                                          |
 | `cargo-oxide`     | Cargo subcommand (`cargo oxide run`, `build`, `sanitize`, `debug`)     |
