@@ -480,26 +480,6 @@ fn translate_assert(
     Ok(op)
 }
 
-/// Translates a MIR `SwitchInt` terminator to conditional branches.
-///
-/// Handles multi-way branches used for `match` expressions and enum dispatch:
-///
-/// # Boolean Switch (1 branch)
-///
-/// Uses `mir.cond_branch`:
-/// - `switchInt(bool) → [0: bb_false, otherwise: bb_true]`
-/// - Creates comparison or negation as needed
-///
-/// # Multi-way Switch (N branches)
-///
-/// Creates a chain of conditional branches:
-/// ```text
-/// current:     cmp0 = (discr == v0); cond_br cmp0, t0, intermediate_1
-/// intermediate_1: cmp1 = (discr == v1); cond_br cmp1, t1, intermediate_2
-/// ...
-/// intermediate_N: cmpN = (discr == vN); cond_br cmpN, tN, otherwise
-/// ```
-#[allow(clippy::too_many_arguments)]
 /// Build the comparison constant for one `SwitchInt` arm, typed as the
 /// discriminant it is compared against.
 ///
@@ -527,6 +507,26 @@ fn switch_arm_constant(
     )
 }
 
+/// Translates a MIR `SwitchInt` terminator to conditional branches.
+///
+/// Handles multi-way branches used for `match` expressions and enum dispatch:
+///
+/// # Boolean Switch (1 branch)
+///
+/// Uses `mir.cond_branch`:
+/// - `switchInt(bool) → [0: bb_false, otherwise: bb_true]`
+/// - Creates comparison or negation as needed
+///
+/// # Multi-way Switch (N branches)
+///
+/// Creates a chain of conditional branches:
+/// ```text
+/// current:     cmp0 = (discr == v0); cond_br cmp0, t0, intermediate_1
+/// intermediate_1: cmp1 = (discr == v1); cond_br cmp1, t1, intermediate_2
+/// ...
+/// intermediate_N: cmpN = (discr == vN); cond_br cmpN, tN, otherwise
+/// ```
+#[allow(clippy::too_many_arguments)]
 fn translate_switch(
     ctx: &mut Context,
     body: &mir::Body,
