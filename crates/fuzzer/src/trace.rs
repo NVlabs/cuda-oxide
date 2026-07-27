@@ -126,17 +126,30 @@ fn trace_write_char(val: char) {
 /// the backend produced, and the mismatches worth finding are the ones a
 /// tolerance hides.
 ///
-/// Every NaN the two backends produce must therefore agree bit for bit,
-/// payload included. That holds for the arithmetic rustlantis emits, and a
-/// disagreement in a NaN payload is itself a result worth reporting.
+/// The bits agree for every non-NaN value the two backends produce. NaN
+/// payload bits are not pinned down by Rust, so both writers canonicalize a
+/// NaN to the quiet-NaN bit pattern before hashing, as Cranelift's fuzzgen
+/// does. A payload divergence therefore cannot produce a false MISMATCH,
+/// while a NaN against a non-NaN still hashes differently and remains a real
+/// signal.
 #[inline]
 fn trace_write_f32(val: f32) {
-    trace_write_u32(val.to_bits());
+    let bits = if val.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        val.to_bits()
+    };
+    trace_write_u32(bits);
 }
 
 #[inline]
 fn trace_write_f64(val: f64) {
-    trace_write_u64(val.to_bits());
+    let bits = if val.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        val.to_bits()
+    };
+    trace_write_u64(bits);
 }
 
 /// Scalar values that can be folded into the trace.

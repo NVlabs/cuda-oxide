@@ -95,11 +95,16 @@ know how to rewrite/hash that dumped type safely.
 
 The comparison is exact `u64` hash equality, so it assumes the CPU and the GPU
 agree bit for bit. Floats are folded as their `to_bits()` pattern, which keeps
-that assumption intact: a tolerance in the trace would compare something other
-than the value a backend produced, and would hide the differences the fuzzer
-exists to find. Floats also still reach the hash indirectly, through an `as`
-cast to an integer, through a comparison that yields a `bool`, or through
-rustlantis' `transmute_place`.
+that assumption intact for every non-NaN value: a tolerance in the trace would
+compare something other than the value a backend produced, and would hide the
+differences the fuzzer exists to find. NaN payload bits are the exception,
+because Rust does not pin them down, so the trace canonicalizes every NaN to
+the quiet-NaN bit pattern at the hash boundary. A payload divergence therefore
+cannot produce a `MISMATCH`; a NaN on one backend against a non-NaN on the
+other still hashes differently, and that difference is a real signal. Floats
+also still reach the hash indirectly, through an `as` cast to an integer,
+through a comparison that yields a `bool`, or through rustlantis'
+`transmute_place`.
 
 Two sources of difference are therefore expected, and neither is a backend bug.
 
