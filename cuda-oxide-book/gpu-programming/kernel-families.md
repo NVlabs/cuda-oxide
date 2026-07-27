@@ -988,10 +988,10 @@ compiled shape is incompatible with the matrix dimensions.
 
 See:
 
-* [`gemm_sol_final`](../../crates/rustc-codegen-cuda/examples/gemm_sol_final/)
-* [`KernelFamily` integration tests](../../crates/cuda-host/tests/kernel_family.rs)
-* [`cuda-host` kernel-family implementation](../../crates/cuda-host/src/kernel_family.rs)
-* [`cuda-host` README](../../crates/cuda-host/README.md)
+* [`gemm_sol_final`](https://github.com/NVlabs/cuda-oxide/tree/main/crates/rustc-codegen-cuda/examples/gemm_sol_final)
+* [`KernelFamily` integration tests](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-host/tests/kernel_family.rs)
+* [`cuda-host` kernel-family implementation](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-host/src/kernel_family.rs)
+* [`cuda-host` README](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-host/README.md)
 
 ## Design guidelines
 
