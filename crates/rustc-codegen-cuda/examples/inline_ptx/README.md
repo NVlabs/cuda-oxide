@@ -13,6 +13,11 @@ A third kernel exercises `inout("+r")`: Rust initializes an accumulator, PTX
 reads and updates the same operand, and the final value is written back to the
 original Rust place.
 
+A fourth kernel exercises multiple read-write operands with mixed widths in
+one asm block: a `+r` counter, a `+l` 64-bit accumulator, and a `+f` float
+are updated in place next to a plain `=r` output, with distinct per-operand
+formulas so swapped tied-register bindings fail host verification.
+
 Run with:
 
 ```bash
@@ -66,7 +71,7 @@ user-visible operands and `%%reg` for literal PTX registers, such as
 | `"=d"`     | out       | `.f64`       | `f64`                 |
 | `"+h"`     | inout     | `.b16`       | `u16` / `i16`         |
 | `"+r"`     | inout     | `.b32`       | `u32` / `i32`         |
-| `"+l"`     | inout     | `.b64`       | `u64` / `i64`         |
+| `"+l"`     | inout     | `.b64`       | `u64` / `i64` / `*T`  |
 | `"+q"`     | inout     | `.b128`      | 128-bit value         |
 | `"+f"`     | inout     | `.f32`       | `f32`                 |
 | `"+d"`     | inout     | `.f64`       | `f64`                 |
