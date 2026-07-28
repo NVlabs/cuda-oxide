@@ -45,13 +45,13 @@ mod kernels {
 
             unsafe {
                 ptx_asm!(
-                "mul%1.u32 %0, %2, %3;",
-                out("=l") product,
-                in("C") MODE,
-                in("r") x,
-                in("r") y,
-                options(register_only),
-            );
+                    "mul%1.u32 %0, %2, %3;",
+                    out("=l") product,
+                    in("C") MODE,
+                    in("r") x,
+                    in("r") y,
+                    options(register_only),
+                );
             }
 
             *slot = product;
@@ -159,7 +159,7 @@ fn main() {
             &mut products_dev,
         )
     }
-        .expect("C-constraint kernel launch failed");
+    .expect("C-constraint kernel launch failed");
 
     let products = products_dev.to_host_vec(&stream).unwrap();
 
