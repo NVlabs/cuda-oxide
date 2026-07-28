@@ -59,10 +59,22 @@ fn prepare_materialization(
     )
 }
 
-fn nvvm_ir_requested(ctx: &Context) -> Result<bool, String> {
-    const EMIT_NVVM_IR_ENV: &str = "CUDA_OXIDE_EMIT_NVVM_IR";
+const EMIT_NVVM_IR_ENV: &str = "CUDA_OXIDE_EMIT_NVVM_IR";
 
-    if let Some(value) = std::env::var_os(EMIT_NVVM_IR_ENV) {
+fn nvvm_ir_requested(ctx: &Context) -> Result<bool, String> {
+    nvvm_ir_requested_with_env(ctx, std::env::var_os(EMIT_NVVM_IR_ENV))
+}
+
+/// `nvvm_ir_requested` with the ambient `CUDA_OXIDE_EMIT_NVVM_IR` injected.
+///
+/// The process value outranks project config, so resolution has to be
+/// injectable for unit tests: an exported `CUDA_OXIDE_EMIT_NVVM_IR` would
+/// otherwise decide the answer before the configured value is consulted.
+fn nvvm_ir_requested_with_env(
+    ctx: &Context,
+    env_value: Option<std::ffi::OsString>,
+) -> Result<bool, String> {
+    if let Some(value) = env_value {
         let value = value
             .into_string()
             .map_err(|_| format!("{EMIT_NVVM_IR_ENV} is not valid Unicode"))?;
@@ -2586,6 +2598,20 @@ fn resolve_device_codegen_crates(
         .transpose()
 }
 
+/// The ambient environment, in the shape the fingerprint helpers consume.
+///
+/// Split out so both fingerprint wrappers share one collection, and so their
+/// `_with_env` counterparts stay the only entry points a unit test needs.
+fn inherited_process_env() -> BTreeMap<String, Vec<u8>> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| {
+            key.into_string()
+                .ok()
+                .map(|key| (key, value.as_encoded_bytes().to_vec()))
+        })
+        .collect()
+}
+
 fn passthrough_codegen_fingerprint(
     ctx: &Context,
     opts: &CargoPassthroughOptions<'_>,
@@ -2593,20 +2619,13 @@ fn passthrough_codegen_fingerprint(
     target_arch: Option<&str>,
     materialization: &MaterializationMode,
 ) -> String {
-    let inherited_env: BTreeMap<String, Vec<u8>> = std::env::vars_os()
-        .filter_map(|(key, value)| {
-            key.into_string()
-                .ok()
-                .map(|key| (key, value.as_encoded_bytes().to_vec()))
-        })
-        .collect();
     passthrough_codegen_fingerprint_with_env(
         ctx,
         opts,
         owner_filter,
         target_arch,
         materialization,
-        &inherited_env,
+        &inherited_process_env(),
     )
 }
 
@@ -2721,6 +2740,33 @@ fn sanitize_codegen_fingerprint(
     ptx_dir: Option<&Path>,
     materialization: &MaterializationMode,
 ) -> String {
+    sanitize_codegen_fingerprint_with_env(
+        ctx,
+        verbose,
+        no_fmad,
+        unchecked_indexing,
+        target_arch,
+        detected_device_arch,
+        ptx_dir,
+        materialization,
+        &inherited_process_env(),
+    )
+}
+
+/// `sanitize_codegen_fingerprint` with the inherited environment injected, the
+/// counterpart to `passthrough_codegen_fingerprint_with_env`.
+#[allow(clippy::too_many_arguments)]
+fn sanitize_codegen_fingerprint_with_env(
+    ctx: &Context,
+    verbose: bool,
+    no_fmad: bool,
+    unchecked_indexing: bool,
+    target_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+    ptx_dir: Option<&Path>,
+    materialization: &MaterializationMode,
+    inherited_env: &BTreeMap<String, Vec<u8>>,
+) -> String {
     let opts = CargoPassthroughOptions {
         verbose,
         emit_nvvm_ir: false,
@@ -2733,7 +2779,14 @@ fn sanitize_codegen_fingerprint(
         unchecked_indexing,
         materialize_cubin: materialization.enabled(),
     };
-    let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
+    let base = passthrough_codegen_fingerprint_with_env(
+        ctx,
+        &opts,
+        None,
+        target_arch,
+        materialization,
+        inherited_env,
+    );
     let mut hash = sha2::Sha256::new();
     for bytes in [
         "sanitize-line-tables-v1".as_bytes(),
@@ -5135,9 +5188,25 @@ fn apply_common_codegen_env(
 /// device optimization. An explicit process or project setting remains
 /// authoritative, including an intentional `CUDA_OXIDE_DEBUG=off`.
 fn apply_default_sanitizer_line_tables(cmd: &mut Command, ctx: &Context) {
-    if std::env::var_os("CUDA_OXIDE_DEBUG").is_none()
-        && project_config_env(ctx, "CUDA_OXIDE_DEBUG").is_none()
-    {
+    apply_default_sanitizer_line_tables_with_env(
+        cmd,
+        ctx,
+        std::env::var_os("CUDA_OXIDE_DEBUG").is_some(),
+    );
+}
+
+/// `apply_default_sanitizer_line_tables` with the `CUDA_OXIDE_DEBUG` probe
+/// injected.
+///
+/// `env_debug_set` is presence-only, matching the `var_os` check it replaces.
+/// Injected so a unit test can assert the defaulting without an exported
+/// `CUDA_OXIDE_DEBUG` suppressing it.
+fn apply_default_sanitizer_line_tables_with_env(
+    cmd: &mut Command,
+    ctx: &Context,
+    env_debug_set: bool,
+) {
+    if !env_debug_set && project_config_env(ctx, "CUDA_OXIDE_DEBUG").is_none() {
         cmd.env("CUDA_OXIDE_DEBUG", "line-tables");
     }
 }
@@ -5148,6 +5217,24 @@ fn apply_interop_device_codegen_options(
     verbose: bool,
     options: InteropDeviceBuildOptions,
 ) {
+    apply_interop_device_codegen_options_with_env(
+        cmd,
+        ctx,
+        verbose,
+        options,
+        std::env::var_os("CUDA_OXIDE_DEBUG").is_some(),
+    );
+}
+
+/// `apply_interop_device_codegen_options` with the `CUDA_OXIDE_DEBUG` probe
+/// injected, forwarded to `apply_default_sanitizer_line_tables_with_env`.
+fn apply_interop_device_codegen_options_with_env(
+    cmd: &mut Command,
+    ctx: &Context,
+    verbose: bool,
+    options: InteropDeviceBuildOptions,
+    env_debug_set: bool,
+) {
     apply_common_codegen_env(
         cmd,
         ctx,
@@ -5156,7 +5243,7 @@ fn apply_interop_device_codegen_options(
         options.unchecked_indexing,
     );
     if options.sanitizer_line_tables {
-        apply_default_sanitizer_line_tables(cmd, ctx);
+        apply_default_sanitizer_line_tables_with_env(cmd, ctx, env_debug_set);
     }
 }
 
@@ -5230,7 +5317,25 @@ fn apply_device_arch_hint(
 ///   caller falls through to slot 4 and the backend's feature-based default
 ///   applies.
 fn detect_run_target_arch(arch: Option<&str>, emit_nvvm_ir: bool) -> Option<String> {
-    if arch.is_some() || emit_nvvm_ir || std::env::var_os("CUDA_OXIDE_TARGET").is_some() {
+    detect_run_target_arch_with_env(
+        arch,
+        emit_nvvm_ir,
+        std::env::var_os("CUDA_OXIDE_TARGET").is_some(),
+    )
+}
+
+/// `detect_run_target_arch` with the `CUDA_OXIDE_TARGET` probe injected.
+///
+/// `env_target_set` is presence-only, matching the `var_os` check it replaces.
+/// Injected so a unit test can exercise the slot-2 skip without exporting the
+/// variable: `set_var` would be a data race against the `vars_os` reads the
+/// fingerprint helpers perform on other test threads.
+fn detect_run_target_arch_with_env(
+    arch: Option<&str>,
+    emit_nvvm_ir: bool,
+    env_target_set: bool,
+) -> Option<String> {
+    if arch.is_some() || emit_nvvm_ir || env_target_set {
         return None;
     }
 
@@ -6820,7 +6925,7 @@ path = "src/other.rs"
         let ctx = test_context(OxideConfig::default());
         let mut cmd = Command::new("cargo");
 
-        apply_interop_device_codegen_options(
+        apply_interop_device_codegen_options_with_env(
             &mut cmd,
             &ctx,
             false,
@@ -6829,6 +6934,7 @@ path = "src/other.rs"
                 unchecked_indexing: false,
                 sanitizer_line_tables: true,
             },
+            false,
         );
 
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
@@ -6868,11 +6974,12 @@ path = "src/other.rs"
         let ctx = test_context(OxideConfig::default());
         let mut cmd = Command::new("cargo");
 
-        apply_interop_device_codegen_options(
+        apply_interop_device_codegen_options_with_env(
             &mut cmd,
             &ctx,
             false,
             InteropDeviceBuildOptions::standard(true, false),
+            false,
         );
 
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
@@ -6884,11 +6991,12 @@ path = "src/other.rs"
         let ctx = test_context(OxideConfig::default());
         let mut cmd = Command::new("cargo");
 
-        apply_interop_device_codegen_options(
+        apply_interop_device_codegen_options_with_env(
             &mut cmd,
             &ctx,
             false,
             InteropDeviceBuildOptions::standard(false, true),
+            false,
         );
 
         assert_eq!(
@@ -6901,67 +7009,44 @@ path = "src/other.rs"
     #[test]
     fn sanitize_fingerprint_tracks_output_affecting_settings() {
         let ctx = test_context(OxideConfig::default());
-        let base = sanitize_codegen_fingerprint(
-            &ctx,
-            false,
-            false,
-            false,
-            None,
-            Some("sm_80"),
-            None,
-            &MaterializationMode::default(),
-        );
+        // Empty inherited environment, matching
+        // `passthrough_fingerprint_tracks_output_affecting_settings`. An
+        // ambient CUDA_OXIDE_NO_FMA / CUDA_OXIDE_UNCHECKED_INDEXING is folded
+        // into the digest on its own, so reading the real environment would
+        // make toggling the corresponding argument a no-op and collapse these
+        // fingerprints onto the base.
+        let inherited_env = BTreeMap::new();
+        let fingerprint = |no_fmad: bool,
+                           unchecked_indexing: bool,
+                           target_arch: Option<&str>,
+                           detected_device_arch: Option<&str>,
+                           ptx_dir: Option<&Path>| {
+            sanitize_codegen_fingerprint_with_env(
+                &ctx,
+                false,
+                no_fmad,
+                unchecked_indexing,
+                target_arch,
+                detected_device_arch,
+                ptx_dir,
+                &MaterializationMode::default(),
+                &inherited_env,
+            )
+        };
+
+        let base = fingerprint(false, false, None, Some("sm_80"), None);
 
         for changed in [
-            sanitize_codegen_fingerprint(
-                &ctx,
-                false,
-                true,
-                false,
-                None,
-                Some("sm_80"),
-                None,
-                &MaterializationMode::default(),
-            ),
-            sanitize_codegen_fingerprint(
-                &ctx,
-                false,
-                false,
-                true,
-                None,
-                Some("sm_80"),
-                None,
-                &MaterializationMode::default(),
-            ),
-            sanitize_codegen_fingerprint(
-                &ctx,
-                false,
-                false,
-                false,
-                None,
-                Some("sm_90"),
-                None,
-                &MaterializationMode::default(),
-            ),
-            sanitize_codegen_fingerprint(
-                &ctx,
-                false,
-                false,
-                false,
-                Some("sm_80"),
-                None,
-                None,
-                &MaterializationMode::default(),
-            ),
-            sanitize_codegen_fingerprint(
-                &ctx,
-                false,
+            fingerprint(true, false, None, Some("sm_80"), None),
+            fingerprint(false, true, None, Some("sm_80"), None),
+            fingerprint(false, false, None, Some("sm_90"), None),
+            fingerprint(false, false, Some("sm_80"), None, None),
+            fingerprint(
                 false,
                 false,
                 None,
                 Some("sm_80"),
                 Some(Path::new("/tmp/generated-ptx")),
-                &MaterializationMode::default(),
             ),
         ] {
             assert_ne!(base, changed);
@@ -8593,30 +8678,32 @@ clippy-aarch64-apple-darwin
         assert_eq!(parse_compute_cap("12.0.1\n"), None);
     }
 
+    // All three skip cases inject the `CUDA_OXIDE_TARGET` probe rather than
+    // reading the ambient one, so each asserts the slot it names instead of
+    // passing because the developer happens to have the variable exported.
+
     #[test]
     fn detect_run_target_arch_skips_when_arch_explicit() {
         // --arch wins; never query the GPU.
-        assert_eq!(detect_run_target_arch(Some("sm_120"), false), None);
+        assert_eq!(
+            detect_run_target_arch_with_env(Some("sm_120"), false, false),
+            None
+        );
     }
 
     #[test]
     fn detect_run_target_arch_skips_when_emit_nvvm_ir() {
         // NVVM IR mode requires explicit --arch; auto-detect must not run.
-        assert_eq!(detect_run_target_arch(None, true), None);
+        assert_eq!(detect_run_target_arch_with_env(None, true, false), None);
     }
 
     #[test]
     fn detect_run_target_arch_skips_when_env_target_set() {
-        // Test in isolation; the `CUDA_OXIDE_TARGET` env handle is process-wide.
-        // SAFETY: single-threaded test serialised by the cargo test harness.
-        unsafe {
-            std::env::set_var("CUDA_OXIDE_TARGET", "sm_75");
-        }
-        let result = detect_run_target_arch(None, false);
-        unsafe {
-            std::env::remove_var("CUDA_OXIDE_TARGET");
-        }
-        assert_eq!(result, None);
+        // Slot 2 wins; never query the GPU. Injected rather than exported:
+        // `set_var` is a data race against the `vars_os` reads the fingerprint
+        // helpers perform on other test threads, which the cargo test harness
+        // runs concurrently by default.
+        assert_eq!(detect_run_target_arch_with_env(None, false, true), None);
     }
 
     fn write_list_example(
@@ -9137,7 +9224,7 @@ edition = "2024"
             },
         };
 
-        assert_eq!(nvvm_ir_requested(&ctx), Ok(true));
+        assert_eq!(nvvm_ir_requested_with_env(&ctx, None), Ok(true));
     }
 
     #[test]
@@ -9154,7 +9241,7 @@ edition = "2024"
             },
         };
 
-        assert_eq!(nvvm_ir_requested(&ctx), Ok(false));
+        assert_eq!(nvvm_ir_requested_with_env(&ctx, None), Ok(false));
     }
 
     #[test]
