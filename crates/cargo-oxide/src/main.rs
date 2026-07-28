@@ -757,13 +757,13 @@ fn main() {
             commands::setup(&ctx);
         }
         Commands::Update { force } => {
-            // AdviseSetup / RefreshCache plan from passive context; RunSetup
-            // rebuilds via setup which resolves the backend on demand.
-            let ctx = if force {
-                commands::resolve_context()
-            } else {
-                commands::resolve_passive_context()
-            };
+            // All plans resolve passively. `setup` only needs
+            // `ctx.codegen_crate`, which the passive resolver provides
+            // identically, while eager resolution would auto-fetch and build
+            // the backend before `update` runs: a double clone+build ahead of
+            // the RefreshCache arm's own clear-and-rebuild, and a wasted
+            // build ahead of the pinned-backend refusals.
+            let ctx = commands::resolve_passive_context();
             commands::update(&ctx, force);
         }
     }
