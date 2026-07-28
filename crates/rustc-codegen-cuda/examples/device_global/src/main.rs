@@ -19,6 +19,13 @@ static STATIC_NAN: f32 = f32::from_bits(0x7fc0_1234);
 
 const STATIC_WEIGHT_PAIR: &[f32; 2] = &STATIC_WEIGHTS[2];
 
+/// One-past-the-end interior pointer: const eval permits forming a pointer
+/// whose addend equals the allocation size (32 bytes here). It is legal to
+/// form and compare, only dereferencing it would be UB, so the translator
+/// must materialize it instead of rejecting the offset.
+const STATIC_WEIGHTS_END: *const [f32; 2] =
+    unsafe { (&raw const STATIC_WEIGHTS as *const [f32; 2]).add(4) };
+
 #[repr(C)]
 struct PaddedStatic {
     tag: u8,
@@ -58,6 +65,11 @@ fn get_padded_static_tag() -> &'static u8 {
 #[inline(never)]
 fn get_padded_static_value() -> &'static u32 {
     &PADDED_STATIC.value
+}
+
+#[inline(never)]
+fn get_static_weights_end() -> *const [f32; 2] {
+    STATIC_WEIGHTS_END
 }
 
 #[cuda_module]
@@ -111,6 +123,18 @@ mod kernels {
             *out.add(1) = *get_padded_static_value();
             *out.add(2) = get_static_weight_pair()[0].to_bits();
             *out.add(3) = get_static_weight_pair()[1].to_bits();
+        }
+    }
+
+    /// A one-past-the-end constant pointer is formed and compared, never
+    /// dereferenced. The distance from the static's base must equal the
+    /// allocation size (32 bytes).
+    #[kernel]
+    pub unsafe fn static_one_past_end(out: *mut u32) {
+        let base = get_static_weights() as *const [[f32; 2]; 4] as usize;
+        let end = get_static_weights_end() as usize;
+        unsafe {
+            *out = (end - base) as u32;
         }
     }
 }
@@ -223,6 +247,29 @@ fn main() {
         eprintln!(
             "FAILED: expected static subobjects {subobject_expected:?}, got {subobject_result:?}"
         );
+        std::process::exit(1);
+    }
+
+    let one_past_end_dev =
+        DeviceBuffer::<u32>::zeroed(&stream, 1).expect("Failed to allocate one-past-end output");
+
+    unsafe {
+        module.static_one_past_end(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            one_past_end_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("One-past-end kernel launch failed");
+
+    let one_past_end_result = one_past_end_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy one-past-end output")[0];
+
+    println!("One-past-the-end offset: result = {one_past_end_result}");
+
+    if one_past_end_result != 32 {
+        eprintln!("FAILED: expected one-past-the-end offset 32, got {one_past_end_result}");
         std::process::exit(1);
     }
 
