@@ -213,6 +213,18 @@ pub fn as_vectors_mut<V: Vector>(slice: &mut [V::Elem]) -> Option<&mut [V]> {
 /// Shared checks: exact division and alignment.
 #[inline]
 fn vector_len<V: Vector>(elems: usize, addr: usize) -> Option<usize> {
+    // Compile-time check of the `Vector` contract every view relies on: a `V`
+    // whose size is not exactly `LANES * size_of::<Elem>()` would make the
+    // element count and the byte extent disagree, and every index through the
+    // view would then read the wrong bytes. Evaluated when `vector_len` is
+    // instantiated for a `V`, so a malformed impl fails the build instead of
+    // silently misindexing.
+    const {
+        assert!(
+            size_of::<V>() == V::LANES * size_of::<V::Elem>(),
+            "Vector impl violates its contract: size_of::<V>() must equal LANES * size_of::<V::Elem>()"
+        );
+    }
     if elems == 0 {
         // Uniform empty-slice semantics: nothing will be accessed, so the
         // base address (which for a literal `&[]` is a dangling pointer with
