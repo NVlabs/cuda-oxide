@@ -296,10 +296,10 @@ mod tests {
     /// address, and would otherwise fault or read the wrong data.
     #[test]
     fn refuses_a_misaligned_base() {
-        let backing = [F32x4::splat(0.0); 4];
+        let backing = [F32x4::splat(0.0); 8];
         let flat: &[f32] =
-            unsafe { core::slice::from_raw_parts(backing.as_ptr().cast::<f32>(), 16) };
-        // Offsets 4, 8, 12 stay 16-byte aligned; 1, 2, 3, 5 do not.
+            unsafe { core::slice::from_raw_parts(backing.as_ptr().cast::<f32>(), 32) };
+        // Offsets 4, 8, 12 stay 16-byte aligned; 1, 2, 3, 5, 6, 7 do not.
         for off in [4usize, 8, 12] {
             assert!(
                 as_vectors::<F32x4>(&flat[off..]).is_some(),
@@ -307,12 +307,12 @@ mod tests {
             );
         }
         for off in [1usize, 2, 3, 5, 6, 7] {
-            let tail = &flat[off..];
-            if !tail.len().is_multiple_of(4) {
-                continue; // rejected on length, not the point here
-            }
+            // Take exactly 12 elements so the length divides by 4 and the
+            // only possible ground for rejection is the misaligned base.
+            let sub = &flat[off..off + 12];
+            assert!(sub.len().is_multiple_of(4), "length must not be the reason");
             assert!(
-                as_vectors::<F32x4>(tail).is_none(),
+                as_vectors::<F32x4>(sub).is_none(),
                 "offset {off} is not 16-byte aligned and must be refused"
             );
         }
