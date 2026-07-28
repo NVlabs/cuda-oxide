@@ -179,6 +179,21 @@ The two annotations provide the checked facts:
 - `block = (64, 1, 1)` requires exactly 64 threads in each block. The launch
   may still contain many blocks.
 
+An exact `block` is checked twice, in two places that fail independently.
+Preparation rejects a mismatched launch configuration on the host, before any
+driver call. The shape also reaches the device compiler, which emits
+`.reqntid 64, 1, 1`, so the CUDA driver refuses any launch whose block differs
+on any axis. The second check covers the paths the first one cannot see: an
+`unsafe` raw launch, and a module whose loaded PTX is not the artifact the
+generated Rust markers describe.
+
+`.reqntid` replaces `.maxntid` for a contracted kernel. ptxas rejects an entry
+declaring both, and an exact shape already bounds the thread count. A kernel
+carrying only `#[launch_bounds]` keeps `.maxntid`, which bounds the product
+`x * y * z` and admits every shape reaching it. That difference is the reason a
+thread bound cannot stand in for a block shape: under `.maxntid 64, 1, 1` the
+driver accepts `(8, 8, 1)` and `(4, 4, 4)` alongside `(64, 1, 1)`.
+
 For 2-D tiles, use `thread::coord_2d_u32(launch_context)` with
 `RowMajorTiles<ROWS, COLS, ROW_STRIDE>`. `ROW_STRIDE` is the logical row pitch
 in elements and must match the buffer's layout. The buffer length does not

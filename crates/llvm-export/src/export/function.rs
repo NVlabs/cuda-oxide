@@ -40,7 +40,8 @@ use super::{
     literals::{format_float_literal, format_half_literal},
     names::{decode_intrinsic_identifier, has_device_prefix, strip_device_prefix},
     state::{
-        KernelClusterConfig, KernelInfo, KernelLaunchBounds, ModuleExportState, PredecessorMap,
+        KernelBlockGeometry, KernelClusterConfig, KernelInfo, KernelLaunchBounds,
+        ModuleExportState, PredecessorMap,
     },
 };
 
@@ -224,12 +225,27 @@ impl<'a> ModuleExportState<'a> {
             }
 
             // Check for launch bounds attributes (from #[launch_bounds(max, min)])
-            // These will be emitted as nvvm.annotations metadata for maxntid and minctasm
-            if let Some(max_threads) = get_int("maxntid") {
+            // and an exact block shape (from #[launch_contract(block = (x,y,z))]).
+            // These are emitted as nvvm.annotations metadata for maxntid,
+            // minctasm and reqntid.
+            let exact_block = match (
+                get_int("reqntid_x"),
+                get_int("reqntid_y"),
+                get_int("reqntid_z"),
+            ) {
+                (Some(x), Some(y), Some(z)) => Some(KernelBlockGeometry::ExactBlock(x, y, z)),
+                _ => None,
+            };
+            // An exact shape displaces the thread maximum: ptxas rejects an
+            // entry carrying both directives, and the shape already bounds the
+            // thread count on every axis.
+            let geometry =
+                exact_block.or_else(|| get_int("maxntid").map(KernelBlockGeometry::MaxThreads));
+            if let Some(geometry) = geometry {
                 let min_blocks = get_int("minctasm");
                 self.launch_bounds_kernels.push(KernelLaunchBounds {
                     name: fixed_func_name.clone(),
-                    max_threads,
+                    geometry,
                     min_blocks: if min_blocks == Some(0) {
                         None
                     } else {

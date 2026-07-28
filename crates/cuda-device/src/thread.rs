@@ -982,6 +982,44 @@ const fn validate_launch_bounds(max_threads: u32) {
     );
 }
 
+/// Compile-time marker carrying an exact block shape to the device compiler.
+///
+/// `#[launch_contract(block = (x, y, z))]` already binds the host launch to one
+/// block shape. This marker gives the same fact to the device compiler, which
+/// emits `.reqntid x, y, z`. The CUDA driver then rejects a launch whose block
+/// dimensions differ on any axis, so the exact-block obligation is enforced by
+/// the compiled artifact rather than by the host check alone.
+///
+/// # How it works
+///
+/// 1. `#[launch_contract]` injects `__launch_contract_block_config::<X, Y, Z>()`
+///    at kernel start.
+/// 2. The MIR importer detects the call and extracts the const generics.
+/// 3. The marker call is removed during compilation.
+/// 4. LLVM export emits `!nvvm.annotations` with `reqntidx`, `reqntidy` and
+///    `reqntidz`.
+/// 5. The NVPTX backend emits `.reqntid x, y, z`.
+///
+/// # Relationship to `#[launch_bounds]`
+///
+/// `.maxntid` and `.reqntid` on one entry is a ptxas error, so a kernel
+/// carrying both attributes emits `.reqntid` alone. An exact block shape
+/// implies the thread maximum that `.maxntid` would have declared, so nothing
+/// the device compiler relies on is lost. `.minnctapersm` from
+/// `#[launch_bounds(max, min)]` is unaffected and still emitted.
+#[inline(never)]
+pub fn __launch_contract_block_config<const X: u32, const Y: u32, const Z: u32>() {
+    const { validate_contract_block(X, Y, Z) }
+    // Detected at compile time and removed. No runtime code is generated.
+}
+
+const fn validate_contract_block(x: u32, y: u32, z: u32) {
+    assert!(
+        x > 0 && y > 0 && z > 0,
+        "launch_contract block dimensions must all be greater than zero"
+    );
+}
+
 /// Compiler marker for opt-in unchecked slice/array indexing.
 ///
 /// `#[kernel(unchecked_indexing)]` inserts this call. The MIR importer records

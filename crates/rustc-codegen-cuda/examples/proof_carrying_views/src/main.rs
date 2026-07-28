@@ -313,6 +313,7 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
 
     for marker in [
         "__launch_contract_config",
+        "__launch_contract_block_config",
         "__launch_bounds_config",
         "make_kernel_scope",
     ] {
@@ -337,9 +338,7 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         ("safe_tile", safe_tile),
         ("raw_tile", raw_tile),
     ] {
-        if !body.contains(".maxntid 64, 1, 1") {
-            return Err(format!("{name} lost its 64-thread launch bound").into());
-        }
+        verify_exact_block(name, body, ".reqntid 64, 1, 1")?;
         verify_u32_coordinates(name, body)?;
         verify_no_calls(name, body)?;
         let branches = conditional_branches(body);
@@ -363,9 +362,10 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         ("safe_epilogue", safe_epilogue),
         ("raw_epilogue", raw_epilogue),
     ] {
-        if !body.contains(".maxntid 64, 1, 1") {
-            return Err(format!("{name} lost its 64-thread launch bound").into());
-        }
+        // A 2-D contract records its real shape. A thread maximum bounds the
+        // product alone, so its per-axis fields would claim one thread on Y
+        // for a block that has eight.
+        verify_exact_block(name, body, ".reqntid 8, 8, 1")?;
         verify_u32_coordinates(name, body)?;
         verify_no_calls(name, body)?;
         for register in ["%ctaid.y", "%ntid.y", "%tid.y"] {
@@ -462,6 +462,27 @@ fn entry_body<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::erro
         .map(|offset| open + 1 + offset + 2)
         .ok_or_else(|| format!("PTX entry `{name}` has no closing brace"))?;
     Ok(&rest[..close])
+}
+
+/// A kernel declaring an exact `block` in its launch contract carries that
+/// shape into PTX as `.reqntid`, which the driver enforces on every axis.
+///
+/// `.reqntid` displaces `.maxntid`: ptxas rejects an entry declaring both, and
+/// an exact shape already bounds the thread count.
+fn verify_exact_block(
+    name: &str,
+    body: &str,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !body.contains(expected) {
+        return Err(format!("{name} lost its exact block shape `{expected}`").into());
+    }
+    if body.contains(".maxntid") {
+        return Err(
+            format!("{name} declares both .maxntid and .reqntid, which ptxas rejects").into(),
+        );
+    }
+    Ok(())
 }
 
 fn verify_u32_coordinates(name: &str, body: &str) -> Result<(), Box<dyn std::error::Error>> {

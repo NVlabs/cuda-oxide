@@ -460,9 +460,10 @@ pub fn compile_translated_module(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PreLoweringBackendSelection {
     /// Whether the lowered module will contain CUDA libdevice (`__nv_*`)
-    /// calls under the selected intrinsic backend. Rounding placeholders
-    /// count only when the LibNvvm backend is selected; on the NVPTX path
-    /// they lower to native LLVM intrinsics instead.
+    /// calls under the selected intrinsic backend. Rounding and sign
+    /// (`fabs`/`copysign`) placeholders count only when the LibNvvm backend
+    /// is selected; on the NVPTX path they lower to native LLVM intrinsics
+    /// instead.
     needs_libdevice: bool,
     /// Whether the pipeline must stop at NVVM IR instead of invoking `llc`.
     emit_nvvm_ir: bool,
@@ -484,14 +485,18 @@ fn select_pre_lowering_backend(
     //
     // * strict: calls that lower to `__nv_*` under every intrinsic backend
     //   (direct `__nv_*` externs and the transcendental-family placeholders);
-    // * backend-dependent: the rounding placeholders, which lower to native
-    //   LLVM intrinsics on the NVPTX path and fall back to libdevice only
-    //   when the module is emitted as NVVM IR (the legacy LLVM 7 dialect has
-    //   no `llvm.roundeven.*`).
+    // * backend-dependent: the rounding and sign (`fabs`/`copysign`)
+    //   placeholders, which lower to native LLVM intrinsics on the NVPTX
+    //   path and fall back to libdevice only when the module is emitted as
+    //   NVVM IR (the legacy LLVM 7 dialect has no `llvm.roundeven.*`).
+    //
+    // The float `max`/`min` placeholders are in neither flavor: they expand
+    // to an ordered compare/select under every backend and never produce a
+    // `__nv_*` call.
     //
     // Only strict use participates in the emit-NVVM-IR decision; otherwise a
-    // rounding-only kernel would drag in the libNVVM dependency it no longer
-    // needs.
+    // kernel using only rounding or sign ops would drag in the libNVVM
+    // dependency it no longer needs.
     let uses_strict_libdevice =
         typed_mir_uses_libdevice(ctx, module) || module_uses_libdevice(ctx, module);
     let uses_backend_dependent_libdevice = typed_mir_calls_match(
@@ -507,9 +512,9 @@ fn select_pre_lowering_backend(
         mir_lower::IntrinsicBackend::LlvmNvptx
     };
     // Predict the `__nv_*` symbols the lowered module will actually contain,
-    // for the post-lowering consistency check: rounding placeholders lower to
-    // `__nv_*` precisely when the LibNvvm backend was chosen (and LibNvvm is
-    // chosen exactly when NVVM IR is emitted).
+    // for the post-lowering consistency check: rounding and sign placeholders
+    // lower to `__nv_*` precisely when the LibNvvm backend was chosen (and
+    // LibNvvm is chosen exactly when NVVM IR is emitted).
     let needs_libdevice =
         uses_strict_libdevice || (emit_nvvm_ir && uses_backend_dependent_libdevice);
 
@@ -569,9 +574,10 @@ fn typed_mir_calls_match(
 /// pre-Blackwell targets.
 ///
 /// Only strict libdevice use (transcendentals and direct `__nv_*` calls) is
-/// consulted. Rounding intrinsics never force the NVVM fallback: on the PTX
-/// path they lower to native LLVM intrinsics with no libdevice involvement,
-/// and they use libdevice only when NVVM IR is emitted for another reason.
+/// consulted. Rounding and sign intrinsics never force the NVVM fallback: on
+/// the PTX path they lower to native LLVM intrinsics with no libdevice
+/// involvement, and they use libdevice only when NVVM IR is emitted for
+/// another reason. Float `max`/`min` never involve libdevice at all.
 fn should_emit_nvvm_ir(
     policy: OutputPolicy,
     uses_strict_libdevice: bool,
@@ -808,6 +814,71 @@ mod tests {
         assert!(selection.emit_nvvm_ir);
         assert_eq!(
             selection.intrinsic_backend,
+            mir_lower::IntrinsicBackend::LibNvvm
+        );
+    }
+
+    /// The sign placeholders (`fabs`/`copysign`) are backend-dependent like
+    /// rounding, and the float `max`/`min` placeholders never use libdevice
+    /// at all: a module using only these ops must stay on the
+    /// self-sufficient PTX path with no libdevice prediction.
+    #[test]
+    fn sign_and_minmax_only_module_stays_on_self_sufficient_ptx_path() {
+        let mut ctx = Context::new();
+        let module = typed_mir_test_module(
+            &mut ctx,
+            &[
+                dialect_mir::rust_intrinsics::CALLEE_FABS,
+                dialect_mir::rust_intrinsics::CALLEE_COPYSIGN_F32,
+                dialect_mir::rust_intrinsics::CALLEE_MAXNUM_NSZ_F32,
+                dialect_mir::rust_intrinsics::CALLEE_MINNUM_NSZ_F64,
+            ],
+        );
+        for can_ir_link_libdevice in [false, true] {
+            let selection = select_pre_lowering_backend(
+                &ctx,
+                module,
+                OutputPolicy::ExternalLinkAllowed {
+                    request_nvvm_ir: false,
+                },
+                can_ir_link_libdevice,
+            );
+            assert!(!selection.needs_libdevice);
+            assert!(!selection.emit_nvvm_ir);
+            assert_eq!(
+                selection.intrinsic_backend,
+                mir_lower::IntrinsicBackend::LlvmNvptx
+            );
+        }
+    }
+
+    /// Under an explicit NVVM IR request the sign placeholders fall back to
+    /// `__nv_fabsf`/`__nv_copysignf` (so libdevice must be predicted), while
+    /// `max`/`min` expand to compare/select under every backend and
+    /// contribute nothing to the prediction.
+    #[test]
+    fn sign_module_needs_libdevice_under_nvvm_ir_but_minmax_never_does() {
+        let mut ctx = Context::new();
+        let nvvm_requested = OutputPolicy::ExternalLinkAllowed {
+            request_nvvm_ir: true,
+        };
+
+        let sign_module =
+            typed_mir_test_module(&mut ctx, &[dialect_mir::rust_intrinsics::CALLEE_FABS]);
+        let sign = select_pre_lowering_backend(&ctx, sign_module, nvvm_requested, false);
+        assert!(sign.needs_libdevice);
+        assert!(sign.emit_nvvm_ir);
+        assert_eq!(sign.intrinsic_backend, mir_lower::IntrinsicBackend::LibNvvm);
+
+        let minmax_module = typed_mir_test_module(
+            &mut ctx,
+            &[dialect_mir::rust_intrinsics::CALLEE_MAXNUM_NSZ_F32],
+        );
+        let minmax = select_pre_lowering_backend(&ctx, minmax_module, nvvm_requested, false);
+        assert!(!minmax.needs_libdevice);
+        assert!(minmax.emit_nvvm_ir);
+        assert_eq!(
+            minmax.intrinsic_backend,
             mir_lower::IntrinsicBackend::LibNvvm
         );
     }

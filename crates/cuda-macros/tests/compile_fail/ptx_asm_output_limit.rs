@@ -13,8 +13,18 @@ fn main() {
     let g: u32;
     let h: u32;
     let i: u32;
+    let j: u32;
+    let k: u32;
+    let l: u32;
+    let m: u32;
+    let n: u32;
+    let o: u32;
+    let p: u32;
+    let q: u32;
 
     unsafe {
-        ptx_asm!("nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("=r") i);
+        ptx_asm!(
+            "nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("=r") i, out("=r") j, out("=r") k, out("=r") l, out("=r") m, out("=r") n, out("=r") o, out("=r") p, out("=r") q,
+        );
     }
 }
