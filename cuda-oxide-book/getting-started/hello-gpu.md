@@ -36,6 +36,8 @@ This generates a ready-to-run project:
 ```text
 my_first_kernel/
 ├── Cargo.toml          # dependencies on cuda-device, cuda-host, cuda-core
+├── README.md           # doctor + run instructions
+├── .gitignore          # target/ and generated device artifacts
 ├── rust-toolchain.toml # pins the required nightly toolchain
 └── src/
     └── main.rs          # kernel + host code in one file
@@ -56,8 +58,9 @@ You should see `PASSED: all 1024 elements correct`. The generated template is a 
 Here's a vector addition with a twist: the element-wise addition is factored out into a plain helper function. Both the kernel and the helper live in the same file alongside host code:
 
 ```rust
-use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};
+use cuda_host::cuda_module;
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 
 /// Plain helper function -- no annotation needed.
 /// The compiler discovers it automatically because `vecadd` calls it.
@@ -70,6 +73,8 @@ mod kernels {
     use super::*;
 
     #[kernel]
+    #[launch_bounds(256)]
+    #[launch_contract(domain = 1, block = (256, 1, 1))]
     pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
@@ -79,32 +84,25 @@ mod kernels {
     }
 }
 
-fn main() {
-    let ctx = CudaContext::new(0).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
     const N: usize = 1024;
     let a_host: Vec<f32> = (0..N).map(|i| i as f32).collect();
     let b_host: Vec<f32> = (0..N).map(|i| (i * 2) as f32).collect();
 
-    let a_dev = DeviceBuffer::from_host(&stream, &a_host).unwrap();
-    let b_dev = DeviceBuffer::from_host(&stream, &b_host).unwrap();
-    let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
+    let a_dev = DeviceBuffer::from_host(&stream, &a_host)?;
+    let b_dev = DeviceBuffer::from_host(&stream, &b_host)?;
+    let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
 
-    let module = kernels::load(&ctx).expect("Failed to load embedded module");
-    // SAFETY: `for_num_elems` is 1D and all three buffers contain N elements.
-    unsafe {
-        module.vecadd(
-            &stream,
-            LaunchConfig::for_num_elems(N as u32),
-            &a_dev,
-            &b_dev,
-            &mut c_dev,
-        )
-    }
-    .unwrap();
+    // SAFETY: this package owns the embedded device bundle produced for the
+    // kernels module above.
+    let module = unsafe { kernels::load(&ctx)? };
+    let prepared = module.prepare_vecadd(LaunchConfig1D::new((N as u32).div_ceil(256), 256, 0))?;
+    module.vecadd(&stream, &prepared, &a_dev, &b_dev, &mut c_dev)?;
 
-    let c_host = c_dev.to_host_vec(&stream).unwrap();
+    let c_host = c_dev.to_host_vec(&stream)?;
     let errors = (0..N)
         .filter(|&i| (c_host[i] - (a_host[i] + b_host[i])).abs() > 1e-5)
         .count();
@@ -115,6 +113,7 @@ fn main() {
         eprintln!("FAILED: {} errors", errors);
         std::process::exit(1);
     }
+    Ok(())
 }
 ```
 
@@ -147,26 +146,25 @@ The `#[device]` attribute exists but serves a different purpose: it marks a func
 `#[cuda_module]` wraps the inline kernel module and generates a typed host API:
 
 ```rust
-let module = kernels::load(&ctx)?;
-// SAFETY: this is a 1D launch and all three buffers contain N elements.
-unsafe {
-    module.vecadd(
-        &stream,
-        LaunchConfig::for_num_elems(N as u32),
-        &a_dev,
-        &b_dev,
-        &mut c_dev,
-    )
-}?;
+// SAFETY: this package owns the embedded device bundle produced for the
+// kernels module above.
+let module = unsafe { kernels::load(&ctx)? };
+let prepared = module.prepare_vecadd(LaunchConfig1D::new((N as u32).div_ceil(256), 256, 0))?;
+module.vecadd(&stream, &prepared, &a_dev, &b_dev, &mut c_dev)?;
 ```
 
 The loader reads the embedded device artifact from the host binary, caches kernel
 function handles, and exposes each `#[kernel]` as a Rust method. The method
 signature mirrors the kernel signature, with device slices mapped to
-`DeviceBuffer` borrows. This checks argument types, but a raw `LaunchConfig`
-does not prove that a 1D-index kernel was given a 1D launch. Raw generated
-launch methods are therefore unsafe. A declared launch contract enables the
-safe prepared path shown in [Launching Kernels](../gpu-programming/launching-kernels.md).
+`DeviceBuffer` borrows. Because `vecadd` declares a `#[launch_contract]`, the
+module also generates `prepare_vecadd`: it takes a rank-preserving
+`LaunchConfig1D` and validates it against the contract and the live device
+limits, returning a `PreparedLaunch<vecadd>` proof that the safe `vecadd`
+method consumes. Loading is the one remaining unsafe step -- the caller vouches
+that the embedded bundle matches the module's declared ABI. Kernels without a
+contract expose only raw, unsafe launch methods, because a raw `LaunchConfig`
+does not prove that a 1D-index kernel was given a 1D launch. The full prepared
+path is covered in [Launching Kernels](../gpu-programming/launching-kernels.md).
 
 `load_kernel_module` and `cuda_launch!` remain available as lower-level APIs
 for manual sidecar artifact loading and custom launch code. `cuda_launch!`
@@ -178,7 +176,7 @@ be wrapped in `unsafe { }`.
 Slices cross the host/device ABI as their `(ptr, len)` components -- the host passes them as two kernel arguments, and the device compiler reassembles the slice in the entry block. Structs and closures by value travel as one byval `.param` instead, so the host packet pushes the whole aggregate as a single slot (this matches what the launcher actually does and avoids mismatches with field-by-field declarations). All of this is fully transparent -- the kernel signature still looks like ordinary Rust:
 
 ```text
-Host:   unsafe { module.vecadd(&stream, raw_config, &data, ...) }
+Host:   module.vecadd(&stream, &prepared, &data, ...)
           → extracts (ptr, len) for the slice, passes two args
 
 PTX:    .entry kernel(.param .u64 ptr, .param .u64 len, ...)

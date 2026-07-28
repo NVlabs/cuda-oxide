@@ -17,6 +17,11 @@
 //! N values of type T that travel together through registers. All access
 //! methods use **copy semantics** - we copy values out, not reference them.
 //!
+//! For the *memory* counterpart - over-aligned element types whose alignment
+//! makes loads and stores single wide transactions - see [`crate::vector`]
+//! (e.g. [`crate::vector::F32x4`]). For packed 16-bit ALU pairs, see
+//! [`crate::f16x2`] / [`crate::bf16x2`].
+//!
 //! # Example
 //!
 //! ```rust,ignore

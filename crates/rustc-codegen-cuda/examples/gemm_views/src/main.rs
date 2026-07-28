@@ -747,6 +747,7 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
 
     for marker in [
         "__launch_contract_config",
+        "__launch_contract_block_config",
         "__launch_bounds_config",
         "make_kernel_scope",
     ] {
@@ -768,8 +769,19 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         ("sgemm_tiled_views", safe_tiled),
         ("sgemm_tiled_raw", raw_tiled),
     ] {
-        if !body.contains(".maxntid 256, 1, 1") {
-            return Err(format!("{name} lost its 256-thread launch bound").into());
+        // These kernels declare `block = (16, 16, 1)`, so the exact shape
+        // reaches the device compiler as `.reqntid` and the driver rejects any
+        // other block on any axis. A thread maximum cannot express this shape:
+        // it bounds the product alone, and its per-axis fields would claim one
+        // thread on Y for a block that has sixteen. `.maxntid` must therefore
+        // be absent, and ptxas rejects an entry carrying both regardless.
+        if !body.contains(".reqntid 16, 16, 1") {
+            return Err(format!("{name} lost its exact 16x16 block shape").into());
+        }
+        if body.contains(".maxntid") {
+            return Err(
+                format!("{name} declares both .maxntid and .reqntid, which ptxas rejects").into(),
+            );
         }
         verify_no_calls(name, body)?;
         // Every bounds fact is proven through sentinel scalar checks; nothing

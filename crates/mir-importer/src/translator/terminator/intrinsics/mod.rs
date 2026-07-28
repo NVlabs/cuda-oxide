@@ -41,6 +41,7 @@ pub mod atomic;
 pub mod bigint;
 pub mod bitops;
 pub mod debug;
+pub mod exact_div;
 pub mod float_math;
 pub mod generated;
 pub mod indexing;

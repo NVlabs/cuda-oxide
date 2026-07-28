@@ -306,6 +306,83 @@ impl<T> DeviceBuffer<T> {
             DeviceBuffer::<A>::from_raw_parts_with_dealloc_stream(ptr, len, ctx, dealloc_stream)
         }
     }
+
+    /// Reinterpret this buffer as `A`, adjusting the element count.
+    ///
+    /// Where [`Self::cast_elem`] requires `A` to be layout-identical to `T`,
+    /// this allows a *different* size and alignment and recomputes the length
+    /// from the byte extent. That is what makes it usable for grouping scalars
+    /// into an over-aligned vector element, which is by construction a
+    /// different size and alignment and so cannot go through `cast_elem`.
+    ///
+    /// ```rust,ignore
+    /// // 4N floats become N 16-byte-aligned quads, same allocation.
+    /// let quads: DeviceBuffer<F32x4> = floats.cast_chunks()?;
+    /// ```
+    ///
+    /// # Why this exists
+    ///
+    /// Wide memory transactions require an over-aligned element type. Without a
+    /// length-adjusting cast, adopting one means every producer and consumer of
+    /// a buffer has to agree on the element type simultaneously: in practice
+    /// that meant six kernel signature changes and a dummy buffer to migrate a
+    /// single buffer pair. This lets the element type be chosen at the boundary
+    /// instead, so a kernel that wants wide accesses can take `&[F32x4]` while
+    /// the buffer is still allocated and filled as `f32`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the buffer unchanged if the reinterpretation would not be exact:
+    ///
+    /// - the byte extent is not a whole number of `A`
+    /// - the device pointer is not aligned for `A`
+    /// - `A` is zero-sized
+    ///
+    /// The alignment check is expected to pass: `cuMemAlloc` returns at least
+    /// 256-byte-aligned memory, which satisfies any vector type. It is checked
+    /// rather than assumed because a buffer can also be built from
+    /// [`Self::from_raw_parts`] with a hand-computed pointer, and that is
+    /// exactly the case where being wrong is silent.
+    ///
+    /// Returning the original on failure rather than panicking keeps the
+    /// fallback path available, since a caller that cannot widen usually has a
+    /// scalar version to fall back to.
+    pub fn cast_chunks<A>(self) -> Result<DeviceBuffer<A>, Self> {
+        let bytes = self.len.saturating_mul(std::mem::size_of::<T>());
+        let Some(new_len) = chunk_cast_len(
+            bytes,
+            self.ptr as usize,
+            std::mem::size_of::<A>(),
+            std::mem::align_of::<A>(),
+        ) else {
+            return Err(self);
+        };
+        let (ptr, _len, ctx, dealloc_stream) = self.into_all_raw_parts();
+        // SAFETY: `ptr` came from a valid allocation of `bytes` bytes, checked
+        // above to be exactly `new_len` elements of `A` and to be aligned for
+        // `A`. The allocation and its ownership are unchanged; only the element
+        // type and the count describing the same bytes change. `Drop` on the
+        // original is suppressed by `into_all_raw_parts`.
+        Ok(unsafe {
+            DeviceBuffer::<A>::from_raw_parts_with_dealloc_stream(ptr, new_len, ctx, dealloc_stream)
+        })
+    }
+
+    /// Whether [`Self::cast_chunks`] to `A` would succeed.
+    ///
+    /// For choosing between a wide and a scalar path without consuming the
+    /// buffer to find out.
+    #[must_use]
+    pub fn can_cast_chunks<A>(&self) -> bool {
+        let bytes = self.len.saturating_mul(std::mem::size_of::<T>());
+        chunk_cast_len(
+            bytes,
+            self.ptr as usize,
+            std::mem::size_of::<A>(),
+            std::mem::align_of::<A>(),
+        )
+        .is_some()
+    }
 }
 
 impl<T: DeviceCopy> DeviceBuffer<T> {
@@ -772,4 +849,87 @@ fn allocation_size<T>(len: usize) -> Result<usize, DriverError> {
     len.checked_mul(std::mem::size_of::<T>()).ok_or(DriverError(
         cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE,
     ))
+}
+
+/// Element count for reinterpreting `bytes` at `addr` as elements of size
+/// `elem_size` and alignment `align`, or `None` if it would not be exact.
+///
+/// Split out so [`DeviceBuffer::cast_chunks`] and
+/// [`DeviceBuffer::can_cast_chunks`] cannot disagree, and so the decision is
+/// testable without a device.
+fn chunk_cast_len(bytes: usize, addr: usize, elem_size: usize, align: usize) -> Option<usize> {
+    if elem_size == 0 || align == 0 {
+        return None;
+    }
+    if !bytes.is_multiple_of(elem_size) {
+        return None;
+    }
+    if !addr.is_multiple_of(align) {
+        return None;
+    }
+    Some(bytes / elem_size)
+}
+
+#[cfg(test)]
+mod chunk_cast_tests {
+    use super::chunk_cast_len;
+
+    /// A device allocation is at least 256-byte aligned, so the alignment check
+    /// is expected to pass; these pin that it does, and that a hand-computed
+    /// pointer is still rejected.
+    #[test]
+    fn accepts_an_aligned_allocation_that_divides() {
+        // 1024 f32 viewed as 256 quads of 16 bytes.
+        assert_eq!(chunk_cast_len(4096, 0x1000, 16, 16), Some(256));
+        // 8-byte pairs out of the same buffer.
+        assert_eq!(chunk_cast_len(4096, 0x1000, 8, 8), Some(512));
+        // Identity cast.
+        assert_eq!(chunk_cast_len(4096, 0x1000, 4, 4), Some(1024));
+    }
+
+    /// A length that is not a whole number of elements is refused rather than
+    /// truncated, so a dropped tail cannot go unnoticed.
+    #[test]
+    fn refuses_a_byte_extent_that_does_not_divide() {
+        assert_eq!(
+            chunk_cast_len(12, 0x1000, 16, 16),
+            None,
+            "3 f32 into a quad"
+        );
+        assert_eq!(chunk_cast_len(4100, 0x1000, 16, 16), None);
+        assert_eq!(chunk_cast_len(4088, 0x1000, 16, 16), None);
+    }
+
+    /// The case the check exists for: a pointer that did not come from
+    /// `cuMemAlloc`, such as one offset by hand into a larger allocation.
+    #[test]
+    fn refuses_a_misaligned_base() {
+        assert_eq!(chunk_cast_len(4096, 0x1004, 16, 16), None, "4-byte offset");
+        assert_eq!(chunk_cast_len(4096, 0x1008, 16, 16), None, "8-byte offset");
+        // Still fine for a narrower element.
+        assert_eq!(chunk_cast_len(4096, 0x1008, 8, 8), Some(512));
+        assert_eq!(chunk_cast_len(4096, 0x1004, 4, 4), Some(1024));
+    }
+
+    /// Every 256-byte-aligned base satisfies every vector alignment, which is
+    /// why the check is expected to pass for a real allocation.
+    #[test]
+    fn a_cuda_allocation_alignment_satisfies_every_vector_type() {
+        for base in [0usize, 256, 512, 4096, 1 << 20] {
+            for align in [4usize, 8, 16] {
+                assert!(
+                    chunk_cast_len(4096, base, align, align).is_some(),
+                    "base {base:#x} should satisfy align {align}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_degenerate_parameters() {
+        assert_eq!(chunk_cast_len(4096, 0x1000, 0, 16), None, "zero-sized");
+        assert_eq!(chunk_cast_len(4096, 0x1000, 16, 0), None);
+        // An empty buffer casts to an empty buffer.
+        assert_eq!(chunk_cast_len(0, 0x1000, 16, 16), Some(0));
+    }
 }

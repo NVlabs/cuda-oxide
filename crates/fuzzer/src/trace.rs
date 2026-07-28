@@ -121,6 +121,37 @@ fn trace_write_char(val: char) {
     trace_write_u32(val as u32);
 }
 
+/// Floats are folded as their bit patterns, so the trace stays an exact
+/// comparison. A tolerance here would compare something other than the value
+/// the backend produced, and the mismatches worth finding are the ones a
+/// tolerance hides.
+///
+/// The bits agree for every non-NaN value the two backends produce. NaN
+/// payload bits are not pinned down by Rust, so both writers canonicalize a
+/// NaN to the quiet-NaN bit pattern before hashing, as Cranelift's fuzzgen
+/// does. A payload divergence therefore cannot produce a false MISMATCH,
+/// while a NaN against a non-NaN still hashes differently and remains a real
+/// signal.
+#[inline]
+fn trace_write_f32(val: f32) {
+    let bits = if val.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        val.to_bits()
+    };
+    trace_write_u32(bits);
+}
+
+#[inline]
+fn trace_write_f64(val: f64) {
+    let bits = if val.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        val.to_bits()
+    };
+    trace_write_u64(bits);
+}
+
 /// Scalar values that can be folded into the trace.
 pub trait TraceValue {
     fn trace_write(self);
@@ -154,6 +185,8 @@ impl_trace_value! {
     u128 => trace_write_u128,
     usize => trace_write_usize,
     char => trace_write_char,
+    f32 => trace_write_f32,
+    f64 => trace_write_f64,
 }
 
 /// Aggregates of scalar values that can be folded into the trace in one call.

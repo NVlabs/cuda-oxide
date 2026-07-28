@@ -30,7 +30,7 @@ document. If this page ever disagrees with those, they win.
 unsafe {
     ptx_asm!(
         "<template>",
-        out("<constraint>") <place>,   // output operands (up to 8)
+        out("<constraint>") <place>,   // output operands (up to 16)
         in("<constraint>") <expr>,     // input operands (up to 16)
         clobber("<name>"),             // side-effect declarations
         options(<option>, ...),        // assembly options

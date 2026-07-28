@@ -53,6 +53,52 @@ pub(crate) fn convert_generated_packed_alu(
     Ok(())
 }
 
+/// Convert one already-packed register to another packed format.
+///
+/// Covers the `f16x2` and packed-FP8 conversions, which take a single source
+/// register rather than the scalar `f32` pair. PTX orders `cvt` operands as
+/// `d, a`, so the lone operand needs no reordering.
+pub(crate) fn convert_generated_packed_unary(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    ptx_mnemonic: &str,
+    result_width: u32,
+    source_width: u32,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 || op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err_noloc!(
+            "generated packed unary conversion requires one operand and one result"
+        );
+    }
+    // `h` names a 16-bit register and `r` a 32-bit one.
+    let constraint = match (result_width, source_width) {
+        (16, 32) => "=h,r",
+        (32, 16) => "=r,h",
+        (16, 16) => "=h,h",
+        (32, 32) => "=r,r",
+        (result, source) => {
+            return pliron::input_err_noloc!(
+                "generated packed unary conversion requires 16- or 32-bit operands, got {result} from {source}"
+            );
+        }
+    };
+    let result_ty = IntegerType::get(ctx, result_width, Signedness::Signless);
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        result_ty.into(),
+        operands,
+        &format!("{ptx_mnemonic} $0, $1;"),
+        constraint,
+        AsmKind::Pure,
+    );
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
 /// Pack two `f32` values, keeping the first argument in the low lane.
 pub(crate) fn convert_generated_packed_f32x2(
     ctx: &mut Context,

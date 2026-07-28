@@ -12,12 +12,13 @@ use syn::{
 };
 
 const MAX_PTX_ASM_INPUTS: usize = 16;
-const MAX_PTX_ASM_OUTPUTS: usize = 8;
+const MAX_PTX_ASM_OUTPUTS: usize = 16;
 const REGISTER_ONLY_OPTION: &str = "register_only";
 const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
-const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n"];
+const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n", "C"];
 const SUPPORTED_OUTPUT_CONSTRAINTS: &[&str] = &["=h", "=r", "=l", "=q", "=f", "=d"];
+const COMPILE_TIME_STRING_CONSTRAINT: &str = "C";
 
 pub struct PtxAsmInput {
     template: LitStr,
@@ -238,7 +239,20 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
     };
     let options_lit = syn::LitByteStr::new(options_marker.as_bytes(), input.template.span());
 
-    let input_exprs: Vec<&Expr> = inputs.iter().map(|(_, expr)| expr).collect();
+    let input_exprs: Vec<TokenStream2> = inputs
+        .iter()
+        .map(|(constraint, expr)| {
+            if constraint.value() == COMPILE_TIME_STRING_CONSTRAINT {
+                // `in("C")` operands must be compile-time byte strings. The
+                // typed helper turns any other operand type into a type error
+                // at the call site, and the inline const keeps the operand a
+                // MIR constant so the importer can splice its text.
+                quote! { const { cuda_device::ptx::__ptx_asm_c(#expr) } }
+            } else {
+                quote! { #expr }
+            }
+        })
+        .collect();
     let arity = input_exprs.len();
 
     if !outputs.is_empty() {
@@ -500,7 +514,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_cuda_constraints() {
-        for constraint in ["", "C", "x", "rf"] {
+        for constraint in ["", "x", "rf"] {
             let input = LitStr::new(constraint, proc_macro2::Span::call_site());
             let err = validate_input_constraint(&input).unwrap_err();
             assert!(
@@ -520,14 +534,32 @@ mod tests {
     }
 
     #[test]
+    fn accepts_compile_time_string_input_constraint() {
+        let input = LitStr::new("C", proc_macro2::Span::call_site());
+        assert!(validate_input_constraint(&input).is_ok());
+
+        for constraint in ["=C", "+C"] {
+            let invalid = LitStr::new(constraint, proc_macro2::Span::call_site());
+            assert!(validate_input_constraint(&invalid).is_err());
+        }
+    }
+
+    #[test]
     fn rejects_too_many_outputs() {
         let input: PtxAsmInput = syn::parse_str(
-            r#""nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("=r") i"#,
+            r#""nop;",
+            out("=r") a, out("=r") b, out("=r") c, out("=r") d,
+            out("=r") e, out("=r") f, out("=r") g, out("=r") h,
+            out("=r") i, out("=r") j, out("=r") k, out("=r") l,
+            out("=r") m, out("=r") n, out("=r") o, out("=r") p,
+            out("=r") q"#,
         )
         .unwrap();
+
         let err = build_ptx_asm(input).unwrap_err();
+
         assert!(
-            err.to_string().contains("at most 8 output operands"),
+            err.to_string().contains("at most 16 output operands"),
             "unexpected error: {err}"
         );
     }

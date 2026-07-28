@@ -21,18 +21,30 @@
 //! pass. A second launch verifies that the ReLU variants produce CUDA's
 //! canonical NaN for NaN inputs.
 //!
+//! A third launch exercises the hand-written unpackers: it packs with the
+//! generated `cvt_f16x2_f32` / `cvt_rz_bf16x2_f32` and unpacks with
+//! `cvt_f32x2_f16x2`, `cvt_f32_f16x2_{lo,hi}`, `cvt_f32x2_bf16x2`, and
+//! `cvt_f32_bf16x2_{lo,hi}`, writing the widened `f32` values out. Widening
+//! is exact in both formats, so the host again checks exact bits. This is
+//! the only example that runs the runtime u16-to-f16 transmute + fpext path
+//! on the device.
+//!
 //! Run: cargo oxide run cvt_packed
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::convert::{
-    cvt_f16x2_f32, cvt_rn_relu_bf16x2_f32, cvt_rn_relu_f16x2_f32, cvt_rz_bf16x2_f32,
-    cvt_rz_f16x2_f32,
+    cvt_f16x2_f32, cvt_f32_bf16x2_hi, cvt_f32_bf16x2_lo, cvt_f32_f16x2_hi, cvt_f32_f16x2_lo,
+    cvt_f32x2_bf16x2, cvt_f32x2_f16x2, cvt_rn_relu_bf16x2_f32, cvt_rn_relu_f16x2_f32,
+    cvt_rz_bf16x2_f32, cvt_rz_f16x2_f32,
 };
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
-/// Number of conversion results produced by the kernel.
+/// Number of conversion results produced by the packing kernel.
 const NUM_VARIANTS: usize = 5;
+
+/// Number of unpacked f32 values produced by the round-trip kernel.
+const NUM_UNPACKED: usize = 8;
 
 // =============================================================================
 // KERNEL
@@ -53,6 +65,34 @@ mod kernels {
                 *out.get_unchecked_mut(2) = cvt_rn_relu_f16x2_f32(lo, hi);
                 *out.get_unchecked_mut(3) = cvt_rn_relu_bf16x2_f32(lo, hi);
                 *out.get_unchecked_mut(4) = cvt_rz_bf16x2_f32(lo, hi);
+            }
+        }
+    }
+
+    /// Thread 0 packs (lo, hi) with the generated packers, unpacks the words
+    /// with the hand-written unpackers, and writes the widened f32 results:
+    ///
+    ///   out[0..2] = cvt_f32x2_f16x2(cvt_f16x2_f32(lo, hi))
+    ///   out[2..4] = cvt_f32_f16x2_lo / cvt_f32_f16x2_hi of the same word
+    ///   out[4..6] = cvt_f32x2_bf16x2(cvt_rz_bf16x2_f32(lo, hi))
+    ///   out[6..8] = cvt_f32_bf16x2_lo / cvt_f32_bf16x2_hi of the same word
+    #[kernel]
+    pub fn cvt_packed_unpack(lo: f32, hi: f32, mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        if idx.get() == 0 {
+            let f16_word = cvt_f16x2_f32(lo, hi);
+            let bf16_word = cvt_rz_bf16x2_f32(lo, hi);
+            let (f16_lo, f16_hi) = cvt_f32x2_f16x2(f16_word);
+            let (bf16_lo, bf16_hi) = cvt_f32x2_bf16x2(bf16_word);
+            unsafe {
+                *out.get_unchecked_mut(0) = f16_lo;
+                *out.get_unchecked_mut(1) = f16_hi;
+                *out.get_unchecked_mut(2) = cvt_f32_f16x2_lo(f16_word);
+                *out.get_unchecked_mut(3) = cvt_f32_f16x2_hi(f16_word);
+                *out.get_unchecked_mut(4) = bf16_lo;
+                *out.get_unchecked_mut(5) = bf16_hi;
+                *out.get_unchecked_mut(6) = cvt_f32_bf16x2_lo(bf16_word);
+                *out.get_unchecked_mut(7) = cvt_f32_bf16x2_hi(bf16_word);
             }
         }
     }
@@ -148,12 +188,61 @@ fn main() {
         }
     }
 
+    // --- Pack/unpack round trip ---
+    // The generated packers narrow (lossy, rounding-mode dependent); the
+    // hand-written unpackers widen exactly. So the round trip lands on the
+    // narrowed value widened back to f32, and the host can check exact bits:
+    //   f16 rn:  1.0065 -> 0x3C07 -> 1.0068359375
+    //   bf16 rz: 1.0065 -> 0x3F80 -> 1.0
+    let mut unpack_dev = DeviceBuffer::<f32>::zeroed(&stream, NUM_UNPACKED).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.cvt_packed_unpack(&stream, cfg, lo, hi, &mut unpack_dev) }
+        .expect("Unpack kernel launch failed");
+    let unpacked = unpack_dev.to_host_vec(&stream).unwrap();
+    assert_eq!(unpacked.len(), NUM_UNPACKED);
+
+    // Exactly 1 + 7/1024: the f16 value 0x3C07 widened to f32 (see table above).
+    let f16_widened = 1.0_f32 + 7.0 / 1024.0;
+    let unpack_labels = [
+        "cvt_f32x2_f16x2 lo",
+        "cvt_f32x2_f16x2 hi",
+        "cvt_f32_f16x2_lo",
+        "cvt_f32_f16x2_hi",
+        "cvt_f32x2_bf16x2 lo",
+        "cvt_f32x2_bf16x2 hi",
+        "cvt_f32_bf16x2_lo",
+        "cvt_f32_bf16x2_hi",
+    ];
+    let unpack_expected = [
+        f16_widened,
+        -f16_widened,
+        f16_widened,
+        -f16_widened,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+    ];
+    for i in 0..NUM_UNPACKED {
+        let got = unpacked[i];
+        let want = unpack_expected[i];
+        if got.to_bits() == want.to_bits() {
+            println!("[{i}] {}: PASS ({got})", unpack_labels[i]);
+        } else {
+            eprintln!(
+                "[{i}] {}: FAIL, expected {want}, got {got}",
+                unpack_labels[i]
+            );
+            failures += 1;
+        }
+    }
+
     // --- Summary ---
     println!();
     if failures == 0 {
         println!(
-            "SUCCESS: all {} packed cvt variants produced correct results",
-            NUM_VARIANTS
+            "SUCCESS: all {} packed cvt variants and {} unpacked values produced correct results",
+            NUM_VARIANTS, NUM_UNPACKED
         );
     } else {
         eprintln!("{failures} check(s) failed");

@@ -45,6 +45,13 @@ pub const CALLEE_SATURATING_ADD: &str = placeholder!("saturating_add");
 /// Placeholder call used for `core::intrinsics::saturating_sub`.
 pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 
+/// Placeholder call used for `core::intrinsics::exact_div`.
+///
+/// Division where the caller guarantees the divisor is non-zero and divides the
+/// dividend exactly. Backs `slice::as_chunks` and friends, which compute their
+/// chunk count with `exact_div(self.len(), N)`.
+pub const CALLEE_EXACT_DIV: &str = placeholder!("exact_div");
+
 /// Placeholder call used for `core::intrinsics::carrying_mul_add`.
 /// Backs the bigint helper methods `carrying_mul_add`, `carrying_mul`,
 /// and `widening_mul` on integer types.
@@ -221,11 +228,20 @@ pub const CALLEE_SELECT_UNPREDICTABLE: &str = placeholder!("select_unpredictable
 /// `f*_fast` intrinsics, so matching the common placeholder prefix would select
 /// the libNVVM backend for modules that do not need it.
 ///
-/// The rounding placeholders (`floor`/`ceil`/`trunc`/`round`/`roundeven`) are
-/// intentionally NOT in this list: on the LLVM NVPTX path they lower to the
-/// native `llvm.floor.*`-family intrinsics and need no libdevice at all. They
-/// fall back to libdevice only when the pipeline emits NVVM IR; see
+/// The rounding placeholders (`floor`/`ceil`/`trunc`/`round`/`roundeven`)
+/// and the sign placeholders (`fabs`/`copysign`) are intentionally NOT in
+/// this list: on the LLVM NVPTX path they lower to the native
+/// `llvm.floor.*`-family / `llvm.fabs.*` / `llvm.copysign.*` intrinsics and
+/// need no libdevice at all. They fall back to libdevice only when the
+/// pipeline emits NVVM IR; see
 /// [`is_backend_dependent_libdevice_placeholder`].
+///
+/// The `max`/`min` placeholders (`maximum_number_nsz_*` /
+/// `minimum_number_nsz_*`) are in NEITHER list: they lower to an ordered
+/// compare/select expansion under every intrinsic backend, so they never
+/// produce a `__nv_*` call. (`llvm.maxnum`/`llvm.minnum` are unusable
+/// because under LLVM 21 they propagate signaling NaNs, contradicting
+/// Rust's ignore-any-NaN contract; see #390.)
 pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
     matches!(
         callee,
@@ -255,13 +271,6 @@ pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
             | CALLEE_FMA_F64
             | CALLEE_FMULADD_F32
             | CALLEE_FMULADD_F64
-            | CALLEE_FABS
-            | CALLEE_COPYSIGN_F32
-            | CALLEE_COPYSIGN_F64
-            | CALLEE_MAXNUM_NSZ_F32
-            | CALLEE_MAXNUM_NSZ_F64
-            | CALLEE_MINNUM_NSZ_F32
-            | CALLEE_MINNUM_NSZ_F64
             | CALLEE_ASIN_F32
             | CALLEE_ASIN_F64
             | CALLEE_ACOS_F32
@@ -293,9 +302,12 @@ pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
 /// The rounding placeholders lower to the native LLVM intrinsics
 /// (`llvm.floor.*`, `llvm.ceil.*`, `llvm.trunc.*`, `llvm.round.*`,
 /// `llvm.roundeven.*`) when the module is headed to LLVM's NVPTX backend, so
-/// on that path they need no libdevice at all. When the pipeline emits NVVM
-/// IR instead, the same placeholders fall back to `__nv_floorf`/... libdevice
-/// calls, because the legacy LLVM 7-based NVVM IR dialect predates
+/// on that path they need no libdevice at all. The sign placeholders
+/// (`fabs`/`copysign`) take the same route via `llvm.fabs.*` /
+/// `llvm.copysign.*`, which the NVPTX backend selects to single PTX
+/// `abs`/`copysign` instructions. When the pipeline emits NVVM IR instead,
+/// the same placeholders fall back to `__nv_floorf`/`__nv_fabsf`/...
+/// libdevice calls, because the legacy LLVM 7-based NVVM IR dialect predates
 /// `llvm.roundeven.*` (added in LLVM 11) and admits only a small intrinsic
 /// allow-list.
 ///
@@ -316,6 +328,9 @@ pub fn is_backend_dependent_libdevice_placeholder(callee: &str) -> bool {
             | CALLEE_ROUND_F64
             | CALLEE_ROUNDEVEN_F32
             | CALLEE_ROUNDEVEN_F64
+            | CALLEE_FABS
+            | CALLEE_COPYSIGN_F32
+            | CALLEE_COPYSIGN_F64
     )
 }
 
@@ -324,7 +339,7 @@ mod tests {
     use super::*;
 
     /// Every placeholder that must be classified as libdevice-backed under
-    /// every intrinsic backend (transcendentals, fma, sign ops, max/min).
+    /// every intrinsic backend (transcendentals and fma).
     const ALWAYS_LIBDEVICE: &[&str] = &[
         CALLEE_SQRT_F32,
         CALLEE_SQRT_F64,
@@ -352,13 +367,6 @@ mod tests {
         CALLEE_FMA_F64,
         CALLEE_FMULADD_F32,
         CALLEE_FMULADD_F64,
-        CALLEE_FABS,
-        CALLEE_COPYSIGN_F32,
-        CALLEE_COPYSIGN_F64,
-        CALLEE_MAXNUM_NSZ_F32,
-        CALLEE_MAXNUM_NSZ_F64,
-        CALLEE_MINNUM_NSZ_F32,
-        CALLEE_MINNUM_NSZ_F64,
         CALLEE_ASIN_F32,
         CALLEE_ASIN_F64,
         CALLEE_ACOS_F32,
@@ -384,7 +392,7 @@ mod tests {
     ];
 
     /// Every placeholder that is libdevice-backed only under the libNVVM
-    /// intrinsic backend (exactly the ten rounding ops).
+    /// intrinsic backend (the ten rounding ops plus the three sign ops).
     const LIBNVVM_ONLY_LIBDEVICE: &[&str] = &[
         CALLEE_FLOOR_F32,
         CALLEE_FLOOR_F64,
@@ -396,10 +404,19 @@ mod tests {
         CALLEE_ROUND_F64,
         CALLEE_ROUNDEVEN_F32,
         CALLEE_ROUNDEVEN_F64,
+        CALLEE_FABS,
+        CALLEE_COPYSIGN_F32,
+        CALLEE_COPYSIGN_F64,
     ];
 
-    /// Callees that never lower to libdevice under any backend.
+    /// Callees that never lower to libdevice under any backend. `max`/`min`
+    /// sit here because they expand to an ordered compare/select under every
+    /// intrinsic backend (see #390).
     const NEVER_LIBDEVICE: &[&str] = &[
+        CALLEE_MAXNUM_NSZ_F32,
+        CALLEE_MAXNUM_NSZ_F64,
+        CALLEE_MINNUM_NSZ_F32,
+        CALLEE_MINNUM_NSZ_F64,
         CALLEE_ROTATE_LEFT,
         CALLEE_ROTATE_RIGHT,
         CALLEE_CTPOP,
@@ -411,6 +428,7 @@ mod tests {
         CALLEE_BITREVERSE,
         CALLEE_SATURATING_ADD,
         CALLEE_SATURATING_SUB,
+        CALLEE_EXACT_DIV,
         CALLEE_CARRYING_MUL_ADD,
         CALLEE_FADD_FAST,
         CALLEE_FSUB_FAST,
