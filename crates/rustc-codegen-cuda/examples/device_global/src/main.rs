@@ -17,7 +17,7 @@ static mut DEVICE_MARKER: u32 = 0;
 static STATIC_WEIGHTS: [[f32; 2]; 4] = [[0.25, 0.5], [1.0, 2.0], [4.0, 8.0], [16.0, 32.0]];
 static STATIC_NAN: f32 = f32::from_bits(0x7fc0_1234);
 
-const STATIC_WEIGHT_PAIR: &'static [f32; 2] = &STATIC_WEIGHTS[2];
+const STATIC_WEIGHT_PAIR: &[f32; 2] = &STATIC_WEIGHTS[2];
 
 #[repr(C)]
 struct PaddedStatic {

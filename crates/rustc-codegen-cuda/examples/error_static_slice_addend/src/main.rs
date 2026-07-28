@@ -19,7 +19,7 @@ static TABLE: [[f32; 2]; 4] = [[0.25, 0.5], [1.0, 2.0], [4.0, 8.0], [16.0, 32.0]
 /// `&TABLE[2]` is `&[f32; 2]`; the unsize coercion to `&[f32]` keeps the
 /// 16-byte addend selecting element 2 but adds a length that the thin
 /// device pointer emitted for interior-static addends cannot carry.
-const PAIR_SLICE: &'static [f32] = &TABLE[2];
+const PAIR_SLICE: &[f32] = &TABLE[2];
 
 #[inline(never)]
 fn pair_slice() -> &'static [f32] {
