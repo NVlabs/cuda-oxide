@@ -1721,6 +1721,25 @@ fn translate_float_constant(
     use dialect_mir::ops::MirFloatConstantOp;
     use pliron::builtin::attributes::{FPDoubleAttr, FPSingleAttr};
 
+    /// Bit pattern decoded from the MIR constant, tagged by float width.
+    enum FloatBits {
+        F16(u16),
+        F32(u32),
+        F64(u64),
+    }
+
+    // Decode the constant bytes before allocating the op, so a decode
+    // error cannot leave an orphan operation behind in the context.
+    let bits = if const_ty.deref(ctx).is::<MirFP16Type>() {
+        FloatBits::F16(read_float_constant_bits(constant, "f16", 2, loc.clone())? as u16)
+    } else if const_ty.deref(ctx).is::<FP32Type>() {
+        FloatBits::F32(read_float_constant_bits(constant, "f32", 4, loc.clone())? as u32)
+    } else if const_ty.deref(ctx).is::<FP64Type>() {
+        FloatBits::F64(read_float_constant_bits(constant, "f64", 8, loc.clone())? as u64)
+    } else {
+        unreachable!("translate_float_constant called with a non-float type");
+    };
+
     let op = Operation::new(
         ctx,
         MirFloatConstantOp::get_concrete_op_info(),
@@ -1733,17 +1752,16 @@ fn translate_float_constant(
 
     let float_op = MirFloatConstantOp::new(op);
 
-    if const_ty.deref(ctx).is::<MirFP16Type>() {
-        let bits = read_float_constant_bits(constant, "f16", 2, loc.clone())? as u16;
-        float_op.set_attr_float_value_f16(ctx, MirFP16Attr::from_bits(bits));
-    } else if const_ty.deref(ctx).is::<FP32Type>() {
-        let bits = read_float_constant_bits(constant, "f32", 4, loc.clone())? as u32;
-        float_op.set_attr_float_value(ctx, FPSingleAttr::from(f32::from_bits(bits)));
-    } else if const_ty.deref(ctx).is::<FP64Type>() {
-        let bits = read_float_constant_bits(constant, "f64", 8, loc.clone())? as u64;
-        float_op.set_attr_float_value_f64(ctx, FPDoubleAttr::from(f64::from_bits(bits)));
-    } else {
-        unreachable!("translate_float_constant called with a non-float type");
+    match bits {
+        FloatBits::F16(bits) => {
+            float_op.set_attr_float_value_f16(ctx, MirFP16Attr::from_bits(bits));
+        }
+        FloatBits::F32(bits) => {
+            float_op.set_attr_float_value(ctx, FPSingleAttr::from(f32::from_bits(bits)));
+        }
+        FloatBits::F64(bits) => {
+            float_op.set_attr_float_value_f64(ctx, FPDoubleAttr::from(f64::from_bits(bits)));
+        }
     }
 
     if let Some(prev) = prev_op {
