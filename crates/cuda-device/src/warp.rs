@@ -1114,6 +1114,207 @@ pub fn reduce_min_f64(mut val: f64) -> f64 {
     val
 }
 
+// =============================================================================
+// Predicate-returning shuffles
+// =============================================================================
+//
+// PTX `shfl.sync` has an optional second destination: `shfl.sync.op.b32 d|p,
+// a, b, c, membermask`. LLVM has the intrinsics
+// (`int_nvvm_shfl_sync_{bfly,down,idx,up}_{f32,i32}p`) and they are in the
+// pinned metadata, but the generator does not admit them: the scalar_math
+// shapes assume one result and these return two. Written by hand here through
+// the multi-output form of `ptx_asm!`.
+//
+// # What the predicate actually reports
+//
+// It is a **range** predicate, not an activity one: `p` is true when the
+// computed source lane lies inside the clamp segment, meaning the shuffle
+// delivered another lane's value. When `p` is false the source index was out of
+// range and the lane received its **own** input back unchanged.
+//
+// This is worth stating plainly because the natural guess is wrong. Measured on
+// sm_86:
+//
+// ```text
+// shfl.sync.up   delta=1                      p false on lane 0 only
+// shfl.sync.up   delta=4                      p false on lanes 0..3
+// shfl.sync.bfly partner outside membermask   p TRUE on every lane
+// ```
+//
+// The last row is the one that matters. Running a butterfly with membermask
+// `0x0000FFFF` and a partner in the upper half still sets `p`, even though the
+// partner is not participating. So the predicate does **not** detect a
+// partially converged warp, and it cannot be used to tell a real contribution
+// from a stale one. For that, the membermask is the only source of truth and
+// the caller has to know it.
+//
+// # What it is for
+//
+// Segment boundaries, which is where `shfl.up` and `shfl.down` need it. In a
+// prefix scan the first `delta` lanes have no predecessor; without the
+// predicate they silently combine their own value a second time. With it they
+// substitute the identity:
+//
+// ```rust,ignore
+// let (prev, valid) = warp::shuffle_up_f32_sync_pred(mask, acc, delta);
+// acc += if valid { prev } else { 0.0 };
+// ```
+//
+// `bfly` and `idx` over a whole-warp segment always report true, so the
+// predicate carries no information there and the plain forms are equivalent.
+
+/// Butterfly shuffle, with the source-in-range predicate.
+///
+/// Emits `shfl.sync.bfly.b32 d|p, a, b, c, membermask`.
+///
+/// Over a whole-warp segment every XOR partner is in range, so the predicate is
+/// always `true` and carries no information - [`shuffle_xor_f32_sync`] is
+/// equivalent and cheaper to read. Provided for completeness and for segmented
+/// use with a narrower clamp. It does **not** report whether the partner lane
+/// was in `mask`; see the module notes.
+#[must_use]
+#[inline(always)]
+pub fn shuffle_xor_f32_sync_pred(mask: u32, var: f32, lane_mask: u32) -> (f32, bool) {
+    let value: f32;
+    let pred: u32;
+    unsafe {
+        crate::ptx_asm!(
+            "{ .reg .pred %%p; shfl.sync.bfly.b32 %0|%%p, %2, %3, 0x1f, %4; \
+              selp.u32 %1, 1, 0, %%p; }",
+            out("=f") value,
+            out("=r") pred,
+            in("f") var,
+            in("r") lane_mask,
+            in("r") mask,
+            options(register_only),
+        );
+    }
+    (value, pred != 0)
+}
+
+/// Shuffle down, with the source-in-range predicate.
+///
+/// Emits `shfl.sync.down.b32 d|p, a, b, c, membermask`. The predicate is
+/// `false` for the last `delta` lanes of the segment, which have no successor
+/// and receive their own value back.
+#[must_use]
+#[inline(always)]
+pub fn shuffle_down_f32_sync_pred(mask: u32, var: f32, delta: u32) -> (f32, bool) {
+    let value: f32;
+    let pred: u32;
+    unsafe {
+        crate::ptx_asm!(
+            "{ .reg .pred %%p; shfl.sync.down.b32 %0|%%p, %2, %3, 0x1f, %4; \
+              selp.u32 %1, 1, 0, %%p; }",
+            out("=f") value,
+            out("=r") pred,
+            in("f") var,
+            in("r") delta,
+            in("r") mask,
+            options(register_only),
+        );
+    }
+    (value, pred != 0)
+}
+
+/// Shuffle up, with the source-in-range predicate.
+///
+/// Emits `shfl.sync.up.b32 d|p, a, b, c, membermask`. The predicate is `false`
+/// for the first `delta` lanes, which have no predecessor and receive their own
+/// value back - the case a prefix scan must substitute an identity for.
+///
+/// Verified on sm_86: `delta = 4` reports `false` on lanes 0 through 3.
+///
+/// Note the clamp operand is `0` for `up`, not `0x1f`: the two directions clamp
+/// at opposite ends of the segment.
+#[must_use]
+#[inline(always)]
+pub fn shuffle_up_f32_sync_pred(mask: u32, var: f32, delta: u32) -> (f32, bool) {
+    let value: f32;
+    let pred: u32;
+    unsafe {
+        crate::ptx_asm!(
+            "{ .reg .pred %%p; shfl.sync.up.b32 %0|%%p, %2, %3, 0x0, %4; \
+              selp.u32 %1, 1, 0, %%p; }",
+            out("=f") value,
+            out("=r") pred,
+            in("f") var,
+            in("r") delta,
+            in("r") mask,
+            options(register_only),
+        );
+    }
+    (value, pred != 0)
+}
+
+/// Indexed shuffle, with the source-in-range predicate.
+///
+/// Emits `shfl.sync.idx.b32 d|p, a, b, c, membermask`. The predicate reports
+/// whether `src_lane` fell inside the clamp segment, so it catches an
+/// out-of-range index. It does **not** detect a source lane that is in range but
+/// absent from `mask`.
+#[must_use]
+#[inline(always)]
+pub fn shuffle_f32_sync_pred(mask: u32, var: f32, src_lane: u32) -> (f32, bool) {
+    let value: f32;
+    let pred: u32;
+    unsafe {
+        crate::ptx_asm!(
+            "{ .reg .pred %%p; shfl.sync.idx.b32 %0|%%p, %2, %3, 0x1f, %4; \
+              selp.u32 %1, 1, 0, %%p; }",
+            out("=f") value,
+            out("=r") pred,
+            in("f") var,
+            in("r") src_lane,
+            in("r") mask,
+            options(register_only),
+        );
+    }
+    (value, pred != 0)
+}
+
+/// Butterfly shuffle of a `u32`, with the source-in-range predicate.
+#[must_use]
+#[inline(always)]
+pub fn shuffle_xor_sync_pred(mask: u32, var: u32, lane_mask: u32) -> (u32, bool) {
+    let value: u32;
+    let pred: u32;
+    unsafe {
+        crate::ptx_asm!(
+            "{ .reg .pred %%p; shfl.sync.bfly.b32 %0|%%p, %2, %3, 0x1f, %4; \
+              selp.u32 %1, 1, 0, %%p; }",
+            out("=r") value,
+            out("=r") pred,
+            in("r") var,
+            in("r") lane_mask,
+            in("r") mask,
+            options(register_only),
+        );
+    }
+    (value, pred != 0)
+}
+
+/// Shuffle down of a `u32`, with the source-in-range predicate.
+#[must_use]
+#[inline(always)]
+pub fn shuffle_down_sync_pred(mask: u32, var: u32, delta: u32) -> (u32, bool) {
+    let value: u32;
+    let pred: u32;
+    unsafe {
+        crate::ptx_asm!(
+            "{ .reg .pred %%p; shfl.sync.down.b32 %0|%%p, %2, %3, 0x1f, %4; \
+              selp.u32 %1, 1, 0, %%p; }",
+            out("=r") value,
+            out("=r") pred,
+            in("r") var,
+            in("r") delta,
+            in("r") mask,
+            options(register_only),
+        );
+    }
+    (value, pred != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,6 +12,11 @@ pub use cuda_macros::{
 };
 
 // Re-export for convenience
+// `ptx_asm!` expands to absolute `cuda_device::ptx::__ptx_asm_*` marker paths so
+// that downstream kernel crates resolve them; a proc-macro cannot emit `$crate`.
+// Aliasing this crate to its own name lets modules here use the macro too.
+extern crate self as cuda_device;
+
 pub mod async_copy;
 pub mod atomic;
 pub mod barrier;
