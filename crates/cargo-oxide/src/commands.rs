@@ -5852,13 +5852,28 @@ fn find_cuda_toolkit_executable(
     name: &str,
     fallback_paths: &[&str],
 ) -> Option<PathBuf> {
+    find_cuda_toolkit_executable_with_env(ctx, name, fallback_paths, |key| std::env::var(key).ok())
+}
+
+/// `find_cuda_toolkit_executable` with the ambient environment injected.
+///
+/// The process environment takes precedence over `cuda-oxide.toml`'s `env`, so
+/// resolution has to be injectable for unit tests: a developer with a real
+/// `CUDA_TOOLKIT_PATH` (or `CUDA_HOME`) exported would otherwise shadow the
+/// configured root a test is trying to assert on. Same rationale as
+/// `cuda_toolkit_root` and `cuda_header_candidates`.
+fn find_cuda_toolkit_executable_with_env(
+    ctx: &Context,
+    name: &str,
+    fallback_paths: &[&str],
+    mut get_env: impl FnMut(&str) -> Option<String>,
+) -> Option<PathBuf> {
     if let Some(path) = find_executable(name, &[]) {
         return Some(path);
     }
 
     let toolkit = cuda_toolkit_root(|key| {
-        std::env::var(key)
-            .ok()
+        get_env(key)
             .filter(|value| !value.trim().is_empty())
             .or_else(|| project_config_env(ctx, key).map(str::to_owned))
     });
@@ -6994,18 +7009,10 @@ path = "src/other.rs"
         assert_ne!(standard, pipeline);
     }
 
-    #[test]
-    fn sanitizer_tool_lookup_uses_project_cuda_toolkit_root() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_sanitizer_tool_{}_{}",
-            std::process::id(),
-            unique
-        ));
-        let tool = root.join("bin/cuda-oxide-test-sanitizer");
+    /// A `Context` whose `cuda-oxide.toml` points `CUDA_TOOLKIT_PATH` at
+    /// `root`, alongside a fake executable named `name` under `root/bin`.
+    fn toolkit_context_with_tool(root: &Path, name: &str) -> (Context, PathBuf) {
+        let tool = root.join("bin").join(name);
         std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
         std::fs::write(&tool, b"fake tool").unwrap();
         let ctx = test_context(OxideConfig {
@@ -7015,9 +7022,19 @@ path = "src/other.rs"
             )],
             ..OxideConfig::default()
         });
+        (ctx, tool)
+    }
 
+    #[test]
+    fn sanitizer_tool_lookup_uses_project_cuda_toolkit_root() {
+        let root = unique_temp_dir("cargo_oxide_sanitizer_tool");
+        let (ctx, tool) = toolkit_context_with_tool(&root, "cuda-oxide-test-sanitizer");
+
+        // `|_| None` stands in for an empty ambient environment. Reading the
+        // real one would let an exported CUDA_TOOLKIT_PATH/CUDA_HOME shadow the
+        // configured root this test asserts on.
         assert_eq!(
-            find_cuda_toolkit_executable(&ctx, "cuda-oxide-test-sanitizer", &[]),
+            find_cuda_toolkit_executable_with_env(&ctx, "cuda-oxide-test-sanitizer", &[], |_| None),
             Some(tool)
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -7026,37 +7043,43 @@ path = "src/other.rs"
     #[test]
     fn doctor_compute_sanitizer_lookup_matches_sanitize_discovery() {
         // Hermetic: a fake tool name keeps the user's real PATH (and any
-        // installed compute-sanitizer) out of the lookup, while the shared
+        // installed compute-sanitizer) out of the lookup, the injected empty
+        // environment keeps an exported toolkit root out of it, and the shared
         // fallback const exercises the exact argument both `doctor` and
         // `sanitize` pass. The configured toolkit root wins before any
         // fallback path is consulted.
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_doctor_sanitizer_{}_{}",
-            std::process::id(),
-            unique
-        ));
-        let tool = root.join("bin/cuda-oxide-test-doctor-sanitizer");
-        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
-        std::fs::write(&tool, b"fake tool").unwrap();
-        let ctx = test_context(OxideConfig {
-            env: vec![(
-                "CUDA_TOOLKIT_PATH".to_string(),
-                root.to_string_lossy().into_owned(),
-            )],
-            ..OxideConfig::default()
-        });
+        let root = unique_temp_dir("cargo_oxide_doctor_sanitizer");
+        let (ctx, tool) = toolkit_context_with_tool(&root, "cuda-oxide-test-doctor-sanitizer");
 
         assert_eq!(
-            find_cuda_toolkit_executable(
+            find_cuda_toolkit_executable_with_env(
                 &ctx,
                 "cuda-oxide-test-doctor-sanitizer",
                 COMPUTE_SANITIZER_FALLBACK_PATHS,
+                |_| None,
             ),
             Some(tool)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ambient_cuda_toolkit_path_shadows_the_project_configured_root() {
+        // The precedence the two lookups above have to be insulated from: an
+        // exported CUDA_TOOLKIT_PATH outranks `cuda-oxide.toml`, so a tool
+        // present only under the configured root is not found.
+        let root = unique_temp_dir("cargo_oxide_ambient_shadow");
+        let (ctx, _tool) = toolkit_context_with_tool(&root, "cuda-oxide-test-shadowed-sanitizer");
+        let ambient = unique_temp_dir("cargo_oxide_ambient_root");
+
+        assert_eq!(
+            find_cuda_toolkit_executable_with_env(
+                &ctx,
+                "cuda-oxide-test-shadowed-sanitizer",
+                &[],
+                |key| (key == "CUDA_TOOLKIT_PATH").then(|| ambient.to_string_lossy().into_owned()),
+            ),
+            None
         );
         std::fs::remove_dir_all(root).unwrap();
     }
