@@ -394,17 +394,19 @@ impl RustFloatMathIntrinsic {
             Self::Fabs => fabs_libdevice_name(ctx, result_ty, loc),
             Self::CopysignF32 => Ok("__nv_copysignf"),
             Self::CopysignF64 => Ok("__nv_copysign"),
-            // `f32::max` / `f32::min` (and the f64 forms) call the
-            // `_nsz` intrinsics, i.e. IEEE-754 maxNum/minNum with the
-            // "no signed zero" relaxation: when one operand is NaN the
-            // non-NaN operand is returned, and -0.0 / +0.0 may be
-            // treated as equivalent. libdevice `__nv_fmaxf`/`__nv_fminf`
-            // implement the same maxNum/minNum NaN rule (the -0/+0 nsz
-            // relaxation is a permitted slack, not a required behavior).
-            Self::MaxNumNszF32 => Ok("__nv_fmaxf"),
-            Self::MaxNumNszF64 => Ok("__nv_fmax"),
-            Self::MinNumNszF32 => Ok("__nv_fminf"),
-            Self::MinNumNszF64 => Ok("__nv_fmin"),
+            // `f32::max` / `f32::min` (and the f64 forms) call the `_nsz`
+            // intrinsics, i.e. IEEE-754 maxNum/minNum with the "no signed
+            // zero" relaxation. They expand to an ordered compare/select
+            // sequence under every intrinsic backend (the caller routes them
+            // through `lower_float_minmax_nsz` before any symbol lookup), so
+            // they must never reach a libdevice name.
+            Self::MaxNumNszF32 | Self::MaxNumNszF64 | Self::MinNumNszF32 | Self::MinNumNszF64 => {
+                pliron::input_err!(
+                    loc,
+                    "float max/min intrinsics lower to a compare/select \
+                     expansion, never to libdevice"
+                )
+            }
             Self::AsinF32 => Ok("__nv_asinf"),
             Self::AsinF64 => Ok("__nv_asin"),
             Self::AcosF32 => Ok("__nv_acosf"),
@@ -1174,8 +1176,10 @@ fn convert_rust_carrying_mul_add(
 /// Lower placeholder calls for rustc's `f32` / `f64` math intrinsics.
 ///
 /// Simple scalar operations go to LLVM intrinsics so the ordinary llc -> PTX
-/// path can lower them directly. Transcendentals and other libdevice-owned
-/// operations still lower to `__nv_*` calls and therefore force NVVM IR mode.
+/// path can lower them directly, and float `max`/`min` expand to an ordered
+/// compare/select. Transcendentals and other libdevice-owned operations still
+/// lower to `__nv_*` calls, which need libdevice linked at the IR level or
+/// the NVVM IR route.
 fn convert_rust_float_math_intrinsic(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -2199,9 +2203,10 @@ mod tests {
     }
 
     /// The resolved callee symbol follows the active intrinsic backend:
-    /// rounding uses the native LLVM intrinsics under `LlvmNvptx` but stays
-    /// on libdevice under `LibNvvm` (whose legacy LLVM 7 dialect predates
-    /// `llvm.roundeven.*`); transcendentals use libdevice under both.
+    /// rounding and sign ops use the native LLVM intrinsics under
+    /// `LlvmNvptx` but stay on libdevice under `LibNvvm` (whose legacy
+    /// LLVM 7 dialect predates `llvm.roundeven.*`); transcendentals use
+    /// libdevice under both.
     #[test]
     fn float_math_symbol_dispatches_on_intrinsic_backend() {
         let mut ctx = Context::new();
@@ -2236,6 +2241,21 @@ mod tests {
             "llvm_roundeven_f32"
         );
         assert_eq!(
+            float_math_intrinsic_symbol(&ctx, RustFloatMathIntrinsic::Fabs, f32_ty, loc.clone())
+                .unwrap(),
+            "llvm_fabs_f32"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(
+                &ctx,
+                RustFloatMathIntrinsic::CopysignF32,
+                f32_ty,
+                loc.clone()
+            )
+            .unwrap(),
+            "llvm_copysign_f32"
+        );
+        assert_eq!(
             float_math_intrinsic_symbol(&ctx, RustFloatMathIntrinsic::SinF32, f32_ty, loc.clone())
                 .unwrap(),
             "__nv_sinf"
@@ -2267,6 +2287,21 @@ mod tests {
             )
             .unwrap(),
             "__nv_rintf"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(&ctx, RustFloatMathIntrinsic::Fabs, f32_ty, loc.clone())
+                .unwrap(),
+            "__nv_fabsf"
+        );
+        assert_eq!(
+            float_math_intrinsic_symbol(
+                &ctx,
+                RustFloatMathIntrinsic::CopysignF32,
+                f32_ty,
+                loc.clone()
+            )
+            .unwrap(),
+            "__nv_copysignf"
         );
         assert_eq!(
             float_math_intrinsic_symbol(&ctx, RustFloatMathIntrinsic::SinF32, f32_ty, loc).unwrap(),
