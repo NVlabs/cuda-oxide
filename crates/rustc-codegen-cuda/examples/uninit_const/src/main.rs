@@ -47,7 +47,11 @@ fn main() {
     let module = kernels::from_module(module).expect("typed module");
     let stream = ctx.default_stream();
     const N: usize = 32;
-    let cfg = LaunchConfig { grid_dim: (1, 1, 1), block_dim: (N as u32, 1, 1), shared_mem_bytes: 0 };
+    let cfg = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (N as u32, 1, 1),
+        shared_mem_bytes: 0,
+    };
     let mut out = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
     // SAFETY: 32-thread 1D block matches the 32-element output allocation.
     unsafe { module.write_through_uninit(stream.as_ref(), cfg, &mut out) }.expect("launch");
