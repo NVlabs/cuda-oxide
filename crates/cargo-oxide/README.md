@@ -32,14 +32,18 @@ cargo oxide test                    # cargo test with cuda-oxide defaults
 cargo oxide test -- -p my_app       # arbitrary cargo test through cuda-oxide
 cargo oxide pipeline vecadd         # verbose pipeline dump
                                     # (MIR -> dialect-mir -> LLVM dialect -> LLVM IR -> PTX)
+cargo oxide inspect vecadd          # build + print generated PTX
 cargo oxide sanitize vecadd         # build + run under NVIDIA Compute Sanitizer
 cargo oxide debug vecadd --tui      # build + launch cuda-gdb
 cargo oxide fmt                     # format all crates
 cargo oxide fmt --check             # check formatting
 cargo oxide list                    # list examples and requirements
 cargo oxide list --json             # stable machine-readable output
+cargo oxide clean                   # remove local build outputs / generated artifacts
 cargo oxide doctor                  # validate environment
 cargo oxide setup                   # explicitly build the codegen backend
+cargo oxide update                  # refresh cached backend (external projects)
+cargo oxide update --force          # inside the workspace, run setup via update
 ```
 
 ### Flags
@@ -48,16 +52,18 @@ cargo oxide setup                   # explicitly build the codegen backend
 |------------------------------|----------------------------------|-------------------------------------------------|
 | `--materialize-cubin`        | run, sanitize, build, test, pipeline, debug | Finalize and embed target-specific native GPU code during the host build |
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
-| `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir | Target architecture override |
-| `--features <F>`             | run, sanitize, debug, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
+| `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir, inspect | Target architecture override |
+| `--features <F>`             | run, sanitize, debug, build, build passthrough, emit-ltoir, inspect | Comma-separated cargo features to enable |
 | `--bin <NAME>`               | run, sanitize, debug                | Specific binary target to build/run      |
 | `--tool <T>`                 | sanitize                         | Compute Sanitizer tool: `memcheck`, `racecheck`, `initcheck`, or `synccheck` |
 | `-o, --output <P>`           | emit-ltoir                       | Output path for the `.ltoir` artifact           |
 | `--cargo-target-dir <PATH>`  | build/test passthrough           | Cargo target directory                          |
 | `--device-codegen-crate <LIST>` | build/test passthrough        | Comma-separated device owner crate filter       |
 | `--device-cfg <NAME>`        | build/test passthrough           | Append `--cfg NAME` to rustflags                |
-| `-v, --verbose`              | run, sanitize, build, test, emit-ltoir | Show detailed compilation output           |
-| `--no-fmad`                  | run, sanitize, build, emit-ltoir, pipeline | Keep ordinary multiply and add/subtract operations separate |
+| `-v, --verbose`              | run, sanitize, build, test, emit-ltoir, inspect | Show detailed compilation output           |
+| `--no-fmad`                  | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Keep ordinary multiply and add/subtract operations separate |
+| `--unchecked-indexing`       | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Elide device slice/array bounds checks (UB on OOB) |
+| `--force`                    | update                           | Inside the workspace, run `setup` instead of advising it |
 | `--async`                    | new                              | Use the async template                          |
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
 | `--tui`                      | debug                            | Use GDB's TUI interface                         |
