@@ -4245,6 +4245,62 @@ pub fn setup(ctx: &Context) {
     }
 }
 
+/// How `cargo oxide update` should behave for the current project mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdatePlan {
+    /// Inside the monorepo: tell the user to run `setup` (non-destructive).
+    AdviseSetup,
+    /// Inside the monorepo with `--force`: rebuild via `setup`.
+    RunSetup,
+    /// Outside the monorepo: clear and rebuild the shared cache.
+    RefreshCache,
+}
+
+pub fn plan_update(is_workspace: bool, force: bool) -> UpdatePlan {
+    match (is_workspace, force) {
+        (true, false) => UpdatePlan::AdviseSetup,
+        (true, true) => UpdatePlan::RunSetup,
+        (false, _) => UpdatePlan::RefreshCache,
+    }
+}
+
+/// Refresh the codegen backend used by this project.
+///
+/// Inside the cuda-oxide workspace the authoritative backend is the local
+/// source tree, so the default path points at `cargo oxide setup`. Outside
+/// the workspace, the shared `~/.cargo/cuda-oxide/` cache is cleared and
+/// rebuilt via the auto-fetch path.
+pub fn update(ctx: &Context, force: bool) {
+    if std::env::var_os("CUDA_OXIDE_BACKEND").is_some() {
+        eprintln!("Error: CUDA_OXIDE_BACKEND is set, so `cargo oxide update` will not");
+        eprintln!("modify the shared cache. Unset CUDA_OXIDE_BACKEND and re-run, or");
+        eprintln!("rebuild the pinned backend path yourself.");
+        std::process::exit(1);
+    }
+
+    match plan_update(ctx.is_workspace, force) {
+        UpdatePlan::AdviseSetup => {
+            println!("Inside the cuda-oxide workspace the codegen backend is built from");
+            println!("local source (`crates/rustc-codegen-cuda`).");
+            println!();
+            println!("Run `cargo oxide setup` to rebuild and publish to the shared cache,");
+            println!("or pass `--force` to run setup from this command.");
+        }
+        UpdatePlan::RunSetup => {
+            println!("`--force` requested inside the workspace; running setup...");
+            println!();
+            setup(ctx);
+        }
+        UpdatePlan::RefreshCache => {
+            println!("Refreshing the shared codegen backend cache for external projects...");
+            println!();
+            let so = backend::refresh_cached_backend();
+            println!();
+            println!("✓ Cached backend ready at {}", so.display());
+        }
+    }
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -7880,6 +7936,14 @@ components = ["rust-src", "rustc-dev", "llvm-tools"]
             "stable-x86_64-unknown-linux-gnu\nactive because: default",
             "nightly-2026-04-03"
         ));
+    }
+
+    #[test]
+    fn plan_update_selects_advise_setup_or_cache_refresh() {
+        assert_eq!(plan_update(true, false), UpdatePlan::AdviseSetup);
+        assert_eq!(plan_update(true, true), UpdatePlan::RunSetup);
+        assert_eq!(plan_update(false, false), UpdatePlan::RefreshCache);
+        assert_eq!(plan_update(false, true), UpdatePlan::RefreshCache);
     }
 
     #[test]

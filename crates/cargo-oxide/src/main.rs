@@ -26,6 +26,7 @@
 //! cargo oxide doctor                  # check environment
 //! cargo oxide clean                   # remove local build outputs
 //! cargo oxide setup                   # explicitly build/install backend
+//! cargo oxide update                  # refresh cached backend (external)
 //! ```
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
@@ -318,6 +319,13 @@ enum Commands {
     Doctor,
     /// Build and cache the codegen backend
     Setup,
+    /// Refresh the cached codegen backend (or run setup inside the workspace)
+    Update {
+        /// Inside the workspace, run `setup` instead of only advising it.
+        /// Outside the workspace, refresh is already the default.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -421,6 +429,10 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
         ),
         Commands::Setup => Err(
             "--materialize-cubin cannot be used with setup because setup only builds the codegen backend"
+                .to_string(),
+        ),
+        Commands::Update { .. } => Err(
+            "--materialize-cubin cannot be used with update because update only refreshes the codegen backend"
                 .to_string(),
         ),
         Commands::MaterializerProvenance => Err(
@@ -744,6 +756,16 @@ fn main() {
             let ctx = commands::resolve_context();
             commands::setup(&ctx);
         }
+        Commands::Update { force } => {
+            // AdviseSetup / RefreshCache plan from passive context; RunSetup
+            // rebuilds via setup which resolves the backend on demand.
+            let ctx = if force {
+                commands::resolve_context()
+            } else {
+                commands::resolve_passive_context()
+            };
+            commands::update(&ctx, force);
+        }
     }
 }
 
@@ -817,6 +839,23 @@ mod tests {
             Cli::try_parse_from(["cargo-oxide", "clean"]).expect("clean command should parse");
 
         assert!(matches!(cli.command, Commands::Clean));
+    }
+
+    #[test]
+    fn update_parser_accepts_force_flag() {
+        let plain =
+            Cli::try_parse_from(["cargo-oxide", "update"]).expect("update command should parse");
+        let Commands::Update { force } = plain.command else {
+            panic!("expected Update");
+        };
+        assert!(!force);
+
+        let forced = Cli::try_parse_from(["cargo-oxide", "update", "--force"])
+            .expect("update --force should parse");
+        let Commands::Update { force } = forced.command else {
+            panic!("expected Update");
+        };
+        assert!(force);
     }
 
     #[test]

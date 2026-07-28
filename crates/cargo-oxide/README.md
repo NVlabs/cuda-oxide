@@ -296,6 +296,18 @@ anyway).
 
 Explicitly builds (or rebuilds) the codegen backend. Normally this happens automatically on every `run`/`build`/`pipeline` command, but `setup` is useful after pulling new changes or for CI.
 
+### `cargo oxide update [--force]`
+
+Refreshes the shared codegen backend cache used by projects outside this
+repository (`~/.cargo/cuda-oxide/`). Inside the cuda-oxide workspace the local
+source tree is authoritative, so the default path prints how to run
+`cargo oxide setup`; pass `--force` to run setup from this command.
+
+```bash
+cargo oxide update
+cargo oxide update --force
+```
+
 ## Backend Discovery
 
 When `cargo oxide` needs the `librustc_codegen_cuda.so` backend, it searches in this order:
@@ -351,6 +363,3 @@ crates/cargo-oxide/
 | Command                         | Description                                             |
 |---------------------------------|---------------------------------------------------------|
 | `cargo oxide bench <example>`   | GPU profiling (nsys/ncu integration), report TFLOPS     |
-| `cargo oxide clean`             | Remove generated PTX/LL/LTOIR artifacts and build caches|
-| `cargo oxide update`            | Update the cached codegen backend to latest version     |
-| `cargo oxide inspect <example>` | Show generated PTX without the full pipeline dump       |
