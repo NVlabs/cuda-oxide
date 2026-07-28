@@ -70,6 +70,19 @@
 //!   `DeviceBuffer::cast_chunks`, using a host-defined `#[repr(C, align(16))]`
 //!   element that implements `DeviceCopy`, and launch a kernel that takes that
 //!   element type directly.
+//!
+//! # Related "N x scalar" types
+//!
+//! cuda-device spells grouped scalars three ways, for three different jobs:
+//!
+//! - **This module**: over-aligned *memory element* types. The grouping lives
+//!   in the type's alignment so that loads and stores are wide transactions.
+//! - [`crate::cusimd::CuSimd`]: *register* groups. N values travelling
+//!   together through registers (e.g. `tcgen05.ld` results), with copy
+//!   semantics and no memory-layout claim at all.
+//! - [`crate::f16x2`] / [`crate::bf16x2`]: *packed arithmetic* pairs. Two
+//!   16-bit values in one `u32` operated on by a single SIMD instruction;
+//!   the packing is the ALU format, not an alignment trick.
 
 use core::mem::{align_of, size_of};
 
