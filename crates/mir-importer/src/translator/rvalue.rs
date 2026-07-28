@@ -8415,13 +8415,8 @@ fn translate_static_global_pointer(
     // 5. Normalize to the exact translated Rust operand type (lowering
     // emits an `addrspacecast` when the address spaces differ).
     let result = result_cast.get_operation().deref(ctx).get_result(0);
-    let (result, last_op) = retype_static_pointer_result(
-        ctx,
-        result,
-        result_ptr_ty,
-        result_cast.get_operation(),
-        loc,
-    );
+    let (result, last_op) =
+        retype_static_pointer_result(ctx, result, result_ptr_ty, result_cast.get_operation(), loc);
     Ok((result, Some(last_op)))
 }
 
