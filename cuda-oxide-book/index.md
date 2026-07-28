@@ -37,7 +37,7 @@ mod kernels {
     #[kernel]
     #[launch_bounds(256)]
     #[launch_contract(domain = 1, block = (256, 1, 1))]
-    fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
+    pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if let Some(c_elem) = c.get_mut(idx) {
@@ -69,7 +69,7 @@ fn main() {
 }
 ```
 
-Build and run with `cargo oxide run vecadd` upon installing the [prerequisites](getting-started/installation.md). The same launch-contract pattern is what `cargo oxide new` scaffolds; see [Hello, GPU!](getting-started/hello-gpu.md).
+Build and run with `cargo oxide run vecadd` upon installing the [prerequisites](getting-started/installation.md). The same launch-contract pattern is what `cargo oxide new` scaffolds; see [Writing Your First Kernel](getting-started/hello-gpu.md).
 
 :::{note}
 `#[cuda_module]` embeds the generated device artifact into the host binary and
