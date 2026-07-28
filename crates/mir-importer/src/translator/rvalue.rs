@@ -4919,6 +4919,14 @@ fn validate_ptr_to_array_constant_type(
     }
 
     if let Some(array_ty) = ty_obj.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        // A zero-length array has no element values: its initializer is empty
+        // and nothing can ever be read through it, so the element-type
+        // restriction below is vacuous. This admits promoted empty-slice
+        // constants such as `&[]` (which rustc promotes to `&[T; 0]`) for any
+        // element type, including structs.
+        if array_ty.size() == 0 {
+            return Ok(());
+        }
         let element_ty = array_ty.element_type();
         drop(ty_obj);
         return validate_ptr_to_array_constant_type(ctx, element_ty, loc);
