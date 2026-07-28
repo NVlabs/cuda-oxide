@@ -9193,5 +9193,7 @@ edition = "2024"
         assert!(!files.readme.contains("sync template"));
         assert!(files.gitignore.contains("**/*.ptx"));
         assert!(files.main_rs.contains("vecadd_async"));
+        assert!(files.main_rs.contains("use cuda_host::cuda_module;"));
+        assert!(!files.main_rs.contains("use cuda_device::{cuda_module"));
     }
 }
