@@ -363,16 +363,17 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // A kernel declaring an exact `block` carries that shape into PTX as
-    // `.reqntid`, which the driver enforces on every axis. A kernel bounded
-    // only by `#[launch_bounds]` keeps `.maxntid`, which bounds the thread
-    // count and permits any shape reaching it.
+    // `.reqntid`, which the driver enforces on every axis. Every kernel in
+    // this example declares one, including the generic and the explicitly
+    // instantiated kernels whose contracts expand before `#[kernel]` and
+    // reach the entry wrapper through marker forwarding.
     for (entry, geometry) in [
         ("aligned_dynamic_shared", ".reqntid 256, 1, 1"),
         ("mixed_abi", ".reqntid 256, 1, 1"),
         ("strided_scale", ".reqntid 128, 1, 1"),
         ("helper_contract_32", ".reqntid 32, 1, 1"),
         ("helper_contract_256", ".reqntid 32, 1, 1"),
-        ("explicit_aligned_u32", ".maxntid 32, 1, 1"),
+        ("explicit_aligned_u32", ".reqntid 32, 1, 1"),
     ] {
         verify_entry_geometry(&ptx, &format!(".visible .entry {entry}("), entry, geometry)?;
     }
@@ -381,7 +382,7 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
         &ptx,
         ".visible .entry generic_aligned_TID_",
         "generic_aligned specialization",
-        ".maxntid 64, 1, 1",
+        ".reqntid 64, 1, 1",
     )?;
 
     println!("SUCCESS: prepared-launch PTX contract verified");

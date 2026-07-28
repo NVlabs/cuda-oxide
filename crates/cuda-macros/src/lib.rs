@@ -4766,7 +4766,9 @@ fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
         module == "thread" && marker == "__launch_contract_config"
     } else {
         (module == "thread"
-            && (marker == "__launch_bounds_config" || marker == "__unchecked_indexing_config"))
+            && (marker == "__launch_bounds_config"
+                || marker == "__launch_contract_block_config"
+                || marker == "__unchecked_indexing_config"))
             || (module == "cluster" && marker == "__cluster_config")
             || (module == "shared" && marker == "__dynamic_shared_alignment")
     }
@@ -8699,6 +8701,7 @@ mod tests {
                 unsafe {
                     ::cuda_device::thread::__launch_contract_config::<1, true>();
                 }
+                ::cuda_device::thread::__launch_contract_block_config::<64, 1, 1>();
                 ::cuda_device::cluster::__cluster_config::<2, 1, 1>();
                 ::cuda_device::shared::__dynamic_shared_alignment::<128>();
                 cuda_device::thread::__launch_bounds_config::<4, 1>();
@@ -8714,9 +8717,10 @@ mod tests {
         let markers = top_level_kernel_configuration_markers(&kernel);
         let forwarded = quote!(#(#markers)*).to_string().replace(' ', "");
 
-        assert_eq!(markers.len(), 4);
+        assert_eq!(markers.len(), 5);
         assert!(forwarded.contains("__launch_bounds_config::<64,2>()"));
         assert!(forwarded.contains("__launch_contract_config::<1,true>()"));
+        assert!(forwarded.contains("__launch_contract_block_config::<64,1,1>()"));
         assert!(forwarded.contains("__cluster_config::<2,1,1>()"));
         assert!(forwarded.contains("__dynamic_shared_alignment::<128>()"));
         assert!(!forwarded.contains("unrelated"));
