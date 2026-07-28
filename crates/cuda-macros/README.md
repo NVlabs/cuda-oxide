@@ -180,9 +180,12 @@ module. Generic loading also merges all PTX bundles, so those specializations
 must match and have no conflicting entry definitions. Preparation and launch
 are safe after this one-time binding.
 
-Cluster and cooperative requirements are each checked against the live device.
-Combining them currently fails preparation because cuda-oxide cannot yet prove
-the combined residency limit with the available occupancy query.
+Cluster and cooperative requirements are each checked against the live device,
+and they may be combined. For a clustered cooperative kernel, preparation first
+proves the cluster shape with `cuOccupancyMaxActiveClusters`, then requires the
+whole grid to fit in that concurrent cluster capacity so a cooperative
+`grid::sync()` cannot hang on non-resident blocks. Oversized grids fail
+preparation with `LaunchContractError::CooperativeGridTooLarge`.
 
 ### `#[cluster_launch(x, y, z)]`
 
