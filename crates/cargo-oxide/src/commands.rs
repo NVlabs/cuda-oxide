@@ -381,12 +381,15 @@ fn discover_examples(examples_dir: &Path) -> Result<Vec<ExampleInfo>, String> {
             )
         })?;
 
+        // A directory without a manifest is not an example (scratch dirs,
+        // checked-out tooling, ...). Skip it instead of failing the listing.
         let manifest_path = example_dir.join("Cargo.toml");
         if !manifest_path.is_file() {
-            return Err(format!(
-                "example directory {} has no top-level Cargo.toml",
+            eprintln!(
+                "Warning: skipping {}: no top-level Cargo.toml",
                 example_dir.display()
-            ));
+            );
+            continue;
         }
 
         let manifest = parse_example_manifest(&manifest_path)?;
@@ -7407,15 +7410,22 @@ Instructions.
     }
 
     #[test]
-    fn example_discovery_rejects_directory_without_manifest() {
+    fn example_discovery_skips_directory_without_manifest() {
         let root = unique_temp_dir("cargo_oxide_list_missing_manifest");
-        std::fs::create_dir_all(root.join("broken")).unwrap();
+        std::fs::create_dir_all(root.join("scratch")).unwrap();
 
-        let error =
-            discover_examples(&root).expect_err("directory without Cargo.toml must be rejected");
+        write_list_example(&root, "real", Some("A real example"), None);
 
-        assert!(error.contains("broken"));
-        assert!(error.contains("Cargo.toml"));
+        let examples =
+            discover_examples(&root).expect("manifest-less directories must not abort listing");
+
+        assert_eq!(
+            examples
+                .iter()
+                .map(|example| example.name.as_str())
+                .collect::<Vec<_>>(),
+            ["real"]
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }
