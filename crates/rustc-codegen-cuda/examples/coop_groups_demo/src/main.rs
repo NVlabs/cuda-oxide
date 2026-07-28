@@ -162,6 +162,9 @@ mod grid_sync_kernels {
         let n = thread::gridDim_x();
 
         if thread::threadIdx_x() == 0 {
+            // SAFETY: the host sizes `markers` to exactly gridDim.x elements,
+            // so `block_id` indexes in bounds, and only thread 0 of each
+            // block writes its own slot, so the writes are disjoint.
             unsafe {
                 *markers.get_unchecked_mut(block_id as usize) = block_id + 1;
             }
@@ -174,11 +177,18 @@ mod grid_sync_kernels {
             let mut sum: u32 = 0;
             let mut i: u32 = 0;
             while i < n {
+                // SAFETY: `i < n = gridDim.x` and `markers` holds gridDim.x
+                // elements, so `base.add(i)` stays in bounds. Every block's
+                // marker write happened before `grid::sync()`, so the
+                // cross-block reads are data-race free.
                 unsafe {
                     sum = sum.wrapping_add(*base.add(i as usize));
                 }
                 i += 1;
             }
+            // SAFETY: the host sizes `out` to exactly gridDim.x elements, so
+            // `block_id` indexes in bounds, and only thread 0 of each block
+            // writes its own slot.
             unsafe {
                 *out.get_unchecked_mut(block_id as usize) = sum;
             }

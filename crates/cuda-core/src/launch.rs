@@ -996,6 +996,13 @@ impl<C: KernelLaunchContract> PreparedLaunch<C> {
                 Err(error) => return Err(error.into()),
             };
             validate_cluster_residency(C::SPEC.kernel_name, cluster, active_clusters)?;
+            // Deliberate error reuse: `active_clusters * cluster_blocks` is a
+            // device-capacity product over the cluster dimension, and
+            // `DimensionProductOverflow { Cluster }` is the closest existing
+            // diagnostic. The arm is unreachable in practice: both factors fit
+            // in u32 (`active_clusters` is driver-reported, `cluster_blocks`
+            // was validated against the u32 `max_cluster_size` above), so the
+            // product always fits in u64. `checked_mul` keeps the math honest.
             clustered_resident_blocks = Some(
                 u64::from(active_clusters)
                     .checked_mul(cluster_blocks)
