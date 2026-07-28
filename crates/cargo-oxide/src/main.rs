@@ -720,7 +720,7 @@ fn main() {
             );
         }
         Commands::List { json } => {
-            let ctx = commands::resolve_doctor_context();
+            let ctx = commands::resolve_passive_context();
             commands::list_examples(&ctx, json);
         }
         Commands::Fmt { check } => {
