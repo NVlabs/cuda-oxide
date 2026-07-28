@@ -695,6 +695,16 @@ fn extract_requirements(lines: &[&str]) -> Vec<String> {
 
         let trimmed = line.trim();
 
+        // A blank line terminates the current list item. Whatever follows is
+        // a new paragraph (prose, a code fence, ...), not a wrapped
+        // continuation of the bullet above it.
+        if trimmed.is_empty() {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            continue;
+        }
+
         let item = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
@@ -709,9 +719,7 @@ fn extract_requirements(lines: &[&str]) -> Vec<String> {
             if !item.is_empty() {
                 current_requirement = Some(item);
             }
-        } else if !trimmed.is_empty()
-            && let Some(requirement) = &mut current_requirement
-        {
+        } else if let Some(requirement) = &mut current_requirement {
             requirement.push(' ');
             requirement.push_str(&strip_inline_markdown(trimmed));
         }
@@ -7070,6 +7078,77 @@ Run the example with cargo oxide.
             [
                 "CUDA Toolkit 13.1+ with nvcc and tileiras available. This example also requires the CUDA development libraries.",
                 "Blackwell GPU with sm_100+ support.",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_does_not_absorb_paragraph_after_blank_line() {
+        // Modeled on the cpp_consumes_rust_device README: a bullet list under
+        // the requirements heading, then a blank line, then a follow-up
+        // paragraph and a code fence. The paragraph is a new paragraph, not a
+        // wrapped continuation of the last bullet.
+        let parsed = parse_example_readme(
+            "cpp_consumes_rust_device",
+            r#"
+# cpp_consumes_rust_device
+
+## Prerequisites
+
+- CUDA Toolkit (nvcc, libNVVM, nvJitLink)
+- Blackwell+ GPU (sm_100+) — LTOIR requires NVVM 20 dialect
+
+If your default host compiler is newer than the CUDA Toolkit supports, set
+`NVCC_CCBIN` or `CUDAHOSTCXX` before running the example:
+
+```bash
+NVCC_CCBIN=/usr/bin/g++-15 cargo oxide run cpp_consumes_rust_device
+```
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "CUDA Toolkit (nvcc, libNVVM, nvJitLink)",
+                "Blackwell+ GPU (sm_100+) — LTOIR requires NVVM 20 dialect",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_joins_wrapped_items_but_not_following_paragraphs() {
+        // Modeled on the cutile_inter_kernel README: the last bullet wraps
+        // across indented lines (joined), and the paragraph after the blank
+        // line must not be glued onto it.
+        let parsed = parse_example_readme(
+            "cutile_inter_kernel",
+            r#"
+# cutile_inter_kernel
+
+## Requirements
+
+- cuda-oxide from this repository.
+- CUDA Toolkit 13.1+ with `nvcc` and `tileiras` available. This example
+  defaults `CUDA_TOOLKIT_PATH` to `/usr/local/cuda` through its local Cargo
+  config; set `CUDA_TOOLKIT_PATH` yourself if your toolkit lives elsewhere.
+
+`cargo oxide run` targets explicit `--arch` first, then `CUDA_OXIDE_TARGET`,
+then auto-detects the local GPU.
+
+## Run
+
+Run instructions.
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "cuda-oxide from this repository.",
+                "CUDA Toolkit 13.1+ with nvcc and tileiras available. This example \
+                 defaults CUDA_TOOLKIT_PATH to /usr/local/cuda through its local Cargo \
+                 config; set CUDA_TOOLKIT_PATH yourself if your toolkit lives elsewhere.",
             ]
         );
     }
