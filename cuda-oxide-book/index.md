@@ -26,14 +26,17 @@ The v0.1.0 release is an early-stage alpha: **expect bugs, incomplete features, 
 ## 🚀 Quick start
 
 ```rust
-use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};
+use cuda_host::cuda_module;
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 
 #[cuda_module]
 mod kernels {
     use super::*;
 
     #[kernel]
+    #[launch_bounds(256)]
+    #[launch_contract(domain = 1, block = (256, 1, 1))]
     fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
@@ -46,35 +49,38 @@ mod kernels {
 fn main() {
     let ctx = CudaContext::new(0).unwrap();
     let stream = ctx.default_stream();
-    let module = kernels::load(&ctx).unwrap();
+
+    // SAFETY: this package owns the embedded device bundle for `kernels`.
+    let module = unsafe { kernels::load(&ctx).unwrap() };
 
     let a = DeviceBuffer::from_host(&stream, &[1.0f32; 1024]).unwrap();
     let b = DeviceBuffer::from_host(&stream, &[2.0f32; 1024]).unwrap();
     let mut c = DeviceBuffer::<f32>::zeroed(&stream, 1024).unwrap();
 
-    // SAFETY: this is a 1D launch and all three buffers contain 1024 elements.
-    unsafe {
-        module.vecadd(&stream, LaunchConfig::for_num_elems(1024), &a, &b, &mut c)
-    }
-    .unwrap();
+    let prepared = module
+        .prepare_vecadd(LaunchConfig1D::new(1024u32.div_ceil(256), 256, 0))
+        .unwrap();
+    module
+        .vecadd(&stream, &prepared, &a, &b, &mut c)
+        .unwrap();
 
     let result = c.to_host_vec(&stream).unwrap();
     assert_eq!(result[0], 3.0);
 }
 ```
 
-Build and run with `cargo oxide run vecadd` upon installing the [prerequisites](getting-started/installation.md).
+Build and run with `cargo oxide run vecadd` upon installing the [prerequisites](getting-started/installation.md). The same launch-contract pattern is what `cargo oxide new` scaffolds; see [Hello, GPU!](getting-started/hello-gpu.md).
 
 :::{note}
 `#[cuda_module]` embeds the generated device artifact into the host binary and
 generates a typed `kernels::load` function plus one launch method per kernel.
-Kernel arguments are type-checked. A raw `LaunchConfig` call is still unsafe
-because the configuration does not prove the kernel's indexing shape or
-resource requirements. A declared launch contract provides the safe
-`PreparedLaunch` path described in [Launching Kernels](gpu-programming/launching-kernels.md).
-The lower-level `load_kernel_module` and unsafe `cuda_launch!` APIs remain
-available when you need to load a specific sidecar artifact or build custom
-launch code.
+Kernel arguments are type-checked. A declared `#[launch_contract]` unlocks the
+safe `PreparedLaunch` path (`prepare_*` + typed launch) described in
+[Launching Kernels](gpu-programming/launching-kernels.md). A raw `LaunchConfig`
+call remains available as an unsafe escape hatch when you need a one-off
+geometry that the contract does not cover. The lower-level
+`load_kernel_module` and unsafe `cuda_launch!` APIs remain available when you
+need to load a specific sidecar artifact or build custom launch code.
 :::
 
 ---
