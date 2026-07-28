@@ -654,18 +654,44 @@ fn is_non_prose_markdown(line: &str) -> bool {
 }
 
 fn is_ordered_list_item(line: &str) -> bool {
-    line.split_once(". ").is_some_and(|(prefix, _)| {
-        !prefix.is_empty() && prefix.bytes().all(|byte| byte.is_ascii_digit())
-    })
+    strip_ordered_list_marker(line).is_some()
 }
+
+/// Strip a `1. ` / `42. ` ordered-list marker, returning the item text.
+fn strip_ordered_list_marker(line: &str) -> Option<&str> {
+    let (marker, item) = line.split_once(". ")?;
+    if !marker.is_empty() && marker.bytes().all(|byte| byte.is_ascii_digit()) {
+        Some(item.trim_start())
+    } else {
+        None
+    }
+}
+
+/// Collect the requirement entries documented under a requirements-style
+/// heading ([`is_requirements_heading`]).
+///
+/// Recognized forms:
+/// - unordered list items (`- ` / `* ` / `+ `), with indented
+///   wrap-continuation lines joined onto the item;
+/// - ordered list items (`1. `), same continuation rule;
+/// - two-column markdown tables, emitted as `name: value` per data row.
+///
+/// Tables with any other column count are skipped whole: without knowing
+/// which columns carry the requirement, half-parsing them would produce
+/// garbage entries.
 fn extract_requirements(lines: &[&str]) -> Vec<String> {
     let mut requirements = Vec::new();
     let mut current_requirement: Option<String> = None;
+    let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut requirement_level = None;
     let mut in_code_fence = false;
 
     for line in lines {
         if is_code_fence(line) {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            flush_requirement_table(&mut table_rows, &mut requirements);
             in_code_fence = !in_code_fence;
             continue;
         }
@@ -675,14 +701,16 @@ fn extract_requirements(lines: &[&str]) -> Vec<String> {
         }
 
         if let Some((level, heading)) = parse_markdown_heading(line) {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            flush_requirement_table(&mut table_rows, &mut requirements);
+
             let normalized = normalize_heading(&heading);
 
             if is_requirements_heading(&normalized) {
                 requirement_level = Some(level);
             } else if requirement_level.is_some_and(|active| level <= active) {
-                if let Some(requirement) = current_requirement.take() {
-                    requirements.push(requirement);
-                }
                 requirement_level = None;
             }
 
@@ -695,20 +723,31 @@ fn extract_requirements(lines: &[&str]) -> Vec<String> {
 
         let trimmed = line.trim();
 
-        // A blank line terminates the current list item. Whatever follows is
-        // a new paragraph (prose, a code fence, ...), not a wrapped
-        // continuation of the bullet above it.
+        // A blank line terminates the current list item or table. Whatever
+        // follows is a new paragraph (prose, a code fence, ...), not a
+        // wrapped continuation of the bullet above it.
         if trimmed.is_empty() {
             if let Some(requirement) = current_requirement.take() {
                 requirements.push(requirement);
             }
+            flush_requirement_table(&mut table_rows, &mut requirements);
             continue;
         }
+
+        if trimmed.starts_with('|') {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            table_rows.push(split_table_row(trimmed));
+            continue;
+        }
+        flush_requirement_table(&mut table_rows, &mut requirements);
 
         let item = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
-            .or_else(|| trimmed.strip_prefix("+ "));
+            .or_else(|| trimmed.strip_prefix("+ "))
+            .or_else(|| strip_ordered_list_marker(trimmed));
 
         if let Some(item) = item {
             if let Some(requirement) = current_requirement.take() {
@@ -728,9 +767,77 @@ fn extract_requirements(lines: &[&str]) -> Vec<String> {
     if let Some(requirement) = current_requirement {
         requirements.push(requirement);
     }
+    flush_requirement_table(&mut table_rows, &mut requirements);
 
     requirements.dedup();
     requirements
+}
+
+/// Split a markdown table row into trimmed cells, honoring `\|` escapes and
+/// dropping the empty leading/trailing cells produced by the outer pipes.
+fn split_table_row(row: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut characters = row.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' if characters.peek() == Some(&'|') => {
+                cell.push('|');
+                characters.next();
+            }
+            '|' => {
+                cells.push(cell.trim().to_string());
+                cell.clear();
+            }
+            _ => cell.push(character),
+        }
+    }
+    cells.push(cell.trim().to_string());
+
+    if cells.first().is_some_and(|first| first.is_empty()) {
+        cells.remove(0);
+    }
+    if cells.last().is_some_and(|last| last.is_empty()) {
+        cells.pop();
+    }
+
+    cells
+}
+
+/// The `|---|:---:|` row separating a table header from its data rows.
+fn is_table_separator_row(cells: &[String]) -> bool {
+    !cells.is_empty()
+        && cells.iter().all(|cell| {
+            !cell.is_empty()
+                && cell
+                    .chars()
+                    .all(|character| character == '-' || character == ':')
+        })
+}
+
+/// Convert a buffered `| name | value |` requirements table into one
+/// `name: value` entry per data row. Tables whose header or data rows are
+/// not exactly two columns are dropped whole rather than half-parsed.
+fn flush_requirement_table(table_rows: &mut Vec<Vec<String>>, requirements: &mut Vec<String>) {
+    let rows = std::mem::take(table_rows);
+
+    // Header, separator, and at least one data row.
+    if rows.len() < 3 || !is_table_separator_row(&rows[1]) {
+        return;
+    }
+
+    if !rows.iter().all(|row| row.len() == 2) {
+        return;
+    }
+
+    for row in &rows[2..] {
+        let name = strip_inline_markdown(&row[0]);
+        let value = strip_inline_markdown(&row[1]);
+        if !name.is_empty() && !value.is_empty() {
+            requirements.push(format!("{name}: {value}"));
+        }
+    }
 }
 
 fn is_requirements_heading(heading: &str) -> bool {
@@ -741,6 +848,7 @@ fn is_requirements_heading(heading: &str) -> bool {
             | "software requirements"
             | "system requirements"
             | "toolkit requirements"
+            | "build requirements"
             | "prerequisites"
     )
 }
@@ -7151,6 +7259,106 @@ Run instructions.
                  config; set CUDA_TOOLKIT_PATH yourself if your toolkit lives elsewhere.",
             ]
         );
+    }
+
+    #[test]
+    fn requirement_parser_captures_ordered_list_items() {
+        // Modeled on the mathdx_ffi_test README: prerequisites written as an
+        // ordered list, followed by a paragraph that is not part of the list.
+        let parsed = parse_example_readme(
+            "mathdx_ffi_test",
+            r#"
+# mathdx_ffi_test
+
+## Prerequisites
+
+1. **CUDA Toolkit 12.x+** with nvcc
+2. **MathDx Library** - Download from: https://developer.nvidia.com/cublasdx-downloads
+3. **cuda-oxide compiler** toolchain
+
+If your default host compiler is newer than the CUDA Toolkit supports, set
+`NVCC_CCBIN` or `CUDAHOSTCXX` before running the example.
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "CUDA Toolkit 12.x+ with nvcc",
+                "MathDx Library - Download from: https://developer.nvidia.com/cublasdx-downloads",
+                "cuda-oxide compiler toolchain",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_recognizes_build_requirements_heading() {
+        let parsed = parse_example_readme(
+            "example",
+            r#"
+# example
+
+## Build Requirements
+
+- nvcc with `--expt-relaxed-constexpr`
+"#,
+        );
+
+        assert_eq!(parsed.requirements, ["nvcc with --expt-relaxed-constexpr"]);
+    }
+
+    #[test]
+    fn requirement_parser_parses_two_column_requirement_tables() {
+        // Modeled on the abi_hmm README: requirements in a two-column table,
+        // including an escaped pipe inside a cell.
+        let parsed = parse_example_readme(
+            "abi_hmm",
+            r#"
+# abi_hmm
+
+## Requirements
+
+| Requirement   | Minimum                                           |
+|---------------|---------------------------------------------------|
+| GPU           | Turing or newer (RTX 20xx+)                       |
+| Linux Kernel  | 6.1.24+                                           |
+| HMM Support   | `nvidia-smi -q \| grep Addressing` shows "HMM"    |
+
+## Build and Run
+
+Instructions.
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "GPU: Turing or newer (RTX 20xx+)",
+                "Linux Kernel: 6.1.24+",
+                "HMM Support: nvidia-smi -q | grep Addressing shows \"HMM\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_skips_tables_that_are_not_two_columns() {
+        // A three-column table has no unambiguous name/value mapping, so it
+        // must be skipped whole instead of half-parsed.
+        let parsed = parse_example_readme(
+            "example",
+            r#"
+# example
+
+## Requirements
+
+| Test  | Status | Description |
+|-------|--------|-------------|
+| alpha | Pass   | First test  |
+| beta  | Pass   | Second test |
+"#,
+        );
+
+        assert_eq!(parsed.requirements, Vec::<String>::new());
     }
 
     #[test]
