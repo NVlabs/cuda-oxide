@@ -1,0 +1,11 @@
+error: `inout` constraints must use read-write syntax such as `"+r"`
+  --> tests/compile_fail/ptx_asm_inout_constraint.rs:12:43
+   |
+12 |         ptx_asm!("mov.u32 %0, %0;", inout("r") value);
+   |                                           ^^^
+
+error: unsupported `inout` constraint `+n`; expected one of ["+h", "+r", "+l", "+q", "+f", "+d"]
+  --> tests/compile_fail/ptx_asm_inout_constraint.rs:20:43
+   |
+20 |         ptx_asm!("mov.u32 %0, %0;", inout("+n") value);
+   |                                           ^^^^

@@ -1,0 +1,5 @@
+error: `inout` operands must appear before `in` operands
+  --> tests/compile_fail/ptx_asm_inout_after_input.rs:13:19
+   |
+13 |             inout("+r") value,
+   |                   ^^^^

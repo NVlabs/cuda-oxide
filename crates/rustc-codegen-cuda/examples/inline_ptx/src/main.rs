@@ -67,6 +67,28 @@ mod kernels {
             *prod_slot = prod;
         }
     }
+
+    /// Read-write `ptx_asm!`: the accumulator initializes `%0`, PTX updates
+    /// the same operand, and the final value is written back to Rust.
+    #[kernel]
+    pub fn inline_ptx_inout_kernel(mut out: DisjointSlice<u32>) {
+        if let Some((slot, idx)) = out.get_mut_indexed() {
+            let i = idx.get() as u32;
+            let mut accumulator = i.wrapping_add(10);
+            let increment = i.wrapping_mul(3).wrapping_add(1);
+
+            unsafe {
+                ptx_asm!(
+                    "add.u32 %0, %0, %1;",
+                    inout("+r") accumulator,
+                    in("r") increment,
+                    options(register_only),
+                );
+            }
+
+            *slot = accumulator;
+        }
+    }
 }
 
 fn main() {
@@ -120,6 +142,30 @@ fn main() {
                 "Multi-output mismatch at {i}: expected ({want_sum}, {want_prod}), \
                  got ({got_sum}, {got_prod})"
             );
+            std::process::exit(1);
+        }
+    }
+
+    let mut inout_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+    // SAFETY: launch shape/resources match the kernel; the buffer covers its accesses.
+    unsafe {
+        module.inline_ptx_inout_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &mut inout_dev,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let inout = inout_dev.to_host_vec(&stream).unwrap();
+    for (i, got) in inout.iter().copied().enumerate() {
+        let i = i as u32;
+        let expected = i
+            .wrapping_add(10)
+            .wrapping_add(i.wrapping_mul(3).wrapping_add(1));
+        if got != expected {
+            eprintln!("Read-write mismatch at {i}: expected {expected}, got {got}");
             std::process::exit(1);
         }
     }

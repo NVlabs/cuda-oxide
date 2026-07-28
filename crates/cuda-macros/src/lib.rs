@@ -54,10 +54,10 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 
 /// Inline PTX assembly for CUDA device code.
 ///
-/// The macro accepts the `%0` operand placeholders used by CUDA inline PTX, plus
-/// `in` / `out` operands with PTX constraint strings. Supported constraints are
-/// CUDA register constraints `"h"`, `"r"`, `"l"`, `"q"`, `"f"`, and `"d"`, plus
-/// `"n"` for immediate integer constants:
+/// The macro accepts the `%0` operand placeholders used by CUDA inline PTX,
+/// plus `in`, `out`, and `inout` operands with PTX constraint strings.
+/// Supported register constraints are `"h"`, `"r"`, `"l"`, `"q"`, `"f"`, and
+/// `"d"`, plus `"n"` for immediate integer inputs:
 ///
 /// ```ignore
 /// let y: u32;
@@ -71,18 +71,39 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// Read-write operands use `inout` with a `+`-prefixed register constraint.
+/// The current Rust value initializes the PTX output register and the final
+/// register value is written back to the same place:
+///
+/// ```ignore
+/// let mut accumulator = initial;
+/// unsafe {
+///     ptx_asm!(
+///         "add.u32 %0, %0, %1;",
+///         inout("+r") accumulator,
+///         in("r") increment,
+///         options(register_only),
+///     );
+/// }
+/// ```
+///
 /// Literal PTX registers that begin with `%` must be escaped as `%%`, matching
 /// CUDA C++ inline PTX. Literal `$` labels can be written normally.
 ///
-/// The surface supports up to 8 `out` operands (each constraint prefixed
-/// with `=`, e.g. `"=r"`), up to 16 `in` operands, `clobber("memory")`,
+/// The surface supports up to 8 output operands across `out` and `inout`, up
+/// to 16 explicit `in` operands, `clobber("memory")`,
 /// `options(register_only)`, and the explicit
-/// `options(register_only, may_diverge)` opt-in. With two or more `out`
-/// operands the snippet returns a tuple under the hood, destructured into
-/// the output places in declaration order:
+/// `options(register_only, may_diverge)` opt-in. `out` constraints use an `=`
+/// prefix, such as `"=r"`, while `inout` constraints use a `+` prefix, such as
+/// `"+r"`. All output operands must appear before explicit inputs.
+///
+/// With two or more output operands, including any mixture of `out` and
+/// `inout`, the marker returns a tuple under the hood and the macro writes its
+/// elements back to the output places in declaration order:
 ///
 /// ```ignore
-/// let (sum, prod): (u32, u32);
+/// let sum: u32;
+/// let prod: u32;
 /// unsafe {
 ///     ptx_asm!(
 ///         "add.u32 %0, %2, %3; mul.lo.u32 %1, %2, %3;",
@@ -96,7 +117,7 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 ///
 /// By default, snippets are treated as side-effecting and stay inside their
 /// current control flow. Use `options(register_only)` only for snippets that
-/// read explicit operands and write the explicit output. **Never** use
+/// read explicit operands and write explicit outputs. **Never** use
 /// `may_diverge` for `.sync` instructions, collectives, or any snippet whose
 /// participating lanes matter.
 #[proc_macro]

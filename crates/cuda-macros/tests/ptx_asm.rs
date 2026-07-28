@@ -16,6 +16,12 @@ fn ptx_asm_accepts_multi_output() {
 }
 
 #[test]
+fn ptx_asm_accepts_inout() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/pass/ptx_asm_inout.rs");
+}
+
+#[test]
 fn ptx_asm_compile_failures() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/ptx_asm_requires_unsafe.rs");
@@ -30,4 +36,6 @@ fn ptx_asm_compile_failures() {
     t.compile_fail("tests/compile_fail/ptx_asm_register_only_clobber.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_may_diverge_requires_register_only.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_unknown_option.rs");
+    t.compile_fail("tests/compile_fail/ptx_asm_inout_constraint.rs");
+    t.compile_fail("tests/compile_fail/ptx_asm_inout_after_input.rs");
 }

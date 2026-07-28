@@ -318,4 +318,14 @@ mod tests {
         assert!(!options.sideeffect);
         assert!(!options.convergent);
     }
+
+    #[test]
+    fn parses_output_marker_with_24_inputs() {
+        let kind = InlinePtxCallKind::from_path("cuda_device::ptx::__ptx_asm_out_24")
+            .expect("output marker should be recognized");
+
+        assert!(matches!(kind, InlinePtxCallKind::Output { inputs: 24 }));
+        assert_eq!(kind.inputs(), 24);
+        assert!(kind.has_output());
+    }
 }
