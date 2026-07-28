@@ -258,6 +258,19 @@ The generated PTX includes these directives:
 .entry optimized_kernel .maxntid 256, 1, 1 .minnctapersm 2 { ... }
 ```
 
+`.maxntid` bounds the product `x * y * z`, so a 256-thread bound admits
+`(256, 1, 1)`, `(16, 16, 1)` and `(4, 8, 8)` alike. Add
+`#[launch_contract(block = (x, y, z))]` when one exact shape is required. That
+emits `.reqntid` in place of `.maxntid`, which the driver enforces per axis:
+
+```text
+.entry exact_kernel .reqntid 256, 1, 1 .minnctapersm 2 { ... }
+```
+
+The two directives are mutually exclusive; ptxas rejects an entry declaring
+both, so a contracted kernel emits `.reqntid` alone. `.minnctapersm` is an
+occupancy hint and composes with either.
+
 :::{tip}
 `#[launch_bounds]` must appear **after** `#[kernel]`:
 

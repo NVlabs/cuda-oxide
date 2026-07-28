@@ -143,7 +143,18 @@ reduce_unchecked: raw LaunchConfig             -> unsafe expert path
 
 `block` is exact. If it is omitted, `#[launch_bounds]` supplies the compiled
 maximum total threads per block. For example, a limit of 256 accepts both
-`(256, 1, 1)` and `(16, 16, 1)`. Dynamic shared memory is either exact
+`(256, 1, 1)` and `(16, 16, 1)`.
+
+An exact `block` also reaches the device compiler, which emits
+`.reqntid x, y, z` in place of `.maxntid`. The CUDA driver enforces that per
+axis, so a launch whose block differs is refused even when it never passed
+through preparation. Preparation and the driver therefore check the same
+requirement on independent paths, and the raw `_unchecked` path is covered by
+the second. The two directives cannot coexist on one entry, so a kernel
+declaring both `#[launch_bounds]` and an exact `block` emits `.reqntid` alone.
+The occupancy hint `.minnctapersm` is unaffected.
+
+Dynamic shared memory is either exact
 (`dynamic_shared = BYTES`) or an inclusive range. The byte extent is an author
 promise; the alignment is a compiler-visible minimum and is merged with any
 higher `DynamicSharedArray<T, ALIGN>` request in the body or a reachable local
@@ -180,9 +191,12 @@ module. Generic loading also merges all PTX bundles, so those specializations
 must match and have no conflicting entry definitions. Preparation and launch
 are safe after this one-time binding.
 
-Cluster and cooperative requirements are each checked against the live device.
-Combining them currently fails preparation because cuda-oxide cannot yet prove
-the combined residency limit with the available occupancy query.
+Cluster and cooperative requirements are each checked against the live device,
+and they may be combined. For a clustered cooperative kernel, preparation first
+proves the cluster shape with `cuOccupancyMaxActiveClusters`, then requires the
+whole grid to fit in that concurrent cluster capacity so a cooperative
+`grid::sync()` cannot hang on non-resident blocks. Oversized grids fail
+preparation with `LaunchContractError::CooperativeGridTooLarge`.
 
 ### `#[cluster_launch(x, y, z)]`
 
@@ -402,7 +416,7 @@ unsafe {
 }
 ```
 
-The surface supports up to 8 `out` operands, up to 16 `in` operands, and
+The surface supports up to 16 `out` operands, up to 16 `in` operands, and
 `clobber("memory")`. Every `out` constraint must be `=`-prefixed (e.g.
 `"=r"`); with two or more `out` operands the snippet returns a tuple under
 the hood, destructured into the output places in declaration order:
@@ -424,7 +438,7 @@ unsafe {
 
 `options(register_only)` requires an `out` operand and cannot be combined
 with clobbers. `options(may_diverge)` must be paired with `register_only`.
-More than 8 outputs, read-write operands, and the `"C"` constraint are not
+More than 16 outputs, read-write operands, and the `"C"` constraint are not
 implemented yet.
 
 ## Source Layout

@@ -22422,7 +22422,15 @@ fn expand_debug_control_admission(
                         mechanism: BackendLoweringMechanism::InlinePtx,
                         evidence_profile: admission.libnvvm_evidence_profile.clone(),
                         targets: None,
-                        minimum_ptx: Some("9.3".into()),
+                        // PTX floor is the inline-PTX mechanism floor, same as
+                        // the LlvmNvptx entry above; the hardware floor stays at
+                        // the probed sm_75 (backend-codegen evidence must sit
+                        // exactly at the hardware floor, and CUDA 13 cannot
+                        // probe older targets). Writing the probe PTX version
+                        // (9.3) here made every panic path unbuildable on the
+                        // NVVM-IR route: the floor exceeded the newest PTX
+                        // version cuda-oxide can request.
+                        minimum_ptx: Some("3.2".into()),
                         minimum_sm: Some("sm_75".into()),
                     },
                 ],
@@ -22567,7 +22575,7 @@ fn validate_debug_control_policy(
         policy,
         [
             (IntrinsicBackend::LlvmNvptx, "3.2", Some("sm_20")),
-            (IntrinsicBackend::LibNvvm, "9.3", Some("sm_75")),
+            (IntrinsicBackend::LibNvvm, "3.2", Some("sm_75")),
         ],
         "debug-control",
     )?;

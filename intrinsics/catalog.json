@@ -9175,7 +9175,7 @@
           "mechanism": "inline_ptx",
           "evidence_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
           "target": {
-            "minimum_ptx": "9.3",
+            "minimum_ptx": "3.2",
             "hardware": {
               "kind": "any_of",
               "alternatives": [
@@ -176163,7 +176163,7 @@
           "mechanism": "inline_ptx",
           "evidence_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
           "target": {
-            "minimum_ptx": "9.3",
+            "minimum_ptx": "3.2",
             "hardware": {
               "kind": "any_of",
               "alternatives": [
@@ -299633,7 +299633,7 @@
           "mechanism": "inline_ptx",
           "evidence_profile": "cuda-13.3-libnvvm-13.3.33-debug-control",
           "target": {
-            "minimum_ptx": "9.3",
+            "minimum_ptx": "3.2",
             "hardware": {
               "kind": "any_of",
               "alternatives": [

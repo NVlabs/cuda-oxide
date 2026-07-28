@@ -253,3 +253,221 @@ mod tests {
         assert_eq!(acc_matrix_offset(0, 0, 1, usize::MAX, usize::MAX), None);
     }
 }
+
+// =============================================================================
+// Predication against a logical tile extent
+// =============================================================================
+//
+// A tile shape rarely divides the problem, and the accumulator makes the
+// mismatch awkward: each lane's four values are scattered across the tile, so
+// clipping is not a contiguous prefix the way it is for a linear tile. Lane 0
+// may hold four valid elements while lane 4 holds two, at the same `j`.
+//
+// Concretely, at `M = 9` against the 16-row tile: `j` 0 and 1 land on row
+// `group`, always inside; `j` 2 and 3 land on row `group + 8`, inside only for
+// `group == 0`. So lanes 0..3 keep all four registers and every other lane
+// keeps two - which is 4*4 + 28*2 = 72 = 9 * 8 elements, the whole logical tile
+// and nothing more.
+//
+// The predicate is per register rather than per lane, so it is returned as a
+// 4-bit mask. A kernel tests one mask instead of recomputing bounds per store.
+// Computing the mask adds no divergent control flow (every lane evaluates the
+// same straight-line expressions), but the masks themselves differ across
+// lanes, so stores guarded on mask bits can still diverge exactly as any
+// bounds check would. The mask buys fewer tests and a warp-uniform fast path
+// when `acc_mask_is_uniform` holds for every lane; it does not by itself keep
+// the warp convergent.
+
+/// Whether one accumulator register lies inside a logical extent.
+///
+/// `valid_rows` and `valid_cols` are the real problem dimensions, which may be
+/// smaller than the `16 x 8` tile the instruction computes. Values larger than
+/// the tile are treated as the tile, so an over-large extent cannot admit an
+/// element that does not exist.
+#[must_use]
+#[inline(always)]
+pub const fn acc_is_valid(lane: usize, j: usize, valid_rows: usize, valid_cols: usize) -> bool {
+    let rows = if valid_rows < ACC_ROWS {
+        valid_rows
+    } else {
+        ACC_ROWS
+    };
+    let cols = if valid_cols < ACC_COLS {
+        valid_cols
+    } else {
+        ACC_COLS
+    };
+    let (row, col) = acc_coords(lane, j);
+    row < rows && col < cols
+}
+
+/// Which of a lane's four accumulator registers lie inside a logical extent.
+///
+/// Bit `j` is set when register `j` is valid. A mask of `0` means the lane holds
+/// nothing worth storing.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // M = 9 rows of a 16-row tile, all 8 columns.
+/// let mask = mma_frag::acc_valid_mask(lane, 9, 8);
+/// for j in 0..4 {
+///     if mask & (1 << j) != 0 {
+///         let (row, col) = mma_frag::acc_coords(lane, j);
+///         // store d[j] at (row, col)
+///     }
+/// }
+/// ```
+#[must_use]
+#[inline(always)]
+pub const fn acc_valid_mask(lane: usize, valid_rows: usize, valid_cols: usize) -> u32 {
+    let mut mask = 0u32;
+    let mut j = 0;
+    while j < ACC_PER_LANE {
+        if acc_is_valid(lane, j, valid_rows, valid_cols) {
+            mask |= 1 << j;
+        }
+        j += 1;
+    }
+    mask
+}
+
+/// Whether a lane's registers are either all valid or all invalid.
+///
+/// Useful for picking a store path: when every lane in the warp is uniform, the
+/// epilogue can use unpredicated stores for the lanes that are wholly inside and
+/// skip the rest, rather than testing per register.
+#[must_use]
+#[inline(always)]
+pub const fn acc_mask_is_uniform(mask: u32) -> bool {
+    mask == 0 || mask == 0b1111
+}
+
+/// Valid registers a whole warp holds for a logical extent.
+///
+/// Equals `min(valid_rows, 16) * min(valid_cols, 8)`, because the layout is a
+/// bijection: every element of the logical tile is held by exactly one lane. Kept
+/// as a computed sum so a wrong predicate shows up as a wrong total rather than
+/// as missing output.
+#[must_use]
+#[inline(always)]
+pub const fn acc_valid_count(valid_rows: usize, valid_cols: usize) -> usize {
+    let mut total = 0;
+    let mut lane = 0;
+    while lane < WARP_LANES {
+        total += acc_valid_mask(lane, valid_rows, valid_cols).count_ones() as usize;
+        lane += 1;
+    }
+    total
+}
+
+#[cfg(test)]
+mod predication_tests {
+    use super::*;
+
+    /// The shape this fork runs: 9 rows of a 16-row tile.
+    #[test]
+    fn nine_rows_keeps_four_registers_only_in_the_first_group() {
+        // group 0 is lanes 0..3; row group + 8 = 8, still inside 9.
+        for lane in 0..4 {
+            assert_eq!(
+                acc_valid_mask(lane, 9, 8),
+                0b1111,
+                "lane {lane} is wholly inside at M=9"
+            );
+        }
+        // Every other lane loses the two registers on row group + 8.
+        for lane in 4..WARP_LANES {
+            assert_eq!(
+                acc_valid_mask(lane, 9, 8),
+                0b0011,
+                "lane {lane} keeps only j 0 and 1 at M=9"
+            );
+        }
+    }
+
+    /// The count must equal the logical tile exactly: no element dropped, none
+    /// invented. This is the property the bijection buys.
+    #[test]
+    fn valid_count_matches_the_logical_tile() {
+        assert_eq!(acc_valid_count(9, 8), 72, "9 x 8");
+        assert_eq!(acc_valid_count(16, 8), 128, "the whole tile");
+        assert_eq!(acc_valid_count(1, 1), 1);
+        assert_eq!(acc_valid_count(0, 8), 0);
+        assert_eq!(acc_valid_count(8, 8), 64, "exactly half the rows");
+        // Sweep every extent.
+        for rows in 0..=ACC_ROWS {
+            for cols in 0..=ACC_COLS {
+                assert_eq!(
+                    acc_valid_count(rows, cols),
+                    rows * cols,
+                    "mismatch at {rows} x {cols}"
+                );
+            }
+        }
+    }
+
+    /// An extent beyond the tile must clamp, not admit elements the instruction
+    /// never computes.
+    #[test]
+    fn oversized_extent_clamps_to_the_tile() {
+        assert_eq!(acc_valid_count(999, 999), 128);
+        assert_eq!(acc_valid_count(16, 99), 128);
+        assert_eq!(acc_valid_count(99, 8), 128);
+    }
+
+    /// Each valid register maps to a distinct element of the logical tile, which
+    /// is what makes a predicated store race-free: masking removes elements from
+    /// a bijection and cannot create an overlap.
+    #[test]
+    fn predicated_registers_stay_disjoint() {
+        let (rows, cols) = (9usize, 8usize);
+        let mut owner = [None::<(usize, usize)>; ACC_ROWS * ACC_COLS];
+        for lane in 0..WARP_LANES {
+            let mask = acc_valid_mask(lane, rows, cols);
+            for j in 0..ACC_PER_LANE {
+                if mask & (1 << j) == 0 {
+                    continue;
+                }
+                let (row, col) = acc_coords(lane, j);
+                assert!(row < rows && col < cols, "masked-in element is outside");
+                let off = row * ACC_COLS + col;
+                assert_eq!(owner[off], None, "element {off} claimed twice");
+                owner[off] = Some((lane, j));
+            }
+        }
+        let claimed = owner.iter().filter(|o| o.is_some()).count();
+        assert_eq!(claimed, rows * cols);
+    }
+
+    /// Column clipping bites differently from row clipping: columns come from
+    /// `tig`, so a narrow extent removes whole lanes rather than registers.
+    #[test]
+    fn column_clipping_removes_lanes_not_registers() {
+        // 2 valid columns: only tig == 0 contributes (cols 0 and 1).
+        for lane in 0..WARP_LANES {
+            let mask = acc_valid_mask(lane, 16, 2);
+            if lane % 4 == 0 {
+                assert_eq!(mask, 0b1111, "lane {lane} has tig 0");
+            } else {
+                assert_eq!(mask, 0, "lane {lane} is outside 2 columns");
+            }
+        }
+        assert_eq!(acc_valid_count(16, 2), 32);
+    }
+
+    #[test]
+    fn uniformity_predicate_matches_the_mask() {
+        assert!(acc_mask_is_uniform(0));
+        assert!(acc_mask_is_uniform(0b1111));
+        assert!(!acc_mask_is_uniform(0b0011));
+        assert!(!acc_mask_is_uniform(0b0001));
+        // At M=9 lanes disagree, so the epilogue cannot use one uniform path.
+        assert!(acc_mask_is_uniform(acc_valid_mask(0, 9, 8)));
+        assert!(!acc_mask_is_uniform(acc_valid_mask(4, 9, 8)));
+        // At the full tile every lane is uniform.
+        for lane in 0..WARP_LANES {
+            assert!(acc_mask_is_uniform(acc_valid_mask(lane, 16, 8)));
+        }
+    }
+}
