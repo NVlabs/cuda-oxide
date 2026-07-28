@@ -173,19 +173,38 @@ define_vector!(
 /// The tail is not silently dropped. A slice of 10 `f32` viewed as `F32x4` is an
 /// error rather than two vectors and a discarded remainder, because discarding
 /// data is the kind of thing that should be written down at the call site.
+///
+/// # Empty slices
+///
+/// An empty input always yields `Some` empty view, regardless of its base
+/// address: there is nothing to access, so there is no alignment to violate.
+/// This makes the literal `&[]` (whose dangling base is only aligned for the
+/// scalar) and an aligned empty sub-slice of a real buffer behave identically.
 #[must_use]
 pub fn as_vectors<V: Vector>(slice: &[V::Elem]) -> Option<&[V]> {
     let len = vector_len::<V>(slice.len(), slice.as_ptr() as usize)?;
+    if len == 0 {
+        // `from_raw_parts` requires a base aligned for `V` even at length 0,
+        // and an empty input's base may only be aligned for the scalar. The
+        // empty view does not need the base at all.
+        return Some(&[]);
+    }
     // SAFETY: length divides exactly and the base is aligned for `V`, both
     // checked above. `V` is `repr(C)` over `LANES` values of `Elem`, so `len`
     // vectors cover exactly `slice.len()` elements.
     Some(unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<V>(), len) })
 }
 
-/// Mutable [`as_vectors`].
+/// Mutable [`as_vectors`]. Shares its semantics, including the empty-slice
+/// case: any empty input yields `Some` empty view.
 #[must_use]
 pub fn as_vectors_mut<V: Vector>(slice: &mut [V::Elem]) -> Option<&mut [V]> {
     let len = vector_len::<V>(slice.len(), slice.as_ptr() as usize)?;
+    if len == 0 {
+        // As in `as_vectors`: no access will happen, and the possibly
+        // scalar-aligned base must not reach `from_raw_parts_mut`.
+        return Some(&mut []);
+    }
     // SAFETY: as `as_vectors`, and the exclusive borrow of `slice` is consumed
     // for the lifetime of the result, so no aliasing view coexists.
     Some(unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<V>(), len) })
@@ -194,6 +213,12 @@ pub fn as_vectors_mut<V: Vector>(slice: &mut [V::Elem]) -> Option<&mut [V]> {
 /// Shared checks: exact division and alignment.
 #[inline]
 fn vector_len<V: Vector>(elems: usize, addr: usize) -> Option<usize> {
+    if elems == 0 {
+        // Uniform empty-slice semantics: nothing will be accessed, so the
+        // base address (which for a literal `&[]` is a dangling pointer with
+        // only the scalar's alignment) is irrelevant.
+        return Some(0);
+    }
     if V::LANES == 0 || size_of::<V::Elem>() == 0 {
         return None;
     }
@@ -334,6 +359,34 @@ mod tests {
             as_vectors::<F32x2>(off2).is_some(),
             "8-byte aligned and 14 divides by 2"
         );
+    }
+
+    /// Every empty input views as an empty vector slice, whatever its base
+    /// address: the literal `&[]` (dangling, scalar-aligned base) and an
+    /// empty sub-slice at a misaligned offset behave identically.
+    #[test]
+    fn empty_slices_always_view() {
+        let empty = as_vectors::<F32x4>(&[]).expect("literal empty slice");
+        assert!(empty.is_empty());
+        assert!(is_viewable::<F32x4>(&[]));
+        let mut none: [f32; 0] = [];
+        assert!(
+            as_vectors_mut::<F32x4>(&mut none)
+                .expect("empty mut")
+                .is_empty()
+        );
+
+        let backing = [F32x4::splat(0.0); 2];
+        let flat: &[f32] =
+            unsafe { core::slice::from_raw_parts(backing.as_ptr().cast::<f32>(), 8) };
+        // Zero-length sub-slice at a misaligned offset: still an empty view.
+        let sub = &flat[1..1];
+        assert!(
+            as_vectors::<F32x4>(sub)
+                .expect("empty sub-slice")
+                .is_empty()
+        );
+        assert!(is_viewable::<F32x4>(sub));
     }
 
     #[test]
