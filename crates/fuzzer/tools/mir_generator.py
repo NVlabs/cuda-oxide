@@ -213,6 +213,10 @@ def literal_for_type(ty: str, idx: int) -> str:
         "u128": ["10_u128", "20_u128", "42_u128"],
         "usize": ["10_usize", "20_usize", "42_usize"],
         "char": ["'a'", "'\\u{3a9}'", "'\\u{1f980}'"],
+        # Exactly representable in binary floating point, so the literal a
+        # seed is given is the value both backends start from.
+        "f32": ["1.5_f32", "(-0.25_f32)", "42.0_f32"],
+        "f64": ["1.5_f64", "(-0.25_f64)", "42.0_f64"],
     }
     if ty not in literals:
         raise SystemExit(f"unsupported function argument type for Stage 2 adapter: {ty}")
@@ -236,6 +240,8 @@ def supported_trace_type(ty: str) -> bool:
         "u128",
         "usize",
         "char",
+        "f32",
+        "f64",
     }
 
 

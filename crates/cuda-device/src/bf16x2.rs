@@ -5,5 +5,10 @@
 //!
 //! Each `u32` stores two bf16 values. The first value uses the low 16 bits.
 //! The second value uses the high 16 bits.
+//!
+//! The packing here is the ALU format for SIMD arithmetic. For over-aligned
+//! *memory element* types that make loads and stores single wide transactions,
+//! see [`crate::vector`]. For multi-register *value* groups, see
+//! [`crate::cusimd::CuSimd`].
 
 include!("generated/bf16x2.rs");

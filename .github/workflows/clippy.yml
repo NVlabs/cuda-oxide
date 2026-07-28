@@ -27,10 +27,14 @@ jobs:
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcurand-dev"]'
 
+      # `--all-targets` covers tests, benches and examples, matching the two
+      # steps below and the `just clippy` recipe. Without it a lint that fires
+      # only in a test target passes here and fails for anyone running the
+      # recipe locally.
       - name: Run clippy (workspace crates)
         env:
           CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       # `rustc-codegen-cuda` and each example under examples/ are their own
       # standalone workspaces (the codegen backend is swapped in via

@@ -50,10 +50,11 @@ The 21 checks split into three layers:
 launches through the typed path: both kernels carry
 `#[cooperative_launch]` inside a `#[cuda_module]` module, so their
 generated launch methods submit via `cuLaunchKernelEx` with
-`CU_LAUNCH_ATTRIBUTE_COOPERATIVE`. The same module also holds a
-compile-only kernel combining `#[cluster_launch(2, 1, 1)]` with
-`#[cooperative_launch]`, pinning that the two attributes are accepted
-together.
+`CU_LAUNCH_ATTRIBUTE_COOPERATIVE`. The same module also holds
+`test_cluster_coop_grid_sync`, which combines `#[cluster_launch(2, 1, 1)]`
+with `#[cooperative_launch]` and a `#[launch_contract]`. On Hopper+ that
+kernel is prepared and launched through the safe `PreparedLaunch` path;
+pre-Hopper devices print that the combined mode was not exercised.
 
 ### Layer 2 — typed cooperative-groups handles (5 checks)
 

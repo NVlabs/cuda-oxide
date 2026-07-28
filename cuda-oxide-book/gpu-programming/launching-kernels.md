@@ -152,8 +152,311 @@ cannot represent active Y/Z dimensions, and `PreparedLaunch<vecadd>` cannot be
 used with another kernel. Preparation may fail; once it succeeds, the branded
 launch can be reused safely.
 
+Cluster and cooperative attributes may be declared together
+(`#[cluster_launch(...)]` + `#[cooperative_launch]`). Preparation proves the
+cluster shape with `cuOccupancyMaxActiveClusters`, then requires the whole
+grid to fit in that concurrent cluster capacity so a cooperative
+`grid::sync()` cannot hang on non-resident blocks. An oversized grid fails
+preparation with `LaunchContractError::CooperativeGridTooLarge` (or a related
+cluster residency error) instead of submitting an unsound launch.
+
 For a contracted kernel, the raw escape hatch is named `vecadd_unchecked` and
 remains unsafe. Uncontracted kernels expose only unsafe raw launch methods.
+
+## Compile-time policy configuration
+
+A kernel policy is a named collection of compile-time choices. It can describe
+tile shapes, operation atoms, launch bounds, loop-unroll factors, or any other
+configuration that a kernel library wants to expose.
+
+Policies are represented by Rust types rather than runtime values. A generic
+kernel is monomorphized once for every concrete policy type used by the host:
+
+```text
+transform::<SmallTilePolicy> -> transform_TID_<A>
+transform::<WideTilePolicy>  -> transform_TID_<B>
+```
+
+Each specialization has its own PTX entry point and its own folded constants.
+The policy is not passed as a kernel argument, and the generated kernel does not
+contain a runtime branch that selects a policy.
+
+### Define a domain-specific policy
+
+`cuda_device::config::Policy` deliberately contains only a stable identifier.
+Kernel libraries extend it with associated types and constants that are
+meaningful for their domain:
+
+```rust
+use cuda_device::config::{
+    Atom, AtomKind, AtomSpec, Block, Global, Policy, PolicyId, RowMajor, Shape1,
+    Thread, Tile, TileSpec,
+};
+
+enum XorRotate {}
+impl AtomKind for XorRotate {}
+
+trait VectorPolicy: Policy {
+    type BlockTile: TileSpec<
+        Layout = RowMajor,
+        MemorySpace = Global,
+        Scope = Block,
+    >;
+
+    type ElementAtom: AtomSpec<
+        Kind = XorRotate,
+        Scope = Thread,
+    >;
+
+    const MAX_THREADS: u32;
+    const MIN_BLOCKS: u32;
+    const ITEMS_PER_THREAD: u32;
+    const UNROLL: u32;
+    const TAG: u32;
+}
+```
+
+`Tile`, `Atom`, `Shape`, layout, memory-space, and scope types are metadata.
+They do not allocate memory, provide pointer access, emit an instruction, or
+synchronize threads. The domain-specific trait and kernel implementation decide
+what those descriptions mean and which combinations are valid.
+
+### Define concrete policies
+
+A concrete policy implements both `Policy` and the domain-specific policy
+trait:
+
+```rust
+enum SmallTilePolicy {}
+
+impl Policy for SmallTilePolicy {
+    const ID: PolicyId =
+        PolicyId::new(0x706f_6c69_6379_5f63, 1);
+}
+
+impl VectorPolicy for SmallTilePolicy {
+    type BlockTile =
+        Tile<Shape1<1024>, RowMajor, Global, Block>;
+
+    type ElementAtom =
+        Atom<XorRotate, Shape1<1>, Thread>;
+
+    const MAX_THREADS: u32 = 64;
+    const MIN_BLOCKS: u32 = 2;
+    const ITEMS_PER_THREAD: u32 = 16;
+    const UNROLL: u32 = 2;
+    const TAG: u32 = 0x1357_9bdf;
+}
+```
+
+A second policy can select a different tile, launch bound, and unroll factor
+without duplicating the kernel:
+
+```rust
+enum WideTilePolicy {}
+
+impl Policy for WideTilePolicy {
+    const ID: PolicyId =
+        PolicyId::new(0x706f_6c69_6379_5f63, 2);
+}
+
+impl VectorPolicy for WideTilePolicy {
+    type BlockTile =
+        Tile<Shape1<4096>, RowMajor, Global, Block>;
+
+    type ElementAtom =
+        Atom<XorRotate, Shape1<1>, Thread>;
+
+    const MAX_THREADS: u32 = 256;
+    const MIN_BLOCKS: u32 = 1;
+    const ITEMS_PER_THREAD: u32 = 16;
+    const UNROLL: u32 = 4;
+    const TAG: u32 = 0x2468_ace0;
+}
+```
+
+`PolicyId` is an explicit library-facing identity. Its namespace and value are
+supplied by the policy author and must remain stable while the policy's
+generated behavior remains unchanged. It is not derived from Rust `TypeId`,
+compiler mangling, a type name, or a compiler-generated hash.
+
+cuda-oxide does not maintain a global policy-ID registry. A policy library is
+responsible for choosing its namespace and preventing duplicate IDs.
+
+### Use policy constants in a kernel
+
+Policy-associated constants can be used by supported compile-time attributes:
+
+```rust
+use cuda_device::{
+    cuda_module, kernel, launch_bounds, launch_contract, thread,
+};
+
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[kernel]
+    #[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+    #[launch_contract(domain = 1)]
+    pub unsafe fn transform<P: VectorPolicy>(
+        input: *const u32,
+        output: *mut u32,
+        count: u32,
+    ) {
+        let base =
+            thread::index_1d().get()
+                * P::ITEMS_PER_THREAD as usize;
+
+        let mut lane = 0;
+
+        #[unroll(P::UNROLL)]
+        while lane < count {
+            let index = base + lane as usize;
+
+            // SAFETY: the caller provides readable and writable storage
+            // for every active thread and keeps count within the tile.
+            let value =
+                unsafe { input.add(index).read_volatile() } ^ P::TAG;
+
+            unsafe {
+                output.add(index).write_volatile(value);
+            }
+
+            lane += 1;
+        }
+    }
+}
+```
+
+rustc resolves the associated constants after monomorphization. cuda-oxide
+therefore sees concrete values for each specialization:
+
+```text
+SmallTilePolicy:
+  launch_bounds = (64, 2)
+  unroll         = 2
+
+WideTilePolicy:
+  launch_bounds = (256, 1)
+  unroll         = 4
+```
+
+`MAX_THREADS` specifies the maximum block size accepted by that specialization.
+It does not force every launch to use exactly that number of threads.
+
+`MIN_BLOCKS` is a compiler occupancy hint represented by PTX
+`.minnctapersm`. It is not a grid or block dimension and is not enforced as
+launch geometry.
+
+`UNROLL` is a partial-unroll factor. `UNROLL = 4` groups four loop iterations
+per transformed loop body; it does not limit the loop to four iterations.
+Runtime bounds and remainder iterations are preserved.
+
+Invalid or unevaluatable policy expressions produce compilation errors instead
+of silently using default values.
+
+### Prepare a policy-specific launch
+
+Generic kernels generate generic host methods whose policy parameter selects
+the concrete kernel specialization:
+
+```rust
+use cuda_core::LaunchConfig1D;
+
+let small_launch =
+    module.prepare_transform::<SmallTilePolicy>(
+        LaunchConfig1D::new(1, 64, 0),
+    )?;
+
+let wide_launch =
+    module.prepare_transform::<WideTilePolicy>(
+        LaunchConfig1D::new(1, 256, 0),
+    )?;
+```
+
+The generated launch contract is evaluated independently for each
+specialization:
+
+* `SmallTilePolicy` rejects blocks larger than 64 threads.
+* `WideTilePolicy` rejects blocks larger than 256 threads.
+
+A prepared launch remains branded for the selected kernel specialization. A
+`PreparedLaunch` created for one policy cannot be passed to another policy's
+launch method.
+
+The policy changes compile-time code generation and launch validation, but it
+does not prove raw-pointer memory safety. Kernels that accept raw pointers
+remain unsafe to call:
+
+```rust
+// SAFETY: the pointers cover the complete policy tile and remain valid
+// until the stream completes the launch.
+unsafe {
+    module.transform::<SmallTilePolicy>(
+        &stream,
+        &small_launch,
+        input,
+        output,
+        count,
+    )?;
+}
+```
+
+### Current limitations
+
+Policy expressions are currently supported first for:
+
+* `#[launch_bounds(...)]`
+* partial loop `#[unroll(...)]`
+
+Generic constant expressions require Rust's `generic_const_exprs` feature:
+
+```rust
+#![feature(generic_const_exprs)]
+#![allow(incomplete_features)]
+```
+
+The following values currently remain literal rather than policy-derived:
+
+* `launch_contract` fields
+* cluster dimensions
+* dynamic shared-memory sizes
+
+A policy-derived maximum launch bound can still be combined with a host launch
+contract. The contract and the policy maximum are checked separately for each
+monomorphized specialization.
+
+Any additional named constants referenced by a policy-derived launch-bound
+maximum must be visible at module scope because the host launch contract is
+generated beside the kernel function.
+
+### Complete example
+
+The
+[`policy_config`](https://github.com/NVlabs/cuda-oxide/tree/main/crates/rustc-codegen-cuda/examples/policy_config)
+example defines two policies for one generic kernel and verifies that they
+produce:
+
+* distinct host-addressable PTX entries
+* distinct `.maxntid` and `.minnctapersm` directives
+* folded policy-specific constants
+* different partial-unroll factors in raw LLVM IR
+* policy-specific prepared-launch validation
+
+Build and inspect the generated artifacts without a GPU:
+
+```bash
+cargo oxide build policy_config
+
+cargo run --release \
+  --manifest-path crates/rustc-codegen-cuda/examples/policy_config/Cargo.toml \
+  -- --verify-ptx
+```
+
+Use `--release` for the verifier because compiler-generated specialization
+names can differ between build profiles. `PolicyId` remains the explicit,
+profile-independent policy identity.
 
 ## `cuda_launch!` -- unsafe lower-level launch
 

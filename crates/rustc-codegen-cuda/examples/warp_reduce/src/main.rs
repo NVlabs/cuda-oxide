@@ -7,7 +7,8 @@
 
 //! Unified Warp Reduction Example
 //!
-//! Demonstrates warp-level primitives: shuffle_xor, shuffle_down, shuffle (broadcast).
+//! Demonstrates warp-level primitives: shuffle_xor, shuffle_down, shuffle (broadcast),
+//! and the packaged reduce utilities (reduce_sum/max/min for f32 and f64).
 //! Uses butterfly reduction pattern for efficient parallel sum.
 //!
 //! Build and run with:
@@ -113,6 +114,78 @@ mod kernels {
             unsafe {
                 *out.get_unchecked_mut(gid.get()) = lane;
             }
+        }
+    }
+
+    /// Reduce-sum utility - every lane writes the warp sum it received.
+    #[kernel]
+    pub fn warp_reduce_sum_util(data: &[f32], mut out: DisjointSlice<f32>) {
+        let gid = thread::index_1d();
+
+        let val = if gid.in_bounds(out.len()) {
+            data[gid.get()]
+        } else {
+            0.0
+        };
+
+        let sum = warp::reduce_sum_f32(val);
+
+        if let Some(out_elem) = out.get_mut(gid) {
+            *out_elem = sum;
+        }
+    }
+
+    /// Reduce-max utility - every lane writes the warp maximum it received.
+    #[kernel]
+    pub fn warp_reduce_max_util(data: &[f32], mut out: DisjointSlice<f32>) {
+        let gid = thread::index_1d();
+
+        let val = if gid.in_bounds(out.len()) {
+            data[gid.get()]
+        } else {
+            0.0
+        };
+
+        let max = warp::reduce_max_f32(val);
+
+        if let Some(out_elem) = out.get_mut(gid) {
+            *out_elem = max;
+        }
+    }
+
+    /// Reduce-min utility - every lane writes the warp minimum it received.
+    #[kernel]
+    pub fn warp_reduce_min_util(data: &[f32], mut out: DisjointSlice<f32>) {
+        let gid = thread::index_1d();
+
+        let val = if gid.in_bounds(out.len()) {
+            data[gid.get()]
+        } else {
+            0.0
+        };
+
+        let min = warp::reduce_min_f32(val);
+
+        if let Some(out_elem) = out.get_mut(gid) {
+            *out_elem = min;
+        }
+    }
+
+    /// Reduce-sum utility (f64) - every lane writes the warp sum it received.
+    #[kernel]
+    pub fn warp_reduce_sum_f64_util(data: &[f64], mut out: DisjointSlice<f64>) {
+        let gid = thread::index_1d();
+
+        let val = if gid.in_bounds(out.len()) {
+            data[gid.get()]
+        } else {
+            0.0
+        };
+
+        let sum = warp::reduce_sum_f64(val);
+
+        if let Some(out_elem) = out.get_mut(gid) {
+            *out_elem = sum;
         }
     }
 }
@@ -280,6 +353,76 @@ fn main() {
         println!("✓ Lane IDs correct: 0-31 pattern for each warp");
     } else {
         println!("✗ Lane ID test failed!");
+        std::process::exit(1);
+    }
+
+    // ===== Test 5: Reduce utilities (f32) =====
+    // Each warp holds lane indices 0-31: sum = 496, max = 31, min = 0.
+    // All values are exact in f32, so exact comparison is safe, and every
+    // lane must observe the reduced value (not just lane 0).
+    println!("\n--- Test 5: Reduce Utilities (f32) ---");
+
+    let mut sum_out_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.warp_reduce_sum_util((stream).as_ref(), cfg, &data_dev, &mut sum_out_dev) }
+        .expect("Kernel launch failed");
+    let sum_result = sum_out_dev.to_host_vec(&stream).unwrap();
+    if sum_result.iter().all(|&x| x == 496.0) {
+        println!("✓ reduce_sum_f32 correct: all {} lanes hold 496", N);
+    } else {
+        println!("✗ reduce_sum_f32 failed: {:?}", &sum_result[0..8]);
+        std::process::exit(1);
+    }
+
+    let mut max_out_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.warp_reduce_max_util((stream).as_ref(), cfg, &data_dev, &mut max_out_dev) }
+        .expect("Kernel launch failed");
+    let max_result = max_out_dev.to_host_vec(&stream).unwrap();
+    if max_result.iter().all(|&x| x == 31.0) {
+        println!("✓ reduce_max_f32 correct: all {} lanes hold 31", N);
+    } else {
+        println!("✗ reduce_max_f32 failed: {:?}", &max_result[0..8]);
+        std::process::exit(1);
+    }
+
+    // Seed with a sentinel so a kernel that never wrote would be caught
+    // (the expected minimum is 0.0, which a zeroed buffer already holds).
+    let min_sentinel = vec![-1.0f32; N];
+    let mut min_out_dev = DeviceBuffer::from_host(&stream, &min_sentinel).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.warp_reduce_min_util((stream).as_ref(), cfg, &data_dev, &mut min_out_dev) }
+        .expect("Kernel launch failed");
+    let min_result = min_out_dev.to_host_vec(&stream).unwrap();
+    if min_result.iter().all(|&x| x == 0.0) {
+        println!("✓ reduce_min_f32 correct: all {} lanes hold 0", N);
+    } else {
+        println!("✗ reduce_min_f32 failed: {:?}", &min_result[0..8]);
+        std::process::exit(1);
+    }
+
+    // ===== Test 6: Reduce utility (f64) =====
+    println!("\n--- Test 6: Reduce Utility (f64) ---");
+    let data_f64_host: Vec<f64> = (0..N).map(|i| (i % 32) as f64).collect();
+    let data_f64_dev = DeviceBuffer::from_host(&stream, &data_f64_host).unwrap();
+    let mut f64_out_dev = DeviceBuffer::<f64>::zeroed(&stream, N).unwrap();
+
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.warp_reduce_sum_f64_util((stream).as_ref(), cfg, &data_f64_dev, &mut f64_out_dev)
+    }
+    .expect("Kernel launch failed");
+
+    let f64_result = f64_out_dev.to_host_vec(&stream).unwrap();
+    let expected_sum_f64 = (0..32).sum::<i32>() as f64;
+    let all_lanes_correct = f64_result.iter().all(|&x| x == expected_sum_f64);
+    if all_lanes_correct {
+        println!(
+            "✓ reduce_sum_f64 correct: all {} lanes hold {}",
+            N, expected_sum_f64
+        );
+    } else {
+        println!("✗ reduce_sum_f64 failed: {:?}", &f64_result[0..8]);
         std::process::exit(1);
     }
 

@@ -804,7 +804,8 @@ pub enum CompileError {
     #[error("{reason}")]
     TargetSelection {
         /// Target that was rejected, in canonical `sm_XX` spelling once it
-        /// parsed at all.
+        /// parsed at all. Empty when nothing supplied a target to reject, as
+        /// on the NVVM IR route, which requires an explicit one.
         target: String,
         /// Full explanation, suitable for display on its own.
         reason: String,

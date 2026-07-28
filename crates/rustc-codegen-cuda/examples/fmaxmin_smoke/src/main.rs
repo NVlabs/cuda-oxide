@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Smoke test for `f32::max` / `f32::min` (and the f64 forms).
+//! Smoke test for scalar `max`, `min`, `abs`, and `copysign` operations that
+//! lower directly through LLVM for both float widths.
 //!
 //! These lower to `core::intrinsics::maximum_number_nsz_f32` /
 //! `minimum_number_nsz_f32` / ... in MIR. Before this example was added,
@@ -16,10 +17,9 @@
 //! * `mir-importer::translator::terminator::intrinsics::float_math`
 //! * `mir-lower::convert::ops::call`
 //!
-//! the calls lower to libdevice `__nv_fmaxf` / `__nv_fmax` / `__nv_fminf`
-//! / `__nv_fmin`, which the auto-detected libNVVM + nvJitLink pipeline
-//! resolves transparently. This smoke check validates the full chain on a
-//! real GPU.
+//! max/min lower to ordered comparisons and selects, while abs/copysign use
+//! their LLVM intrinsics. llc lowers all four directly to PTX. This smoke check
+//! validates the full chain on a real GPU.
 //!
 //! NaN inputs are passed in from the host rather than being embedded as
 //! `f32::NAN` literals in the kernel so the example stays focused on the
@@ -41,31 +41,65 @@ use cuda_host::{cuda_module, ltoir};
 mod kernels {
     use super::*;
 
-    /// Writes `f32::max(a, b)` and `f32::min(a, b)` to `out[0..2]`, and then
-    /// `f32::max(nan_arg, b)` and `f32::min(nan_arg, b)` to `out[2..4]` so the
-    /// host can exercise the maxNum / minNum NaN-suppression rule by passing
-    /// a NaN through `nan_arg`.
+    /// Exercise finite, quiet/signaling NaN, signed-zero, sign, and payload
+    /// behavior for the four LLVM-only scalar operations.
     #[kernel]
-    pub fn fmaxmin_f32_kernel(a: f32, b: f32, nan_arg: f32, mut out: DisjointSlice<u32>) {
+    pub fn fmaxmin_f32_kernel(a: f32, b: f32, qnan: f32, snan: f32, mut out: DisjointSlice<u32>) {
         if thread::index_1d().get() == 0 {
             unsafe {
                 *out.get_unchecked_mut(0) = a.max(b).to_bits();
                 *out.get_unchecked_mut(1) = a.min(b).to_bits();
-                *out.get_unchecked_mut(2) = nan_arg.max(b).to_bits();
-                *out.get_unchecked_mut(3) = nan_arg.min(b).to_bits();
+                *out.get_unchecked_mut(2) = qnan.max(b).to_bits();
+                *out.get_unchecked_mut(3) = b.max(qnan).to_bits();
+                *out.get_unchecked_mut(4) = snan.max(b).to_bits();
+                *out.get_unchecked_mut(5) = b.max(snan).to_bits();
+                *out.get_unchecked_mut(6) = qnan.min(b).to_bits();
+                *out.get_unchecked_mut(7) = b.min(qnan).to_bits();
+                *out.get_unchecked_mut(8) = snan.min(b).to_bits();
+                *out.get_unchecked_mut(9) = b.min(snan).to_bits();
+                *out.get_unchecked_mut(10) = qnan.max(snan).to_bits();
+                *out.get_unchecked_mut(11) = (-0.0_f32).max(0.0).to_bits();
+                *out.get_unchecked_mut(12) = b.abs().to_bits();
+                *out.get_unchecked_mut(13) = a.copysign(b).to_bits();
+                *out.get_unchecked_mut(14) = (-0.0_f32).abs().to_bits();
+                *out.get_unchecked_mut(15) = (-qnan).abs().to_bits();
+                *out.get_unchecked_mut(16) = a.copysign(-b).to_bits();
+                *out.get_unchecked_mut(17) = qnan.copysign(b).to_bits();
+                *out.get_unchecked_mut(18) = (-qnan).copysign(a).to_bits();
+                *out.get_unchecked_mut(19) = 0.0_f32.max(-0.0).to_bits();
+                *out.get_unchecked_mut(20) = (-0.0_f32).min(0.0).to_bits();
+                *out.get_unchecked_mut(21) = 0.0_f32.min(-0.0).to_bits();
             }
         }
     }
 
     /// Same as `fmaxmin_f32_kernel` for `f64::max` / `f64::min`.
     #[kernel]
-    pub fn fmaxmin_f64_kernel(a: f64, b: f64, nan_arg: f64, mut out: DisjointSlice<u64>) {
+    pub fn fmaxmin_f64_kernel(a: f64, b: f64, qnan: f64, snan: f64, mut out: DisjointSlice<u64>) {
         if thread::index_1d().get() == 0 {
             unsafe {
                 *out.get_unchecked_mut(0) = a.max(b).to_bits();
                 *out.get_unchecked_mut(1) = a.min(b).to_bits();
-                *out.get_unchecked_mut(2) = nan_arg.max(b).to_bits();
-                *out.get_unchecked_mut(3) = nan_arg.min(b).to_bits();
+                *out.get_unchecked_mut(2) = qnan.max(b).to_bits();
+                *out.get_unchecked_mut(3) = b.max(qnan).to_bits();
+                *out.get_unchecked_mut(4) = snan.max(b).to_bits();
+                *out.get_unchecked_mut(5) = b.max(snan).to_bits();
+                *out.get_unchecked_mut(6) = qnan.min(b).to_bits();
+                *out.get_unchecked_mut(7) = b.min(qnan).to_bits();
+                *out.get_unchecked_mut(8) = snan.min(b).to_bits();
+                *out.get_unchecked_mut(9) = b.min(snan).to_bits();
+                *out.get_unchecked_mut(10) = qnan.max(snan).to_bits();
+                *out.get_unchecked_mut(11) = (-0.0_f64).max(0.0).to_bits();
+                *out.get_unchecked_mut(12) = b.abs().to_bits();
+                *out.get_unchecked_mut(13) = a.copysign(b).to_bits();
+                *out.get_unchecked_mut(14) = (-0.0_f64).abs().to_bits();
+                *out.get_unchecked_mut(15) = (-qnan).abs().to_bits();
+                *out.get_unchecked_mut(16) = a.copysign(-b).to_bits();
+                *out.get_unchecked_mut(17) = qnan.copysign(b).to_bits();
+                *out.get_unchecked_mut(18) = (-qnan).copysign(a).to_bits();
+                *out.get_unchecked_mut(19) = 0.0_f64.max(-0.0).to_bits();
+                *out.get_unchecked_mut(20) = (-0.0_f64).min(0.0).to_bits();
+                *out.get_unchecked_mut(21) = 0.0_f64.min(-0.0).to_bits();
             }
         }
     }
@@ -81,9 +115,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    // The kernels use libdevice (`__nv_fmaxf` etc.), so cuda-oxide emits NVVM
-    // IR rather than PTX and `ltoir::load_kernel_module` finishes the build
-    // through libNVVM + nvJitLink, just like `primitive_stress`.
+    // `load_kernel_module` loads the PTX produced by llc directly here. The
+    // same helper also handles NVVM IR for examples that genuinely need
+    // libdevice.
     let module = ltoir::load_kernel_module(&ctx, "fmaxmin_smoke")?;
     let module = kernels::from_module(module)?;
     let cfg = LaunchConfig::for_num_elems(1);
@@ -95,17 +129,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let a = 1.5_f32;
         let b = -2.5_f32;
-        let nan_arg = f32::NAN;
-        let mut out = DeviceBuffer::<u32>::zeroed(&stream, 4)?;
+        let qnan = f32::from_bits(0x7fc1_2345);
+        let snan = f32::from_bits(0x7f81_2345);
+        let mut out = DeviceBuffer::<u32>::zeroed(&stream, 22)?;
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-        unsafe { module.fmaxmin_f32_kernel(&stream, cfg, a, b, nan_arg, &mut out) }?;
-        let result = out.to_host_vec(&stream)?;
-        let expected: [u32; 4] = [
+        unsafe { module.fmaxmin_f32_kernel(&stream, cfg, a, b, qnan, snan, &mut out) }?;
+        let mut result = out.to_host_vec(&stream)?;
+        let expected: [u32; 22] = [
             a.max(b).to_bits(), // f32::max finite
             a.min(b).to_bits(), // f32::min finite
-            b.to_bits(),        // f32::max(NaN, b) == b  (maxNum rule)
-            b.to_bits(),        // f32::min(NaN, b) == b  (minNum rule)
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            qnan.to_bits(),    // normalized below: both-NaN payload is unspecified
+            0.0_f32.to_bits(), // normalized below: either signed zero is valid
+            b.abs().to_bits(),
+            a.copysign(b).to_bits(),
+            0.0_f32.to_bits(),
+            qnan.to_bits(),
+            a.to_bits(),
+            (-qnan).to_bits(),
+            qnan.to_bits(),
+            0.0_f32.to_bits(),
+            0.0_f32.to_bits(),
+            0.0_f32.to_bits(),
         ];
+        assert!(f32::from_bits(result[10]).is_nan());
+        assert_eq!(f32::from_bits(result[11]), 0.0);
+        assert!(f32::from_bits(result[15]).is_nan());
+        assert_eq!(result[15] >> 31, 0);
+        assert!(f32::from_bits(result[17]).is_nan());
+        assert_eq!(result[17] >> 31, 1);
+        assert!(f32::from_bits(result[18]).is_nan());
+        assert_eq!(result[18] >> 31, 0);
+        for bits in &result[19..22] {
+            assert_eq!(f32::from_bits(*bits), 0.0);
+        }
+        result[10] = expected[10];
+        result[11] = expected[11];
+        result[15] = expected[15];
+        result[19..22].copy_from_slice(&expected[19..22]);
         check_f32(
             "f32::max / f32::min",
             &result,
@@ -119,17 +187,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let a = 1.5e10_f64;
         let b = -2.5e10_f64;
-        let nan_arg = f64::NAN;
-        let mut out = DeviceBuffer::<u64>::zeroed(&stream, 4)?;
+        let qnan = f64::from_bits(0x7ff8_0000_0001_2345);
+        let snan = f64::from_bits(0x7ff0_0000_0001_2345);
+        let mut out = DeviceBuffer::<u64>::zeroed(&stream, 22)?;
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-        unsafe { module.fmaxmin_f64_kernel(&stream, cfg, a, b, nan_arg, &mut out) }?;
-        let result = out.to_host_vec(&stream)?;
-        let expected: [u64; 4] = [
+        unsafe { module.fmaxmin_f64_kernel(&stream, cfg, a, b, qnan, snan, &mut out) }?;
+        let mut result = out.to_host_vec(&stream)?;
+        let expected: [u64; 22] = [
             a.max(b).to_bits(),
             a.min(b).to_bits(),
             b.to_bits(),
             b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            b.to_bits(),
+            qnan.to_bits(),
+            0.0_f64.to_bits(),
+            b.abs().to_bits(),
+            a.copysign(b).to_bits(),
+            0.0_f64.to_bits(),
+            qnan.to_bits(),
+            a.to_bits(),
+            (-qnan).to_bits(),
+            qnan.to_bits(),
+            0.0_f64.to_bits(),
+            0.0_f64.to_bits(),
+            0.0_f64.to_bits(),
         ];
+        assert!(f64::from_bits(result[10]).is_nan());
+        assert_eq!(f64::from_bits(result[11]), 0.0);
+        assert!(f64::from_bits(result[15]).is_nan());
+        assert_eq!(result[15] >> 63, 0);
+        assert!(f64::from_bits(result[17]).is_nan());
+        assert_eq!(result[17] >> 63, 1);
+        assert!(f64::from_bits(result[18]).is_nan());
+        assert_eq!(result[18] >> 63, 0);
+        for bits in &result[19..22] {
+            assert_eq!(f64::from_bits(*bits), 0.0);
+        }
+        result[10] = expected[10];
+        result[11] = expected[11];
+        result[15] = expected[15];
+        result[19..22].copy_from_slice(&expected[19..22]);
         check_f64(
             "f64::max / f64::min",
             &result,
@@ -158,7 +260,7 @@ fn check_f32(name: &str, got: &[u32], expected: &[u32], passed: &mut u32, failed
         *passed += 1;
     } else {
         println!(
-            "FAIL {name}: got {:?} expected {:?}",
+            "FAIL {name}: got {:?} expected {:?}\ngot bits: {got:x?}\nexpected bits: {expected:x?}",
             got.iter().map(|b| f32::from_bits(*b)).collect::<Vec<_>>(),
             expected
                 .iter()
@@ -178,7 +280,7 @@ fn check_f64(name: &str, got: &[u64], expected: &[u64], passed: &mut u32, failed
         *passed += 1;
     } else {
         println!(
-            "FAIL {name}: got {:?} expected {:?}",
+            "FAIL {name}: got {:?} expected {:?}\ngot bits: {got:x?}\nexpected bits: {expected:x?}",
             got.iter().map(|b| f64::from_bits(*b)).collect::<Vec<_>>(),
             expected
                 .iter()
