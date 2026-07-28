@@ -11,7 +11,7 @@ fn main() {
         ptx_asm!(
             "add.u32 %0, %1, %1;",
             out("=r") y,
-            in("C") x,
+            in("x") x,
         );
     }
 

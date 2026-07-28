@@ -5718,3 +5718,59 @@ status = "active"
 catalog_id = "tanh_approx_f32"
 operation_key = "scalar.math.tanh.approx.f32"
 raw_rust_signature = { safe = true, arguments = ["f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0822"
+status = "active"
+catalog_id = "cvt_rn_satfinite_e4m3x2_f16x2"
+operation_key = "packed.convert.f16x2.e4m3x2.nearest_even.satfinite"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0823"
+status = "active"
+catalog_id = "cvt_rn_satfinite_relu_e4m3x2_f16x2"
+operation_key = "packed.convert.f16x2.e4m3x2.nearest_even.satfinite.relu"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0824"
+status = "active"
+catalog_id = "cvt_rn_satfinite_e5m2x2_f16x2"
+operation_key = "packed.convert.f16x2.e5m2x2.nearest_even.satfinite"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0825"
+status = "active"
+catalog_id = "cvt_rn_satfinite_relu_e5m2x2_f16x2"
+operation_key = "packed.convert.f16x2.e5m2x2.nearest_even.satfinite.relu"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0826"
+status = "active"
+catalog_id = "cvt_rn_f16x2_e4m3x2"
+operation_key = "packed.convert.e4m3x2.f16x2.nearest_even"
+raw_rust_signature = { safe = true, arguments = ["u16"], result = "u32" }
+
+[[entry]]
+abi_id = "i0827"
+status = "active"
+catalog_id = "cvt_rn_relu_f16x2_e4m3x2"
+operation_key = "packed.convert.e4m3x2.f16x2.nearest_even.relu"
+raw_rust_signature = { safe = true, arguments = ["u16"], result = "u32" }
+
+[[entry]]
+abi_id = "i0828"
+status = "active"
+catalog_id = "cvt_rn_f16x2_e5m2x2"
+operation_key = "packed.convert.e5m2x2.f16x2.nearest_even"
+raw_rust_signature = { safe = true, arguments = ["u16"], result = "u32" }
+
+[[entry]]
+abi_id = "i0829"
+status = "active"
+catalog_id = "cvt_rn_relu_f16x2_e5m2x2"
+operation_key = "packed.convert.e5m2x2.f16x2.nearest_even.relu"
+raw_rust_signature = { safe = true, arguments = ["u16"], result = "u32" }

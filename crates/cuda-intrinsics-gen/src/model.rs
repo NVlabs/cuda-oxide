@@ -174,6 +174,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub packed_conversion_fp8: Option<PackedConversionFp8Admission>,
     #[serde(default)]
+    pub packed_conversion_fp8_f16x2: Option<PackedConversionFp8F16x2Admission>,
+    #[serde(default)]
     pub scalar_conversion: Option<ScalarConversionAdmission>,
     #[serde(default)]
     pub scalar_arithmetic: Option<ScalarArithmeticAdmission>,
@@ -655,6 +657,41 @@ pub struct PackedConversionFp8Admission {
     pub destination_formats: Vec<PackedConversionDestinationFormat>,
     pub saturations: Vec<PackedConversionSaturation>,
     pub product_count: usize,
+}
+
+/// Compact admission for packed FP8 conversions whose other side is `f16x2`.
+///
+/// Covers both directions: packing `f16x2` down to `e4m3x2`/`e5m2x2`, and
+/// unpacking those back to `f16x2`. Both are single-operand conversions, unlike
+/// the scalar-`f32` pair admitted by [`PackedConversionFp8Admission`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedConversionFp8F16x2Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub fp8_formats: Vec<PackedConversionFp8Format>,
+    pub directions: Vec<PackedConversionFp8Direction>,
+    pub relu_variants: bool,
+    pub product_count: usize,
+}
+
+/// The FP8 side of an `f16x2` conversion pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionFp8Format {
+    E4m3x2,
+    E5m2x2,
+}
+
+/// Which way an FP8/`f16x2` conversion runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionFp8Direction {
+    /// `f16x2` narrowed to packed FP8, always saturating to finite.
+    Pack,
+    /// Packed FP8 widened back to `f16x2`, which is always exact.
+    Unpack,
 }
 
 /// Compact admission for scalar F32-to-TF32 conversions.
@@ -2578,7 +2615,12 @@ pub enum ExtendedMinMaxAdapter {
     DirectPackedU32,
 }
 
-/// Closed contract for converting two scalar values into one packed value.
+/// Closed contract for converting between scalar and packed values.
+///
+/// The source may be a scalar pair (`f32x2`, two operands) or an already-packed
+/// 16-bit or 32-bit register (`f16x2`, `e4m3x2`, `e5m2x2`, one operand), so the
+/// operand arity follows [`PackedConversionSourceFormat`] rather than being
+/// fixed at two.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackedConversion {
@@ -2592,7 +2634,33 @@ pub struct PackedConversion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackedConversionSourceFormat {
+    E4m3x2,
+    E5m2x2,
+    F16x2,
     F32x2,
+}
+
+impl PackedConversionSourceFormat {
+    /// Number of source operands the conversion takes.
+    ///
+    /// `f32x2` names two scalar `f32` operands; every packed source arrives in a
+    /// single register.
+    pub fn operand_count(self) -> usize {
+        match self {
+            Self::F32x2 => 2,
+            Self::E4m3x2 | Self::E5m2x2 | Self::F16x2 => 1,
+        }
+    }
+
+    /// PTX source-type token, used as the trailing `cvt` modifier.
+    pub fn ptx_token(self) -> &'static str {
+        match self {
+            Self::E4m3x2 => "e4m3x2",
+            Self::E5m2x2 => "e5m2x2",
+            Self::F16x2 => "f16x2",
+            Self::F32x2 => "f32",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2623,6 +2691,15 @@ pub enum PackedConversionSaturation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackedConversionAdapter {
+    /// Forward the single packed source operand unchanged.
+    ///
+    /// PTX orders `cvt` operands as `d, a`, so a one-operand conversion needs no
+    /// reordering to keep the Rust argument order.
+    Identity,
+    /// Swap the two scalar operands.
+    ///
+    /// PTX writes the second source operand into the low half, so the operands
+    /// are reversed to keep the first Rust argument in the low half.
     ReverseHighLowOperands,
 }
 
@@ -3694,7 +3771,7 @@ adapter = "reverse_high_low_operands"
 "#;
         toml::from_str::<PackedConversion>(valid).unwrap();
         for invalid in [
-            valid.replace("source_format = \"f32x2\"", "source_format = \"f16x2\""),
+            valid.replace("source_format = \"f32x2\"", "source_format = \"f64x2\""),
             valid.replace(
                 "destination_format = \"bf16x2\"",
                 "destination_format = \"f8x2\"",

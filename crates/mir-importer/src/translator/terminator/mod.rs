@@ -480,6 +480,33 @@ fn translate_assert(
     Ok(op)
 }
 
+/// Build the comparison constant for one `SwitchInt` arm, typed as the
+/// discriminant it is compared against.
+///
+/// Arm values arrive as `u128` bit patterns at the discriminant's width, so
+/// the constant is built at that width and a scrutinee wider than 64 bits
+/// keeps its whole value. Narrower widths truncate, which is what the
+/// discriminant's own type already did to the value.
+///
+/// Enum tags cannot reach here above 64 bits. `translate_adt_type` rejects a
+/// discriminant carrier wider than that when it builds the enum type, so the
+/// widths above 64 that arrive here belong to integer scrutinees.
+fn switch_arm_constant(
+    ctx: &mut Context,
+    val: u128,
+    width: usize,
+    signedness: Signedness,
+) -> pliron::builtin::attributes::IntegerAttr {
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let width_nz = NonZeroUsize::new(width).expect("integer discriminants have a non-zero width");
+    pliron::builtin::attributes::IntegerAttr::new(
+        IntegerType::get(ctx, width as u32, signedness),
+        APInt::from_u128(val, width_nz),
+    )
+}
+
 /// Translates a MIR `SwitchInt` terminator to conditional branches.
 ///
 /// Handles multi-way branches used for `match` expressions and enum dispatch:
@@ -511,9 +538,6 @@ fn translate_switch(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    use pliron::utils::apint::APInt;
-    use std::num::NonZeroUsize;
-
     // Translate discriminant
     let (discr_value, last_op) = match discr {
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
@@ -577,26 +601,7 @@ fn translate_switch(
                 };
 
             // Create constant for val with SAME type as discriminant.
-            // SwitchInt values are u128 bit patterns at the discriminant's
-            // width; the dialect stores tags as u64 (same limit as
-            // MirEnumType::variant_discriminants in types.rs), so values
-            // that need more than 64 bits must fail loudly instead of
-            // silently truncating.
-            let switch_val = u64::try_from(val).map_err(|_| {
-                input_error!(
-                    loc.clone(),
-                    TranslationErr::unsupported(format!(
-                        "SwitchInt value {} does not fit in 64 bits",
-                        val
-                    ))
-                )
-            })?;
-            let width_nz = NonZeroUsize::new(width).unwrap();
-            let apint = APInt::from_u64(switch_val, width_nz);
-            let int_attr = pliron::builtin::attributes::IntegerAttr::new(
-                IntegerType::get(ctx, width as u32, signedness),
-                apint,
-            );
+            let int_attr = switch_arm_constant(ctx, val, width, signedness);
 
             let const_op = Operation::new(
                 ctx,
@@ -719,24 +724,7 @@ fn translate_switch(
         };
 
         // Create constant for comparison with SAME type as discriminant.
-        // Same checked u128 -> u64 narrowing as the single-branch path
-        // above: a silently truncated switch value would compare against
-        // the wrong arm.
-        let switch_val = u64::try_from(*val).map_err(|_| {
-            input_error!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "SwitchInt value {} does not fit in 64 bits",
-                    val
-                ))
-            )
-        })?;
-        let width_nz = NonZeroUsize::new(width).unwrap();
-        let apint = APInt::from_u64(switch_val, width_nz);
-        let int_attr = pliron::builtin::attributes::IntegerAttr::new(
-            IntegerType::get(ctx, width as u32, signedness),
-            apint,
-        );
+        let int_attr = switch_arm_constant(ctx, *val, width, signedness);
 
         let const_op = Operation::new(
             ctx,
@@ -2543,6 +2531,22 @@ fn try_dispatch_intrinsic(
         ));
     }
 
+    if let Some(intrinsic) = intrinsics::exact_div::RustExactDivIntrinsic::from_core_path(name) {
+        return Ok(Some(intrinsics::exact_div::emit_rust_exact_div_intrinsic(
+            ctx,
+            body,
+            intrinsic,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?));
+    }
+
     if let Some(intrinsic) = intrinsics::bigint::RustBigIntIntrinsic::from_core_path(name) {
         return Ok(Some(intrinsics::bigint::emit_rust_bigint_intrinsic(
             ctx,
@@ -2791,6 +2795,8 @@ fn try_dispatch_intrinsic(
         | "cuda_device::thread::__launch_bounds_config"
         | "cuda_device::__launch_contract_config"
         | "cuda_device::thread::__launch_contract_config"
+        | "cuda_device::__launch_contract_block_config"
+        | "cuda_device::thread::__launch_contract_block_config"
         | "cuda_device::__unchecked_indexing_config"
         | "cuda_device::thread::__unchecked_indexing_config" => {
             let expected_marker = match name {
@@ -2798,6 +2804,10 @@ fn try_dispatch_intrinsic(
                 | "cuda_device::thread::__launch_bounds_config" => "__launch_bounds_config",
                 "cuda_device::__launch_contract_config"
                 | "cuda_device::thread::__launch_contract_config" => "__launch_contract_config",
+                "cuda_device::__launch_contract_block_config"
+                | "cuda_device::thread::__launch_contract_block_config" => {
+                    "__launch_contract_block_config"
+                }
                 "cuda_device::__unchecked_indexing_config"
                 | "cuda_device::thread::__unchecked_indexing_config" => {
                     "__unchecked_indexing_config"
@@ -3070,6 +3080,41 @@ fn try_dispatch_intrinsic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `SwitchInt` arm keeps its whole value at 128 bits, and narrower
+    /// discriminants truncate exactly as the previous `u64` construction did.
+    /// Every width at or below 64 is the behaviour this shares with the enum
+    /// tags that dominate the switches in the tree, so it is pinned here
+    /// alongside the widths that used to be rejected.
+    #[test]
+    fn switch_arm_constants_are_built_at_the_discriminant_width() {
+        use pliron::utils::apint::APInt;
+        use std::num::NonZeroUsize;
+
+        let ctx = &mut Context::new();
+
+        for (width, value) in [
+            (8usize, 0xffu128),
+            (16, 0xbeef),
+            (32, 0xdead_beef),
+            (64, u128::from(u64::MAX)),
+        ] {
+            let attr = switch_arm_constant(ctx, value, width, Signedness::Unsigned);
+            let expected = APInt::from_u64(value as u64, NonZeroUsize::new(width).unwrap());
+            assert_eq!(
+                attr.value(),
+                expected,
+                "width {width} must match the previous u64 construction"
+            );
+        }
+
+        // Above 64 bits the u64 construction could not represent the value at
+        // all, which is what used to be rejected.
+        let wide = (1u128 << 100) | 1;
+        let attr = switch_arm_constant(ctx, wide, 128, Signedness::Unsigned);
+        assert_eq!(attr.value().to_u128(), wide);
+        assert_eq!(attr.value().bw(), 128);
+    }
 
     /// The importer traps exactly the calls the codegen collector declines to
     /// collect. If the two predicates drift apart, one side emits a call to a

@@ -9,12 +9,12 @@
 //! - Backend path resolved via discovery chain instead of hardcoded relative path
 //! - Workspace root resolved by walking up from CWD instead of assuming CWD
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use crate::backend;
 use sha2::Digest as _;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const MATERIALIZE_ENV: &str = reserved_oxide_symbols::MATERIALIZE_CUBIN_ENV;
 const EXPECTED_PROVENANCE_ENV: &str = reserved_oxide_symbols::MATERIALIZER_PROVENANCE_ENV;
@@ -59,24 +59,49 @@ fn prepare_materialization(
     )
 }
 
+fn nvvm_ir_requested(ctx: &Context) -> Result<bool, String> {
+    const EMIT_NVVM_IR_ENV: &str = "CUDA_OXIDE_EMIT_NVVM_IR";
+
+    if let Some(value) = std::env::var_os(EMIT_NVVM_IR_ENV) {
+        let value = value
+            .into_string()
+            .map_err(|_| format!("{EMIT_NVVM_IR_ENV} is not valid Unicode"))?;
+        return parse_strict_bool(EMIT_NVVM_IR_ENV, &value);
+    }
+
+    if let Some(value) = project_config_env(ctx, EMIT_NVVM_IR_ENV) {
+        return parse_strict_bool(EMIT_NVVM_IR_ENV, value);
+    }
+
+    Ok(false)
+}
+
+fn materialization_requested(ctx: &Context, cli_requested: bool) -> Result<bool, String> {
+    if cli_requested {
+        return Ok(true);
+    }
+
+    if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
+        let value = value
+            .into_string()
+            .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
+        return parse_strict_bool(MATERIALIZE_ENV, &value);
+    }
+
+    if let Some(value) = project_config_env(ctx, MATERIALIZE_ENV) {
+        return parse_strict_bool(MATERIALIZE_ENV, value);
+    }
+
+    Ok(false)
+}
+
 fn prepare_materialization_result(
     ctx: &Context,
     cli_requested: bool,
     cli_arch: Option<&str>,
     emit_nvvm_ir: bool,
 ) -> Result<MaterializationMode, String> {
-    let enabled = if cli_requested {
-        true
-    } else if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
-        let value = value
-            .into_string()
-            .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
-        parse_strict_bool(MATERIALIZE_ENV, &value)?
-    } else if let Some(value) = project_config_env(ctx, MATERIALIZE_ENV) {
-        parse_strict_bool(MATERIALIZE_ENV, value)?
-    } else {
-        false
-    };
+    let enabled = materialization_requested(ctx, cli_requested)?;
     if !enabled {
         return Ok(MaterializationMode::default());
     }
@@ -299,6 +324,617 @@ pub fn resolve_passive_context() -> Context {
     eprintln!("Run from inside the cuda-oxide repository, or from a project created");
     eprintln!("with `cargo oxide new <name>`.");
     std::process::exit(1);
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ExampleInfo {
+    name: String,
+    title: String,
+    description: String,
+    requirements: Vec<String>,
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct ParsedReadme {
+    title: Option<String>,
+    description: Option<String>,
+    requirements: Vec<String>,
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct ManifestInfo {
+    description: Option<String>,
+}
+
+pub fn list_examples(ctx: &Context, json: bool) {
+    if !ctx.is_workspace {
+        eprintln!("Error: `cargo oxide list` must be run from inside a cuda-oxide checkout.");
+        eprintln!();
+        eprintln!("The command lists examples under crates/rustc-codegen-cuda/examples/.");
+        std::process::exit(1);
+    }
+
+    let examples = discover_examples(&ctx.examples_dir).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    });
+
+    let output = if json {
+        format_examples_json(&examples).unwrap_or_else(|error| {
+            eprintln!("Error: could not serialize example list: {error}");
+            std::process::exit(1);
+        })
+    } else {
+        format_examples_human(&examples)
+    };
+
+    print!("{output}");
+}
+
+fn discover_examples(examples_dir: &Path) -> Result<Vec<ExampleInfo>, String> {
+    let entries = fs::read_dir(examples_dir).map_err(|error| {
+        format!(
+            "could not read examples directory {}: {error}",
+            examples_dir.display()
+        )
+    })?;
+
+    let mut examples = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read an entry under {}: {error}",
+                examples_dir.display()
+            )
+        })?;
+
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("could not inspect {}: {error}", entry.path().display()))?;
+
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let example_dir = entry.path();
+        let name = entry.file_name().into_string().map_err(|name| {
+            format!(
+                "example directory name is not valid UTF-8: {}",
+                name.to_string_lossy()
+            )
+        })?;
+
+        // A directory without a manifest is not an example (scratch dirs,
+        // checked-out tooling, ...). Skip it instead of failing the listing.
+        let manifest_path = example_dir.join("Cargo.toml");
+        if !manifest_path.is_file() {
+            eprintln!(
+                "Warning: skipping {}: no top-level Cargo.toml",
+                example_dir.display()
+            );
+            continue;
+        }
+
+        let manifest = parse_example_manifest(&manifest_path)?;
+
+        let readme_path = example_dir.join("README.md");
+        let parsed_readme = if readme_path.is_file() {
+            let contents = fs::read_to_string(&readme_path)
+                .map_err(|error| format!("could not read {}: {error}", readme_path.display()))?;
+            parse_example_readme(&name, &contents)
+        } else {
+            ParsedReadme::default()
+        };
+
+        let ParsedReadme {
+            title,
+            description,
+            requirements,
+        } = parsed_readme;
+
+        let title = title.unwrap_or_else(|| name.clone());
+
+        let description = description.or(manifest.description).unwrap_or_else(|| {
+            if title != name {
+                title.clone()
+            } else {
+                "No description documented.".to_string()
+            }
+        });
+
+        examples.push(ExampleInfo {
+            name,
+            title,
+            description,
+            requirements,
+        });
+    }
+
+    examples.sort_by(|left, right| left.name.cmp(&right.name));
+
+    if examples.is_empty() {
+        return Err(format!(
+            "no examples found under {}",
+            examples_dir.display()
+        ));
+    }
+
+    Ok(examples)
+}
+
+fn parse_example_manifest(path: &Path) -> Result<ManifestInfo, String> {
+    let contents = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+
+    let manifest: toml::Value = toml::from_str(&contents)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
+    let package = manifest
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| format!("{} has no [package] table", path.display()))?;
+
+    let description = package
+        .get("description")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+        .map(str::to_owned);
+
+    Ok(ManifestInfo { description })
+}
+
+fn parse_example_readme(crate_name: &str, contents: &str) -> ParsedReadme {
+    let lines: Vec<&str> = contents.lines().collect();
+    let mut headings = Vec::new();
+    let mut in_code_fence = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        if is_code_fence(line) {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+
+        if in_code_fence {
+            continue;
+        }
+
+        if let Some((level, title)) = parse_markdown_heading(line) {
+            headings.push((index, level, title));
+        }
+    }
+
+    let crate_heading = normalize_heading(crate_name);
+
+    let selected_heading = match headings.first() {
+        Some(first) if normalize_heading(&first.2) == crate_heading => headings
+            .get(1)
+            .filter(|heading| {
+                heading.1 == 2
+                    && first_prose_paragraph_in_range(&lines, first.0 + 1, heading.0).is_none()
+                    && !is_generic_section_heading(&normalize_heading(&heading.2))
+            })
+            .or(Some(first)),
+        Some(first) => Some(first),
+        None => None,
+    };
+
+    let title = selected_heading
+        .map(|(_, _, title)| strip_inline_markdown(title))
+        .filter(|title| !title.is_empty());
+
+    let description_start = selected_heading.map(|(index, _, _)| index + 1).unwrap_or(0);
+
+    let description_end = headings
+        .iter()
+        .find(|(index, _, _)| *index >= description_start)
+        .map(|(index, _, _)| *index)
+        .unwrap_or(lines.len());
+
+    let description = first_prose_paragraph_in_range(&lines, description_start, description_end);
+    let requirements = extract_requirements(&lines);
+
+    ParsedReadme {
+        title,
+        description,
+        requirements,
+    }
+}
+
+fn parse_markdown_heading(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim_start();
+    let level = trimmed.bytes().take_while(|byte| *byte == b'#').count();
+
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+
+    let remainder = &trimmed[level..];
+    if !remainder.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+
+    let title = remainder.trim().trim_end_matches('#').trim();
+
+    if title.is_empty() {
+        None
+    } else {
+        Some((level, title.to_string()))
+    }
+}
+
+fn is_code_fence(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
+fn strip_inline_markdown(value: &str) -> String {
+    value
+        .replace("**", "")
+        .replace("__", "")
+        .replace('`', "")
+        .trim()
+        .to_string()
+}
+
+fn normalize_heading(value: &str) -> String {
+    strip_inline_markdown(value)
+        .trim_matches(|character: char| {
+            character == ':' || character == '-' || character.is_whitespace()
+        })
+        .to_ascii_lowercase()
+}
+
+fn is_generic_section_heading(heading: &str) -> bool {
+    matches!(
+        heading,
+        "overview"
+            | "what this example does"
+            | "key concepts"
+            | "key concepts demonstrated"
+            | "build"
+            | "build and run"
+            | "usage"
+            | "expected output"
+            | "requirements"
+            | "hardware requirements"
+            | "prerequisites"
+            | "potential errors"
+            | "how it works"
+            | "how it works under the hood"
+            | "generated ptx"
+            | "run"
+            | "test"
+            | "tests"
+            | "correctness"
+            | "trigger"
+            | "kernels"
+            | "features tested"
+            | "what this tests"
+            | "what it tests"
+            | "what this demonstrates"
+            | "why this exists"
+            | "the bug"
+            | "final design"
+    )
+}
+
+fn first_prose_paragraph_in_range(lines: &[&str], start: usize, end: usize) -> Option<String> {
+    let end = end.min(lines.len());
+    let start = start.min(end);
+    let mut paragraph = Vec::new();
+    let mut in_code_fence = false;
+
+    for line in &lines[start..end] {
+        if is_code_fence(line) {
+            if !paragraph.is_empty() {
+                break;
+            }
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+
+        if in_code_fence {
+            continue;
+        }
+
+        let trimmed = line.trim();
+
+        if parse_markdown_heading(trimmed).is_some() {
+            break;
+        }
+
+        if trimmed.is_empty() {
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+
+        if is_non_prose_markdown(trimmed) {
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+
+        paragraph.push(trimmed);
+    }
+
+    if paragraph.is_empty() {
+        None
+    } else {
+        Some(paragraph.join(" "))
+    }
+}
+
+fn is_non_prose_markdown(line: &str) -> bool {
+    line.starts_with("- ")
+        || line.starts_with("* ")
+        || line.starts_with("+ ")
+        || line.starts_with('>')
+        || line.starts_with('|')
+        || line.starts_with("![")
+        || line.starts_with("<!--")
+        || is_ordered_list_item(line)
+}
+
+fn is_ordered_list_item(line: &str) -> bool {
+    strip_ordered_list_marker(line).is_some()
+}
+
+/// Strip a `1. ` / `42. ` ordered-list marker, returning the item text.
+fn strip_ordered_list_marker(line: &str) -> Option<&str> {
+    let (marker, item) = line.split_once(". ")?;
+    if !marker.is_empty() && marker.bytes().all(|byte| byte.is_ascii_digit()) {
+        Some(item.trim_start())
+    } else {
+        None
+    }
+}
+
+/// Collect the requirement entries documented under a requirements-style
+/// heading ([`is_requirements_heading`]).
+///
+/// Recognized forms:
+/// - unordered list items (`- ` / `* ` / `+ `), with indented
+///   wrap-continuation lines joined onto the item;
+/// - ordered list items (`1. `), same continuation rule;
+/// - two-column markdown tables, emitted as `name: value` per data row.
+///
+/// Tables with any other column count are skipped whole: without knowing
+/// which columns carry the requirement, half-parsing them would produce
+/// garbage entries.
+fn extract_requirements(lines: &[&str]) -> Vec<String> {
+    let mut requirements = Vec::new();
+    let mut current_requirement: Option<String> = None;
+    let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut requirement_level = None;
+    let mut in_code_fence = false;
+
+    for line in lines {
+        if is_code_fence(line) {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            flush_requirement_table(&mut table_rows, &mut requirements);
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+
+        if in_code_fence {
+            continue;
+        }
+
+        if let Some((level, heading)) = parse_markdown_heading(line) {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            flush_requirement_table(&mut table_rows, &mut requirements);
+
+            let normalized = normalize_heading(&heading);
+
+            if is_requirements_heading(&normalized) {
+                requirement_level = Some(level);
+            } else if requirement_level.is_some_and(|active| level <= active) {
+                requirement_level = None;
+            }
+
+            continue;
+        }
+
+        if requirement_level.is_none() {
+            continue;
+        }
+
+        let trimmed = line.trim();
+
+        // A blank line terminates the current list item or table. Whatever
+        // follows is a new paragraph (prose, a code fence, ...), not a
+        // wrapped continuation of the bullet above it.
+        if trimmed.is_empty() {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            flush_requirement_table(&mut table_rows, &mut requirements);
+            continue;
+        }
+
+        if trimmed.starts_with('|') {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+            table_rows.push(split_table_row(trimmed));
+            continue;
+        }
+        flush_requirement_table(&mut table_rows, &mut requirements);
+
+        let item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
+            .or_else(|| strip_ordered_list_marker(trimmed));
+
+        if let Some(item) = item {
+            if let Some(requirement) = current_requirement.take() {
+                requirements.push(requirement);
+            }
+
+            let item = strip_inline_markdown(item);
+            if !item.is_empty() {
+                current_requirement = Some(item);
+            }
+        } else if let Some(requirement) = &mut current_requirement {
+            requirement.push(' ');
+            requirement.push_str(&strip_inline_markdown(trimmed));
+        }
+    }
+
+    if let Some(requirement) = current_requirement {
+        requirements.push(requirement);
+    }
+    flush_requirement_table(&mut table_rows, &mut requirements);
+
+    requirements.dedup();
+    requirements
+}
+
+/// Split a markdown table row into trimmed cells, honoring `\|` escapes and
+/// dropping the empty leading/trailing cells produced by the outer pipes.
+fn split_table_row(row: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut characters = row.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' if characters.peek() == Some(&'|') => {
+                cell.push('|');
+                characters.next();
+            }
+            '|' => {
+                cells.push(cell.trim().to_string());
+                cell.clear();
+            }
+            _ => cell.push(character),
+        }
+    }
+    cells.push(cell.trim().to_string());
+
+    if cells.first().is_some_and(|first| first.is_empty()) {
+        cells.remove(0);
+    }
+    if cells.last().is_some_and(|last| last.is_empty()) {
+        cells.pop();
+    }
+
+    cells
+}
+
+/// The `|---|:---:|` row separating a table header from its data rows.
+fn is_table_separator_row(cells: &[String]) -> bool {
+    !cells.is_empty()
+        && cells.iter().all(|cell| {
+            !cell.is_empty()
+                && cell
+                    .chars()
+                    .all(|character| character == '-' || character == ':')
+        })
+}
+
+/// Convert a buffered `| name | value |` requirements table into one
+/// `name: value` entry per data row. Tables whose header or data rows are
+/// not exactly two columns are dropped whole rather than half-parsed.
+fn flush_requirement_table(table_rows: &mut Vec<Vec<String>>, requirements: &mut Vec<String>) {
+    let rows = std::mem::take(table_rows);
+
+    // Header, separator, and at least one data row.
+    if rows.len() < 3 || !is_table_separator_row(&rows[1]) {
+        return;
+    }
+
+    if !rows.iter().all(|row| row.len() == 2) {
+        return;
+    }
+
+    for row in &rows[2..] {
+        let name = strip_inline_markdown(&row[0]);
+        let value = strip_inline_markdown(&row[1]);
+        if !name.is_empty() && !value.is_empty() {
+            requirements.push(format!("{name}: {value}"));
+        }
+    }
+}
+
+fn is_requirements_heading(heading: &str) -> bool {
+    matches!(
+        heading,
+        "requirements"
+            | "hardware requirements"
+            | "software requirements"
+            | "system requirements"
+            | "toolkit requirements"
+            | "build requirements"
+            | "prerequisites"
+    )
+}
+
+fn format_examples_human(examples: &[ExampleInfo]) -> String {
+    let mut output = String::new();
+
+    for (index, example) in examples.iter().enumerate() {
+        if index != 0 {
+            output.push('\n');
+        }
+
+        output.push_str(&example.name);
+        output.push('\n');
+
+        if example.title != example.name {
+            output.push_str("  ");
+            output.push_str(&example.title);
+            output.push('\n');
+        }
+
+        output.push_str("  ");
+        output.push_str(&example.description);
+        output.push('\n');
+
+        if !example.requirements.is_empty() {
+            output.push_str("  Requirements:\n");
+            for requirement in &example.requirements {
+                output.push_str("    - ");
+                output.push_str(requirement);
+                output.push('\n');
+            }
+        }
+    }
+
+    output
+}
+
+fn format_examples_json(examples: &[ExampleInfo]) -> Result<String, serde_json::Error> {
+    let examples = examples
+        .iter()
+        .map(|example| {
+            serde_json::json!({
+                "name": example.name,
+                "title": example.title,
+                "description": example.description,
+                "requirements": example.requirements,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "examples": examples,
+    });
+
+    let mut output = serde_json::to_string_pretty(&document)?;
+    output.push('\n');
+    Ok(output)
 }
 
 // =============================================================================
@@ -735,6 +1371,23 @@ fn build_interop_device_crates(
     }
 }
 
+fn interop_device_artifact_name(manifest_path: &Path, device_crate: &DeviceCrateConfig) -> String {
+    device_crate
+        .artifact_name
+        .clone()
+        .unwrap_or_else(|| normalize_crate_name(&package_name_from_manifest(manifest_path)))
+}
+
+fn interop_device_ptx_path(
+    example_dir: &Path,
+    device_crate: &DeviceCrateConfig,
+    artifact_name: &str,
+) -> PathBuf {
+    example_dir
+        .join(&device_crate.ptx_dir)
+        .join(format!("{}.ptx", artifact_stem(artifact_name)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_interop_device_crate(
     ctx: &Context,
@@ -766,11 +1419,7 @@ fn build_interop_device_crate(
         std::process::exit(1);
     });
 
-    let package_name = package_name_from_manifest(&manifest_path);
-    let artifact_name = device_crate
-        .artifact_name
-        .clone()
-        .unwrap_or_else(|| normalize_crate_name(&package_name));
+    let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
     clean_generated_files(&ptx_dir, &artifact_name);
     touch_main_rs(device_dir);
 
@@ -815,7 +1464,7 @@ fn build_interop_device_crate(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let ptx_path = ptx_dir.join(format!("{}.ptx", artifact_stem(&artifact_name)));
+    let ptx_path = interop_device_ptx_path(example_dir, device_crate, &artifact_name);
     if !ptx_path.exists() {
         eprintln!(
             "Error: device crate build succeeded but did not produce {}",
@@ -1553,6 +2202,67 @@ pub fn codegen_build(
     if !status.success() {
         eprintln!("\nBuild failed with exit code: {:?}", status.code());
         std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+// =============================================================================
+// Inspect command
+// =============================================================================
+
+/// Build an example as PTX and print the generated artifact.
+#[allow(clippy::too_many_arguments)]
+pub fn codegen_inspect_ptx(
+    ctx: &Context,
+    example: &str,
+    arch: Option<&str>,
+    features: Option<&str>,
+    verbose: bool,
+    no_fmad: bool,
+    unchecked_indexing: bool,
+) {
+    let materialization_enabled = materialization_requested(ctx, false).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    });
+
+    if materialization_enabled {
+        eprintln!("Error: inspect requires PTX output, but {MATERIALIZE_ENV} is enabled");
+        std::process::exit(2);
+    }
+
+    let nvvm_ir_enabled = nvvm_ir_requested(ctx).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    });
+
+    if nvvm_ir_enabled {
+        eprintln!("Error: inspect requires PTX output, but CUDA_OXIDE_EMIT_NVVM_IR is enabled");
+        std::process::exit(2);
+    }
+
+    codegen_build(
+        ctx,
+        example,
+        verbose,
+        false,
+        arch,
+        features,
+        no_fmad,
+        unchecked_indexing,
+        false,
+    );
+
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
+
+    for path in ptx_artifact_paths(&example_dir, example) {
+        print_ptx_artifact(&path).unwrap_or_else(|error| {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        });
     }
 }
 
@@ -2659,6 +3369,229 @@ fn run_cargo_fmt(dir: &Path, check: bool) -> bool {
 // Doctor command
 // =============================================================================
 
+/// Parsed contents of a `rust-toolchain.toml` pin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RustToolchainPin {
+    channel: String,
+    components: Vec<String>,
+}
+
+/// Components that doctor treats as hard requirements for the cuda-oxide
+/// pipeline even if `rust-toolchain.toml` stops listing them: `rust-src`
+/// (device-side core sources), `rustc-dev` (rustc_private, required to build
+/// the codegen backend), and `llvm-tools`.
+const DOCTOR_REQUIRED_COMPONENTS: &[&str] = &["rust-src", "rustc-dev", "llvm-tools"];
+
+/// The components doctor verifies for a pin: everything the pin itself lists,
+/// plus the [`DOCTOR_REQUIRED_COMPONENTS`] floor.
+///
+/// rustup auto-installs every component named in `rust-toolchain.toml` when it
+/// installs the pinned toolchain, so a pinned component that is absent from
+/// `rustup component list --installed` means a broken or manually trimmed
+/// install and is worth failing doctor over. The floor guards against a future
+/// edit of the pin file dropping a component the pipeline genuinely needs.
+fn doctor_verified_components(pin: &RustToolchainPin) -> Vec<String> {
+    let mut required: Vec<String> = pin.components.clone();
+    for component in DOCTOR_REQUIRED_COMPONENTS {
+        if !required.iter().any(|existing| existing == component) {
+            required.push((*component).to_string());
+        }
+    }
+    required
+}
+
+/// Parse a `rust-toolchain.toml` document for channel and components.
+fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainPin, String> {
+    let value: toml::Value =
+        toml::from_str(contents).map_err(|error| format!("invalid TOML: {error}"))?;
+    let toolchain = value
+        .get("toolchain")
+        .ok_or_else(|| "missing [toolchain] table".to_string())?;
+    let channel = toolchain
+        .get("channel")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|channel| !channel.is_empty())
+        .ok_or_else(|| "missing toolchain.channel".to_string())?
+        .to_string();
+    let components = match toolchain.get("components") {
+        None => Vec::new(),
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(|name| name.trim().to_string())
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| {
+                        "toolchain.components entries must be non-empty strings".to_string()
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => {
+            return Err("toolchain.components must be an array of strings".to_string());
+        }
+    };
+    Ok(RustToolchainPin {
+        channel,
+        components,
+    })
+}
+
+/// True when `rustup show active-toolchain` output matches the pinned channel.
+///
+/// The toolchain name is the first whitespace-delimited token of the first
+/// line in every rustup output format seen so far:
+///
+/// - pre-1.28 and 1.29+: `nightly-2026-04-03-<triple> (default)` or
+///   `nightly-2026-04-03-<triple> (overridden by '<path>')` on one line
+///   (verified against rustup 1.29.0);
+/// - 1.28.x: the bare name on the first line with the reason on a second
+///   `active because: ...` line.
+fn active_toolchain_matches_channel(active_toolchain: &str, channel: &str) -> bool {
+    let active = active_toolchain
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    if active.is_empty() || channel.is_empty() {
+        return false;
+    }
+    active == channel || active.starts_with(&format!("{channel}-"))
+}
+
+/// Return required components that are absent from `rustup component list --installed`.
+fn missing_rustup_components<S: AsRef<str>>(installed_list: &str, required: &[S]) -> Vec<String> {
+    required
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|component| !rustup_component_installed(installed_list, component))
+        .map(str::to_string)
+        .collect()
+}
+
+fn rustup_component_installed(installed_list: &str, component: &str) -> bool {
+    installed_list.lines().any(|line| {
+        let name = line.split_whitespace().next().unwrap_or("");
+        name == component || name.starts_with(&format!("{component}-"))
+    })
+}
+
+fn doctor_report_toolchain_pin(ctx: &Context, ok: &mut bool) {
+    let toolchain_file = ctx.workspace_root.join("rust-toolchain.toml");
+    print!("rust-toolchain.toml... ");
+    if !toolchain_file.exists() {
+        println!("✗ not found at {}", toolchain_file.display());
+        *ok = false;
+        return;
+    }
+
+    let contents = match std::fs::read_to_string(&toolchain_file) {
+        Ok(contents) => contents,
+        Err(error) => {
+            println!("✗ present but unreadable ({error})");
+            *ok = false;
+            return;
+        }
+    };
+
+    let pin = match parse_rust_toolchain_toml(&contents) {
+        Ok(pin) => pin,
+        Err(error) => {
+            println!("✗ present but invalid ({error})");
+            *ok = false;
+            return;
+        }
+    };
+    println!("✓ channel {}", pin.channel);
+
+    print!("Pinned toolchain active... ");
+    match Command::new("rustup")
+        .args(["show", "active-toolchain"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let active = String::from_utf8_lossy(&output.stdout);
+            let active = active.trim();
+            if active_toolchain_matches_channel(active, &pin.channel) {
+                println!("✓ {active}");
+            } else {
+                println!(
+                    "✗ active `{active}`, expected `{pin_channel}`",
+                    pin_channel = pin.channel
+                );
+                eprintln!(
+                    "  Install/select the pin with `rustup toolchain install {}` and reopen the shell",
+                    pin.channel
+                );
+                eprintln!("  in this workspace so rust-toolchain.toml can select it.");
+                *ok = false;
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!("✗ rustup show active-toolchain failed");
+            if !stderr.trim().is_empty() {
+                eprintln!("  {}", stderr.trim());
+            }
+            *ok = false;
+        }
+        Err(_) => {
+            println!("✗ rustup not found");
+            eprintln!("  Install rustup from https://rustup.rs/ so doctor can verify the pin.");
+            *ok = false;
+        }
+    }
+
+    let required = doctor_verified_components(&pin);
+
+    print!("Required rustup components... ");
+    match Command::new("rustup")
+        .args([
+            "component",
+            "list",
+            "--installed",
+            "--toolchain",
+            &pin.channel,
+        ])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let installed = String::from_utf8_lossy(&output.stdout);
+            let missing = missing_rustup_components(&installed, &required);
+            if missing.is_empty() {
+                println!("✓ {}", required.join(", "));
+            } else {
+                println!("✗ missing {}", missing.join(", "));
+                eprintln!(
+                    "  Install with `rustup component add --toolchain {} {}`",
+                    pin.channel,
+                    missing.join(" ")
+                );
+                *ok = false;
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!("✗ could not list components for {}", pin.channel);
+            if !stderr.trim().is_empty() {
+                eprintln!("  {}", stderr.trim());
+            }
+            eprintln!(
+                "  Try `rustup toolchain install {channel} -c {components}`",
+                channel = pin.channel,
+                components = required.join(" -c ")
+            );
+            *ok = false;
+        }
+        Err(_) => {
+            println!("✗ rustup not found");
+            *ok = false;
+        }
+    }
+}
+
 /// Validate the development environment.
 ///
 /// Checks for: Rust nightly toolchain, `rust-toolchain.toml`, the codegen
@@ -2697,15 +3630,8 @@ pub fn doctor(ctx: &Context) {
         }
     }
 
-    // 2. rust-toolchain.toml
-    let toolchain_file = ctx.workspace_root.join("rust-toolchain.toml");
-    print!("rust-toolchain.toml... ");
-    if toolchain_file.exists() {
-        println!("✓ present");
-    } else {
-        println!("✗ not found at {}", toolchain_file.display());
-        ok = false;
-    }
+    // 2. rust-toolchain.toml pin + active channel + required components
+    doctor_report_toolchain_pin(ctx, &mut ok);
 
     // 3. Backend .so. Informational, not fatal: `run`/`build`/`pipeline`
     // build the backend on demand, so "not built yet" is a healthy state
@@ -4138,6 +5064,54 @@ fn artifact_stem(example: &str) -> String {
     example.replace('-', "_")
 }
 
+/// Return the PTX artifacts generated for a regular or metadata-interop project.
+fn ptx_artifact_paths(example_dir: &Path, example: &str) -> Vec<PathBuf> {
+    if let Some(interop) =
+        load_interop_config(example_dir).filter(|config| !config.device_crates.is_empty())
+    {
+        return interop
+            .device_crates
+            .iter()
+            .map(|device_crate| {
+                let manifest_path = example_dir.join(&device_crate.manifest_path);
+                let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
+
+                interop_device_ptx_path(example_dir, device_crate, &artifact_name)
+            })
+            .collect();
+    }
+
+    let stem = artifact_stem(example);
+    vec![example_dir.join(format!("{stem}.ptx"))]
+}
+
+fn read_ptx_artifact(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read generated PTX {}: {error}", path.display()))
+}
+
+/// Print one generated PTX artifact.
+fn print_ptx_artifact(path: &Path) -> Result<(), String> {
+    let content = read_ptx_artifact(path)?;
+
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+
+    println!();
+    println!("=========================================");
+    println!("PTX ({name})");
+    println!("=========================================");
+    print!("{content}");
+
+    if !content.ends_with('\n') {
+        println!();
+    }
+
+    Ok(())
+}
+
 /// Path to the NVVM IR (`.ll`) the backend emits for `example`. Named after the
 /// Cargo-normalized crate stem, so a hyphenated example resolves to the
 /// underscore-spelled file the build actually wrote. Route `emit-ltoir` reads
@@ -4226,21 +5200,68 @@ channel = "nightly-2026-04-03"
 components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
 "#;
 
-/// Scaffold a new standalone cuda-oxide project.
-pub fn scaffold_new(name: &str, async_mode: bool) {
-    let project_dir = PathBuf::from(name);
-    if project_dir.exists() {
-        eprintln!("Error: directory '{}' already exists.", name);
-        std::process::exit(1);
-    }
+const SCAFFOLD_GITIGNORE: &str = "\
+/target/
+**/*.ptx
+**/*.ll
+**/*.bc
+**/*.cubin
+**/*.ltoir
+.DS_Store
+";
 
-    let src_dir = project_dir.join("src");
-    std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
-        eprintln!("Error creating directory: {}", e);
-        std::process::exit(1);
-    });
+/// File contents produced by `cargo oxide new`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ScaffoldFiles {
+    cargo_toml: String,
+    rust_toolchain_toml: String,
+    gitignore: String,
+    readme: String,
+    main_rs: String,
+}
 
-    let cargo_toml = if async_mode {
+fn scaffold_readme(name: &str, async_mode: bool) -> String {
+    let mode = if async_mode {
+        "async cuda-oxide"
+    } else {
+        "cuda-oxide"
+    };
+    let template_notes = if async_mode {
+        "The template is a vector-add kernel launched through `cuda-async`:\n\
+         `vecadd_async` returns a lazy `DeviceOperation` scheduled on the\n\
+         stream pool. See the cuda-oxide book getting-started chapter for the\n\
+         next steps."
+    } else {
+        "The template is a vector-add kernel. It uses `#[launch_contract]` and\n\
+         `PreparedLaunch` so geometry is checked before launch. See the\n\
+         cuda-oxide book getting-started chapter for the next steps."
+    };
+    format!(
+        r#"# {name}
+
+Scaffolded {mode} project.
+
+## Setup
+
+```bash
+cargo oxide doctor
+```
+
+Fix anything doctor reports before building.
+
+## Run
+
+```bash
+cargo oxide run
+```
+
+{template_notes}
+"#
+    )
+}
+
+fn scaffold_cargo_toml(name: &str, async_mode: bool) -> String {
+    if async_mode {
         format!(
             r#"[package]
 name = "{name}"
@@ -4273,9 +5294,11 @@ cuda-host = {{ git = "{GIT_REPO}" }}
 cuda-core = {{ git = "{GIT_REPO}" }}
 "#
         )
-    };
+    }
+}
 
-    let main_rs = if async_mode {
+fn scaffold_main_rs(async_mode: bool) -> String {
+    if async_mode {
         r#"use cuda_device::{kernel, thread, DisjointSlice};
 use cuda_host::cuda_module;
 use cuda_async::device_context::init_device_contexts;
@@ -4370,15 +5393,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 "#
         .to_string()
     } else {
-        r#"use cuda_device::{kernel, thread, DisjointSlice};
+        r#"use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};
 use cuda_host::cuda_module;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 
 #[cuda_module]
 mod kernels {
     use super::*;
 
     #[kernel]
+    #[launch_bounds(256)]
+    #[launch_contract(domain = 1, block = (256, 1, 1))]
     pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let idx_raw = idx.get();
@@ -4387,34 +5412,26 @@ mod kernels {
         }
     }
 }
-fn main() {
-    let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
     const N: usize = 1024;
     let a_host: Vec<f32> = (0..N).map(|i| i as f32).collect();
     let b_host: Vec<f32> = (0..N).map(|i| (i * 2) as f32).collect();
 
-    let a_dev = DeviceBuffer::from_host(&stream, &a_host).unwrap();
-    let b_dev = DeviceBuffer::from_host(&stream, &b_host).unwrap();
-    let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
+    let a_dev = DeviceBuffer::from_host(&stream, &a_host)?;
+    let b_dev = DeviceBuffer::from_host(&stream, &b_host)?;
+    let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
 
-    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    // SAFETY: this is a 1D launch and `vecadd` guards its index against the
-    // output length before writing.
-    unsafe {
-        module.vecadd(
-            &stream,
-            LaunchConfig::for_num_elems(N as u32),
-            &a_dev,
-            &b_dev,
-            &mut c_dev,
-        )
-    }
-    .expect("Kernel launch failed");
+    // SAFETY: this package owns the embedded device bundle produced for the
+    // kernels module above.
+    let module = unsafe { kernels::load(&ctx)? };
+    let prepared = module.prepare_vecadd(LaunchConfig1D::new((N as u32).div_ceil(256), 256, 0))?;
+    module.vecadd(&stream, &prepared, &a_dev, &b_dev, &mut c_dev)?;
 
-    let c_host = c_dev.to_host_vec(&stream).unwrap();
-
+    let c_host = c_dev.to_host_vec(&stream)?;
     let errors = (0..N)
         .filter(|&i| (c_host[i] - (a_host[i] + b_host[i])).abs() > 1e-5)
         .count();
@@ -4425,21 +5442,56 @@ fn main() {
         eprintln!("FAILED: {} errors", errors);
         std::process::exit(1);
     }
+    Ok(())
 }
 "#
         .to_string()
-    };
+    }
+}
 
-    std::fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
-    std::fs::write(project_dir.join("rust-toolchain.toml"), RUST_TOOLCHAIN_TOML)
-        .expect("Failed to write rust-toolchain.toml");
-    std::fs::write(src_dir.join("main.rs"), main_rs).expect("Failed to write src/main.rs");
+fn scaffold_files(name: &str, async_mode: bool) -> ScaffoldFiles {
+    ScaffoldFiles {
+        cargo_toml: scaffold_cargo_toml(name, async_mode),
+        rust_toolchain_toml: RUST_TOOLCHAIN_TOML.to_string(),
+        gitignore: SCAFFOLD_GITIGNORE.to_string(),
+        readme: scaffold_readme(name, async_mode),
+        main_rs: scaffold_main_rs(async_mode),
+    }
+}
+
+/// Scaffold a new standalone cuda-oxide project.
+pub fn scaffold_new(name: &str, async_mode: bool) {
+    let project_dir = PathBuf::from(name);
+    if project_dir.exists() {
+        eprintln!("Error: directory '{}' already exists.", name);
+        std::process::exit(1);
+    }
+
+    let src_dir = project_dir.join("src");
+    std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
+        eprintln!("Error creating directory: {}", e);
+        std::process::exit(1);
+    });
+
+    let files = scaffold_files(name, async_mode);
+    std::fs::write(project_dir.join("Cargo.toml"), files.cargo_toml)
+        .expect("Failed to write Cargo.toml");
+    std::fs::write(
+        project_dir.join("rust-toolchain.toml"),
+        files.rust_toolchain_toml,
+    )
+    .expect("Failed to write rust-toolchain.toml");
+    std::fs::write(project_dir.join(".gitignore"), files.gitignore)
+        .expect("Failed to write .gitignore");
+    std::fs::write(project_dir.join("README.md"), files.readme).expect("Failed to write README.md");
+    std::fs::write(src_dir.join("main.rs"), files.main_rs).expect("Failed to write src/main.rs");
 
     let mode = if async_mode { " (async)" } else { "" };
     println!("✓ Created cuda-oxide project '{}'{}", name, mode);
     println!();
     println!("  cd {}", name);
-    println!("  cargo oxide run {}", name);
+    println!("  cargo oxide doctor");
+    println!("  cargo oxide run");
 }
 
 /// Locate an executable by name, first via `which` (PATH lookup), then by
@@ -6766,6 +7818,119 @@ device-owner = { path = "../device-owner" }
     }
 
     #[test]
+    fn parse_rust_toolchain_toml_reads_channel_and_components() {
+        let pin = parse_rust_toolchain_toml(
+            r#"[toolchain]
+channel = "nightly-2026-04-03"
+components = ["rust-src", "rustc-dev", "llvm-tools"]
+"#,
+        )
+        .expect("pin should parse");
+        assert_eq!(pin.channel, "nightly-2026-04-03");
+        assert_eq!(
+            pin.components,
+            vec![
+                "rust-src".to_string(),
+                "rustc-dev".to_string(),
+                "llvm-tools".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_rust_toolchain_toml_rejects_missing_channel() {
+        let error = parse_rust_toolchain_toml("[toolchain]\ncomponents = [\"rust-src\"]\n")
+            .expect_err("channel is required");
+        assert!(error.contains("channel"), "{error}");
+    }
+
+    #[test]
+    fn active_toolchain_matches_channel_accepts_target_triple_suffix() {
+        assert!(active_toolchain_matches_channel(
+            "nightly-2026-04-03-aarch64-apple-darwin (default)",
+            "nightly-2026-04-03"
+        ));
+        assert!(active_toolchain_matches_channel(
+            "nightly-2026-04-03",
+            "nightly-2026-04-03"
+        ));
+        assert!(!active_toolchain_matches_channel(
+            "nightly-2026-01-01-x86_64-unknown-linux-gnu (default)",
+            "nightly-2026-04-03"
+        ));
+    }
+
+    #[test]
+    fn active_toolchain_matches_channel_accepts_rustup_128_and_129_formats() {
+        // rustup 1.29 single-line form with an override annotation, as
+        // observed verbatim on a workspace with rust-toolchain.toml.
+        assert!(active_toolchain_matches_channel(
+            "nightly-2026-04-03-x86_64-unknown-linux-gnu (overridden by \
+             '/home/user/cuda-oxide/rust-toolchain.toml')",
+            "nightly-2026-04-03"
+        ));
+        // rustup 1.28 two-line form: bare name, then the reason line.
+        assert!(active_toolchain_matches_channel(
+            "nightly-2026-04-03-x86_64-unknown-linux-gnu\nactive because: \
+             overridden by '/home/user/cuda-oxide/rust-toolchain.toml'",
+            "nightly-2026-04-03"
+        ));
+        // A mismatched pin must not be rescued by later lines.
+        assert!(!active_toolchain_matches_channel(
+            "stable-x86_64-unknown-linux-gnu\nactive because: default",
+            "nightly-2026-04-03"
+        ));
+    }
+
+    #[test]
+    fn doctor_verified_components_unions_pin_list_with_required_floor() {
+        // Pin lists everything: order preserved, no duplicates appended.
+        let pin = RustToolchainPin {
+            channel: "nightly-2026-04-03".to_string(),
+            components: vec![
+                "rust-src".to_string(),
+                "rustc-dev".to_string(),
+                "rust-analyzer".to_string(),
+                "clippy".to_string(),
+                "llvm-tools".to_string(),
+            ],
+        };
+        assert_eq!(
+            doctor_verified_components(&pin),
+            vec![
+                "rust-src",
+                "rustc-dev",
+                "rust-analyzer",
+                "clippy",
+                "llvm-tools"
+            ]
+        );
+
+        // A trimmed pin still gets the hard floor appended.
+        let trimmed = RustToolchainPin {
+            channel: "nightly-2026-04-03".to_string(),
+            components: vec!["clippy".to_string()],
+        };
+        assert_eq!(
+            doctor_verified_components(&trimmed),
+            vec!["clippy", "rust-src", "rustc-dev", "llvm-tools"]
+        );
+    }
+
+    #[test]
+    fn missing_rustup_components_detects_host_triple_suffixes() {
+        let installed = "\
+rust-src-aarch64-apple-darwin
+clippy-aarch64-apple-darwin
+";
+        assert_eq!(
+            missing_rustup_components(installed, &["rust-src", "llvm-tools"]),
+            vec!["llvm-tools".to_string()]
+        );
+        assert!(missing_rustup_components(installed, &["rust-src"]).is_empty());
+    }
+
+    #[test]
     fn parse_compute_cap_rejects_failure_banners_and_garbage() {
         // nvidia-smi prints failure text to STDOUT, not stderr.
         assert_eq!(
@@ -6808,5 +7973,581 @@ device-owner = { path = "../device-owner" }
             std::env::remove_var("CUDA_OXIDE_TARGET");
         }
         assert_eq!(result, None);
+    }
+
+    fn write_list_example(
+        examples_dir: &Path,
+        name: &str,
+        manifest_description: Option<&str>,
+        readme: Option<&str>,
+    ) {
+        let example_dir = examples_dir.join(name);
+        std::fs::create_dir_all(&example_dir).unwrap();
+
+        let description = manifest_description
+            .map(|value| format!("description = {value:?}\n"))
+            .unwrap_or_default();
+
+        std::fs::write(
+            example_dir.join("Cargo.toml"),
+            format!(
+                "[package]\nname = {name:?}\nversion = \"0.1.0\"\nedition = \"2024\"\n{description}"
+            ),
+        )
+        .unwrap();
+
+        if let Some(readme) = readme {
+            std::fs::write(example_dir.join("README.md"), readme).unwrap();
+        }
+    }
+
+    #[test]
+    fn readme_parser_extracts_title_description_and_requirements() {
+        let parsed = parse_example_readme(
+            "vecadd",
+            r#"
+# vecadd
+
+## Vector Addition
+
+Adds two vectors using one CUDA thread per element.
+
+## Hardware Requirements
+
+- **Minimum GPU**: sm_70+
+- **CUDA Toolkit**: 12.x+
+"#,
+        );
+
+        assert_eq!(parsed.title.as_deref(), Some("Vector Addition"));
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Adds two vectors using one CUDA thread per element.")
+        );
+        assert_eq!(
+            parsed.requirements,
+            ["Minimum GPU: sm_70+", "CUDA Toolkit: 12.x+"]
+        );
+    }
+
+    #[test]
+    fn readme_parser_does_not_use_run_as_title() {
+        let parsed = parse_example_readme(
+            "cuda_module_nested",
+            r#"
+# cuda_module_nested
+
+## Run
+
+Expected output:
+
+```text
+PASS
+```
+
+"#,
+        );
+
+        assert_eq!(parsed.title.as_deref(), Some("cuda_module_nested"));
+        assert_eq!(parsed.description, None);
+    }
+
+    #[test]
+    fn readme_parser_does_not_scan_later_headings_for_title() {
+        let parsed = parse_example_readme(
+            "example",
+            r#"
+
+# example
+
+Introductory description.
+
+## Build
+
+Build instructions.
+
+## Advanced Implementation Details
+
+Internal details.
+"#,
+        );
+
+        assert_eq!(parsed.title.as_deref(), Some("example"));
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Introductory description.")
+        );
+    }
+
+    #[test]
+    fn readme_parser_stops_description_at_next_heading() {
+        let parsed = parse_example_readme(
+            "vecadd",
+            r#"
+
+# vecadd
+
+## Vector Addition
+
+Adds two vectors on the GPU.
+
+## Run
+
+Run the example with cargo oxide.
+"#,
+        );
+
+        assert_eq!(parsed.title.as_deref(), Some("Vector Addition"));
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Adds two vectors on the GPU.")
+        );
+    }
+
+    #[test]
+    fn requirement_parser_joins_wrapped_list_items() {
+        let parsed = parse_example_readme(
+            "example",
+            r#"
+
+# example
+
+## Requirements
+
+* CUDA Toolkit 13.1+ with nvcc and tileiras available. This example
+  also requires the CUDA development libraries.
+* Blackwell GPU with sm_100+ support.
+  "#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "CUDA Toolkit 13.1+ with nvcc and tileiras available. This example also requires the CUDA development libraries.",
+                "Blackwell GPU with sm_100+ support.",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_does_not_absorb_paragraph_after_blank_line() {
+        // Modeled on the cpp_consumes_rust_device README: a bullet list under
+        // the requirements heading, then a blank line, then a follow-up
+        // paragraph and a code fence. The paragraph is a new paragraph, not a
+        // wrapped continuation of the last bullet.
+        let parsed = parse_example_readme(
+            "cpp_consumes_rust_device",
+            r#"
+# cpp_consumes_rust_device
+
+## Prerequisites
+
+- CUDA Toolkit (nvcc, libNVVM, nvJitLink)
+- Blackwell+ GPU (sm_100+) — LTOIR requires NVVM 20 dialect
+
+If your default host compiler is newer than the CUDA Toolkit supports, set
+`NVCC_CCBIN` or `CUDAHOSTCXX` before running the example:
+
+```bash
+NVCC_CCBIN=/usr/bin/g++-15 cargo oxide run cpp_consumes_rust_device
+```
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "CUDA Toolkit (nvcc, libNVVM, nvJitLink)",
+                "Blackwell+ GPU (sm_100+) — LTOIR requires NVVM 20 dialect",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_joins_wrapped_items_but_not_following_paragraphs() {
+        // Modeled on the cutile_inter_kernel README: the last bullet wraps
+        // across indented lines (joined), and the paragraph after the blank
+        // line must not be glued onto it.
+        let parsed = parse_example_readme(
+            "cutile_inter_kernel",
+            r#"
+# cutile_inter_kernel
+
+## Requirements
+
+- cuda-oxide from this repository.
+- CUDA Toolkit 13.1+ with `nvcc` and `tileiras` available. This example
+  defaults `CUDA_TOOLKIT_PATH` to `/usr/local/cuda` through its local Cargo
+  config; set `CUDA_TOOLKIT_PATH` yourself if your toolkit lives elsewhere.
+
+`cargo oxide run` targets explicit `--arch` first, then `CUDA_OXIDE_TARGET`,
+then auto-detects the local GPU.
+
+## Run
+
+Run instructions.
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "cuda-oxide from this repository.",
+                "CUDA Toolkit 13.1+ with nvcc and tileiras available. This example \
+                 defaults CUDA_TOOLKIT_PATH to /usr/local/cuda through its local Cargo \
+                 config; set CUDA_TOOLKIT_PATH yourself if your toolkit lives elsewhere.",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_captures_ordered_list_items() {
+        // Modeled on the mathdx_ffi_test README: prerequisites written as an
+        // ordered list, followed by a paragraph that is not part of the list.
+        let parsed = parse_example_readme(
+            "mathdx_ffi_test",
+            r#"
+# mathdx_ffi_test
+
+## Prerequisites
+
+1. **CUDA Toolkit 12.x+** with nvcc
+2. **MathDx Library** - Download from: https://developer.nvidia.com/cublasdx-downloads
+3. **cuda-oxide compiler** toolchain
+
+If your default host compiler is newer than the CUDA Toolkit supports, set
+`NVCC_CCBIN` or `CUDAHOSTCXX` before running the example.
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "CUDA Toolkit 12.x+ with nvcc",
+                "MathDx Library - Download from: https://developer.nvidia.com/cublasdx-downloads",
+                "cuda-oxide compiler toolchain",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_recognizes_build_requirements_heading() {
+        let parsed = parse_example_readme(
+            "example",
+            r#"
+# example
+
+## Build Requirements
+
+- nvcc with `--expt-relaxed-constexpr`
+"#,
+        );
+
+        assert_eq!(parsed.requirements, ["nvcc with --expt-relaxed-constexpr"]);
+    }
+
+    #[test]
+    fn requirement_parser_parses_two_column_requirement_tables() {
+        // Modeled on the abi_hmm README: requirements in a two-column table,
+        // including an escaped pipe inside a cell.
+        let parsed = parse_example_readme(
+            "abi_hmm",
+            r#"
+# abi_hmm
+
+## Requirements
+
+| Requirement   | Minimum                                           |
+|---------------|---------------------------------------------------|
+| GPU           | Turing or newer (RTX 20xx+)                       |
+| Linux Kernel  | 6.1.24+                                           |
+| HMM Support   | `nvidia-smi -q \| grep Addressing` shows "HMM"    |
+
+## Build and Run
+
+Instructions.
+"#,
+        );
+
+        assert_eq!(
+            parsed.requirements,
+            [
+                "GPU: Turing or newer (RTX 20xx+)",
+                "Linux Kernel: 6.1.24+",
+                "HMM Support: nvidia-smi -q | grep Addressing shows \"HMM\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_parser_skips_tables_that_are_not_two_columns() {
+        // A three-column table has no unambiguous name/value mapping, so it
+        // must be skipped whole instead of half-parsed.
+        let parsed = parse_example_readme(
+            "example",
+            r#"
+# example
+
+## Requirements
+
+| Test  | Status | Description |
+|-------|--------|-------------|
+| alpha | Pass   | First test  |
+| beta  | Pass   | Second test |
+"#,
+        );
+
+        assert_eq!(parsed.requirements, Vec::<String>::new());
+    }
+
+    #[test]
+    fn example_discovery_is_sorted_and_uses_manifest_fallback() {
+        let root = unique_temp_dir("cargo_oxide_list_examples");
+        std::fs::create_dir_all(&root).unwrap();
+
+        write_list_example(&root, "zeta", Some("Manifest fallback description"), None);
+
+        write_list_example(
+            &root,
+            "alpha",
+            None,
+            Some("# alpha\n\n## Alpha Example\n\nREADME description.\n"),
+        );
+
+        let examples = discover_examples(&root).unwrap();
+
+        assert_eq!(
+            examples
+                .iter()
+                .map(|example| example.name.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
+        assert_eq!(examples[0].description, "README description.");
+        assert_eq!(examples[1].description, "Manifest fallback description");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn example_discovery_keeps_examples_without_readmes() {
+        let root = unique_temp_dir("cargo_oxide_list_missing_readme");
+        std::fs::create_dir_all(&root).unwrap();
+
+        write_list_example(&root, "minimal", None, None);
+
+        let examples = discover_examples(&root).unwrap();
+
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0].name, "minimal");
+        assert_eq!(examples[0].description, "No description documented.");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn example_discovery_skips_directory_without_manifest() {
+        let root = unique_temp_dir("cargo_oxide_list_missing_manifest");
+        std::fs::create_dir_all(root.join("scratch")).unwrap();
+
+        write_list_example(&root, "real", Some("A real example"), None);
+
+        let examples =
+            discover_examples(&root).expect("manifest-less directories must not abort listing");
+
+        assert_eq!(
+            examples
+                .iter()
+                .map(|example| example.name.as_str())
+                .collect::<Vec<_>>(),
+            ["real"]
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ptx_artifact_paths_normalize_hyphenated_example_names() {
+        let root = unique_temp_dir("cargo_oxide_inspect_regular");
+        std::fs::create_dir_all(&root).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "demo-app"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ptx_artifact_paths(&root, "demo-app"),
+            vec![root.join("demo_app.ptx")]
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ptx_artifact_paths_resolve_interop_device_artifacts() {
+        let root = unique_temp_dir("cargo_oxide_inspect_interop");
+        let device_dir = root.join("device");
+        std::fs::create_dir_all(&device_dir).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "host-app"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.cuda-oxide]
+interop = "device"
+
+[[package.metadata.cuda-oxide.device-crates]]
+manifest-path = "device/Cargo.toml"
+ptx-dir = "generated"
+artifact-name = "custom-device"
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            device_dir.join("Cargo.toml"),
+            r#"[package]
+name = "device-app"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ptx_artifact_paths(&root, "host-app"),
+            vec![root.join("generated/custom_device.ptx")]
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn read_ptx_artifact_returns_exact_contents() {
+        let root = unique_temp_dir("cargo_oxide_read_ptx");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let path = root.join("demo.ptx");
+        std::fs::write(&path, ".version 8.0\n.target sm_90\n").unwrap();
+
+        assert_eq!(
+            read_ptx_artifact(&path).unwrap(),
+            ".version 8.0\n.target sm_90\n"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_json_has_versioned_stable_shape() {
+        let examples = vec![ExampleInfo {
+            name: "vecadd".to_string(),
+            title: "Vector Addition".to_string(),
+            description: "Adds two vectors.".to_string(),
+            requirements: vec!["Minimum GPU: sm_70+".to_string()],
+        }];
+
+        let output = format_examples_json(&examples).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["examples"][0]["name"], "vecadd");
+        assert_eq!(
+            value["examples"][0]["requirements"][0],
+            "Minimum GPU: sm_70+"
+        );
+        assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn read_ptx_artifact_reports_missing_file() {
+        let root = unique_temp_dir("cargo_oxide_missing_ptx");
+        let path = root.join("missing.ptx");
+
+        let error = read_ptx_artifact(&path).unwrap_err();
+
+        assert!(error.contains("could not read generated PTX"));
+        assert!(error.contains("missing.ptx"));
+    }
+
+    #[test]
+    fn nvvm_ir_requested_reads_project_configuration() {
+        let ctx = Context {
+            workspace_root: PathBuf::from("/tmp/project"),
+            codegen_crate: PathBuf::from("/tmp/project"),
+            examples_dir: PathBuf::from("/tmp/project"),
+            backend_so: PathBuf::from("/tmp/backend.so"),
+            is_workspace: false,
+            config: OxideConfig {
+                env: vec![("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), "true".to_string())],
+                ..OxideConfig::default()
+            },
+        };
+
+        assert_eq!(nvvm_ir_requested(&ctx), Ok(true));
+    }
+
+    #[test]
+    fn nvvm_ir_requested_accepts_disabled_project_configuration() {
+        let ctx = Context {
+            workspace_root: PathBuf::from("/tmp/project"),
+            codegen_crate: PathBuf::from("/tmp/project"),
+            examples_dir: PathBuf::from("/tmp/project"),
+            backend_so: PathBuf::from("/tmp/backend.so"),
+            is_workspace: false,
+            config: OxideConfig {
+                env: vec![("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), "false".to_string())],
+                ..OxideConfig::default()
+            },
+        };
+
+        assert_eq!(nvvm_ir_requested(&ctx), Ok(false));
+    }
+
+    #[test]
+    fn scaffold_sync_template_uses_launch_contract_and_docs() {
+        let files = scaffold_files("demo_kernel", false);
+        assert!(files.cargo_toml.contains("name = \"demo_kernel\""));
+        assert!(files.readme.contains("cargo oxide doctor"));
+        assert!(files.readme.contains("cargo oxide run"));
+        assert!(files.gitignore.contains("/target/"));
+        // The template uses the launch_bounds / launch_contract attribute
+        // macros, so the cuda_device import must bring them in; a scaffolded
+        // project fails to compile without this exact line.
+        assert!(files.main_rs.starts_with(
+            "use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};"
+        ));
+        assert!(
+            files
+                .main_rs
+                .contains("#[launch_contract(domain = 1, block = (256, 1, 1))]")
+        );
+        assert!(files.main_rs.contains("prepare_vecadd"));
+        assert!(files.main_rs.contains("LaunchConfig1D"));
+        assert!(!files.main_rs.contains("LaunchConfig::for_num_elems"));
+    }
+
+    #[test]
+    fn scaffold_async_template_keeps_async_deps_and_docs() {
+        let files = scaffold_files("async_demo", true);
+        assert!(files.cargo_toml.contains("cuda-async"));
+        assert!(files.cargo_toml.contains("tokio"));
+        assert!(files.readme.contains("async cuda-oxide"));
+        assert!(files.readme.contains("cargo oxide doctor"));
+        // The async README must stand alone: it describes the async launch
+        // path and never talks about "the sync template".
+        assert!(files.readme.contains("DeviceOperation"));
+        assert!(!files.readme.contains("sync template"));
+        assert!(files.gitignore.contains("**/*.ptx"));
+        assert!(files.main_rs.contains("vecadd_async"));
     }
 }

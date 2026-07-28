@@ -190,4 +190,4 @@ extension with codec and decompressed-size metadata.
 
 ## TODO
 
-- Consider Windows support later.
+- Windows support is tracked in [#139](https://github.com/NVlabs/cuda-oxide/issues/139).

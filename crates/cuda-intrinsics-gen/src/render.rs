@@ -631,66 +631,17 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             ),
             "packed_conversion" => ensure!(
                 record.rust.module == "convert"
-                    && record.rust.arguments == ["f32", "f32"]
+                    && record.rust.arguments == packed_conversion_rust_arguments(record)
                     && record.rust.result == packed_conversion_rust_type(record)
                     && record.rust.safe
                     && !record.rust.must_use
-                    && record.dialect.operands == ["f32", "f32"]
+                    && record.dialect.operands == packed_conversion_dialect_operands(record)
                     && record.dialect.results == [packed_conversion_dialect_type(record)]
                     && record.lowering == packed_conversion_lowering_name(record)
-                    && record.packed_conversion.as_ref().is_some_and(|conversion| {
-                        conversion.source_format == PackedConversionSourceFormat::F32x2
-                            && conversion.adapter
-                                == PackedConversionAdapter::ReverseHighLowOperands
-                            && matches!(
-                                (
-                                    conversion.destination_format,
-                                    conversion.rounding,
-                                    conversion.saturation,
-                                ),
-                                (
-                                    PackedConversionDestinationFormat::Bf16x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::None,
-                                ) | (
-                                    PackedConversionDestinationFormat::F16x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::None,
-                                ) | (
-                                    PackedConversionDestinationFormat::F16x2,
-                                    PackedConversionRounding::TowardZero,
-                                    PackedConversionSaturation::None,
-                                ) | (
-                                    PackedConversionDestinationFormat::F16x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::Relu,
-                                ) | (
-                                    PackedConversionDestinationFormat::Bf16x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::Relu,
-                                ) | (
-                                    PackedConversionDestinationFormat::Bf16x2,
-                                    PackedConversionRounding::TowardZero,
-                                    PackedConversionSaturation::None,
-                                ) | (
-                                    PackedConversionDestinationFormat::E4m3x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::Satfinite,
-                                ) | (
-                                    PackedConversionDestinationFormat::E4m3x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::SatfiniteRelu,
-                                ) | (
-                                    PackedConversionDestinationFormat::E5m2x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::Satfinite,
-                                ) | (
-                                    PackedConversionDestinationFormat::E5m2x2,
-                                    PackedConversionRounding::NearestEven,
-                                    PackedConversionSaturation::SatfiniteRelu,
-                                )
-                            )
-                    }),
+                    && record
+                        .packed_conversion
+                        .as_ref()
+                        .is_some_and(packed_conversion_is_closed_recipe),
                 "{} is outside the closed generated packed-conversion recipe",
                 record.id
             ),
@@ -3477,6 +3428,107 @@ fn packed_conversion_element(record: &CatalogIntrinsic) -> &'static str {
     }
 }
 
+/// Whether the conversion is one of the closed, reviewed packed-conversion
+/// recipes: scalar `f32` pairs narrowed to a packed format, `f16x2` narrowed to
+/// packed FP8, or packed FP8 widened back to `f16x2`.
+fn packed_conversion_is_closed_recipe(conversion: &crate::model::PackedConversion) -> bool {
+    use PackedConversionDestinationFormat as Dst;
+    use PackedConversionRounding as Round;
+    use PackedConversionSaturation as Sat;
+    use PackedConversionSourceFormat as Src;
+
+    let adapter_matches = conversion.adapter
+        == match conversion.source_format {
+            Src::F32x2 => PackedConversionAdapter::ReverseHighLowOperands,
+            Src::E4m3x2 | Src::E5m2x2 | Src::F16x2 => PackedConversionAdapter::Identity,
+        };
+
+    adapter_matches
+        && matches!(
+            (
+                conversion.source_format,
+                conversion.destination_format,
+                conversion.rounding,
+                conversion.saturation,
+            ),
+            (Src::F32x2, Dst::Bf16x2, Round::NearestEven, Sat::None)
+                | (Src::F32x2, Dst::Bf16x2, Round::NearestEven, Sat::Relu)
+                | (Src::F32x2, Dst::Bf16x2, Round::TowardZero, Sat::None)
+                | (Src::F32x2, Dst::F16x2, Round::NearestEven, Sat::None)
+                | (Src::F32x2, Dst::F16x2, Round::NearestEven, Sat::Relu)
+                | (Src::F32x2, Dst::F16x2, Round::TowardZero, Sat::None)
+                | (Src::F32x2, Dst::E4m3x2, Round::NearestEven, Sat::Satfinite)
+                | (
+                    Src::F32x2,
+                    Dst::E4m3x2,
+                    Round::NearestEven,
+                    Sat::SatfiniteRelu
+                )
+                | (Src::F32x2, Dst::E5m2x2, Round::NearestEven, Sat::Satfinite)
+                | (
+                    Src::F32x2,
+                    Dst::E5m2x2,
+                    Round::NearestEven,
+                    Sat::SatfiniteRelu
+                )
+                | (Src::F16x2, Dst::E4m3x2, Round::NearestEven, Sat::Satfinite)
+                | (
+                    Src::F16x2,
+                    Dst::E4m3x2,
+                    Round::NearestEven,
+                    Sat::SatfiniteRelu
+                )
+                | (Src::F16x2, Dst::E5m2x2, Round::NearestEven, Sat::Satfinite)
+                | (
+                    Src::F16x2,
+                    Dst::E5m2x2,
+                    Round::NearestEven,
+                    Sat::SatfiniteRelu
+                )
+                | (Src::E4m3x2, Dst::F16x2, Round::NearestEven, Sat::None)
+                | (Src::E4m3x2, Dst::F16x2, Round::NearestEven, Sat::Relu)
+                | (Src::E5m2x2, Dst::F16x2, Round::NearestEven, Sat::None)
+                | (Src::E5m2x2, Dst::F16x2, Round::NearestEven, Sat::Relu)
+        )
+}
+
+fn packed_conversion_source(record: &CatalogIntrinsic) -> PackedConversionSourceFormat {
+    record
+        .packed_conversion
+        .as_ref()
+        .expect("packed-conversion record")
+        .source_format
+}
+
+/// Register width of a single packed source operand.
+fn packed_conversion_source_width(record: &CatalogIntrinsic) -> u32 {
+    match packed_conversion_source(record) {
+        PackedConversionSourceFormat::F16x2 => 32,
+        PackedConversionSourceFormat::E4m3x2 | PackedConversionSourceFormat::E5m2x2 => 16,
+        PackedConversionSourceFormat::F32x2 => {
+            unreachable!("f32x2 conversions do not have a single packed source")
+        }
+    }
+}
+
+/// Rust argument types, one per source operand.
+fn packed_conversion_rust_arguments(record: &CatalogIntrinsic) -> Vec<&'static str> {
+    match packed_conversion_source(record) {
+        PackedConversionSourceFormat::F32x2 => vec!["f32", "f32"],
+        PackedConversionSourceFormat::F16x2 => vec!["u32"],
+        PackedConversionSourceFormat::E4m3x2 | PackedConversionSourceFormat::E5m2x2 => vec!["u16"],
+    }
+}
+
+/// Dialect operand types, one per source operand.
+fn packed_conversion_dialect_operands(record: &CatalogIntrinsic) -> Vec<&'static str> {
+    match packed_conversion_source(record) {
+        PackedConversionSourceFormat::F32x2 => vec!["f32", "f32"],
+        PackedConversionSourceFormat::F16x2 => vec!["i32"],
+        PackedConversionSourceFormat::E4m3x2 | PackedConversionSourceFormat::E5m2x2 => vec!["i16"],
+    }
+}
+
 fn packed_conversion_result_width(record: &CatalogIntrinsic) -> u32 {
     match record
         .packed_conversion
@@ -3505,19 +3557,41 @@ fn packed_conversion_dialect_type(record: &CatalogIntrinsic) -> &'static str {
     }
 }
 
+/// Inline-asm constraint string: one result register, then one per source
+/// operand. `h` is a 16-bit register, `r` a 32-bit one, and `f` an f32.
 fn packed_conversion_constraint(record: &CatalogIntrinsic) -> &'static str {
-    match packed_conversion_result_width(record) {
-        16 => "=h,f,f",
-        32 => "=r,f,f",
-        _ => unreachable!("closed packed-conversion result width"),
+    match (
+        packed_conversion_result_width(record),
+        packed_conversion_source(record),
+    ) {
+        (16, PackedConversionSourceFormat::F32x2) => "=h,f,f",
+        (32, PackedConversionSourceFormat::F32x2) => "=r,f,f",
+        (16, PackedConversionSourceFormat::F16x2) => "=h,r",
+        (32, PackedConversionSourceFormat::E4m3x2 | PackedConversionSourceFormat::E5m2x2) => "=r,h",
+        _ => unreachable!("closed packed-conversion result width and source format"),
     }
 }
 
+/// Whether the conversion lowers through a typed NVVM intrinsic call rather
+/// than inline PTX. Only the scalar-`f32` pair narrowed to FP8 does; see the
+/// matching predicate in `resolve.rs` for why.
+fn packed_conversion_uses_typed_nvvm(record: &CatalogIntrinsic) -> bool {
+    let conversion = record
+        .packed_conversion
+        .as_ref()
+        .expect("packed-conversion record");
+    conversion.source_format == PackedConversionSourceFormat::F32x2
+        && matches!(
+            conversion.destination_format,
+            PackedConversionDestinationFormat::E4m3x2 | PackedConversionDestinationFormat::E5m2x2
+        )
+}
+
 fn packed_conversion_lowering_name(record: &CatalogIntrinsic) -> &'static str {
-    match packed_conversion_result_width(record) {
-        16 => "generated_packed_conversion_backend",
-        32 => "generated_packed_conversion_inline_ptx",
-        _ => unreachable!("closed packed-conversion result width"),
+    if packed_conversion_uses_typed_nvvm(record) {
+        "generated_packed_conversion_backend"
+    } else {
+        "generated_packed_conversion_inline_ptx"
     }
 }
 
@@ -3539,12 +3613,13 @@ fn packed_conversion_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
         .as_ref()
         .expect("packed-conversion record");
     debug_assert_eq!(
-        conversion.source_format,
-        PackedConversionSourceFormat::F32x2
-    );
-    debug_assert_eq!(
         conversion.adapter,
-        PackedConversionAdapter::ReverseHighLowOperands
+        match conversion.source_format {
+            PackedConversionSourceFormat::F32x2 => PackedConversionAdapter::ReverseHighLowOperands,
+            PackedConversionSourceFormat::E4m3x2
+            | PackedConversionSourceFormat::E5m2x2
+            | PackedConversionSourceFormat::F16x2 => PackedConversionAdapter::Identity,
+        }
     );
     let rounding = match conversion.rounding {
         PackedConversionRounding::NearestEven => "rn",
@@ -3557,8 +3632,9 @@ fn packed_conversion_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
         PackedConversionSaturation::SatfiniteRelu => ".satfinite.relu",
     };
     format!(
-        "cvt.{rounding}{saturation}.{}.f32",
-        packed_conversion_destination(record)
+        "cvt.{rounding}{saturation}.{}.{}",
+        packed_conversion_destination(record),
+        conversion.source_format.ptx_token()
     )
 }
 
@@ -6321,20 +6397,35 @@ fn render_compat_packed_conversion(
             .iter()
             .find(|path| path.starts_with(path_prefix))
             .expect("packed-conversion compatibility path");
+        // A packed source arrives in one register, so the parameter list
+        // follows the record's own argument types rather than a fixed f32 pair.
+        let parameter_names: Vec<&str> = match packed_conversion_source(record) {
+            PackedConversionSourceFormat::F32x2 => vec![argument_names.0, argument_names.1],
+            PackedConversionSourceFormat::E4m3x2
+            | PackedConversionSourceFormat::E5m2x2
+            | PackedConversionSourceFormat::F16x2 => vec!["packed"],
+        };
+        let parameter_types = packed_conversion_rust_arguments(record);
+        let parameters = parameter_names
+            .iter()
+            .zip(&parameter_types)
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let discards = parameter_names.join(", ");
         writeln!(output, "/// {}", record.summary).unwrap();
         output.push_str("#[inline(never)]\n");
         writeln!(
             output,
-            "pub fn {}({}: f32, {}: f32) -> {} {{",
-            record.rust.name, argument_names.0, argument_names.1, record.rust.result,
+            "pub fn {}({parameters}) -> {} {{",
+            record.rust.name, record.rust.result,
         )
         .unwrap();
-        writeln!(
-            output,
-            "    let _ = ({}, {});",
-            argument_names.0, argument_names.1
-        )
-        .unwrap();
+        if parameter_names.len() == 1 {
+            writeln!(output, "    let _ = {discards};").unwrap();
+        } else {
+            writeln!(output, "    let _ = ({discards});").unwrap();
+        }
         writeln!(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
@@ -8904,40 +8995,77 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
         "//! Structural operation for generated packed conversion.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{FP32Type, IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_f32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx).downcast_ref::<FP32Type>().is_some()\n}\n\nfn is_integer_width(\n    ctx: &Context,\n    ty: pliron::r#type::TypeHandle,\n    width: u32,\n) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == width)\n}\n\n",
     );
     for record in packed_conversions(catalog) {
+        let result_width = packed_conversion_result_width(record);
         writeln!(output, "/// {}", record.summary).unwrap();
-        writeln!(
-            output,
-            "///\n/// The first input becomes the low {} lane; the second becomes the high lane.",
-            packed_conversion_element(record)
-        )
-        .unwrap();
-        writeln!(
-            output,
-            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
-            record.dialect.op_name
-        )
-        .unwrap();
-        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
-        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
-        writeln!(
-            output,
-            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, low: Value, high: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {}, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![low, high],\n            vec![],\n            0,\n        )\n    }}\n}}",
-            packed_conversion_result_width(record)
-        )
-        .unwrap();
-        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
-        writeln!(
-            output,
-            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_f32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_f32(ctx, op.get_operand(1).get_type(ctx))\n            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), {})\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
-            format!("{} requires two operands and one result", record.dialect.op_name),
-            packed_conversion_result_width(record),
-            format!(
-                "{} requires f32 operands and one {}-bit integer result",
-                record.dialect.op_name,
-                packed_conversion_result_width(record),
-            ),
-        )
-        .unwrap();
+        match packed_conversion_source(record) {
+            PackedConversionSourceFormat::F32x2 => {
+                writeln!(
+                    output,
+                    "///\n/// The first input becomes the low {} lane; the second becomes the high lane.",
+                    packed_conversion_element(record)
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
+                    record.dialect.op_name
+                )
+                .unwrap();
+                writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+                writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+                writeln!(
+                    output,
+                    "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, low: Value, high: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {result_width}, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![low, high],\n            vec![],\n            0,\n        )\n    }}\n}}",
+                )
+                .unwrap();
+                writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+                writeln!(
+                    output,
+                    "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_f32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_f32(ctx, op.get_operand(1).get_type(ctx))\n            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), {})\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+                    format!("{} requires two operands and one result", record.dialect.op_name),
+                    result_width,
+                    format!(
+                        "{} requires f32 operands and one {result_width}-bit integer result",
+                        record.dialect.op_name,
+                    ),
+                )
+                .unwrap();
+            }
+            PackedConversionSourceFormat::E4m3x2
+            | PackedConversionSourceFormat::E5m2x2
+            | PackedConversionSourceFormat::F16x2 => {
+                let source_width = packed_conversion_source_width(record);
+                writeln!(
+                    output,
+                    "///\n/// The single input carries both packed lanes, and lane order is preserved."
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],\n)]",
+                    record.dialect.op_name
+                )
+                .unwrap();
+                writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+                writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+                writeln!(
+                    output,
+                    "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, packed: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {result_width}, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![packed],\n            vec![],\n            0,\n        )\n    }}\n}}",
+                )
+                .unwrap();
+                writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+                writeln!(
+                    output,
+                    "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 1 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), {source_width})\n            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), {result_width})\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+                    format!("{} requires one operand and one result", record.dialect.op_name),
+                    format!(
+                        "{} requires one {source_width}-bit integer operand and one {result_width}-bit integer result",
+                        record.dialect.op_name,
+                    ),
+                )
+                .unwrap();
+            }
+        }
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in packed_conversions(catalog) {
@@ -13584,7 +13712,7 @@ fn tcgen05_inline_asm(record: &CatalogIntrinsic) -> (String, String, Option<usiz
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, basic::convert_sreg_read_inline, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, basic::convert_sreg_read_inline, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2, convert_generated_packed_unary}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     if debug_controls(catalog).next().is_some() {
         output = output.replace(
@@ -14799,10 +14927,10 @@ fn convert_generated_tcgen05_load(
         output.push_str("    }\n}\n\n");
     }
     for record in packed_conversions(catalog) {
-        debug_assert_eq!(
-            record.packed_conversion.as_ref().unwrap().adapter,
-            PackedConversionAdapter::ReverseHighLowOperands
-        );
+        let conversion = record
+            .packed_conversion
+            .as_ref()
+            .expect("packed-conversion record");
         writeln!(
             output,
             "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
@@ -14812,16 +14940,37 @@ fn convert_generated_tcgen05_load(
         output.push_str(
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
         );
-        let typed_intrinsic = packed_conversion_typed_llvm_name(record)
-            .map(|name| format!("Some({name:?})"))
-            .unwrap_or_else(|| "None".into());
-        writeln!(
-            output,
-            "        convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), {typed_intrinsic}, {:?}, {})",
-            packed_conversion_ptx_mnemonic(record),
-            packed_conversion_result_width(record),
-        )
-        .unwrap();
+        match conversion.source_format {
+            PackedConversionSourceFormat::F32x2 => {
+                debug_assert_eq!(
+                    conversion.adapter,
+                    PackedConversionAdapter::ReverseHighLowOperands
+                );
+                let typed_intrinsic = packed_conversion_typed_llvm_name(record)
+                    .map(|name| format!("Some({name:?})"))
+                    .unwrap_or_else(|| "None".into());
+                writeln!(
+                    output,
+                    "        convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), {typed_intrinsic}, {:?}, {})",
+                    packed_conversion_ptx_mnemonic(record),
+                    packed_conversion_result_width(record),
+                )
+                .unwrap();
+            }
+            PackedConversionSourceFormat::E4m3x2
+            | PackedConversionSourceFormat::E5m2x2
+            | PackedConversionSourceFormat::F16x2 => {
+                debug_assert_eq!(conversion.adapter, PackedConversionAdapter::Identity);
+                writeln!(
+                    output,
+                    "        convert_generated_packed_unary(ctx, rewriter, self.get_operation(), {:?}, {}, {})",
+                    packed_conversion_ptx_mnemonic(record),
+                    packed_conversion_result_width(record),
+                    packed_conversion_source_width(record),
+                )
+                .unwrap();
+            }
+        }
         output.push_str("    }\n}\n\n");
     }
     for record in cp_async_copies(catalog) {
@@ -17304,7 +17453,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 "  %result = call {result_ty} @{symbol}(float %high, float %low)"
             )
             .unwrap();
-        } else {
+        } else if packed_conversion_source(record) == PackedConversionSourceFormat::F32x2 {
             writeln!(
                 output,
                 "define {result_ty} @probe_{}(float %low, float %high) {{",
@@ -17314,6 +17463,23 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             writeln!(
                 output,
                 "  %result = call {result_ty} asm \"{} $0, $2, $1;\", \"{}\"(float %low, float %high)",
+                packed_conversion_ptx_mnemonic(record),
+                packed_conversion_constraint(record),
+            )
+            .unwrap();
+        } else {
+            // A packed source arrives in one integer register, so the probe
+            // takes a single operand and needs no reordering.
+            let source_ty = format!("i{}", packed_conversion_source_width(record));
+            writeln!(
+                output,
+                "define {result_ty} @probe_{}({source_ty} %packed) {{",
+                record.id,
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "  %result = call {result_ty} asm \"{} $0, $1;\", \"{}\"({source_ty} %packed)",
                 packed_conversion_ptx_mnemonic(record),
                 packed_conversion_constraint(record),
             )
@@ -19277,7 +19443,7 @@ mod tests {
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         assert_eq!(packed_alus(&catalog).count(), 18);
-        assert_eq!(packed_conversions(&catalog).count(), 10);
+        assert_eq!(packed_conversions(&catalog).count(), 18);
 
         let dialect = render_dialect_packed_alu(&catalog, "test-hash");
         for op in [
@@ -19410,9 +19576,18 @@ mod tests {
                 assert!(probe.contains(&format!("declare i16 @{symbol}(float, float)")));
                 assert!(probe.contains(&format!("call i16 @{symbol}(float %high, float %low)")));
                 assert!(!probe.contains(" asm "));
-            } else {
+            } else if packed_conversion_source(conversion) == PackedConversionSourceFormat::F32x2 {
                 assert!(probe.contains(&format!(
                     "asm \"{} $0, $2, $1;\", \"{}\"(float %low, float %high)",
+                    packed_conversion_ptx_mnemonic(conversion),
+                    packed_conversion_constraint(conversion),
+                )));
+                assert!(!probe.contains("declare "));
+            } else {
+                // One packed source operand, so no high/low reordering.
+                let source_ty = format!("i{}", packed_conversion_source_width(conversion));
+                assert!(probe.contains(&format!(
+                    "asm \"{} $0, $1;\", \"{}\"({source_ty} %packed)",
                     packed_conversion_ptx_mnemonic(conversion),
                     packed_conversion_constraint(conversion),
                 )));
@@ -20792,7 +20967,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 821);
+        assert_eq!(catalog.intrinsics.len(), 829);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records

@@ -101,12 +101,19 @@ pub(crate) fn resolve_nvvm_target_with_generated(
     automatic_features: Option<DetectedFeatures>,
     generated: &GeneratedModuleRequirements,
 ) -> Result<CudaArch, PipelineError> {
+    // A target the caller requested, or one detected from the device, is an
+    // input to compilation, so its rejection is classified as
+    // `TargetSelection` and reported at `CompilationStage::Input`. Only the
+    // failures that belong to the export itself stay `Export`.
     let parse = |target: &str, source: &str| {
-        target.parse::<CudaArch>().map_err(|error| {
-            PipelineError::Export(format!(
-                "cannot select an NVVM IR dialect from the {source} `{target}`: {error}"
-            ))
-        })
+        target
+            .parse::<CudaArch>()
+            .map_err(|error| PipelineError::TargetSelection {
+                target: target.to_string(),
+                reason: format!(
+                    "cannot select an NVVM IR dialect from the {source} `{target}`: {error}"
+                ),
+            })
     };
 
     // libNVVM chooses the final PTX version itself, but still reject a future
@@ -117,9 +124,19 @@ pub(crate) fn resolve_nvvm_target_with_generated(
     if let Some(target) = explicit_target {
         let parsed = parse(target, "explicit CUDA target")?;
         if let Some(features) = automatic_features {
-            validate_target_features(&parsed, features).map_err(PipelineError::Export)?;
+            validate_target_features(&parsed, features).map_err(|reason| {
+                PipelineError::TargetSelection {
+                    target: parsed.sm(),
+                    reason,
+                }
+            })?;
         }
-        validate_generated_target(&parsed.sm(), generated).map_err(PipelineError::Export)?;
+        validate_generated_target(&parsed.sm(), generated).map_err(|reason| {
+            PipelineError::TargetSelection {
+                target: parsed.sm(),
+                reason,
+            }
+        })?;
         return Ok(parsed);
     }
 
@@ -150,12 +167,16 @@ pub(crate) fn resolve_nvvm_target_with_generated(
         return parse(&target, "generated-intrinsic requirement");
     }
 
-    Err(PipelineError::Export(
-        "NVVM IR requires a concrete CUDA target because pre-Blackwell and Blackwell+ \
-         use different LLVM dialects; pass `cargo oxide ... --arch sm_XX` (or set \
-         CUDA_OXIDE_TARGET)"
+    // Nothing supplied a target, so there is none to name. The caller still
+    // has to act on their own input, which is why this reports at
+    // `CompilationStage::Input` alongside the rejections above.
+    Err(PipelineError::TargetSelection {
+        target: String::new(),
+        reason: "NVVM IR requires a concrete CUDA target because pre-Blackwell and Blackwell+ \
+                 use different LLVM dialects; pass `cargo oxide ... --arch sm_XX` (or set \
+                 CUDA_OXIDE_TARGET)"
             .to_string(),
-    ))
+    })
 }
 
 // mir-importer pipeline plumbing; not part of the frontend contract.
@@ -500,6 +521,63 @@ mod tests {
         assert!(
             resolve_nvvm_target(None, Some("not-an-arch"), Some(DetectedFeatures::Basic)).is_err()
         );
+    }
+
+    /// Every rejection the NVVM IR resolver attributes to a target is decided
+    /// before any export runs, so it reports at `CompilationStage::Input`.
+    #[test]
+    fn nvvm_target_rejections_report_the_input_stage() {
+        let f16 = generated_intrinsic_target_by_marker("v1:i0014").unwrap();
+        let below_floor = GeneratedModuleRequirements::from_targets(vec![f16])
+            .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+        let none = GeneratedModuleRequirements::default();
+
+        for (case, error) in [
+            (
+                "unparsable explicit target",
+                resolve_nvvm_target_with_generated(Some("sm_9x"), None, None, &none).unwrap_err(),
+            ),
+            (
+                "unparsable device hint",
+                resolve_nvvm_target_with_generated(
+                    None,
+                    Some("not-an-arch"),
+                    Some(DetectedFeatures::Basic),
+                    &none,
+                )
+                .unwrap_err(),
+            ),
+            (
+                "target below a detected feature floor",
+                resolve_nvvm_target_with_generated(
+                    Some("sm_70"),
+                    None,
+                    Some(DetectedFeatures::Movmatrix),
+                    &none,
+                )
+                .unwrap_err(),
+            ),
+            (
+                "target below a generated intrinsic floor",
+                resolve_nvvm_target_with_generated(Some("sm_70"), None, None, &below_floor)
+                    .unwrap_err(),
+            ),
+            (
+                "no target supplied at all",
+                resolve_nvvm_target_with_generated(None, None, None, &none).unwrap_err(),
+            ),
+        ] {
+            assert!(
+                matches!(error, PipelineError::TargetSelection { .. }),
+                "{case}: got {error:?}"
+            );
+            let compile_error = crate::api::CompileError::from(error);
+            assert_eq!(
+                compile_error.stage(),
+                crate::api::CompilationStage::Input,
+                "{case}"
+            );
+        }
     }
 
     #[test]

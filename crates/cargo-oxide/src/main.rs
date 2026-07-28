@@ -17,8 +17,11 @@
 //! cargo oxide pipeline vecadd         # verbose pipeline dump
 //! cargo oxide sanitize vecadd         # run under NVIDIA Compute Sanitizer
 //! cargo oxide debug vecadd --tui      # build + cuda-gdb
-//! cargo oxide new my_kernel            # scaffold a standalone project
+//! cargo oxide inspect vecadd          # build + print generated PTX
+//! cargo oxide new my_kernel           # scaffold a standalone project
 //! cargo oxide new my_kernel --async   # scaffold with async template
+//! cargo oxide list                    # list bundled examples
+//! cargo oxide list --json             # machine-readable output
 //! cargo oxide fmt                     # format all crates
 //! cargo oxide doctor                  # check environment
 //! cargo oxide clean                   # remove local build outputs
@@ -267,6 +270,34 @@ enum Commands {
         #[arg(long)]
         tui: bool,
     },
+    /// List the examples bundled with the cuda-oxide workspace
+    List {
+        /// Emit stable machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build an example or project and print the generated PTX
+    Inspect {
+        /// Example name (required in workspace, optional for standalone projects)
+        example: Option<String>,
+        /// Target architecture (e.g., sm_90, sm_100, sm_120)
+        #[arg(long)]
+        arch: Option<String>,
+        /// Comma-separated list of features to enable
+        #[arg(long)]
+        features: Option<String>,
+        /// Show verbose compilation output
+        #[arg(short, long)]
+        verbose: bool,
+        /// Disable FMA contraction (default: on, matching nvcc --fmad=true).
+        /// Settable also via CUDA_OXIDE_NO_FMA=1.
+        #[arg(long)]
+        no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel.
+        /// Settable also via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
+    },
     /// Format all crates (root workspace, codegen backend, examples)
     Fmt {
         /// Check formatting without modifying files
@@ -360,8 +391,16 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
         | Commands::Test { .. }
         | Commands::Pipeline { .. }
         | Commands::Debug { .. } => Ok(()),
+        Commands::Inspect { .. } => Err(
+            "--materialize-cubin cannot be used with inspect because inspect displays PTX"
+                .to_string(),
+        ),
         Commands::EmitLtoir { .. } => Err(
             "--materialize-cubin cannot be combined with emit-ltoir; one emits a final cubin and the other emits linkable LTOIR"
+                .to_string(),
+        ),
+        Commands::List { .. } => Err(
+            "--materialize-cubin cannot be used with list because list does not compile device code"
                 .to_string(),
         ),
         Commands::Fmt { .. } => Err(
@@ -638,6 +677,26 @@ fn main() {
                 materialize_cubin,
             );
         }
+        Commands::Inspect {
+            example,
+            arch,
+            features,
+            verbose,
+            no_fmad,
+            unchecked_indexing,
+        } => {
+            let ctx = commands::resolve_context();
+            let example = resolve_example_name(example, &ctx, "inspect");
+            commands::codegen_inspect_ptx(
+                &ctx,
+                &example,
+                arch.as_deref(),
+                features.as_deref(),
+                verbose,
+                no_fmad,
+                unchecked_indexing,
+            );
+        }
         Commands::Debug {
             example,
             arch,
@@ -659,6 +718,10 @@ fn main() {
                 tui,
                 materialize_cubin,
             );
+        }
+        Commands::List { json } => {
+            let ctx = commands::resolve_doctor_context();
+            commands::list_examples(&ctx, json);
         }
         Commands::Fmt { check } => {
             let ctx = commands::resolve_context();
@@ -831,6 +894,7 @@ mod tests {
                 "sm_90",
                 "--materialize-cubin",
             ],
+            &["cargo-oxide", "inspect", "demo", "--materialize-cubin"],
         ] {
             let cli = Cli::try_parse_from(args).expect("global flag should parse first");
             let error = validate_materialization_cli(&cli)
@@ -1006,5 +1070,76 @@ mod tests {
         assert!(use_build_passthrough(false, false, true, false, false));
         assert!(use_build_passthrough(false, false, false, true, false));
         assert!(use_build_passthrough(false, false, false, false, true));
+    }
+
+    #[test]
+    fn list_parser_defaults_to_human_output() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "list"]).expect("list command should parse");
+
+        let Commands::List { json } = cli.command else {
+            panic!("expected list command");
+        };
+
+        assert!(!json);
+    }
+
+    #[test]
+    fn list_parser_accepts_json_output() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "list", "--json"])
+            .expect("list --json should parse");
+
+        let Commands::List { json } = cli.command else {
+            panic!("expected list command");
+        };
+
+        assert!(json);
+    }
+
+    #[test]
+    fn materialize_cubin_rejects_list() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "list", "--materialize-cubin"])
+            .expect("global option should parse");
+
+        let error =
+            validate_materialization_cli(&cli).expect_err("list must reject materialization");
+
+        assert!(error.contains("--materialize-cubin"));
+        assert!(error.contains("list"));
+    }
+
+    #[test]
+    fn inspect_parser_accepts_codegen_options() {
+        let cli = Cli::try_parse_from([
+            "cargo-oxide",
+            "inspect",
+            "vecadd",
+            "--arch",
+            "sm_90",
+            "--features",
+            "foo,bar",
+            "--verbose",
+            "--no-fmad",
+            "--unchecked-indexing",
+        ])
+        .expect("inspect command should parse");
+
+        let Commands::Inspect {
+            example,
+            arch,
+            features,
+            verbose,
+            no_fmad,
+            unchecked_indexing,
+        } = cli.command
+        else {
+            panic!("expected inspect command");
+        };
+
+        assert_eq!(example.as_deref(), Some("vecadd"));
+        assert_eq!(arch.as_deref(), Some("sm_90"));
+        assert_eq!(features.as_deref(), Some("foo,bar"));
+        assert!(verbose);
+        assert!(no_fmad);
+        assert!(unchecked_indexing);
     }
 }

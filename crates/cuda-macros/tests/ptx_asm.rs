@@ -16,6 +16,18 @@ fn ptx_asm_accepts_multi_output() {
 }
 
 #[test]
+fn ptx_asm_accepts_compile_time_strings() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/pass/ptx_asm_c_string.rs");
+}
+
+#[test]
+fn ptx_asm_accepts_inout() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/pass/ptx_asm_inout.rs");
+}
+
+#[test]
 fn ptx_asm_compile_failures() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/ptx_asm_requires_unsafe.rs");
@@ -24,10 +36,13 @@ fn ptx_asm_compile_failures() {
     t.compile_fail("tests/compile_fail/ptx_asm_input_limit.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_constraint_comma.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_unsupported_constraint.rs");
+    t.compile_fail("tests/compile_fail/ptx_asm_c_constraint_not_bytes.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_input_output_constraint.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_placeholder_out_of_range.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_register_only_requires_output.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_register_only_clobber.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_may_diverge_requires_register_only.rs");
     t.compile_fail("tests/compile_fail/ptx_asm_unknown_option.rs");
+    t.compile_fail("tests/compile_fail/ptx_asm_inout_constraint.rs");
+    t.compile_fail("tests/compile_fail/ptx_asm_inout_after_input.rs");
 }

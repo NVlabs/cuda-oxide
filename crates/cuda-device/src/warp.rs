@@ -27,19 +27,15 @@
 //!     let gid = thread::index_1d();
 //!     let lane = warp::lane_id();
 //!
-//!     let mut val = data[gid.get()];
+//!     let val = data[gid.get()];
 //!
-//!     // Butterfly reduction using shuffle_xor
-//!     val = val + warp::shuffle_xor_f32(val, 16);
-//!     val = val + warp::shuffle_xor_f32(val, 8);
-//!     val = val + warp::shuffle_xor_f32(val, 4);
-//!     val = val + warp::shuffle_xor_f32(val, 2);
-//!     val = val + warp::shuffle_xor_f32(val, 1);
+//!     // Butterfly reduction across the full warp; every lane gets the sum.
+//!     let sum = warp::reduce_sum_f32(val);
 //!
-//!     // Lane 0 has the sum
+//!     // Every lane holds the sum; lane 0 writes it out.
 //!     if lane == 0 {
 //!         let warp_idx = gid.get() / 32;
-//!         *out.get_unchecked_mut(warp_idx) = val;
+//!         *out.get_unchecked_mut(warp_idx) = sum;
 //!     }
 //! }
 //! ```
@@ -918,6 +914,206 @@ pub fn is_elected_sync(mask: u32) -> bool {
     elect_sync(mask).1
 }
 
+// =============================================================================
+// Warp-Level Reductions (f32)
+// =============================================================================
+//
+// Butterfly shuffle reduction utilities for f32 values. These use
+// `shuffle_xor_f32` with a full-warp mask (0xFFFF_FFFF) to reduce a
+// value across all 32 lanes, producing the result in every lane.
+
+/// Reduce-sum a scalar f32 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the sum of all input values.
+///
+/// Any NaN input propagates to every lane, as with ordinary `f32` addition.
+///
+/// # Convergence
+///
+/// The shuffles inside use the full-warp mask (`u32::MAX`), so all 32 lanes
+/// must be converged and participate. Calling this from divergent control
+/// flow, or from a block with fewer than 32 threads, is undefined; see
+/// [`redux_sync_add`] for the participation contract.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f32 = per_lane_value;
+/// let total = warp::reduce_sum_f32(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_sum_f32(mut val: f32) -> f32 {
+    val = val + shuffle_xor_f32(val, 16);
+    val = val + shuffle_xor_f32(val, 8);
+    val = val + shuffle_xor_f32(val, 4);
+    val = val + shuffle_xor_f32(val, 2);
+    val = val + shuffle_xor_f32(val, 1);
+    val
+}
+
+/// Reduce-max a scalar f32 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the maximum of all input values.
+///
+/// A NaN in one lane is ignored because `f32::max` returns the non-NaN
+/// operand; the result is NaN only if every lane holds NaN.
+///
+/// # Convergence
+///
+/// The shuffles inside use the full-warp mask (`u32::MAX`), so all 32 lanes
+/// must be converged and participate. Calling this from divergent control
+/// flow, or from a block with fewer than 32 threads, is undefined; see
+/// [`redux_sync_add`] for the participation contract.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f32 = per_lane_value;
+/// let global_max = warp::reduce_max_f32(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_max_f32(mut val: f32) -> f32 {
+    val = f32::max(val, shuffle_xor_f32(val, 16));
+    val = f32::max(val, shuffle_xor_f32(val, 8));
+    val = f32::max(val, shuffle_xor_f32(val, 4));
+    val = f32::max(val, shuffle_xor_f32(val, 2));
+    val = f32::max(val, shuffle_xor_f32(val, 1));
+    val
+}
+
+/// Reduce-min a scalar f32 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the minimum of all input values.
+///
+/// A NaN in one lane is ignored because `f32::min` returns the non-NaN
+/// operand; the result is NaN only if every lane holds NaN.
+///
+/// # Convergence
+///
+/// The shuffles inside use the full-warp mask (`u32::MAX`), so all 32 lanes
+/// must be converged and participate. Calling this from divergent control
+/// flow, or from a block with fewer than 32 threads, is undefined; see
+/// [`redux_sync_add`] for the participation contract.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f32 = per_lane_value;
+/// let global_min = warp::reduce_min_f32(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_min_f32(mut val: f32) -> f32 {
+    val = f32::min(val, shuffle_xor_f32(val, 16));
+    val = f32::min(val, shuffle_xor_f32(val, 8));
+    val = f32::min(val, shuffle_xor_f32(val, 4));
+    val = f32::min(val, shuffle_xor_f32(val, 2));
+    val = f32::min(val, shuffle_xor_f32(val, 1));
+    val
+}
+
+// =============================================================================
+// Warp-Level Reductions (f64)
+// =============================================================================
+//
+// Butterfly shuffle reduction utilities for f64 values. These use
+// `shuffle_xor_f64` with a full-warp mask (0xFFFF_FFFF) to reduce a
+// value across all 32 lanes, producing the result in every lane.
+
+/// Reduce-sum a scalar f64 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the sum of all input values.
+///
+/// Any NaN input propagates to every lane, as with ordinary `f64` addition.
+///
+/// # Convergence
+///
+/// The shuffles inside use the full-warp mask (`u32::MAX`), so all 32 lanes
+/// must be converged and participate. Calling this from divergent control
+/// flow, or from a block with fewer than 32 threads, is undefined; see
+/// [`redux_sync_add`] for the participation contract.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f64 = per_lane_value;
+/// let total = warp::reduce_sum_f64(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_sum_f64(mut val: f64) -> f64 {
+    val = val + shuffle_xor_f64(val, 16);
+    val = val + shuffle_xor_f64(val, 8);
+    val = val + shuffle_xor_f64(val, 4);
+    val = val + shuffle_xor_f64(val, 2);
+    val = val + shuffle_xor_f64(val, 1);
+    val
+}
+
+/// Reduce-max a scalar f64 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the maximum of all input values.
+///
+/// A NaN in one lane is ignored because `f64::max` returns the non-NaN
+/// operand; the result is NaN only if every lane holds NaN.
+///
+/// # Convergence
+///
+/// The shuffles inside use the full-warp mask (`u32::MAX`), so all 32 lanes
+/// must be converged and participate. Calling this from divergent control
+/// flow, or from a block with fewer than 32 threads, is undefined; see
+/// [`redux_sync_add`] for the participation contract.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f64 = per_lane_value;
+/// let global_max = warp::reduce_max_f64(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_max_f64(mut val: f64) -> f64 {
+    val = f64::max(val, shuffle_xor_f64(val, 16));
+    val = f64::max(val, shuffle_xor_f64(val, 8));
+    val = f64::max(val, shuffle_xor_f64(val, 4));
+    val = f64::max(val, shuffle_xor_f64(val, 2));
+    val = f64::max(val, shuffle_xor_f64(val, 1));
+    val
+}
+
+/// Reduce-min a scalar f64 across all 32 lanes using butterfly shuffles.
+///
+/// After this call, every lane holds the minimum of all input values.
+///
+/// A NaN in one lane is ignored because `f64::min` returns the non-NaN
+/// operand; the result is NaN only if every lane holds NaN.
+///
+/// # Convergence
+///
+/// The shuffles inside use the full-warp mask (`u32::MAX`), so all 32 lanes
+/// must be converged and participate. Calling this from divergent control
+/// flow, or from a block with fewer than 32 threads, is undefined; see
+/// [`redux_sync_add`] for the participation contract.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let val: f64 = per_lane_value;
+/// let global_min = warp::reduce_min_f64(val);
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_min_f64(mut val: f64) -> f64 {
+    val = f64::min(val, shuffle_xor_f64(val, 16));
+    val = f64::min(val, shuffle_xor_f64(val, 8));
+    val = f64::min(val, shuffle_xor_f64(val, 4));
+    val = f64::min(val, shuffle_xor_f64(val, 2));
+    val = f64::min(val, shuffle_xor_f64(val, 1));
+    val
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,5 +1144,11 @@ mod tests {
             shuffle_down_f64,
             shuffle_up_f64,
         ];
+    }
+
+    #[test]
+    fn warp_reduce_signatures_stay_stable() {
+        let _: [fn(f32) -> f32; 3] = [reduce_sum_f32, reduce_max_f32, reduce_min_f32];
+        let _: [fn(f64) -> f64; 3] = [reduce_sum_f64, reduce_max_f64, reduce_min_f64];
     }
 }

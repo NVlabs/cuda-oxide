@@ -83,23 +83,38 @@ or function signature that uses a type the adapter cannot rewrite. The trace
 API hashes:
 
 ```text
-bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char
+bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char,
+f32, f64
 ```
 
-It does not hash `f32` or `f64`. In many `UNSUPPORTED [adapter]` cases, the MIR
-can probably be patched by widening the adapter and trace API. The adapter stops
-because it does not yet know how to rewrite/hash that dumped type safely.
+In many `UNSUPPORTED [adapter]` cases, the MIR can probably be patched by
+widening the adapter and trace API. The adapter stops because it does not yet
+know how to rewrite/hash that dumped type safely.
 
 ## Floating point and libdevice seeds
 
 The comparison is exact `u64` hash equality, so it assumes the CPU and the GPU
-agree bit for bit. Floats are never hashed directly, since the trace API has no
-`f32` or `f64` arm and the adapter refuses a bare float dump. A float can still
-reach the hash indirectly, through an `as` cast to an integer, through a
-comparison that yields a `bool`, or through rustlantis' `transmute_place`.
+agree bit for bit. Floats are folded as their `to_bits()` pattern, which keeps
+that assumption intact for every non-NaN value: a tolerance in the trace would
+compare something other than the value a backend produced, and would hide the
+differences the fuzzer exists to find. NaN payload bits are the exception,
+because Rust does not pin them down, so the trace canonicalizes every NaN to
+the quiet-NaN bit pattern at the hash boundary. A payload divergence therefore
+cannot produce a `MISMATCH`; a NaN on one backend against a non-NaN on the
+other still hashes differently, and that difference is a real signal. Floats
+also still reach the hash indirectly, through an `as` cast to an integer,
+through a comparison that yields a `bool`, or through rustlantis'
+`transmute_place`.
 
-Where that happens on a seed whose device code calls libdevice, a mismatch is
-not on its own evidence of a backend bug. Only a few libdevice entry points are
+Two sources of difference are therefore expected, and neither is a backend bug.
+
+The first is FMA contraction. Device codegen contracts an `fmul` feeding an
+`fadd` into a single `fma.rn` by default, matching nvcc's `--fmad=true`, while
+the CPU oracle rounds the multiply and the add separately. `run_seed.py` passes
+`--no-fmad` so the two agree. Contraction is worth fuzzing on its own terms,
+against a contracted reference.
+
+The second is libdevice. Only a few libdevice entry points are
 specified as single correctly-rounded operations, `fma` among them. The
 transcendentals (`sin`, `cos`, `exp`, `log`, `pow`, `atan2` and the rest) are not
 required to be bit-identical to the host's libm, and the repository compares them

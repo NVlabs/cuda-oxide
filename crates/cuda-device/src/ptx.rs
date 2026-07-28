@@ -60,7 +60,23 @@ macro_rules! define_ptx_asm_void {
     };
 }
 
+/// Typed identity helper for `in("C")` operands.
+///
+/// `ptx_asm!` wraps every `in("C")` operand in
+/// `const { __ptx_asm_c(...) }`: the signature rejects anything that is not
+/// a `&'static [u8; N]` byte string at type-check time, and the inline
+/// const keeps the operand a compile-time constant so the MIR importer can
+/// splice its text into the PTX template.
+#[doc(hidden)]
+#[inline(always)]
+pub const fn __ptx_asm_c<const N: usize>(value: &'static [u8; N]) -> &'static [u8; N] {
+    value
+}
+
 // Rust has no variadic generics, so expose marker stubs for fixed arities.
+// Output markers support up to 24 arguments: 16 explicit inputs plus up to
+// 8 hidden tied inputs generated for `inout` operands. Void markers require
+// only 16 arguments because `inout` always produces an output.
 define_ptx_asm_out!(__ptx_asm_out_0;);
 define_ptx_asm_out!(__ptx_asm_out_1; a0: A0);
 define_ptx_asm_out!(__ptx_asm_out_2; a0: A0, a1: A1);
@@ -78,6 +94,14 @@ define_ptx_asm_out!(__ptx_asm_out_13; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5
 define_ptx_asm_out!(__ptx_asm_out_14; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13);
 define_ptx_asm_out!(__ptx_asm_out_15; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14);
 define_ptx_asm_out!(__ptx_asm_out_16; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15);
+define_ptx_asm_out!(__ptx_asm_out_17; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16);
+define_ptx_asm_out!(__ptx_asm_out_18; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17);
+define_ptx_asm_out!(__ptx_asm_out_19; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17, a18: A18);
+define_ptx_asm_out!(__ptx_asm_out_20; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17, a18: A18, a19: A19);
+define_ptx_asm_out!(__ptx_asm_out_21; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17, a18: A18, a19: A19, a20: A20);
+define_ptx_asm_out!(__ptx_asm_out_22; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17, a18: A18, a19: A19, a20: A20, a21: A21);
+define_ptx_asm_out!(__ptx_asm_out_23; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17, a18: A18, a19: A19, a20: A20, a21: A21, a22: A22);
+define_ptx_asm_out!(__ptx_asm_out_24; a0: A0, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13, a14: A14, a15: A15, a16: A16, a17: A17, a18: A18, a19: A19, a20: A20, a21: A21, a22: A22, a23: A23);
 
 define_ptx_asm_void!(__ptx_asm_void_0;);
 define_ptx_asm_void!(__ptx_asm_void_1; a0: A0);

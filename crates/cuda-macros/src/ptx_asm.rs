@@ -12,12 +12,14 @@ use syn::{
 };
 
 const MAX_PTX_ASM_INPUTS: usize = 16;
-const MAX_PTX_ASM_OUTPUTS: usize = 8;
+const MAX_PTX_ASM_OUTPUTS: usize = 16;
 const REGISTER_ONLY_OPTION: &str = "register_only";
 const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
-const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n"];
+const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n", "C"];
 const SUPPORTED_OUTPUT_CONSTRAINTS: &[&str] = &["=h", "=r", "=l", "=q", "=f", "=d"];
+const COMPILE_TIME_STRING_CONSTRAINT: &str = "C";
+const SUPPORTED_INOUT_CONSTRAINTS: &[&str] = &["+h", "+r", "+l", "+q", "+f", "+d"];
 
 pub struct PtxAsmInput {
     template: LitStr,
@@ -27,8 +29,21 @@ pub struct PtxAsmInput {
 enum PtxAsmOperand {
     Out { constraint: LitStr, place: Expr },
     In { constraint: LitStr, expr: Expr },
+    InOut { constraint: LitStr, place: Expr },
     Clobber { name: LitStr },
     Options { options: Vec<Ident> },
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum PtxAsmOutputKind {
+    WriteOnly,
+    ReadWrite,
+}
+
+struct PtxAsmOutput {
+    constraint: LitStr,
+    place: Expr,
+    kind: PtxAsmOutputKind,
 }
 
 #[derive(Default)]
@@ -63,6 +78,11 @@ impl Parse for PtxAsmInput {
                     let place: Expr = input.parse()?;
                     operands.push(PtxAsmOperand::Out { constraint, place });
                 }
+                "inout" => {
+                    let constraint = parse_parenthesized_string(input)?;
+                    let place: Expr = input.parse()?;
+                    operands.push(PtxAsmOperand::InOut { constraint, place });
+                }
                 "clobber" => {
                     let name = parse_parenthesized_string(input)?;
                     operands.push(PtxAsmOperand::Clobber { name });
@@ -75,7 +95,7 @@ impl Parse for PtxAsmInput {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "unsupported ptx_asm! operand `{other}`; expected `out`, `in`, `clobber`, or `options`"
+                            "unsupported ptx_asm! operand `{other}`; expected `out`, `inout`, `in`, `clobber`, or `options`"
                         ),
                     ));
                 }
@@ -120,7 +140,7 @@ pub fn ptx_asm_impl(input: PtxAsmInput) -> TokenStream2 {
 }
 
 fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
-    let mut outputs: Vec<(LitStr, Expr)> = Vec::new();
+    let mut outputs: Vec<PtxAsmOutput> = Vec::new();
     let mut inputs: Vec<(LitStr, Expr)> = Vec::new();
     let mut clobbers: Vec<LitStr> = Vec::new();
     let mut options = PtxAsmOptions::default();
@@ -136,7 +156,25 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
                     ));
                 }
                 validate_output_constraint(&constraint)?;
-                outputs.push((constraint, place));
+                outputs.push(PtxAsmOutput {
+                    constraint,
+                    place,
+                    kind: PtxAsmOutputKind::WriteOnly,
+                });
+            }
+            PtxAsmOperand::InOut { constraint, place } => {
+                if saw_input {
+                    return Err(syn::Error::new(
+                        constraint.span(),
+                        "`inout` operands must appear before `in` operands",
+                    ));
+                }
+                validate_inout_constraint(&constraint)?;
+                outputs.push(PtxAsmOutput {
+                    constraint,
+                    place,
+                    kind: PtxAsmOutputKind::ReadWrite,
+                });
             }
             PtxAsmOperand::In { constraint, expr } => {
                 validate_input_constraint(&constraint)?;
@@ -184,14 +222,16 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
     if outputs.len() > MAX_PTX_ASM_OUTPUTS {
         return Err(syn::Error::new(
             input.template.span(),
-            format!("ptx_asm! supports at most {MAX_PTX_ASM_OUTPUTS} output operands"),
+            format!(
+                "ptx_asm! supports at most {MAX_PTX_ASM_OUTPUTS} output operands across `out` and `inout`"
+            ),
         ));
     }
 
     if options.register_only && outputs.is_empty() {
         return Err(syn::Error::new(
             input.template.span(),
-            "`options(register_only)` requires an `out` operand",
+            "`options(register_only)` requires an `out` or `inout` operand",
         ));
     }
     if options.register_only && !clobbers.is_empty() {
@@ -214,20 +254,13 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
         ));
     }
 
+    // Hidden tied inputs initialize read-write outputs but are not visible
+    // template operands, so they do not contribute to `%N` validation.
     let operand_count = outputs.len() + inputs.len();
     let converted_template = convert_cuda_template(&input.template, operand_count)?;
     let template_lit = syn::LitByteStr::new(converted_template.as_bytes(), input.template.span());
 
-    // Build constraint string: output constraints first, then input constraints, then clobbers.
-    let mut constraints = Vec::new();
-    for (constraint, _) in &outputs {
-        constraints.push(constraint.value());
-    }
-    constraints.extend(inputs.iter().map(|(constraint, _)| constraint.value()));
-    for clobber in &clobbers {
-        constraints.push(normalize_clobber(clobber)?);
-    }
-    let constraints = constraints.join(",");
+    let constraints = build_constraint_string(&outputs, &inputs, &clobbers)?;
     let constraints_lit = syn::LitByteStr::new(constraints.as_bytes(), input.template.span());
     let options_marker = if options.register_only && options.may_diverge {
         REGISTER_ONLY_MAY_DIVERGE_OPTIONS
@@ -238,56 +271,152 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
     };
     let options_lit = syn::LitByteStr::new(options_marker.as_bytes(), input.template.span());
 
-    let input_exprs: Vec<&Expr> = inputs.iter().map(|(_, expr)| expr).collect();
-    let arity = input_exprs.len();
+    let input_exprs: Vec<TokenStream2> = inputs
+        .iter()
+        .map(|(constraint, expr)| {
+            if constraint.value() == COMPILE_TIME_STRING_CONSTRAINT {
+                // `in("C")` operands must be compile-time byte strings. The
+                // typed helper turns any other operand type into a type error
+                // at the call site, and the inline const keeps the operand a
+                // MIR constant so the importer can splice its text.
+                quote! { const { cuda_device::ptx::__ptx_asm_c(#expr) } }
+            } else {
+                quote! { #expr }
+            }
+        })
+        .collect();
 
-    if !outputs.is_empty() {
-        let fn_ident = format_ident!("__ptx_asm_out_{arity}");
+    // Evaluate each read-write place exactly once. A raw pointer keeps that
+    // address available across explicit input evaluation without extending a
+    // mutable reference borrow over the marker call.
+    let mut inout_bindings = Vec::new();
+    let mut inout_value_idents = Vec::new();
+    let mut inout_ptr_idents: Vec<Option<Ident>> = Vec::with_capacity(outputs.len());
 
-        if outputs.len() == 1 {
-            // Single output: assign directly (backward compatible).
-            let place = &outputs[0].1;
-            Ok(quote! {{
-                #place = cuda_device::ptx::#fn_ident(
-                    #template_lit,
-                    #constraints_lit,
-                    #options_lit,
-                    #(#input_exprs),*
-                );
-            }})
-        } else {
-            // Multi-output: result is a tuple, destructure into output places.
-            let output_places: Vec<&Expr> = outputs.iter().map(|(_, place)| place).collect();
-            let tuple_vars: Vec<syn::Ident> = (0..outputs.len())
-                .map(|i| format_ident!("__ptx_out_{}", i))
-                .collect();
-            let assignments = output_places
-                .iter()
-                .zip(tuple_vars.iter())
-                .map(|(place, var)| {
-                    quote! { #place = #var; }
+    for (output_index, output) in outputs.iter().enumerate() {
+        match output.kind {
+            PtxAsmOutputKind::WriteOnly => inout_ptr_idents.push(None),
+            PtxAsmOutputKind::ReadWrite => {
+                let ptr_ident = format_ident!("__ptx_inout_ptr_{output_index}");
+                let value_ident = format_ident!("__ptx_inout_value_{output_index}");
+                let place = &output.place;
+
+                inout_bindings.push(quote! {
+                    let #ptr_ident = &mut #place as *mut _;
+                    let #value_ident = *#ptr_ident;
                 });
-            Ok(quote! {{
-                let ( #(#tuple_vars),* ) = cuda_device::ptx::#fn_ident(
-                    #template_lit,
-                    #constraints_lit,
-                    #options_lit,
-                    #(#input_exprs),*
-                );
-                #(#assignments)*
-            }})
+                inout_value_idents.push(value_ident);
+                inout_ptr_idents.push(Some(ptr_ident));
+            }
         }
-    } else {
+    }
+
+    // LLVM operands follow all explicit inputs with the hidden values used by
+    // numeric tied-input constraints.
+    let marker_args: Vec<TokenStream2> = input_exprs
+        .iter()
+        .map(|expr| quote! { #expr })
+        .chain(inout_value_idents.iter().map(|ident| quote! { #ident }))
+        .collect();
+    let arity = marker_args.len();
+
+    if outputs.is_empty() {
         let fn_ident = format_ident!("__ptx_asm_void_{arity}");
-        Ok(quote! {{
+        return Ok(quote! {{
             cuda_device::ptx::#fn_ident(
                 #template_lit,
                 #constraints_lit,
                 #options_lit,
-                #(#input_exprs),*
+                #(#marker_args),*
             );
+        }});
+    }
+
+    let fn_ident = format_ident!("__ptx_asm_out_{arity}");
+    let tuple_vars: Vec<Ident> = (0..outputs.len())
+        .map(|i| format_ident!("__ptx_out_{i}"))
+        .collect();
+
+    let assignments = outputs.iter().enumerate().zip(tuple_vars.iter()).map(
+        |((output_index, output), result_ident)| match output.kind {
+            PtxAsmOutputKind::WriteOnly => {
+                let place = &output.place;
+                quote! {
+                    #place = #result_ident;
+                }
+            }
+            PtxAsmOutputKind::ReadWrite => {
+                let ptr_ident = inout_ptr_idents[output_index]
+                    .as_ref()
+                    .expect("read-write outputs always have a generated pointer");
+                quote! {
+                    *#ptr_ident = #result_ident;
+                }
+            }
+        },
+    );
+
+    if outputs.len() == 1 {
+        let result_ident = &tuple_vars[0];
+        Ok(quote! {{
+            #(#inout_bindings)*
+            let #result_ident = cuda_device::ptx::#fn_ident(
+                #template_lit,
+                #constraints_lit,
+                #options_lit,
+                #(#marker_args),*
+            );
+            #(#assignments)*
+        }})
+    } else {
+        Ok(quote! {{
+            #(#inout_bindings)*
+            let ( #(#tuple_vars),* ) = cuda_device::ptx::#fn_ident(
+                #template_lit,
+                #constraints_lit,
+                #options_lit,
+                #(#marker_args),*
+            );
+            #(#assignments)*
         }})
     }
+}
+
+fn build_constraint_string(
+    outputs: &[PtxAsmOutput],
+    inputs: &[(LitStr, Expr)],
+    clobbers: &[LitStr],
+) -> syn::Result<String> {
+    let mut constraints = Vec::new();
+
+    // LLVM represents a CUDA `+r` read-write operand as an `=r` output
+    // followed by a numeric input constraint tied to that output.
+    for output in outputs {
+        match output.kind {
+            PtxAsmOutputKind::WriteOnly => constraints.push(output.constraint.value()),
+            PtxAsmOutputKind::ReadWrite => {
+                let value = output.constraint.value();
+                constraints.push(format!("={}", &value[1..]));
+            }
+        }
+    }
+
+    // Explicit inputs retain their user-visible operand order.
+    constraints.extend(inputs.iter().map(|(constraint, _)| constraint.value()));
+
+    // Hidden tied inputs follow explicit inputs so they do not change `%N`
+    // numbering in the CUDA template.
+    for (output_index, output) in outputs.iter().enumerate() {
+        if output.kind == PtxAsmOutputKind::ReadWrite {
+            constraints.push(output_index.to_string());
+        }
+    }
+
+    for clobber in clobbers {
+        constraints.push(normalize_clobber(clobber)?);
+    }
+
+    Ok(constraints.join(","))
 }
 
 fn convert_cuda_template(template: &LitStr, operand_count: usize) -> syn::Result<String> {
@@ -378,6 +507,25 @@ fn validate_single_constraint(constraint: &LitStr) -> syn::Result<String> {
         ));
     }
     Ok(value)
+}
+
+fn validate_inout_constraint(constraint: &LitStr) -> syn::Result<()> {
+    let value = validate_single_constraint(constraint)?;
+    if !value.starts_with('+') {
+        return Err(syn::Error::new(
+            constraint.span(),
+            "`inout` constraints must use read-write syntax such as `\"+r\"`",
+        ));
+    }
+    if !SUPPORTED_INOUT_CONSTRAINTS.contains(&value.as_str()) {
+        return Err(syn::Error::new(
+            constraint.span(),
+            format!(
+                "unsupported `inout` constraint `{value}`; expected one of {SUPPORTED_INOUT_CONSTRAINTS:?}"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_output_constraint(constraint: &LitStr) -> syn::Result<()> {
@@ -496,11 +644,15 @@ mod tests {
             let output = LitStr::new(constraint, proc_macro2::Span::call_site());
             assert!(validate_output_constraint(&output).is_ok());
         }
+        for constraint in SUPPORTED_INOUT_CONSTRAINTS {
+            let inout = LitStr::new(constraint, proc_macro2::Span::call_site());
+            assert!(validate_inout_constraint(&inout).is_ok());
+        }
     }
 
     #[test]
     fn rejects_unsupported_cuda_constraints() {
-        for constraint in ["", "C", "x", "rf"] {
+        for constraint in ["", "x", "rf"] {
             let input = LitStr::new(constraint, proc_macro2::Span::call_site());
             let err = validate_input_constraint(&input).unwrap_err();
             assert!(
@@ -517,17 +669,75 @@ mod tests {
                 "unexpected error for `{constraint}`: {err}"
             );
         }
+
+        for constraint in ["", "r", "=r"] {
+            let inout = LitStr::new(constraint, proc_macro2::Span::call_site());
+            let err = validate_inout_constraint(&inout).unwrap_err();
+            assert!(
+                err.to_string().contains("must use read-write syntax"),
+                "unexpected error for `{constraint}`: {err}"
+            );
+        }
+
+        for constraint in ["+n", "+C", "+x", "+rf"] {
+            let inout = LitStr::new(constraint, proc_macro2::Span::call_site());
+            let err = validate_inout_constraint(&inout).unwrap_err();
+            assert!(
+                err.to_string().contains("unsupported `inout` constraint"),
+                "unexpected error for `{constraint}`: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn builds_tied_constraints_without_exposing_hidden_operands() {
+        let outputs = vec![
+            PtxAsmOutput {
+                constraint: parse_quote!("=r"),
+                place: parse_quote!(write_only),
+                kind: PtxAsmOutputKind::WriteOnly,
+            },
+            PtxAsmOutput {
+                constraint: parse_quote!("+f"),
+                place: parse_quote!(read_write),
+                kind: PtxAsmOutputKind::ReadWrite,
+            },
+        ];
+        let inputs = vec![(parse_quote!("r"), parse_quote!(input))];
+
+        assert_eq!(
+            build_constraint_string(&outputs, &inputs, &[]).unwrap(),
+            "=r,=f,r,1"
+        );
+    }
+
+    #[test]
+    fn accepts_compile_time_string_input_constraint() {
+        let input = LitStr::new("C", proc_macro2::Span::call_site());
+        assert!(validate_input_constraint(&input).is_ok());
+
+        for constraint in ["=C", "+C"] {
+            let invalid = LitStr::new(constraint, proc_macro2::Span::call_site());
+            assert!(validate_input_constraint(&invalid).is_err());
+        }
     }
 
     #[test]
     fn rejects_too_many_outputs() {
         let input: PtxAsmInput = syn::parse_str(
-            r#""nop;", out("=r") a, out("=r") b, out("=r") c, out("=r") d, out("=r") e, out("=r") f, out("=r") g, out("=r") h, out("=r") i"#,
+            r#""nop;",
+            out("=r") a, out("=r") b, out("=r") c, out("=r") d,
+            out("=r") e, out("=r") f, out("=r") g, out("=r") h,
+            out("=r") i, out("=r") j, out("=r") k, out("=r") l,
+            out("=r") m, out("=r") n, out("=r") o, out("=r") p,
+            out("=r") q"#,
         )
         .unwrap();
+
         let err = build_ptx_asm(input).unwrap_err();
+
         assert!(
-            err.to_string().contains("at most 8 output operands"),
+            err.to_string().contains("at most 16 output operands"),
             "unexpected error: {err}"
         );
     }

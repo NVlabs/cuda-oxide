@@ -264,6 +264,16 @@ cargo +nightly-2026-04-03 install --git https://github.com/NVlabs/cuda-oxide.git
 
 On first run, `cargo-oxide` will automatically fetch and build the codegen backend. Subsequent runs reuse the cached build.
 
+To discover the examples available in a cuda-oxide checkout:
+
+```bash
+cargo oxide list
+cargo oxide list --json
+```
+
+The command reports each example's purpose and any documented GPU, architecture,
+CUDA Toolkit, or external SDK requirements.
+
 ---
 
 ## Verifying your installation

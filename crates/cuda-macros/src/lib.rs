@@ -54,10 +54,10 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 
 /// Inline PTX assembly for CUDA device code.
 ///
-/// The macro accepts the `%0` operand placeholders used by CUDA inline PTX, plus
-/// `in` / `out` operands with PTX constraint strings. Supported constraints are
-/// CUDA register constraints `"h"`, `"r"`, `"l"`, `"q"`, `"f"`, and `"d"`, plus
-/// `"n"` for immediate integer constants:
+/// The macro accepts the `%0` operand placeholders used by CUDA inline PTX,
+/// plus `in`, `out`, and `inout` operands with PTX constraint strings.
+/// Supported register constraints are `"h"`, `"r"`, `"l"`, `"q"`, `"f"`, and
+/// `"d"`, plus `"n"` for immediate integer inputs:
 ///
 /// ```ignore
 /// let y: u32;
@@ -71,18 +71,39 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// Read-write operands use `inout` with a `+`-prefixed register constraint.
+/// The current Rust value initializes the PTX output register and the final
+/// register value is written back to the same place:
+///
+/// ```ignore
+/// let mut accumulator = initial;
+/// unsafe {
+///     ptx_asm!(
+///         "add.u32 %0, %0, %1;",
+///         inout("+r") accumulator,
+///         in("r") increment,
+///         options(register_only),
+///     );
+/// }
+/// ```
+///
 /// Literal PTX registers that begin with `%` must be escaped as `%%`, matching
 /// CUDA C++ inline PTX. Literal `$` labels can be written normally.
 ///
-/// The surface supports up to 8 `out` operands (each constraint prefixed
-/// with `=`, e.g. `"=r"`), up to 16 `in` operands, `clobber("memory")`,
+/// The surface supports up to 16 output operands across `out` and `inout`,
+/// up to 16 explicit `in` operands, `clobber("memory")`,
 /// `options(register_only)`, and the explicit
-/// `options(register_only, may_diverge)` opt-in. With two or more `out`
-/// operands the snippet returns a tuple under the hood, destructured into
-/// the output places in declaration order:
+/// `options(register_only, may_diverge)` opt-in. `out` constraints use an `=`
+/// prefix, such as `"=r"`, while `inout` constraints use a `+` prefix, such as
+/// `"+r"`. All output operands must appear before explicit inputs.
+///
+/// With two or more output operands, including any mixture of `out` and
+/// `inout`, the marker returns a tuple under the hood and the macro writes its
+/// elements back to the output places in declaration order:
 ///
 /// ```ignore
-/// let (sum, prod): (u32, u32);
+/// let sum: u32;
+/// let prod: u32;
 /// unsafe {
 ///     ptx_asm!(
 ///         "add.u32 %0, %2, %3; mul.lo.u32 %1, %2, %3;",
@@ -96,7 +117,7 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 ///
 /// By default, snippets are treated as side-effecting and stay inside their
 /// current control flow. Use `options(register_only)` only for snippets that
-/// read explicit operands and write the explicit output. **Never** use
+/// read explicit operands and write explicit outputs. **Never** use
 /// `may_diverge` for `.sync` instructions, collectives, or any snippet whose
 /// participating lanes matter.
 #[proc_macro]
@@ -4766,7 +4787,9 @@ fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
         module == "thread" && marker == "__launch_contract_config"
     } else {
         (module == "thread"
-            && (marker == "__launch_bounds_config" || marker == "__unchecked_indexing_config"))
+            && (marker == "__launch_bounds_config"
+                || marker == "__launch_contract_block_config"
+                || marker == "__unchecked_indexing_config"))
             || (module == "cluster" && marker == "__cluster_config")
             || (module == "shared" && marker == "__dynamic_shared_alignment")
     }
@@ -5509,6 +5532,13 @@ fn substitute_type(ty: &Type, param: &syn::Ident, replacement: &Type) -> TokenSt
 /// and `.minnctapersm` PTX directives. This helps the CUDA compiler optimize
 /// register allocation and occupancy.
 ///
+/// `.maxntid` bounds the product `x * y * z`, so a 256-thread maximum admits
+/// `(256, 1, 1)`, `(16, 16, 1)` and `(4, 8, 8)` alike. Use
+/// `#[launch_contract(block = (x, y, z))]` to require one exact shape; that
+/// emits `.reqntid` instead, which the driver enforces per axis. A kernel
+/// carrying both attributes emits `.reqntid` alone, because ptxas rejects an
+/// entry declaring both directives. `.minnctapersm` composes with either.
+///
 /// # Usage
 ///
 /// ```ignore
@@ -5691,8 +5721,15 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// still validates every relation for well-formedness at compile time
 /// (unknown identifiers and unsupported grammar are errors at the attribute
 /// site), but no launcher exists to evaluate the relations at runtime. That
-/// is the same enforcement story as the geometry keys such as `block` and
-/// `dynamic_shared`.
+/// is the same enforcement story as `dynamic_shared`.
+///
+/// An exact `block` is the one key that also holds without a generated
+/// launcher. The shape reaches the device compiler as `.reqntid x, y, z`, and
+/// the CUDA driver refuses any launch whose block differs on any axis, so a
+/// standalone contracted kernel and an `_unchecked` raw launch are both
+/// covered. `.reqntid` and `.maxntid` cannot appear on one entry, so a kernel
+/// declaring an exact `block` emits `.reqntid` in place of the maximum that
+/// `#[launch_bounds]` would otherwise contribute.
 #[proc_macro_attribute]
 pub fn launch_contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as LaunchContractArgs);
@@ -5807,13 +5844,25 @@ fn inject_launch_contract_markers(args: &LaunchContractArgs, input: &mut ItemFn)
         }
     };
     input.block.stmts.insert(0, contract_marker);
+    let mut next = 1;
+
+    // Give the exact block shape to the device compiler as well, so ptxas
+    // emits `.reqntid` and the driver rejects a mismatched block on every
+    // axis. Without this the shape is known only to the host check.
+    if let Some((x, y, z)) = args.exact_block {
+        let block_marker: syn::Stmt = parse_quote! {
+            ::cuda_device::thread::__launch_contract_block_config::<#x, #y, #z>();
+        };
+        input.block.stmts.insert(next, block_marker);
+        next += 1;
+    }
 
     if dynamic_shared_max(args.dynamic_shared) != 0 {
         let alignment = args.dynamic_shared_alignment as usize;
         let alignment_marker: syn::Stmt = parse_quote! {
             ::cuda_device::shared::__dynamic_shared_alignment::<#alignment>();
         };
-        input.block.stmts.insert(1, alignment_marker);
+        input.block.stmts.insert(next, alignment_marker);
     }
 }
 
@@ -6934,14 +6983,6 @@ impl Parse for CudaLaunchInput {
             let _ = input.parse::<Token![,]>();
         }
 
-        if cluster_dim.is_some() && cooperative.is_some() {
-            return Err(syn::Error::new(
-                input.span(),
-                "cuda_launch!: `cluster_dim` and `cooperative` are mutually exclusive — \
-                 cooperative cluster launches are not yet supported by this macro",
-            ));
-        }
-
         Ok(CudaLaunchInput {
             kernel: kernel.ok_or_else(|| syn::Error::new(input.span(), "missing 'kernel'"))?,
             stream: stream.ok_or_else(|| syn::Error::new(input.span(), "missing 'stream'"))?,
@@ -7018,7 +7059,9 @@ impl Parse for CudaLaunchInput {
 /// | `cooperative` | `bool`            | *(optional)* Set `true` to launch via `cuLaunchKernelEx` with `CU_LAUNCH_ATTRIBUTE_COOPERATIVE` (required for `grid::sync()`) |
 /// | `args`        | `[arg, ...]`      | Kernel arguments (see below)                  |
 ///
-/// `cluster_dim` and `cooperative` are mutually exclusive at this layer.
+/// `cluster_dim` and `cooperative` may be combined. When both are set and
+/// `cooperative` is `true`, the expansion calls
+/// `cuda_core::launch_kernel_ex_cooperative_on_stream`.
 ///
 /// # Argument forms
 ///
@@ -7037,7 +7080,10 @@ impl Parse for CudaLaunchInput {
 pub fn cuda_launch(input: TokenStream) -> TokenStream {
     track_codegen_environment();
     let input = parse_macro_input!(input as CudaLaunchInput);
+    expand_cuda_launch(input).into()
+}
 
+fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
     let stream = &input.stream;
     let module = &input.module;
     let config = &input.config;
@@ -7147,13 +7193,40 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base),
     );
 
-    // Generate the launch call — regular, cluster, or cooperative.
+    // Generate the launch call — regular, cluster, cooperative, or both.
     //
     // All paths use the stream-aware cuda_core helpers. Those helpers bind the
     // stream's owning CUDA context to the calling thread and then delegate to
     // the raw cuLaunchKernel/cuLaunchKernelEx wrappers.
-    let launch_call = if let Some(cdim) = cluster_dim {
-        quote! {
+    let launch_call = match (&cluster_dim, &cooperative) {
+        (Some(cdim), Some(coop)) => quote! {
+            {
+                let #config_ident = #config;
+                let #cooperative_ident: bool = #coop;
+                if #cooperative_ident {
+                    cuda_core::launch_kernel_ex_cooperative_on_stream(
+                        &#function_ident,
+                        #config_ident.grid_dim,
+                        #config_ident.block_dim,
+                        #config_ident.shared_mem_bytes,
+                        #cdim,
+                        (#stream).as_ref(),
+                        &mut #args_ident,
+                    )
+                } else {
+                    cuda_core::launch_kernel_ex_on_stream(
+                        &#function_ident,
+                        #config_ident.grid_dim,
+                        #config_ident.block_dim,
+                        #config_ident.shared_mem_bytes,
+                        #cdim,
+                        (#stream).as_ref(),
+                        &mut #args_ident,
+                    )
+                }
+            }
+        },
+        (Some(cdim), None) => quote! {
             {
                 let #config_ident = #config;
                 cuda_core::launch_kernel_ex_on_stream(
@@ -7166,9 +7239,8 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                     &mut #args_ident,
                 )
             }
-        }
-    } else if let Some(coop) = cooperative {
-        quote! {
+        },
+        (None, Some(coop)) => quote! {
             {
                 let #config_ident = #config;
                 let #cooperative_ident: bool = #coop;
@@ -7192,9 +7264,8 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                     )
                 }
             }
-        }
-    } else {
-        quote! {
+        },
+        (None, None) => quote! {
             {
                 let #config_ident = #config;
                 cuda_core::launch_kernel_on_stream(
@@ -7206,10 +7277,10 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                     &mut #args_ident,
                 )
             }
-        }
+        },
     };
 
-    let expanded = if has_closure {
+    if has_closure {
         let closure_expr = closure_info.expect("has_closure but no closure_info");
 
         // The on-wire PTX name comes from the kernel's
@@ -7277,9 +7348,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                 #launch_call
             }
         }
-    };
-
-    TokenStream::from(expanded)
+    }
 }
 
 // ============================================================================
@@ -7871,6 +7940,31 @@ mod tests {
         assert!(
             !expanded.contains("launch_kernel_ex_on_stream"),
             "cluster-only call should be replaced by the combined one:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn cuda_launch_accepts_combined_cluster_and_cooperative() {
+        let input: CudaLaunchInput = parse_quote! {
+            kernel: clustered_grid_sync_kernel,
+            stream: stream,
+            module: module,
+            config: config,
+            cluster_dim: (2, 1, 1),
+            cooperative: true,
+            args: []
+        };
+        assert!(input.cluster_dim.is_some());
+        assert!(input.cooperative.is_some());
+
+        let expanded = expand_cuda_launch(input).to_string().replace(' ', "");
+        assert!(
+            expanded.contains("launch_kernel_ex_cooperative_on_stream"),
+            "expected combined cluster+cooperative cuda_launch expansion:\n{expanded}"
+        );
+        assert!(
+            !expanded.contains("launch_kernel_cooperative_on_stream"),
+            "non-cluster cooperative helper must not be used when cluster_dim is set:\n{expanded}"
         );
     }
 
@@ -8673,6 +8767,7 @@ mod tests {
                 unsafe {
                     ::cuda_device::thread::__launch_contract_config::<1, true>();
                 }
+                ::cuda_device::thread::__launch_contract_block_config::<64, 1, 1>();
                 ::cuda_device::cluster::__cluster_config::<2, 1, 1>();
                 ::cuda_device::shared::__dynamic_shared_alignment::<128>();
                 cuda_device::thread::__launch_bounds_config::<4, 1>();
@@ -8688,9 +8783,10 @@ mod tests {
         let markers = top_level_kernel_configuration_markers(&kernel);
         let forwarded = quote!(#(#markers)*).to_string().replace(' ', "");
 
-        assert_eq!(markers.len(), 4);
+        assert_eq!(markers.len(), 5);
         assert!(forwarded.contains("__launch_bounds_config::<64,2>()"));
         assert!(forwarded.contains("__launch_contract_config::<1,true>()"));
+        assert!(forwarded.contains("__launch_contract_block_config::<64,1,1>()"));
         assert!(forwarded.contains("__cluster_config::<2,1,1>()"));
         assert!(forwarded.contains("__dynamic_shared_alignment::<128>()"));
         assert!(!forwarded.contains("unrelated"));
@@ -8728,6 +8824,48 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn launch_contract_injects_the_block_marker_only_for_an_exact_block() {
+        let exact: LaunchContractArgs =
+            syn::parse_str("domain = 2, block = (8, 8, 1), dynamic_shared = 0").unwrap();
+        let mut kernel: ItemFn = parse_quote! { fn kernel() {} };
+        inject_launch_contract_markers(&exact, &mut kernel);
+        let expanded = quote!(#kernel).to_string().replace(' ', "");
+        assert_eq!(
+            expanded.matches("__launch_contract_block_config").count(),
+            1
+        );
+        assert!(expanded.contains("__launch_contract_block_config::<8u32,8u32,1u32>"));
+
+        // Without an exact block the kernel keeps whatever `#[launch_bounds]`
+        // declares, so no exact shape reaches the device compiler.
+        let bounded: LaunchContractArgs = syn::parse_str("domain = 1, dynamic_shared = 0").unwrap();
+        let mut unbounded_kernel: ItemFn = parse_quote! { fn unbounded_kernel() {} };
+        inject_launch_contract_markers(&bounded, &mut unbounded_kernel);
+        assert!(
+            !quote!(#unbounded_kernel)
+                .to_string()
+                .contains("__launch_contract_block_config")
+        );
+    }
+
+    #[test]
+    fn launch_contract_keeps_every_marker_when_block_and_shared_are_both_declared() {
+        let args: LaunchContractArgs = syn::parse_str(
+            "domain = 1, block = (256, 1, 1), dynamic_shared = 128, dynamic_shared_alignment = 32",
+        )
+        .unwrap();
+        let mut kernel: ItemFn = parse_quote! { fn kernel() {} };
+        inject_launch_contract_markers(&args, &mut kernel);
+        let expanded = quote!(#kernel).to_string();
+        assert_eq!(expanded.matches("__launch_contract_config").count(), 1);
+        assert_eq!(
+            expanded.matches("__launch_contract_block_config").count(),
+            1
+        );
+        assert_eq!(expanded.matches("__dynamic_shared_alignment").count(), 1);
     }
 
     /// The `requires` demo module used by the size-requirement tests: two

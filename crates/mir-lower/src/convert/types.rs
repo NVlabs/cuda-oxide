@@ -2802,7 +2802,7 @@ mod tests {
         let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
         assert_eq!(map.field_slots, vec![None]);
         let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
-        let carrier: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let carrier: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
             vec![lowered_pointer, carrier, pad(&mut ctx, 4)]

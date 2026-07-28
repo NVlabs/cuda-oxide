@@ -36,6 +36,8 @@ cargo oxide sanitize vecadd         # build + run under NVIDIA Compute Sanitizer
 cargo oxide debug vecadd --tui      # build + launch cuda-gdb
 cargo oxide fmt                     # format all crates
 cargo oxide fmt --check             # check formatting
+cargo oxide list                    # list examples and requirements
+cargo oxide list --json             # stable machine-readable output
 cargo oxide doctor                  # validate environment
 cargo oxide setup                   # explicitly build the codegen backend
 ```
@@ -60,6 +62,7 @@ cargo oxide setup                   # explicitly build the codegen backend
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
 | `--tui`                      | debug                            | Use GDB's TUI interface                         |
 | `--check`                    | fmt                              | Check formatting only                           |
+| `--json`                     | list                             | Emit stable machine-readable output             |
 
 `--arch` is required for `emit-ltoir` and explicit NVVM IR output because those
 artifacts are architecture-specific. Without an override, `run` detects the
@@ -97,6 +100,16 @@ by this single-cubin path. Materialization is also a final-output mode, so it
 cannot be combined with `--emit-nvvm-ir` or `emit-ltoir`.
 
 ## Commands
+
+### `cargo oxide list [--json]`
+
+Lists every example bundled with the cuda-oxide workspace, including its short
+description and any hardware or toolkit requirements documented in its README.
+
+```bash
+cargo oxide list
+cargo oxide list --json
+```
 
 ### `cargo oxide run <example>`
 
@@ -340,5 +353,4 @@ crates/cargo-oxide/
 | `cargo oxide bench <example>`   | GPU profiling (nsys/ncu integration), report TFLOPS     |
 | `cargo oxide clean`             | Remove generated PTX/LL/LTOIR artifacts and build caches|
 | `cargo oxide update`            | Update the cached codegen backend to latest version     |
-| `cargo oxide list`              | List examples with descriptions and hardware reqs       |
 | `cargo oxide inspect <example>` | Show generated PTX without the full pipeline dump       |
