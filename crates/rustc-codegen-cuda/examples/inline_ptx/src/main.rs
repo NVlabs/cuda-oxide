@@ -89,6 +89,52 @@ mod kernels {
             *slot = accumulator;
         }
     }
+
+    /// Multi-`inout` with mixed widths: one asm block updates a 32-bit
+    /// counter (`+r`), a 64-bit accumulator (`+l`), and an `f32` scale
+    /// (`+f`) in place, next to a plain `out`. Distinct update formulas per
+    /// operand catch swapped tied-register bindings across widths.
+    #[kernel]
+    pub fn inline_ptx_multi_inout_kernel(
+        mut counts: DisjointSlice<u32>,
+        mut wides: DisjointSlice<u64>,
+        mut scales: DisjointSlice<f32>,
+        mut checks: DisjointSlice<u32>,
+    ) {
+        if let Some((count_slot, idx)) = counts.get_mut_indexed()
+            && let Some((wide_slot, _)) = wides.get_mut_indexed()
+            && let Some((scale_slot, _)) = scales.get_mut_indexed()
+            && let Some((check_slot, _)) = checks.get_mut_indexed()
+        {
+            let i = idx.get() as u32;
+            let mut count = i.wrapping_add(7);
+            let mut wide = (i as u64).wrapping_mul(0x0000_0001_0000_0003);
+            let mut scale = i as f32 * 0.5;
+            let check: u32;
+
+            unsafe {
+                ptx_asm!(
+                    "add.u32 %0, %0, %4;
+                     add.u64 %1, %1, %5;
+                     add.f32 %2, %2, %6;
+                     mul.lo.u32 %3, %4, %4;",
+                    inout("+r") count,
+                    inout("+l") wide,
+                    inout("+f") scale,
+                    out("=r") check,
+                    in("r") i,
+                    in("l") 11u64,
+                    in("f") 0.25f32,
+                    options(register_only),
+                );
+            }
+
+            *count_slot = count;
+            *wide_slot = wide;
+            *scale_slot = scale;
+            *check_slot = check;
+        }
+    }
 }
 
 fn main() {
@@ -166,6 +212,51 @@ fn main() {
             .wrapping_add(i.wrapping_mul(3).wrapping_add(1));
         if got != expected {
             eprintln!("Read-write mismatch at {i}: expected {expected}, got {got}");
+            std::process::exit(1);
+        }
+    }
+
+    let mut counts_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    let mut wides_dev = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
+    let mut scales_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
+    let mut checks_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.inline_ptx_multi_inout_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &mut counts_dev,
+            &mut wides_dev,
+            &mut scales_dev,
+            &mut checks_dev,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let counts = counts_dev.to_host_vec(&stream).unwrap();
+    let wides = wides_dev.to_host_vec(&stream).unwrap();
+    let scales = scales_dev.to_host_vec(&stream).unwrap();
+    let checks = checks_dev.to_host_vec(&stream).unwrap();
+    for i in 0..N {
+        let iu = i as u32;
+        let want_count = iu.wrapping_add(7).wrapping_add(iu);
+        let want_wide = (iu as u64)
+            .wrapping_mul(0x0000_0001_0000_0003)
+            .wrapping_add(11);
+        // Exact in f32: both terms are small dyadic rationals.
+        let want_scale = iu as f32 * 0.5 + 0.25;
+        let want_check = iu.wrapping_mul(iu);
+        if counts[i] != want_count
+            || wides[i] != want_wide
+            || scales[i] != want_scale
+            || checks[i] != want_check
+        {
+            eprintln!(
+                "Multi-inout mismatch at {i}: expected ({want_count}, {want_wide}, \
+                 {want_scale}, {want_check}), got ({}, {}, {}, {})",
+                counts[i], wides[i], scales[i], checks[i]
+            );
             std::process::exit(1);
         }
     }
