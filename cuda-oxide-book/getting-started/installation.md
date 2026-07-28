@@ -280,7 +280,8 @@ Useful day-to-day helpers once you are building kernels:
 # Print generated PTX without the full MIR/LLVM pipeline dump
 cargo oxide inspect vecadd
 
-# Remove local target/ dirs and generated PTX/LL/LTOIR artifacts
+# Remove local target/ dirs and generated device artifacts (PTX, LLVM IR,
+# LTOIR, cubin, and their sidecar metadata)
 cargo oxide clean
 ```
 

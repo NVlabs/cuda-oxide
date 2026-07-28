@@ -451,16 +451,21 @@ When you only need the final device assembly (not the intermediate dumps), use
 cargo oxide inspect vecadd
 ```
 
-`inspect` builds the example the same way as `pipeline`, then prints the
-generated PTX. Prefer it for a quick "what did the backend emit?" check. Use
-`pipeline` (below) when you need MIR / LLVM dialect / `.ll` stages as well.
+`inspect` builds the example the same way as `cargo oxide build`, then prints
+the generated PTX. Prefer it for a quick "what did the backend emit?" check.
+Use `pipeline` (below) when you need MIR / LLVM dialect / `.ll` stages as
+well. `inspect` is strictly a PTX view: it exits with an error when a non-PTX
+output mode is active in the environment (`CUDA_OXIDE_MATERIALIZE_CUBIN` or
+`CUDA_OXIDE_EMIT_NVVM_IR`).
 
 ## `cargo oxide clean` -- remove local build outputs
 
 `clean` deletes project-local Cargo `target/` directories and generated
-cuda-oxide artifacts (PTX / LLVM IR / LTOIR sidecars) under the current
-workspace or standalone project. It does **not** wipe the shared codegen
-backend cache at `~/.cargo/cuda-oxide/`.
+cuda-oxide device artifacts (`.ptx`, `.ll`, `.opt.ll`, `.ltoir`, `.cubin`,
+plus the `.target` / `.options` / `.cubin.target` sidecars) under the current
+workspace or standalone project. It refuses (with an error) to remove a
+symlinked `target/` directory or artifact, and it does **not** wipe the
+shared codegen backend cache at `~/.cargo/cuda-oxide/`.
 
 ```bash
 cargo oxide clean
