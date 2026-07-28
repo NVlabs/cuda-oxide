@@ -50,6 +50,16 @@ fn get_padded_static() -> &'static PaddedStatic {
     &PADDED_STATIC
 }
 
+#[inline(never)]
+fn get_padded_static_tag() -> &'static u8 {
+    &PADDED_STATIC.tag
+}
+
+#[inline(never)]
+fn get_padded_static_value() -> &'static u32 {
+    &PADDED_STATIC.value
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -91,6 +101,16 @@ mod kernels {
         unsafe {
             *nan_out = *get_static_nan();
             *padded_out = ((padded.value as u64) << 8) | padded.tag as u64;
+        }
+    }
+
+    #[kernel]
+    pub unsafe fn static_subobject_pointers(out: *mut u32) {
+        unsafe {
+            *out.add(0) = *get_padded_static_tag() as u32;
+            *out.add(1) = *get_padded_static_value();
+            *out.add(2) = get_static_weight_pair()[0].to_bits();
+            *out.add(3) = get_static_weight_pair()[1].to_bits();
         }
     }
 }
@@ -179,7 +199,34 @@ fn main() {
         std::process::exit(1);
     }
 
+    let subobject_out_dev =
+        DeviceBuffer::<u32>::zeroed(&stream, 4).expect("Failed to allocate subobject output");
+
+    unsafe {
+        module.static_subobject_pointers(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            subobject_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Static subobject kernel launch failed");
+
+    let subobject_result = subobject_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy static subobject output");
+
+    let subobject_expected = [0xabu32, 0x1234_5678, 4.0f32.to_bits(), 8.0f32.to_bits()];
+
+    println!("Static subobjects: result = {subobject_result:?}");
+
+    if subobject_result.as_slice() != subobject_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected static subobjects {subobject_expected:?}, got {subobject_result:?}"
+        );
+        std::process::exit(1);
+    }
+
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, and pointer addends."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, pointer addends, and subobject addresses."
     );
 }

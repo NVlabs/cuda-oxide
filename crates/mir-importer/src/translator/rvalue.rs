@@ -822,6 +822,24 @@ pub fn translate_rvalue(
                 prev_op,
                 loc.clone(),
             )? {
+                // Address arithmetic remains in the physical address space, but the
+                // resulting Rust reference must have its exact translated Rust type.
+                let rust_result_type = rvalue.ty(body.locals()).map_err(|error| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "failed to determine reference rvalue type: {error:?}"
+                    )))
+                })?;
+                let expected_ptr_type = types::translate_type(ctx, &rust_result_type)?;
+
+                let (result_val, last_inserted) = cast_to_generic_addrspace_if_needed(
+                    ctx,
+                    result_val,
+                    expected_ptr_type,
+                    block_ptr,
+                    last_inserted,
+                    loc.clone(),
+                );
+
                 return Ok((None, result_val, last_inserted));
             }
 
@@ -898,6 +916,24 @@ pub fn translate_rvalue(
                 prev_op,
                 loc.clone(),
             )? {
+                // Preserve physical address spaces while walking the place, then restore
+                // the exact raw-pointer type required by the Rust rvalue.
+                let rust_result_type = rvalue.ty(body.locals()).map_err(|error| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "failed to determine address-of rvalue type: {error:?}"
+                    )))
+                })?;
+                let expected_ptr_type = types::translate_type(ctx, &rust_result_type)?;
+
+                let (result_val, last_inserted) = cast_to_generic_addrspace_if_needed(
+                    ctx,
+                    result_val,
+                    expected_ptr_type,
+                    block_ptr,
+                    last_inserted,
+                    loc.clone(),
+                );
+
                 return Ok((None, result_val, last_inserted));
             }
 
@@ -1979,10 +2015,19 @@ pub fn translate_operand(
                     }
                 }
 
+                // The materialized constant pointer must carry the exact
+                // translated Rust operand type. Slot stores and mem2reg are
+                // type-strict, so shapes like `_1 = const &STATIC;
+                // &(*_1).field` need the operand normalized here rather
+                // than leaving the physical-address-space pointer type
+                // exposed to the rest of the function body.
+                let result_ptr_ty = types::translate_type(ctx, &rust_ty)?;
+
                 return translate_static_global_pointer(
                     ctx,
                     &static_target.static_def,
                     pointee_mir_ty,
+                    result_ptr_ty,
                     is_mutable,
                     static_target.byte_offset,
                     block_ptr,
@@ -2788,11 +2833,18 @@ fn classify_place_read_strategy(
                     // where `mir.extract_field` supports tuple values.
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
+
                 let field_type = types::translate_type(ctx, field_ty)?;
-                current_ptr_ty = dialect_mir::types::MirPtrType::get_generic(
-                    ctx, field_type, /* is_mutable */ false,
-                )
-                .into();
+                let Some(projected_ptr_ty) = projected_pointer_type(
+                    ctx,
+                    current_ptr_ty,
+                    field_type,
+                    /* is_mutable */ false,
+                ) else {
+                    return Ok(PlaceReadStrategy::ValueFallback);
+                };
+
+                current_ptr_ty = projected_ptr_ty;
             }
 
             mir::ProjectionElem::Index(_) => {
@@ -4034,25 +4086,35 @@ fn translate_place_addr_from_slot(
 
             mir::ProjectionElem::Field(field_idx, field_ty) => {
                 let field_type = types::translate_type(ctx, field_ty)?;
-                let result_ptr_ty =
-                    dialect_mir::types::MirPtrType::get_generic(ctx, field_type, is_mutable);
+
+                // Field address computation must remain in the address space of the
+                // aggregate pointer. LLVM GEP cannot change address spaces.
+                let Some(result_ptr_ty) =
+                    projected_pointer_type(ctx, current.get_type(ctx), field_type, is_mutable)
+                else {
+                    return Ok(None);
+                };
+
                 let op = Operation::new(
                     ctx,
                     MirFieldAddrOp::get_concrete_op_info(),
-                    vec![result_ptr_ty.into()],
+                    vec![result_ptr_ty],
                     vec![current],
                     vec![],
                     0,
                 );
                 op.deref_mut(ctx).set_loc(loc.clone());
+
                 MirFieldAddrOp::new(op).set_attr_field_index(
                     ctx,
                     dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
                 );
+
                 match current_prev_op {
-                    Some(p) => op.insert_after(ctx, p),
+                    Some(previous) => op.insert_after(ctx, previous),
                     None => op.insert_at_front(block_ptr, ctx),
                 }
+
                 current = op.deref(ctx).get_result(0);
                 current_prev_op = Some(op);
             }
@@ -4286,6 +4348,27 @@ fn mir_ptr_pointee(ctx: &Context, ptr_ty: TypeHandle) -> Option<TypeHandle> {
         .deref(ctx)
         .downcast_ref::<dialect_mir::types::MirPtrType>()
         .map(|ptr_ty| ptr_ty.pointee)
+}
+
+/// Build a pointer to `pointee` while preserving the address space of
+/// `base_ptr_ty`.
+///
+/// Address-producing projections such as field access are LLVM GEPs, and a
+/// GEP cannot change the address space of its base pointer.
+fn projected_pointer_type(
+    ctx: &mut Context,
+    base_ptr_ty: TypeHandle,
+    pointee: TypeHandle,
+    is_mutable: bool,
+) -> Option<TypeHandle> {
+    let address_space = {
+        let base_ptr_ty = base_ptr_ty.deref(ctx);
+        base_ptr_ty
+            .downcast_ref::<dialect_mir::types::MirPtrType>()?
+            .address_space
+    };
+
+    Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
 }
 
 fn is_empty_tuple_type(ctx: &Context, ty: TypeHandle) -> bool {
@@ -8124,6 +8207,7 @@ fn translate_static_global_pointer(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
     result_pointee_ty: TypeHandle,
+    result_ptr_ty: TypeHandle,
     is_mutable: bool,
     byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
@@ -8131,6 +8215,27 @@ fn translate_static_global_pointer(
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     let initializer = static_initializer_data(static_def, loc.clone())?;
+
+    // Rust const evaluation permits forming a pointer one past the end of
+    // an allocation (offset == allocation size); only offsets strictly
+    // beyond the allocation are impossible for rustc to have produced.
+    // Forming the pointer is what is translated here, so the check must
+    // not add a pointee-size term: that would reject legal one-past-the-
+    // end constants that are never dereferenced.
+    let allocation_size = initializer.bytes.len() as u64;
+    if byte_offset > allocation_size {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "constant pointer to device static {} has byte offset {}, \
+                 but the static allocation is only {} bytes",
+                static_def.name(),
+                byte_offset,
+                allocation_size
+            ))
+        );
+    }
+
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let static_ty = static_def.ty();
 
@@ -8193,8 +8298,18 @@ fn translate_static_global_pointer(
 
     // Preserve the existing direct path. It avoids generating unnecessary
     // casts and pointer arithmetic for ordinary references to whole statics.
+    // The result is still normalized to the exact translated Rust operand
+    // type: slot stores and mem2reg are type-strict, so the physical
+    // address-space pointer must not leak into the function body.
     if byte_offset == 0 {
-        return Ok((base_ptr, Some(global_alloc.get_operation())));
+        let (result, last_op) = retype_static_pointer_result(
+            ctx,
+            base_ptr,
+            result_ptr_ty,
+            global_alloc.get_operation(),
+            loc,
+        );
+        return Ok((result, Some(last_op)));
     }
 
     let address_space = {
@@ -8213,7 +8328,10 @@ fn translate_static_global_pointer(
     let byte_ptr_ty: TypeHandle =
         dialect_mir::types::MirPtrType::get(ctx, byte_ty, is_mutable, address_space).into();
 
-    let result_ptr_ty: TypeHandle =
+    // The address arithmetic stays in the static's physical address space
+    // (LLVM GEPs cannot change address spaces); the exact-Rust-type
+    // normalization happens once, at the end.
+    let interior_ptr_ty: TypeHandle =
         dialect_mir::types::MirPtrType::get(ctx, result_pointee_ty, is_mutable, address_space)
             .into();
 
@@ -8283,19 +8401,63 @@ fn translate_static_global_pointer(
     let result_cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
-        vec![result_ptr_ty],
+        vec![interior_ptr_ty],
         vec![offset_byte_ptr],
         vec![],
         0,
     );
-    result_cast_op.deref_mut(ctx).set_loc(loc);
+    result_cast_op.deref_mut(ctx).set_loc(loc.clone());
 
     let result_cast = MirCastOp::new(result_cast_op);
     result_cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
     result_cast.get_operation().insert_after(ctx, ptr_offset_op);
 
+    // 5. Normalize to the exact translated Rust operand type (lowering
+    // emits an `addrspacecast` when the address spaces differ).
     let result = result_cast.get_operation().deref(ctx).get_result(0);
-    Ok((result, Some(result_cast.get_operation())))
+    let (result, last_op) = retype_static_pointer_result(
+        ctx,
+        result,
+        result_ptr_ty,
+        result_cast.get_operation(),
+        loc,
+    );
+    Ok((result, Some(last_op)))
+}
+
+/// Retype a materialized static-pointer `value` to the exact translated Rust
+/// operand type.
+///
+/// `MirGlobalAllocOp` results (and interior-pointer arithmetic built on
+/// them) carry the static's physical address space, but slot stores and
+/// mem2reg are type-strict: the constant operand must have the exact
+/// translated Rust type. Lowering turns this `PtrToPtr` cast into an
+/// `addrspacecast` when the address spaces differ, which
+/// `InferAddressSpaces` later folds back through for direct loads.
+fn retype_static_pointer_result(
+    ctx: &mut Context,
+    value: Value,
+    result_ptr_ty: TypeHandle,
+    insert_after: Ptr<Operation>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    if value.get_type(ctx) == result_ptr_ty {
+        return (value, insert_after);
+    }
+
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![result_ptr_ty],
+        vec![value],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    cast_op.insert_after(ctx, insert_after);
+
+    (cast_op.deref(ctx).get_result(0), cast_op)
 }
 
 /// Return the first union stored inline in `ty`.
@@ -8581,6 +8743,7 @@ mod pointer_array_constant_type_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dialect_mir::types::{MirPtrType, MirStructType};
 
     #[test]
     fn struct_storage_size_reads_layout_presence_not_size() {
@@ -8602,6 +8765,98 @@ mod tests {
 
         // Same failure on a type whose size was recorded before the query failed.
         assert_eq!(struct_storage_size(1, 0, 8), None);
+    }
+
+    #[test]
+    fn projected_pointer_type_preserves_base_address_space() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let field_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        let aggregate_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "ProjectedAddressSpaceTest".into(),
+            vec!["field".into()],
+            vec![field_ty],
+        )
+        .into();
+
+        for address_space in [1, 4] {
+            let base_ptr_ty: TypeHandle =
+                MirPtrType::get(&mut ctx, aggregate_ty, false, address_space).into();
+
+            let projected_ty = projected_pointer_type(&mut ctx, base_ptr_ty, field_ty, false)
+                .expect("base type must be a MIR pointer");
+
+            let (projected_pointee, projected_mutability, projected_address_space) = {
+                let projected_ty = projected_ty.deref(&ctx);
+                let projected_ptr = projected_ty
+                    .downcast_ref::<MirPtrType>()
+                    .expect("projected type must remain a MIR pointer");
+
+                (
+                    projected_ptr.pointee,
+                    projected_ptr.is_mutable,
+                    projected_ptr.address_space,
+                )
+            };
+
+            assert_eq!(
+                projected_pointee, field_ty,
+                "field projection must change the pointee type"
+            );
+            assert!(
+                !projected_mutability,
+                "field projection must preserve the requested mutability"
+            );
+            assert_eq!(
+                projected_address_space, address_space,
+                "field projection must preserve the base pointer address space"
+            );
+        }
+    }
+
+    #[test]
+    fn projected_address_normalization_matches_expected_pointer_type() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let pointee_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        let physical_ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 1).into();
+
+        let expected_rust_ptr_ty: TypeHandle =
+            MirPtrType::get_generic(&mut ctx, pointee_ty, false).into();
+
+        let block = BasicBlock::new(&mut ctx, None, vec![physical_ptr_ty]);
+        let physical_pointer = block.deref(&ctx).get_argument(0);
+
+        // Rvalue::Ref and Rvalue::AddressOf both use this normalization after
+        // computing a projected address in its physical address space.
+        let (normalized_pointer, last_op) = cast_to_generic_addrspace_if_needed(
+            &mut ctx,
+            physical_pointer,
+            expected_rust_ptr_ty,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        assert_eq!(
+            normalized_pointer.get_type(&ctx),
+            expected_rust_ptr_ty,
+            "projected addresses must be normalized to the exact Rust pointer type"
+        );
+
+        let cast_op = last_op.expect(
+            "normalizing addrspace(1) to the Rust generic address space must insert a cast",
+        );
+
+        assert!(
+            Operation::get_op::<MirCastOp>(cast_op, &ctx).is_some(),
+            "normalization must insert mir.cast"
+        );
     }
 }
 
