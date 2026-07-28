@@ -57,7 +57,8 @@ cargo oxide setup                   # explicitly build the codegen backend
 | `--device-codegen-crate <LIST>` | build/test passthrough        | Comma-separated device owner crate filter       |
 | `--device-cfg <NAME>`        | build/test passthrough           | Append `--cfg NAME` to rustflags                |
 | `-v, --verbose`              | run, sanitize, build, test, emit-ltoir | Show detailed compilation output           |
-| `--no-fmad`                  | run, sanitize, build, emit-ltoir, pipeline | Keep ordinary multiply and add/subtract operations separate |
+| `--no-fmad`                  | run, sanitize, build, test, emit-ltoir, pipeline | Keep ordinary multiply and add/subtract operations separate |
+| `--unchecked-indexing`       | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Elide device slice/array bounds checks (UB on OOB) |
 | `--async`                    | new                              | Use the async template                          |
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
 | `--tui`                      | debug                            | Use GDB's TUI interface                         |
