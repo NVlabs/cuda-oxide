@@ -1861,9 +1861,11 @@ pub fn translate_operand(
 
                 // Interior pointers are supported only for sized pointees. A slice, str,
                 // trait object, or another DST requires metadata and cannot be represented
-                // by the thin pointer emitted below.
+                // by the thin pointer emitted below. Note that `layout()` succeeds for
+                // DSTs such as `[f32]` (with an unsized shape), so a successful layout
+                // query must still be checked for sizedness explicitly.
                 if static_target.byte_offset != 0 {
-                    pointee_ty.layout().map_err(|e| {
+                    let pointee_layout = pointee_ty.layout().map_err(|e| {
                         input_error!(
                             loc.clone(),
                             TranslationErr::unsupported(format!(
@@ -1876,6 +1878,20 @@ pub fn translate_operand(
                             ))
                         )
                     })?;
+                    if !pointee_layout.shape().is_sized() {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "constant pointer into device static {} has byte offset {}, \
+                                 but pointee type {:?} is unsized; cuda-oxide does not yet \
+                                 preserve the fat-pointer metadata an interior slice or DST \
+                                 pointer needs",
+                                static_target.static_def.name(),
+                                static_target.byte_offset,
+                                pointee_ty
+                            ))
+                        );
+                    }
                 }
 
                 return translate_static_global_pointer(
