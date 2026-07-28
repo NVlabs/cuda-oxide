@@ -55,6 +55,21 @@
 //! assumption, and to fail loudly on the cases where it does not hold: a slice
 //! taken at a hand-computed offset, a sub-slice starting at an odd index, or a
 //! length that is not a whole number of vectors.
+//!
+//! # Host-side story
+//!
+//! `cuda-core` does not depend on `cuda-device`, so these types carry no
+//! `DeviceCopy` impl, and the orphan rule stops downstream crates from adding
+//! one: a `DeviceBuffer<F32x4>` cannot be filled from host values of these
+//! types. That is fine, because the intended flow keeps host buffers *flat*:
+//!
+//! - Allocate and fill a `DeviceBuffer<f32>` as usual, pass it to a kernel
+//!   taking `&[f32]`, and take the view **inside the kernel** with
+//!   [`as_vectors`] / [`as_vectors_mut`]. This needs no host-side type at all.
+//! - Or reinterpret the flat buffer once at the boundary with `cuda-core`'s
+//!   `DeviceBuffer::cast_chunks`, using a host-defined `#[repr(C, align(16))]`
+//!   element that implements `DeviceCopy`, and launch a kernel that takes that
+//!   element type directly.
 
 use core::mem::{align_of, size_of};
 
