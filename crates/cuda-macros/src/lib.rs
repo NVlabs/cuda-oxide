@@ -3980,8 +3980,10 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// `generic_const_exprs` feature. Partial factors must be in `2..=1024`; an
 /// invalid specialization fails compilation instead of becoming a no-op.
 ///
-/// The pass currently recognizes explicit counted `while` loops. Range-based
-/// `for` loops are not yet recognized.
+/// The pass recognizes counted `while` loops and range `for i in lo..hi` forms
+/// whose exit test lowers to a relational comparison (including an equality
+/// against that comparison's boolean result). Other iterators are not yet
+/// recognized.
 ///
 /// Only the annotated loop is unrolled. Inner loops are copied intact unless
 /// they carry their own annotation. Several `continue` paths (multiple
@@ -6415,8 +6417,9 @@ pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Loop unrolling
 ///
 /// Loop annotations work the same way in device function definitions as they do
-/// in kernels. Use an explicit counted `while` loop; range-based `for` loops are
-/// not yet recognized. Partial factors must be `N >= 2`. Multiple `continue`
+/// in kernels. Counted `while` loops and range `for i in lo..hi` forms whose
+/// exit test lowers to a relational comparison are recognized; other iterators
+/// are not yet. Partial factors must be `N >= 2`. Multiple `continue`
 /// paths are supported; full unrolling preserves `break` and multiple exit
 /// targets. Partial unrolling requires a positive counter step, a `<` or `<=`
 /// test, an unchanging limit, and no exit besides the normal header test.

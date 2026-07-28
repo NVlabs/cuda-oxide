@@ -18,8 +18,11 @@
 //! small remainder loop for leftover iterations. The frontend records the
 //! request as a `mir.unroll_hint` operation inside that loop.
 //!
-//! The current analysis recognizes explicit counted `while` loops. Range-based
-//! `for` loops are not yet recognized.
+//! The analysis recognizes counted `while` loops and the common post-import
+//! shape of range-based `for i in 0..N` after `switchInt` lowering, where the
+//! exit test is an equality of a relational comparison against a boolean
+//! constant (`eq (i < n), true`). Other iterator forms (`step_by`, inclusive
+//! ranges, custom `IntoIterator`) are not yet recognized.
 //!
 //! Several `continue` paths are supported: the pass joins their back-edges
 //! before unrolling. Full `#[unroll]` also preserves early `break` paths and

@@ -16,6 +16,7 @@ mod common;
 use common::{
     counted_loop, counted_loop_from_step, early_exit_counted_loop, early_exit_with_direct_liveout,
     mir_ctx, multi_latch_counted_loop, multiple_exit_counted_loop, nested_counted_loop,
+    range_for_eq_wrapped_loop,
 };
 use dialect_mir::ops::{
     MirBitAndOp, MirCallOp, MirCondBranchOp, MirConstantOp, MirGeOp, MirReturnOp, MirUnrollHintOp,
@@ -120,6 +121,26 @@ fn full_unroll_removes_the_loop() {
         loop_count(&ctx, lp.region),
         0,
         "fully unrolling the only loop should leave no loop"
+    );
+}
+
+#[test]
+fn full_unroll_range_for_eq_wrapped_removes_the_loop() {
+    let mut ctx = mir_ctx();
+    let lp = range_for_eq_wrapped_loop(&mut ctx, 4);
+
+    assert_eq!(loop_count(&ctx, lp.region), 1, "starts with one loop");
+
+    let hint = MirUnrollHintOp::new(&mut ctx, 0);
+    hint.get_operation().insert_at_front(lp.latch, &ctx);
+
+    let mut analyses = AnalysisManager::default();
+    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses).expect("unroll pass succeeds");
+
+    assert_eq!(
+        loop_count(&ctx, lp.region),
+        0,
+        "eq-wrapped range-for guard must still fully unroll"
     );
 }
 

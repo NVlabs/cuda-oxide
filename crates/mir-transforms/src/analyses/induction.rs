@@ -50,7 +50,7 @@
 //! reported as `Unknown` / `None` rather than guessed at.
 
 use dialect_mir::ops::arithmetic::{MirAddOp, MirNotOp, MirSubOp};
-use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
+use dialect_mir::ops::comparison::{MirEqOp, MirGeOp, MirGtOp, MirLeOp, MirLtOp, MirNeOp};
 use dialect_mir::ops::constants::MirConstantOp;
 use dialect_mir::ops::control_flow::MirCondBranchOp;
 use pliron::basic_block::BasicBlock;
@@ -210,6 +210,51 @@ fn match_cmp(ctx: &Context, op: Ptr<Operation>) -> Option<(CmpPred, Value, Value
     };
     let o = op.deref(ctx);
     Some((pred, o.get_operand(0), o.get_operand(1)))
+}
+
+/// Recognize a relational comparison, including the form rustc/switch lowering
+/// often leaves for range `for` loops: `MirEq`/`MirNe` of a `<`/`<=`/`>`/`>=`
+/// result against a boolean constant.
+///
+/// Returns `(pred, lhs, rhs, flip)` where `flip` means the keep-going sense of
+/// `pred` must be negated (e.g. `MirEq(i < n, false)`).
+fn match_cmp_through_bool_eq(
+    ctx: &Context,
+    op: Ptr<Operation>,
+) -> Option<(CmpPred, Value, Value, bool)> {
+    if let Some((pred, lhs, rhs)) = match_cmp(ctx, op) {
+        return Some((pred, lhs, rhs, false));
+    }
+
+    let is_eq = Operation::get_op::<MirEqOp>(op, ctx).is_some();
+    let is_ne = Operation::get_op::<MirNeOp>(op, ctx).is_some();
+    if !is_eq && !is_ne {
+        return None;
+    }
+
+    let lhs = op.deref(ctx).get_operand(0);
+    let rhs = op.deref(ctx).get_operand(1);
+    for (cmp_val, const_val) in [(lhs, rhs), (rhs, lhs)] {
+        let Some(cmp_def) = cmp_val.defining_op() else {
+            continue;
+        };
+        let Some((pred, a, b)) = match_cmp(ctx, cmp_def) else {
+            continue;
+        };
+        let Some(bit) = const_i128(ctx, const_val) else {
+            continue;
+        };
+        // i1 true/false as 1/0 (sign-extended forms still non-zero / zero).
+        let const_is_true = bit != 0;
+        let flip = match (is_eq, const_is_true) {
+            (true, true) => false,  // eq(cmp, true)  == cmp
+            (true, false) => true,  // eq(cmp, false) == !cmp
+            (false, true) => true,  // ne(cmp, true)  == !cmp
+            (false, false) => false, // ne(cmp, false) == cmp
+        };
+        return Some((pred, a, b, flip));
+    }
+    None
 }
 
 /// Run the full analysis on loop `id`: classify every header argument, find the
@@ -481,14 +526,15 @@ fn analyze_guard(
         Some(d) => d,
         None => return (None, None, None, None),
     };
-    let (pred_written, lhs, rhs) = match match_cmp(ctx, def) {
+    let (pred_written, lhs, rhs, eq_flip) = match match_cmp_through_bool_eq(ctx, def) {
         Some(t) => t,
         None => return (None, None, None, None),
     };
     // We want the predicate that is true when the body runs. If the body runs
     // when the comparison is true, that's the comparison itself; if it runs when
-    // the comparison is false, flip the comparison to its opposite.
-    let mut pred = if body_when_cmp_true {
+    // the comparison is false, flip the comparison to its opposite. An outer
+    // `MirEq`/`MirNe` against a boolean constant may also flip the sense.
+    let mut pred = if body_when_cmp_true ^ eq_flip {
         pred_written
     } else {
         pred_written.negate()

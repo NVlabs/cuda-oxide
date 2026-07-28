@@ -9,7 +9,9 @@
 
 mod common;
 
-use common::{counted_loop, counted_loop_from, mir_ctx, multi_latch_counted_loop};
+use common::{
+    counted_loop, counted_loop_from, mir_ctx, multi_latch_counted_loop, range_for_eq_wrapped_loop,
+};
 use mir_transforms::analyses::induction::{ArgKind, CmpPred, analyze};
 use mir_transforms::analyses::loop_info::LoopInfo;
 use pliron::graph::dominance::DomInfo;
@@ -56,6 +58,34 @@ fn analyzes_counted_loop_recurrence() {
         "acc should be a reduction, got {:?}",
         rec.args[0]
     );
+}
+
+#[test]
+fn analyzes_range_for_eq_wrapped_guard() {
+    // Post-import range-for shape: cond_br (eq (i < n), true) [body, exit].
+    let mut ctx = mir_ctx();
+    let lp = range_for_eq_wrapped_loop(&mut ctx, 8);
+
+    let mut dom = DomInfo::default();
+    let info = {
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    let id = info.innermost_loop(lp.header).unwrap();
+    let ph = info.preheader(&ctx, lp.region, id).unwrap();
+    let rec = analyze(&ctx, &info, id, ph);
+
+    assert_eq!(rec.primary_iv, Some(1));
+    match rec.args[1] {
+        ArgKind::BasicIv { init, step } => {
+            assert_eq!(init, 0);
+            assert_eq!(step, 1);
+        }
+        ref other => panic!("i should be a BasicIv, got {other:?}"),
+    }
+    assert_eq!(rec.continue_pred, Some(CmpPred::Lt));
+    assert_eq!(rec.bound, Some(8));
+    assert_eq!(rec.trip_count, Some(8));
 }
 
 /// The trip count tracks the bound: `while i < n` runs `n` times (init 0, step 1).

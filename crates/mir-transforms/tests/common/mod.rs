@@ -16,7 +16,8 @@
 use core::num::NonZero;
 
 use dialect_mir::ops::{
-    MirAddOp, MirCondBranchOp, MirConstantOp, MirFuncOp, MirGotoOp, MirLtOp, MirNotOp, MirReturnOp,
+    MirAddOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirFuncOp, MirGotoOp, MirLtOp, MirNotOp,
+    MirReturnOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
@@ -285,6 +286,87 @@ pub fn counted_loop_from_step(ctx: &mut Context, start: i64, n: i64, step: i64) 
     goto(ctx, latch, header, vec![acc1, inext]);
 
     // exit: return
+    ret(ctx, exit);
+
+    CountedLoop {
+        module,
+        region,
+        preheader,
+        header,
+        latch,
+        exit,
+    }
+}
+
+/// Build a counted loop whose exit test matches the common post-import shape of
+/// a range `for` after `switchInt` lowering: `cond_br (eq (i < n), true)`.
+///
+/// ```text
+///   preheader:        acc0=0; i0=0;            goto header(acc0, i0)
+///   header(acc, i):   lt = i < n; eq = lt == 1; cond_br eq [latch, exit]
+///   latch:            acc1=acc+i; i1=i+1;      goto header(acc1, i1)
+///   exit:             return
+/// ```
+///
+/// The classic `while` fixture uses `not(i < n)` with the exit on the true side.
+/// Range `for` desugaring more often leaves an equality against the comparison
+/// result (or against an Option discriminant derived from it); induction must
+/// see through that wrapper.
+pub fn range_for_eq_wrapped_loop(ctx: &mut Context, n: i64) -> CountedLoop {
+    let (module, region) = empty_func(ctx);
+    let u32 = u32t(ctx);
+    let i1ty = i1(ctx);
+
+    let preheader = block(ctx, region, vec![]);
+    let header = block(ctx, region, vec![u32.into(), u32.into()]);
+    let latch = block(ctx, region, vec![]);
+    let exit = block(ctx, region, vec![]);
+
+    let acc0 = iconst(ctx, preheader, u32, 0);
+    let i0 = iconst(ctx, preheader, u32, 0);
+    goto(ctx, preheader, header, vec![acc0, i0]);
+
+    let acc = header.deref(ctx).get_argument(0);
+    let i = header.deref(ctx).get_argument(1);
+    let nconst = iconst(ctx, header, u32, n);
+    let lt = op2!(
+        ctx,
+        header,
+        MirLtOp::get_concrete_op_info(),
+        i1ty.into(),
+        i,
+        nconst
+    );
+    let one = iconst(ctx, header, i1ty, 1);
+    let eq = op2!(
+        ctx,
+        header,
+        MirEqOp::get_concrete_op_info(),
+        i1ty.into(),
+        lt,
+        one
+    );
+    // True successor is the latch (body); false is exit — keep going while eq.
+    cond_br(ctx, header, eq, latch, exit);
+
+    let acc1 = op2!(
+        ctx,
+        latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        acc,
+        i
+    );
+    let step = iconst(ctx, latch, u32, 1);
+    let inext = op2!(
+        ctx,
+        latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        step
+    );
+    goto(ctx, latch, header, vec![acc1, inext]);
     ret(ctx, exit);
 
     CountedLoop {

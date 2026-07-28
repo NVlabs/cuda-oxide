@@ -1094,8 +1094,10 @@ pub fn __unchecked_indexing_config<const ENABLED: bool>() {
 /// }
 /// ```
 ///
-/// The pass currently recognizes explicit counted `while` loops. Range-based
-/// `for` loops are not yet recognized.
+/// The pass recognizes counted `while` loops and range `for i in lo..hi` forms
+/// whose exit test lowers to a relational comparison (including an equality
+/// against that comparison's boolean result). Other iterators (`step_by`,
+/// inclusive ranges, custom `IntoIterator`) are not yet recognized.
 ///
 /// Loops with several `continue` paths are supported. Full `#[unroll]` also
 /// preserves `break` paths and multiple exit targets. Partial `#[unroll(N)]`
