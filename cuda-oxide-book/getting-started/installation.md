@@ -240,13 +240,14 @@ If you need to install it manually:
 
 ```bash
 rustup toolchain install nightly-2026-04-03
-rustup component add rust-src rustc-dev rust-analyzer --toolchain nightly-2026-04-03
+rustup component add rust-src rustc-dev rust-analyzer llvm-tools --toolchain nightly-2026-04-03
 ```
 
-The two extra components are required by the codegen backend:
+These components are required by the codegen backend and doctor:
 
 - `rust-src` -- source of the Rust standard library, needed for cross-compiling to the NVPTX target.
 - `rustc-dev` -- compiler internals that the backend links against.
+- `llvm-tools` -- toolchain-bundled `llc` used to lower LLVM IR to PTX (doctor's floor check).
 
 ---
 
@@ -321,8 +322,8 @@ If everything is configured correctly, this compiles a Rust kernel to PTX, launc
 :::{tip}
 **Common issues:**
 
-- `No working llc-21 or llc-22 found on PATH` -- install LLVM 21+ (`sudo apt install llvm-21`), add `/usr/lib/llvm-21/bin` to your `PATH`, or set `CUDA_OXIDE_LLC=/usr/bin/llc-21`.
+- `No working llc-21 or llc-22 found on PATH` -- prefer `rustup component add llvm-tools --toolchain nightly-2026-04-03`, or install LLVM 21+ (`sudo apt install llvm-21`), add `/usr/lib/llvm-21/bin` to your `PATH`, or set `CUDA_OXIDE_LLC=/usr/bin/llc-21`.
 - `'stddef.h' file not found` when building host `cuda-bindings` -- install clang dev headers: `sudo apt install clang-21` (or `libclang-common-21-dev`).
 - `cuda.h not found` -- Set `CUDA_TOOLKIT_PATH` to your CUDA install root, or ensure `/usr/local/cuda/include/cuda.h` exists.
-- `rust-src component missing` -- Run `rustup component add rust-src --toolchain nightly-2026-04-03`.
+- `rust-src` / `llvm-tools` component missing -- Run `rustup component add rust-src llvm-tools --toolchain nightly-2026-04-03`.
 :::

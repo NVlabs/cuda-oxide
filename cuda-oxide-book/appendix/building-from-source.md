@@ -39,11 +39,13 @@ If you need to install manually:
 
 ```bash
 rustup toolchain install nightly-2026-04-03
-rustup component add rust-src rustc-dev --toolchain nightly-2026-04-03
+rustup component add rust-src rustc-dev llvm-tools --toolchain nightly-2026-04-03
 ```
 
-`rust-src` provides the standard library source for cross-compilation and
-`rustc-dev` exposes compiler internals that the codegen backend links against.
+`rust-src` provides the standard library source for cross-compilation,
+`rustc-dev` exposes compiler internals that the codegen backend links against,
+and `llvm-tools` installs the toolchain-bundled `llc` used for PTX generation
+(also required by `cargo oxide doctor`).
 
 ## Install CUDA
 

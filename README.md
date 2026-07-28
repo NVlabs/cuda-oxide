@@ -169,7 +169,7 @@ nix run github:NVlabs/cuda-oxide#new my-project   # bootstrap a project
 # Toolchain installed automatically via rust-toolchain.toml
 # Manual install if needed:
 rustup toolchain install nightly-2026-04-03
-rustup component add rust-src rustc-dev --toolchain nightly-2026-04-03
+rustup component add rust-src rustc-dev llvm-tools --toolchain nightly-2026-04-03
 ```
 
 #### CUDA
