@@ -2034,6 +2034,16 @@ fn sanitizer_option_is_no(args: &[String], name: &str) -> bool {
     })
 }
 
+/// Fallback locations probed for `compute-sanitizer` when it is neither on
+/// PATH nor under the configured CUDA toolkit root. Shared by `sanitize`
+/// (`run_compute_sanitizer`) and `doctor` so both use the same discovery
+/// order by construction.
+const COMPUTE_SANITIZER_FALLBACK_PATHS: &[&str] = &[
+    "/usr/local/cuda/bin/compute-sanitizer",
+    "/opt/cuda/bin/compute-sanitizer",
+    "/usr/bin/compute-sanitizer",
+];
+
 fn run_compute_sanitizer(
     ctx: &Context,
     example_dir: &Path,
@@ -2045,11 +2055,7 @@ fn run_compute_sanitizer(
     let compute_sanitizer = find_cuda_toolkit_executable(
         ctx,
         "compute-sanitizer",
-        &[
-            "/usr/local/cuda/bin/compute-sanitizer",
-            "/opt/cuda/bin/compute-sanitizer",
-            "/usr/bin/compute-sanitizer",
-        ],
+        COMPUTE_SANITIZER_FALLBACK_PATHS,
     )
     .unwrap_or_else(|| {
         eprintln!("Error: compute-sanitizer not found.");
@@ -3937,20 +3943,19 @@ pub fn doctor(ctx: &Context) {
 
     // 10. compute-sanitizer (optional) — same discovery order as `sanitize`
     print!("compute-sanitizer (optional)... ");
-    match find_cuda_toolkit_executable(
-        ctx,
-        "compute-sanitizer",
-        &[
-            "/usr/local/cuda/bin/compute-sanitizer",
-            "/opt/cuda/bin/compute-sanitizer",
-            "/usr/bin/compute-sanitizer",
-        ],
-    ) {
+    match find_cuda_toolkit_executable(ctx, "compute-sanitizer", COMPUTE_SANITIZER_FALLBACK_PATHS) {
         Some(path) => match Command::new(&path).arg("--version").output() {
             Ok(output) if output.status.success() => {
                 let version = String::from_utf8_lossy(&output.stdout);
-                if let Some(line) = version.lines().next() {
-                    println!("✓ {} ({})", line.trim(), path.display());
+                // `compute-sanitizer --version` prints a banner and a
+                // copyright line before the actual "Version ..." line.
+                let line = version
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| line.starts_with("Version"))
+                    .or_else(|| version.lines().next().map(str::trim));
+                if let Some(line) = line {
+                    println!("✓ {} ({})", line, path.display());
                 } else {
                     println!("✓ {}", path.display());
                 }
@@ -6722,6 +6727,11 @@ path = "src/other.rs"
 
     #[test]
     fn doctor_compute_sanitizer_lookup_matches_sanitize_discovery() {
+        // Hermetic: a fake tool name keeps the user's real PATH (and any
+        // installed compute-sanitizer) out of the lookup, while the shared
+        // fallback const exercises the exact argument both `doctor` and
+        // `sanitize` pass. The configured toolkit root wins before any
+        // fallback path is consulted.
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time before unix epoch")
@@ -6731,16 +6741,9 @@ path = "src/other.rs"
             std::process::id(),
             unique
         ));
-        let tool = root.join("bin/compute-sanitizer");
+        let tool = root.join("bin/cuda-oxide-test-doctor-sanitizer");
         std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
-        std::fs::write(&tool, b"#!/bin/sh\necho compute-sanitizer fake\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&tool).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&tool, perms).unwrap();
-        }
+        std::fs::write(&tool, b"fake tool").unwrap();
         let ctx = test_context(OxideConfig {
             env: vec![(
                 "CUDA_TOOLKIT_PATH".to_string(),
@@ -6752,12 +6755,8 @@ path = "src/other.rs"
         assert_eq!(
             find_cuda_toolkit_executable(
                 &ctx,
-                "compute-sanitizer",
-                &[
-                    "/usr/local/cuda/bin/compute-sanitizer",
-                    "/opt/cuda/bin/compute-sanitizer",
-                    "/usr/bin/compute-sanitizer",
-                ],
+                "cuda-oxide-test-doctor-sanitizer",
+                COMPUTE_SANITIZER_FALLBACK_PATHS,
             ),
             Some(tool)
         );
