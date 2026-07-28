@@ -18,6 +18,7 @@ const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
 const SUPPORTED_INPUT_CONSTRAINTS: &[&str] = &["h", "r", "l", "q", "f", "d", "n", "C"];
 const SUPPORTED_OUTPUT_CONSTRAINTS: &[&str] = &["=h", "=r", "=l", "=q", "=f", "=d"];
+const COMPILE_TIME_STRING_CONSTRAINT: &str = "C";
 
 pub struct PtxAsmInput {
     template: LitStr,
@@ -238,7 +239,20 @@ fn build_ptx_asm(input: PtxAsmInput) -> syn::Result<TokenStream2> {
     };
     let options_lit = syn::LitByteStr::new(options_marker.as_bytes(), input.template.span());
 
-    let input_exprs: Vec<&Expr> = inputs.iter().map(|(_, expr)| expr).collect();
+    let input_exprs: Vec<TokenStream2> = inputs
+        .iter()
+        .map(|(constraint, expr)| {
+            if constraint.value() == COMPILE_TIME_STRING_CONSTRAINT {
+                // `in("C")` operands must be compile-time byte strings. The
+                // typed helper turns any other operand type into a type error
+                // at the call site, and the inline const keeps the operand a
+                // MIR constant so the importer can splice its text.
+                quote! { const { cuda_device::ptx::__ptx_asm_c(#expr) } }
+            } else {
+                quote! { #expr }
+            }
+        })
+        .collect();
     let arity = input_exprs.len();
 
     if !outputs.is_empty() {

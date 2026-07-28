@@ -121,6 +121,7 @@ pub fn emit_inline_ptx(
     let prepared = prepare_inline_ptx(
         &template,
         &constraints,
+        body,
         &args[3..],
         num_outputs,
         loc.clone(),
@@ -282,6 +283,7 @@ pub fn emit_inline_ptx(
 fn prepare_inline_ptx<'a>(
     template: &str,
     constraints: &str,
+    body: &mir::Body,
     args: &'a [mir::Operand],
     num_outputs: usize,
     loc: Location,
@@ -350,6 +352,24 @@ fn prepare_inline_ptx<'a>(
     {
         if constraint == COMPILE_TIME_STRING_CONSTRAINT {
             let operand_index = num_outputs + input_index;
+
+            // Only byte-string references may be spliced as compile-time
+            // text. Anything else (e.g. a bare integer constant) would
+            // silently splice its raw little-endian bytes into the template.
+            let operand_ty = arg.ty(body.locals()).ok();
+            if !operand_ty.as_ref().is_some_and(is_byte_array_ref) {
+                let ty_desc = operand_ty
+                    .map(|ty| format!("{:?}", ty.kind()))
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "ptx_asm `C` operand ${operand_index} must be a `&'static [u8; N]` \
+                         byte-string constant, got {ty_desc}"
+                    ))
+                );
+            }
+
             let kind_name = format!("ptx_asm `C` operand ${operand_index}");
             let value = literal_operand_string(arg, &kind_name, loc.clone())?;
 
@@ -370,6 +390,20 @@ fn prepare_inline_ptx<'a>(
         constraints,
         runtime_args,
     })
+}
+
+/// Whether `ty` is a reference to a `u8` array (`&[u8; N]`), the only
+/// operand type `in("C")` accepts.
+fn is_byte_array_ref(ty: &rustc_public::ty::Ty) -> bool {
+    use rustc_public::ty::{RigidTy, TyKind, UintTy};
+
+    let TyKind::RigidTy(RigidTy::Ref(_, pointee, _)) = ty.kind() else {
+        return false;
+    };
+    let TyKind::RigidTy(RigidTy::Array(element, _)) = pointee.kind() else {
+        return false;
+    };
+    matches!(element.kind(), TyKind::RigidTy(RigidTy::Uint(UintTy::U8)))
 }
 
 fn split_constraints(constraints: &str) -> Vec<&str> {
