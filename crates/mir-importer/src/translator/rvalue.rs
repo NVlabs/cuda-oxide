@@ -37,10 +37,10 @@ use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
-    MirCheckedSubOp, MirCmpOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
-    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirInsertFieldOp,
-    MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
-    MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
+    MirCheckedSubOp, MirCmpOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp,
+    MirConstructStructOp, MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp,
+    MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
+    MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
 };
 use dialect_mir::types::MirFP16Type;
 use pliron::basic_block::BasicBlock;
@@ -1839,34 +1839,51 @@ pub fn translate_operand(
             if let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
                 && let Some(static_target) = static_target_from_constant(constant, loc.clone())?
             {
-                if static_target.byte_offset != 0 {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "constant pointer into device static {} has byte offset {}; cuda-oxide does not yet preserve interior-static pointer addends",
-                            static_target.static_def.name(),
-                            static_target.byte_offset
-                        ))
-                    );
-                }
                 let static_ty = static_target.static_def.ty();
                 let pointee_mir_ty = types::translate_type(ctx, &pointee_ty)?;
                 let static_mir_ty = types::translate_type(ctx, &static_ty)?;
-                if pointee_mir_ty != static_mir_ty {
+
+                // A zero addend must still refer to the complete static object.
+                // Reinterpreting the base address as an unrelated pointee remains unsupported.
+                if static_target.byte_offset == 0 && pointee_mir_ty != static_mir_ty {
                     return input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
-                            "constant pointer to device static {} has pointee type {:?}, but the full static has type {:?}; pointers to static subobjects or unsized coercions are not yet supported",
+                            "constant pointer to device static {} has pointee type {:?}, \
+                             but the full static has type {:?}; zero-addend pointee \
+                             reinterpretations and unsized coercions are not supported",
                             static_target.static_def.name(),
                             pointee_ty,
                             static_ty
                         ))
                     );
                 }
+
+                // Interior pointers are supported only for sized pointees. A slice, str,
+                // trait object, or another DST requires metadata and cannot be represented
+                // by the thin pointer emitted below.
+                if static_target.byte_offset != 0 {
+                    pointee_ty.layout().map_err(|e| {
+                        input_error!(
+                            loc.clone(),
+                            TranslationErr::unsupported(format!(
+                                "constant pointer into device static {} has byte offset {}, \
+                                 but pointee type {:?} does not have a sized layout: {:?}",
+                                static_target.static_def.name(),
+                                static_target.byte_offset,
+                                pointee_ty,
+                                e
+                            ))
+                        )
+                    })?;
+                }
+
                 return translate_static_global_pointer(
                     ctx,
                     &static_target.static_def,
+                    pointee_mir_ty,
                     is_mutable,
+                    static_target.byte_offset,
                     block_ptr,
                     prev_op,
                     loc.clone(),
@@ -8126,7 +8143,9 @@ fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> S
 fn translate_static_global_pointer(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
+    result_pointee_ty: TypeHandle,
     is_mutable: bool,
+    byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -8134,6 +8153,7 @@ fn translate_static_global_pointer(
     let initializer = static_initializer_data(static_def, loc.clone())?;
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let static_ty = static_def.ty();
+
     if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
         return input_err!(
             loc,
@@ -8143,6 +8163,7 @@ fn translate_static_global_pointer(
             ))
         );
     }
+
     let is_constant = is_constant_wrapper_type(&static_ty);
 
     let global_key: String = if is_constant {
@@ -8154,25 +8175,26 @@ fn translate_static_global_pointer(
     };
 
     let global_ty = types::translate_type(ctx, &static_ty)?;
-    let ptr_ty = if is_constant {
+    let global_ptr_ty: TypeHandle = if is_constant {
         dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
     } else {
         dialect_mir::types::MirPtrType::get_global(ctx, global_ty, is_mutable).into()
     };
 
-    let op = Operation::new(
+    let global_op = Operation::new(
         ctx,
         MirGlobalAllocOp::get_concrete_op_info(),
-        vec![ptr_ty],
+        vec![global_ptr_ty],
         vec![],
         vec![],
         0,
     );
-    op.deref_mut(ctx).set_loc(loc);
+    global_op.deref_mut(ctx).set_loc(loc.clone());
 
-    let global_alloc = MirGlobalAllocOp::new(op);
+    let global_alloc = MirGlobalAllocOp::new(global_op);
 
-    use pliron::builtin::attributes::{StringAttr, TypeAttr};
+    use pliron::builtin::attributes::{IntegerAttr, StringAttr, TypeAttr};
+
     global_alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
     global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
     set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
@@ -8187,8 +8209,113 @@ fn translate_static_global_pointer(
         global_alloc.get_operation().insert_at_front(block_ptr, ctx);
     }
 
-    let val = global_alloc.get_operation().deref(ctx).get_result(0);
-    Ok((val, Some(global_alloc.get_operation())))
+    let base_ptr = global_alloc.get_operation().deref(ctx).get_result(0);
+
+    // Preserve the existing direct path. It avoids generating unnecessary
+    // casts and pointer arithmetic for ordinary references to whole statics.
+    if byte_offset == 0 {
+        return Ok((base_ptr, Some(global_alloc.get_operation())));
+    }
+
+    let address_space = {
+        let base_ty = base_ptr.get_type(ctx);
+        let base_ty = base_ty.deref(ctx);
+        base_ty
+            .downcast_ref::<dialect_mir::types::MirPtrType>()
+            .expect("MirGlobalAllocOp must return MirPtrType")
+            .address_space
+    };
+
+    // mir.ptr_offset scales by sizeof(pointee). Cast to u8 first so the
+    // rustc addend is interpreted as bytes rather than static elements.
+    let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Unsigned).into();
+
+    let byte_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get(ctx, byte_ty, is_mutable, address_space).into();
+
+    let result_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get(ctx, result_pointee_ty, is_mutable, address_space)
+            .into();
+
+    // 1. *StaticType addrspace(N) -> *u8 addrspace(N)
+    let to_byte_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![byte_ptr_ty],
+        vec![base_ptr],
+        vec![],
+        0,
+    );
+    to_byte_op.deref_mut(ctx).set_loc(loc.clone());
+
+    let to_byte_cast = MirCastOp::new(to_byte_op);
+    to_byte_cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    to_byte_cast
+        .get_operation()
+        .insert_after(ctx, global_alloc.get_operation());
+
+    let byte_ptr = to_byte_cast.get_operation().deref(ctx).get_result(0);
+
+    // 2. Materialize the rustc byte addend as usize.
+    let offset_ty = types::get_usize_type(ctx);
+    let offset_attr = IntegerAttr::new(
+        offset_ty,
+        APInt::from_u64(
+            byte_offset,
+            NonZeroUsize::new(64).expect("usize must have non-zero width"),
+        ),
+    );
+
+    let offset_const_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![offset_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    offset_const_op.deref_mut(ctx).set_loc(loc.clone());
+
+    let offset_const = MirConstantOp::new(offset_const_op);
+    offset_const.set_attr_value(ctx, offset_attr);
+    offset_const
+        .get_operation()
+        .insert_after(ctx, to_byte_cast.get_operation());
+
+    let offset_value = offset_const.get_operation().deref(ctx).get_result(0);
+
+    // 3. Apply the addend. Since the pointer now points to u8, one element
+    // equals exactly one byte.
+    let ptr_offset_op = Operation::new(
+        ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![byte_ptr_ty],
+        vec![byte_ptr, offset_value],
+        vec![],
+        0,
+    );
+    ptr_offset_op.deref_mut(ctx).set_loc(loc.clone());
+    ptr_offset_op.insert_after(ctx, offset_const.get_operation());
+
+    let offset_byte_ptr = ptr_offset_op.deref(ctx).get_result(0);
+
+    // 4. *u8 addrspace(N) -> *ResultPointee addrspace(N)
+    let result_cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![result_ptr_ty],
+        vec![offset_byte_ptr],
+        vec![],
+        0,
+    );
+    result_cast_op.deref_mut(ctx).set_loc(loc);
+
+    let result_cast = MirCastOp::new(result_cast_op);
+    result_cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    result_cast.get_operation().insert_after(ctx, ptr_offset_op);
+
+    let result = result_cast.get_operation().deref(ctx).get_result(0);
+    Ok((result, Some(result_cast.get_operation())))
 }
 
 /// Return the first union stored inline in `ty`.

@@ -17,6 +17,8 @@ static mut DEVICE_MARKER: u32 = 0;
 static STATIC_WEIGHTS: [[f32; 2]; 4] = [[0.25, 0.5], [1.0, 2.0], [4.0, 8.0], [16.0, 32.0]];
 static STATIC_NAN: f32 = f32::from_bits(0x7fc0_1234);
 
+const STATIC_WEIGHT_PAIR: &'static [f32; 2] = &STATIC_WEIGHTS[2];
+
 #[repr(C)]
 struct PaddedStatic {
     tag: u8,
@@ -34,6 +36,11 @@ fn get_static_weights() -> &'static [[f32; 2]; 4] {
 }
 
 #[inline(never)]
+fn get_static_weight_pair() -> &'static [f32; 2] {
+    STATIC_WEIGHT_PAIR
+}
+
+#[inline(never)]
 fn get_static_nan() -> &'static f32 {
     &STATIC_NAN
 }
@@ -41,11 +48,6 @@ fn get_static_nan() -> &'static f32 {
 #[inline(never)]
 fn get_padded_static() -> &'static PaddedStatic {
     &PADDED_STATIC
-}
-
-#[inline(always)]
-unsafe fn load_pair(ptr: *const f32, i_pair: usize) -> [f32; 2] {
-    unsafe { *(ptr as *const [f32; 2]).add(i_pair) }
 }
 
 #[cuda_module]
@@ -67,16 +69,18 @@ mod kernels {
         }
     }
 
-    /// Read a non-zero immutable Rust static through a flattened pointer.
+    /// Read both the base address and an interior pointer into an immutable
+    /// device static.
     ///
-    /// This mirrors generated coefficient tables that return
-    /// `&'static [[f32; 2]; N]`, then vector-load from `&table[0][0]`.
+    /// `STATIC_WEIGHT_PAIR` carries the provenance of `STATIC_WEIGHTS` plus
+    /// a 16-byte addend selecting element 2.
     #[kernel]
     pub unsafe fn nonzero_static_table(out: *mut f32) {
         let weights = get_static_weights();
-        let pair = unsafe { load_pair(&weights[0][0], 2) };
+        let pair = get_static_weight_pair();
+
         unsafe {
-            *out = pair[0] + pair[1];
+            *out = weights[0][0] + pair[0] + pair[1];
         }
     }
 
@@ -136,7 +140,7 @@ fn main() {
     let static_result = static_out_dev
         .to_host_vec(&stream)
         .expect("Failed to copy static result")[0];
-    let static_expected = 12.0f32;
+    let static_expected = 12.25f32;
     println!("Static table: result = {static_result}");
     if (static_result - static_expected).abs() > f32::EPSILON {
         eprintln!("FAILED: expected {static_expected}, got {static_result}");
@@ -175,5 +179,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("\nSUCCESS: device globals preserved their storage and initializer bytes.");
+    println!(
+        "\nSUCCESS: device globals preserved storage, initializer bytes, and pointer addends."
+    );
 }
