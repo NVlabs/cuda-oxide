@@ -1689,6 +1689,73 @@ pub fn translate_rvalue(
     }
 }
 
+fn read_float_constant_bits(
+    constant: &mir::ConstOperand,
+    kind_name: &str,
+    byte_width: usize,
+    loc: Location,
+) -> TranslationResult<u128> {
+    let bytes = constant_bytes(constant, kind_name, loc.clone())?;
+
+    if bytes.len() < byte_width {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "{kind_name} constant needs {byte_width} bytes, found {}",
+                bytes.len()
+            ))
+        );
+    }
+
+    Ok(read_uint_from_bytes(&bytes[..byte_width]))
+}
+
+fn translate_float_constant(
+    ctx: &mut Context,
+    constant: &mir::ConstOperand,
+    const_ty: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use dialect_mir::ops::MirFloatConstantOp;
+    use pliron::builtin::attributes::{FPDoubleAttr, FPSingleAttr};
+
+    let op = Operation::new(
+        ctx,
+        MirFloatConstantOp::get_concrete_op_info(),
+        vec![const_ty],
+        vec![],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc.clone());
+
+    let float_op = MirFloatConstantOp::new(op);
+
+    if const_ty.deref(ctx).is::<MirFP16Type>() {
+        let bits = read_float_constant_bits(constant, "f16", 2, loc.clone())? as u16;
+        float_op.set_attr_float_value_f16(ctx, MirFP16Attr::from_bits(bits));
+    } else if const_ty.deref(ctx).is::<FP32Type>() {
+        let bits = read_float_constant_bits(constant, "f32", 4, loc.clone())? as u32;
+        float_op.set_attr_float_value(ctx, FPSingleAttr::from(f32::from_bits(bits)));
+    } else if const_ty.deref(ctx).is::<FP64Type>() {
+        let bits = read_float_constant_bits(constant, "f64", 8, loc.clone())? as u64;
+        float_op.set_attr_float_value_f64(ctx, FPDoubleAttr::from(f64::from_bits(bits)));
+    } else {
+        unreachable!("translate_float_constant called with a non-float type");
+    }
+
+    if let Some(prev) = prev_op {
+        float_op.get_operation().insert_after(ctx, prev);
+    } else {
+        float_op.get_operation().insert_at_front(block_ptr, ctx);
+    }
+
+    let value = float_op.get_operation().deref(ctx).get_result(0);
+    Ok((value, Some(float_op.get_operation())))
+}
+
 /// Translate a MIR Operand to a pliron IR [`Value`].
 /// Returns the value and the last inserted operation (for proper ordering).
 ///
@@ -1927,7 +1994,18 @@ pub fn translate_operand(
                 .deref(ctx)
                 .is::<dialect_mir::types::MirArrayType>();
 
-            // Parse constant value from debug string (HACK for prototype)
+            if is_float {
+                return translate_float_constant(
+                    ctx,
+                    constant,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                );
+            }
+
+            // Debug parsing remains temporarily for non-floating constants.
             let const_str = format!("{:?}", constant.const_);
 
             // Handle pointer-to-array constants (byte strings, typed arrays like [f64; 3], etc.)
@@ -1986,165 +2064,6 @@ pub fn translate_operand(
                     prev_op,
                     loc,
                 )
-            } else if is_float {
-                // Parse bytes for float (f16, f32, or f64)
-                use dialect_mir::ops::MirFloatConstantOp;
-
-                if is_float_16 {
-                    let bytes = constant_bytes(constant, "f16", loc.clone())?;
-                    if bytes.len() < 2 {
-                        return input_err!(
-                            loc,
-                            TranslationErr::unsupported(format!(
-                                "f16 constant needs 2 bytes, found {}",
-                                bytes.len()
-                            ))
-                        );
-                    }
-                    let bits = read_uint_from_bytes(&bytes[..2]) as u16;
-                    let float_attr = MirFP16Attr::from_bits(bits);
-
-                    let op = Operation::new(
-                        ctx,
-                        MirFloatConstantOp::get_concrete_op_info(),
-                        vec![const_ty_ptr],
-                        vec![],
-                        vec![],
-                        0,
-                    );
-                    op.deref_mut(ctx).set_loc(loc);
-
-                    let float_op = MirFloatConstantOp::new(op);
-                    float_op.set_attr_float_value_f16(ctx, float_attr);
-
-                    if let Some(prev) = prev_op {
-                        float_op.get_operation().insert_after(ctx, prev);
-                    } else {
-                        float_op.get_operation().insert_at_front(block_ptr, ctx);
-                    }
-
-                    let val = float_op.get_operation().deref(ctx).get_result(0);
-
-                    Ok((val, Some(float_op.get_operation())))
-                } else if is_float_64 {
-                    // Handle f64 (8 bytes)
-                    let float_val = if const_str.contains("bytes: [") {
-                        if let Some(bytes_part) = const_str.split("bytes: [").nth(1) {
-                            let bytes_end = bytes_part.split(']').next().unwrap_or("");
-                            let mut bytes = [0u8; 8];
-                            for (i, byte_str) in bytes_end.split(',').enumerate() {
-                                if i >= 8 {
-                                    break;
-                                }
-                                let b_str = byte_str.trim();
-                                if let Some(num_str) = b_str
-                                    .strip_prefix("Some(")
-                                    .and_then(|s| s.strip_suffix(')'))
-                                    && let Ok(byte) = num_str.parse::<u8>()
-                                {
-                                    bytes[i] = byte;
-                                }
-                            }
-                            f64::from_le_bytes(bytes)
-                        } else {
-                            0.0f64
-                        }
-                    } else {
-                        // Try to parse as literal float
-                        const_str
-                            .split(':')
-                            .next()
-                            .unwrap_or("0.0")
-                            .trim()
-                            .replace('_', "")
-                            .parse()
-                            .unwrap_or(0.0f64)
-                    };
-
-                    let float_attr = pliron::builtin::attributes::FPDoubleAttr::from(float_val);
-
-                    let op = Operation::new(
-                        ctx,
-                        MirFloatConstantOp::get_concrete_op_info(),
-                        vec![const_ty_ptr],
-                        vec![],
-                        vec![],
-                        0,
-                    );
-                    op.deref_mut(ctx).set_loc(loc.clone());
-
-                    let float_op = MirFloatConstantOp::new(op);
-                    float_op.set_attr_float_value_f64(ctx, float_attr);
-
-                    if let Some(prev) = prev_op {
-                        float_op.get_operation().insert_after(ctx, prev);
-                    } else {
-                        float_op.get_operation().insert_at_front(block_ptr, ctx);
-                    }
-
-                    let val = float_op.get_operation().deref(ctx).get_result(0);
-
-                    Ok((val, Some(float_op.get_operation())))
-                } else {
-                    // Handle f32 (4 bytes)
-                    let float_val = if const_str.contains("bytes: [") {
-                        if let Some(bytes_part) = const_str.split("bytes: [").nth(1) {
-                            let bytes_end = bytes_part.split(']').next().unwrap_or("");
-                            let mut bytes = [0u8; 4];
-                            for (i, byte_str) in bytes_end.split(',').enumerate() {
-                                if i >= 4 {
-                                    break;
-                                }
-                                let b_str = byte_str.trim();
-                                if let Some(num_str) = b_str
-                                    .strip_prefix("Some(")
-                                    .and_then(|s| s.strip_suffix(')'))
-                                    && let Ok(byte) = num_str.parse::<u8>()
-                                {
-                                    bytes[i] = byte;
-                                }
-                            }
-                            f32::from_le_bytes(bytes)
-                        } else {
-                            0.0f32
-                        }
-                    } else {
-                        // Try to parse as literal float
-                        const_str
-                            .split(':')
-                            .next()
-                            .unwrap_or("0.0")
-                            .trim()
-                            .replace('_', "")
-                            .parse()
-                            .unwrap_or(0.0f32)
-                    };
-
-                    let float_attr = pliron::builtin::attributes::FPSingleAttr::from(float_val);
-
-                    let op = Operation::new(
-                        ctx,
-                        MirFloatConstantOp::get_concrete_op_info(),
-                        vec![const_ty_ptr],
-                        vec![],
-                        vec![],
-                        0,
-                    );
-                    op.deref_mut(ctx).set_loc(loc);
-
-                    let float_op = MirFloatConstantOp::new(op);
-                    float_op.set_attr_float_value(ctx, float_attr);
-
-                    if let Some(prev) = prev_op {
-                        float_op.get_operation().insert_after(ctx, prev);
-                    } else {
-                        float_op.get_operation().insert_at_front(block_ptr, ctx);
-                    }
-
-                    let val = float_op.get_operation().deref(ctx).get_result(0);
-
-                    Ok((val, Some(float_op.get_operation())))
-                }
             } else if const_ty_ptr
                 .deref(ctx)
                 .is::<dialect_mir::types::MirPtrType>()
