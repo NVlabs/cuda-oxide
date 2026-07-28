@@ -108,8 +108,8 @@ fn family_of(name: &str) -> String {
 
 /// Every `int_nvvm_*` name appearing anywhere in a JSON document.
 ///
-/// The two files have different shapes, so this walks rather than assuming a
-/// schema; a schema change should not silently zero the report.
+/// Correct for `imported.json`, whose every `int_nvvm_*` mention *is* an imported
+/// record. Do **not** use it on the catalog: see [`collect_generated`].
 fn collect_names(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::String(s) if s.starts_with("int_nvvm_") => {
@@ -118,6 +118,51 @@ fn collect_names(value: &Value, out: &mut BTreeSet<String>) {
         Value::Array(items) => items.iter().for_each(|v| collect_names(v, out)),
         Value::Object(map) => map.values().for_each(|v| collect_names(v, out)),
         _ => {}
+    }
+}
+
+/// Imported records the catalog actually *binds*, plus the ones it explicitly
+/// rejects.
+///
+/// A naive walk over every `int_nvvm_*` string in the catalog over-counts, because
+/// the catalog also records intrinsics it deliberately does **not** use. The
+/// `gridid` entry is the live example: it is `source = { kind = "ptx_native",
+/// instruction = "mov.u64 %gridid" }` and carries
+/// `special_register.llvm_exclusion = { source_record = "int_nvvm_read_ptx_sreg_gridid",
+/// reason = "result_width_mismatch" }` — the imported intrinsic returns `b32` while
+/// the register is 64-bit, so it is unusable by construction. Counting that as
+/// coverage inverts its meaning and inflates the generated total.
+///
+/// So bind only `source.source_record` where `source.kind == "llvm_imported"`, and
+/// report exclusions separately: "deliberately rejected" is a different fact from
+/// "nobody has got to it yet", and the whole point of this command is to keep those
+/// apart.
+fn collect_generated(
+    catalog: &Value,
+    bound: &mut BTreeSet<String>,
+    excluded: &mut BTreeSet<String>,
+) {
+    let Some(entries) = catalog.get("intrinsics").and_then(Value::as_array) else {
+        return;
+    };
+    for entry in entries {
+        let source = entry.get("source");
+        let kind = source.and_then(|s| s.get("kind")).and_then(Value::as_str);
+        if kind == Some("llvm_imported")
+            && let Some(record) = source
+                .and_then(|s| s.get("source_record"))
+                .and_then(Value::as_str)
+        {
+            bound.insert(record.to_string());
+        }
+        if let Some(record) = entry
+            .get("special_register")
+            .and_then(|sreg| sreg.get("llvm_exclusion"))
+            .and_then(|excl| excl.get("source_record"))
+            .and_then(Value::as_str)
+        {
+            excluded.insert(record.to_string());
+        }
     }
 }
 
@@ -133,7 +178,12 @@ pub fn compute(repo_root: &Path) -> Result<Coverage> {
     let mut imported = BTreeSet::new();
     collect_names(&read("intrinsics/imported.json")?, &mut imported);
     let mut generated = BTreeSet::new();
-    collect_names(&read("intrinsics/catalog.json")?, &mut generated);
+    let mut excluded = BTreeSet::new();
+    collect_generated(
+        &read("intrinsics/catalog.json")?,
+        &mut generated,
+        &mut excluded,
+    );
 
     let mut per_family: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for name in &imported {
@@ -297,5 +347,53 @@ mod tests {
         assert_eq!(c.ungenerated(), 215);
         assert_eq!(c.ungenerated_compute(), 5, "surface work is excluded");
         assert_eq!(c.families[0].total(), 15);
+    }
+
+    #[test]
+    fn an_llvm_exclusion_is_not_counted_as_coverage() {
+        // Shape taken from the live `gridid` entry: a `ptx_native` intrinsic that
+        // records the imported record it deliberately does not use. Walking every
+        // `int_nvvm_*` string would count the excluded record as generated, which
+        // inverts its meaning.
+        let catalog: Value = serde_json::from_str(
+            r#"{
+              "intrinsics": [
+                {
+                  "id": "bound_one",
+                  "source": { "kind": "llvm_imported", "source_record": "int_nvvm_bound" }
+                },
+                {
+                  "id": "gridid",
+                  "source": { "kind": "ptx_native", "instruction": "mov.u64 %gridid" },
+                  "special_register": {
+                    "llvm_exclusion": {
+                      "source_record": "int_nvvm_read_ptx_sreg_gridid",
+                      "reason": "result_width_mismatch"
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )
+        .expect("fixture parses");
+
+        let mut bound = BTreeSet::new();
+        let mut excluded = BTreeSet::new();
+        collect_generated(&catalog, &mut bound, &mut excluded);
+
+        assert_eq!(
+            bound,
+            BTreeSet::from(["int_nvvm_bound".to_string()]),
+            "only llvm_imported sources count as coverage"
+        );
+        assert_eq!(
+            excluded,
+            BTreeSet::from(["int_nvvm_read_ptx_sreg_gridid".to_string()]),
+            "the exclusion is tracked separately, not silently dropped"
+        );
+        assert!(
+            !bound.contains("int_nvvm_read_ptx_sreg_gridid"),
+            "a deliberately rejected intrinsic must never be reported as generated"
+        );
     }
 }
