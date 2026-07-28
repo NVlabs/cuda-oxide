@@ -5531,15 +5531,35 @@ channel = "nightly-2026-04-03"
 components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
 "#;
 
-const SCAFFOLD_GITIGNORE: &str = "\
-/target/
-**/*.ptx
-**/*.ll
-**/*.bc
-**/*.cubin
-**/*.ltoir
-.DS_Store
-";
+const SCAFFOLD_GITIGNORE_EXTRA: &[&str] = &[
+    "/target/",
+    "**/*.bc", // bitcode leftovers not in the clean suffix list
+    ".DS_Store",
+];
+
+fn scaffold_gitignore() -> String {
+    let mut lines: Vec<String> = SCAFFOLD_GITIGNORE_EXTRA
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect();
+    // Keep in lockstep with `GENERATED_ARTIFACT_SUFFIXES` so `cargo oxide new`
+    // ignores every artifact `cargo oxide clean` knows how to delete.
+    for suffix in GENERATED_ARTIFACT_SUFFIXES {
+        let pattern = format!("**/*.{suffix}");
+        if !lines.iter().any(|line| line == &pattern) {
+            lines.push(pattern);
+        }
+    }
+    // Stable order for readable diffs: keep the three fixed entries first,
+    // then sort generated patterns.
+    let (fixed, rest) = lines.split_at(SCAFFOLD_GITIGNORE_EXTRA.len());
+    let mut rest = rest.to_vec();
+    rest.sort();
+    let mut out = fixed.to_vec();
+    out.append(&mut rest);
+    out.push(String::new());
+    out.join("\n")
+}
 
 /// File contents produced by `cargo oxide new`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5784,7 +5804,7 @@ fn scaffold_files(name: &str, async_mode: bool) -> ScaffoldFiles {
     ScaffoldFiles {
         cargo_toml: scaffold_cargo_toml(name, async_mode),
         rust_toolchain_toml: RUST_TOOLCHAIN_TOML.to_string(),
-        gitignore: SCAFFOLD_GITIGNORE.to_string(),
+        gitignore: scaffold_gitignore(),
         readme: scaffold_readme(name, async_mode),
         main_rs: scaffold_main_rs(async_mode),
     }
@@ -9193,5 +9213,18 @@ edition = "2024"
         assert!(!files.readme.contains("sync template"));
         assert!(files.gitignore.contains("**/*.ptx"));
         assert!(files.main_rs.contains("vecadd_async"));
+    }
+
+    #[test]
+    fn scaffold_gitignore_covers_every_clean_artifact_suffix() {
+        let gitignore = scaffold_gitignore();
+        assert!(gitignore.contains("/target/"));
+        assert!(gitignore.contains("**/*.bc"));
+        for suffix in GENERATED_ARTIFACT_SUFFIXES {
+            assert!(
+                gitignore.contains(&format!("**/*.{suffix}")),
+                "scaffold .gitignore must ignore clean suffix `{suffix}`"
+            );
+        }
     }
 }
