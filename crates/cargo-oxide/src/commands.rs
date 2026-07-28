@@ -3643,6 +3643,9 @@ pub fn doctor(ctx: &Context) {
         println!("- not built yet (run `cargo oxide setup`)");
     }
 
+    // 3a. Project config (`.cargo/cuda-oxide.toml`)
+    doctor_report_oxide_config(ctx, &mut ok);
+
     // 3b. Shared cache. The check above reports the backend this context
     // resolves to, which inside the repository is the local build. A project
     // outside the repository resolves to the cache instead, so the two can
@@ -4250,50 +4253,207 @@ pub fn setup(ctx: &Context) {
 // =============================================================================
 
 fn load_oxide_config(workspace_root: &Path) -> OxideConfig {
+    match inspect_oxide_config(workspace_root) {
+        OxideConfigInspection::Missing => OxideConfig::default(),
+        OxideConfigInspection::Valid { config, warnings } => {
+            for warning in warnings {
+                eprintln!("Warning: {warning}");
+            }
+            config
+        }
+        OxideConfigInspection::Invalid { errors, warnings } => {
+            for warning in warnings {
+                eprintln!("Warning: {warning}");
+            }
+            for error in errors {
+                eprintln!("Error: {error}");
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Result of reading `.cargo/cuda-oxide.toml` without exiting the process.
+///
+/// `doctor` uses this so a bad config is reported alongside other checks
+/// instead of aborting before the rest of the environment scan runs.
+#[derive(Debug)]
+enum OxideConfigInspection {
+    Missing,
+    Valid {
+        config: OxideConfig,
+        warnings: Vec<String>,
+    },
+    Invalid {
+        errors: Vec<String>,
+        warnings: Vec<String>,
+    },
+}
+
+fn inspect_oxide_config(workspace_root: &Path) -> OxideConfigInspection {
     let config_path = workspace_root.join(".cargo/cuda-oxide.toml");
     if !config_path.exists() {
-        return OxideConfig::default();
+        return OxideConfigInspection::Missing;
     }
 
-    let source = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
-        eprintln!(
-            "Error: could not read cuda-oxide config {}: {}",
-            config_path.display(),
-            e
-        );
-        std::process::exit(1);
-    });
-    let document: toml::Value = toml::from_str(&source).unwrap_or_else(|e| {
-        eprintln!(
-            "Error: could not parse cuda-oxide config {}: {}",
-            config_path.display(),
-            e
-        );
-        std::process::exit(1);
-    });
-    let table = document.as_table().unwrap_or_else(|| {
-        eprintln!(
-            "Error: cuda-oxide config {} must be a TOML table",
-            config_path.display()
-        );
-        std::process::exit(1);
-    });
+    let source = match std::fs::read_to_string(&config_path) {
+        Ok(source) => source,
+        Err(error) => {
+            return OxideConfigInspection::Invalid {
+                errors: vec![format!(
+                    "could not read cuda-oxide config {}: {error}",
+                    config_path.display()
+                )],
+                warnings: Vec::new(),
+            };
+        }
+    };
 
-    let backend = optional_config_string(table, "backend", &config_path)
-        .map(PathBuf::from)
-        .map(|path| absolutize_config_path(path, &config_path));
-    let default_arch = optional_config_string(table, "default-arch", &config_path);
-    let extra_rustflags = optional_config_string_array(table, "extra-rustflags", &config_path);
-    let env = table
-        .get("env")
-        .map(|value| parse_config_env(value, &config_path))
-        .unwrap_or_default();
+    let document: toml::Value = match toml::from_str(&source) {
+        Ok(document) => document,
+        Err(error) => {
+            return OxideConfigInspection::Invalid {
+                errors: vec![format!(
+                    "could not parse cuda-oxide config {}: {error}",
+                    config_path.display()
+                )],
+                warnings: Vec::new(),
+            };
+        }
+    };
 
-    OxideConfig {
-        backend,
-        default_arch,
-        extra_rustflags,
-        env,
+    let Some(table) = document.as_table() else {
+        return OxideConfigInspection::Invalid {
+            errors: vec![format!(
+                "cuda-oxide config {} must be a TOML table",
+                config_path.display()
+            )],
+            warnings: Vec::new(),
+        };
+    };
+
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    let backend = match optional_config_string_result(table, "backend", &config_path) {
+        Ok(value) => value
+            .map(PathBuf::from)
+            .map(|path| absolutize_config_path(path, &config_path)),
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let default_arch = match optional_config_string_result(table, "default-arch", &config_path) {
+        Ok(value) => {
+            if let Some(ref arch) = value
+                && !is_plausible_default_arch(arch)
+            {
+                errors.push(format!(
+                    "cuda-oxide config {} field `default-arch` must look like `sm_XX` \
+                     (optionally with a letter suffix such as `sm_90a`); got `{arch}`",
+                    config_path.display()
+                ));
+            }
+            value
+        }
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let extra_rustflags =
+        match optional_config_string_array_result(table, "extra-rustflags", &config_path) {
+            Ok(value) => value,
+            Err(error) => {
+                errors.push(error);
+                Vec::new()
+            }
+        };
+    let env = match table.get("env") {
+        None => Vec::new(),
+        Some(value) => match parse_config_env_result(value, &config_path) {
+            Ok(env) => {
+                for (key, _) in &env {
+                    if matches!(key.as_str(), "RUSTFLAGS" | "CARGO_ENCODED_RUSTFLAGS") {
+                        warnings.push(format!(
+                            "cuda-oxide config {} `[env]` key `{key}` is ignored; \
+                             use `extra-rustflags` for project rustc defaults",
+                            config_path.display()
+                        ));
+                    }
+                }
+                env
+            }
+            Err(error) => {
+                errors.push(error);
+                Vec::new()
+            }
+        },
+    };
+
+    if !errors.is_empty() {
+        return OxideConfigInspection::Invalid { errors, warnings };
+    }
+
+    OxideConfigInspection::Valid {
+        config: OxideConfig {
+            backend,
+            default_arch,
+            extra_rustflags,
+            env,
+        },
+        warnings,
+    }
+}
+
+/// `default-arch` values cargo-oxide accepts in `.cargo/cuda-oxide.toml`.
+///
+/// Matches the CLI `--arch` spelling: `sm_` plus digits, optionally followed by
+/// a single letter suffix used by architecture variants (`sm_90a`).
+fn is_plausible_default_arch(arch: &str) -> bool {
+    let Some(rest) = arch.strip_prefix("sm_") else {
+        return false;
+    };
+    let mut chars = rest.chars();
+    let mut saw_digit = false;
+    while let Some(ch) = chars.next() {
+        if ch.is_ascii_digit() {
+            saw_digit = true;
+            continue;
+        }
+        // Optional single trailing letter (e.g. `a` for sm_90a / sm_100a).
+        return saw_digit && ch.is_ascii_alphabetic() && chars.next().is_none();
+    }
+    saw_digit
+}
+
+fn doctor_report_oxide_config(ctx: &Context, ok: &mut bool) {
+    let config_path = ctx.workspace_root.join(".cargo/cuda-oxide.toml");
+    print!("Project config (.cargo/cuda-oxide.toml)... ");
+    match inspect_oxide_config(&ctx.workspace_root) {
+        OxideConfigInspection::Missing => {
+            println!("- not present (using defaults)");
+        }
+        OxideConfigInspection::Valid { config, warnings } => {
+            match &config.default_arch {
+                Some(arch) => println!("✓ {} (default-arch = {arch})", config_path.display()),
+                None => println!("✓ {}", config_path.display()),
+            }
+            for warning in warnings {
+                println!("  ⚠ {warning}");
+            }
+        }
+        OxideConfigInspection::Invalid { errors, warnings } => {
+            println!("✗ {}", config_path.display());
+            for warning in warnings {
+                println!("  ⚠ {warning}");
+            }
+            for error in errors {
+                eprintln!("  {error}");
+            }
+            *ok = false;
+        }
     }
 }
 
@@ -4308,72 +4468,95 @@ fn absolutize_config_path(path: PathBuf, config_path: &Path) -> PathBuf {
 }
 
 fn optional_config_string(table: &toml::Table, key: &str, config_path: &Path) -> Option<String> {
-    table.get(key).map(|value| {
-        value.as_str().map(str::to_string).unwrap_or_else(|| {
-            eprintln!(
-                "Error: cuda-oxide config {} field `{}` must be a string",
-                config_path.display(),
-                key
-            );
-            std::process::exit(1);
-        })
+    optional_config_string_result(table, key, config_path).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
     })
 }
 
+fn optional_config_string_result(
+    table: &toml::Table,
+    key: &str,
+    config_path: &Path,
+) -> Result<Option<String>, String> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(value) => value.as_str().map(|s| Some(s.to_string())).ok_or_else(|| {
+            format!(
+                "cuda-oxide config {} field `{key}` must be a string",
+                config_path.display()
+            )
+        }),
+    }
+}
+
 fn optional_config_string_array(table: &toml::Table, key: &str, config_path: &Path) -> Vec<String> {
-    table
-        .get(key)
-        .map(|value| {
-            value
-                .as_array()
-                .unwrap_or_else(|| {
-                    eprintln!(
-                        "Error: cuda-oxide config {} field `{}` must be an array of strings",
-                        config_path.display(),
-                        key
-                    );
-                    std::process::exit(1);
-                })
+    optional_config_string_array_result(table, key, config_path).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    })
+}
+
+fn optional_config_string_array_result(
+    table: &toml::Table,
+    key: &str,
+    config_path: &Path,
+) -> Result<Vec<String>, String> {
+    match table.get(key) {
+        None => Ok(Vec::new()),
+        Some(value) => {
+            let array = value.as_array().ok_or_else(|| {
+                format!(
+                    "cuda-oxide config {} field `{key}` must be an array of strings",
+                    config_path.display()
+                )
+            })?;
+            array
                 .iter()
                 .map(|item| {
-                    item.as_str().map(str::to_string).unwrap_or_else(|| {
-                        eprintln!(
-                            "Error: cuda-oxide config {} field `{}` must be an array of strings",
-                            config_path.display(),
-                            key
-                        );
-                        std::process::exit(1);
+                    item.as_str().map(str::to_string).ok_or_else(|| {
+                        format!(
+                            "cuda-oxide config {} field `{key}` must be an array of strings",
+                            config_path.display()
+                        )
                     })
                 })
                 .collect()
-        })
-        .unwrap_or_default()
+        }
+    }
 }
 
 fn parse_config_env(value: &toml::Value, config_path: &Path) -> Vec<(String, String)> {
-    let table = value.as_table().unwrap_or_else(|| {
-        eprintln!(
-            "Error: cuda-oxide config {} field `env` must be a table of strings",
-            config_path.display()
-        );
+    parse_config_env_result(value, config_path).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
         std::process::exit(1);
-    });
+    })
+}
+
+fn parse_config_env_result(
+    value: &toml::Value,
+    config_path: &Path,
+) -> Result<Vec<(String, String)>, String> {
+    let table = value.as_table().ok_or_else(|| {
+        format!(
+            "cuda-oxide config {} field `env` must be a table of strings",
+            config_path.display()
+        )
+    })?;
     let mut env: Vec<_> = table
         .iter()
         .map(|(key, value)| {
-            let value = value.as_str().unwrap_or_else(|| {
-                eprintln!(
-                    "Error: cuda-oxide config {} env value `{}` must be a string",
-                    config_path.display(),
-                    key
-                );
-                std::process::exit(1);
-            });
-            (key.clone(), value.to_string())
+            let value = value.as_str().ok_or_else(|| {
+                format!(
+                    "cuda-oxide config {} env value `{key}` must be a string",
+                    config_path.display()
+                )
+            })?;
+            Ok((key.clone(), value.to_string()))
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     env.sort_by(|left, right| left.0.cmp(&right.0));
-    env
+    Ok(env)
 }
 
 fn load_interop_config(example_dir: &Path) -> Option<InteropConfig> {
@@ -6911,6 +7094,116 @@ MY_BUILD_FLAG = "configured"
             vec![("MY_BUILD_FLAG".to_string(), "configured".to_string())]
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inspect_oxide_config_missing_is_informational() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_config_missing_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(matches!(
+            inspect_oxide_config(&root),
+            OxideConfigInspection::Missing
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inspect_oxide_config_rejects_bad_toml_and_arch() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_config_bad_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let cargo_dir = root.join(".cargo");
+        std::fs::create_dir_all(&cargo_dir).unwrap();
+        std::fs::write(cargo_dir.join("cuda-oxide.toml"), "default-arch = [\n").unwrap();
+        match inspect_oxide_config(&root) {
+            OxideConfigInspection::Invalid { errors, .. } => {
+                assert!(errors.iter().any(|e| e.contains("could not parse")));
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+
+        std::fs::write(
+            cargo_dir.join("cuda-oxide.toml"),
+            "default-arch = \"compute_90\"\n",
+        )
+        .unwrap();
+        match inspect_oxide_config(&root) {
+            OxideConfigInspection::Invalid { errors, .. } => {
+                assert!(errors.iter().any(|e| e.contains("default-arch")));
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inspect_oxide_config_warns_on_forbidden_env_keys() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_config_warn_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let cargo_dir = root.join(".cargo");
+        std::fs::create_dir_all(&cargo_dir).unwrap();
+        std::fs::write(
+            cargo_dir.join("cuda-oxide.toml"),
+            r#"
+default-arch = "sm_90a"
+
+[env]
+RUSTFLAGS = "-C opt-level=3"
+CARGO_ENCODED_RUSTFLAGS = "legacy"
+MY_OK = "1"
+"#,
+        )
+        .unwrap();
+
+        match inspect_oxide_config(&root) {
+            OxideConfigInspection::Valid { config, warnings } => {
+                assert_eq!(config.default_arch.as_deref(), Some("sm_90a"));
+                assert!(
+                    warnings
+                        .iter()
+                        .any(|w| w.contains("RUSTFLAGS") && w.contains("ignored"))
+                );
+                assert!(
+                    warnings
+                        .iter()
+                        .any(|w| w.contains("CARGO_ENCODED_RUSTFLAGS") && w.contains("ignored"))
+                );
+            }
+            other => panic!("expected Valid with warnings, got {other:?}"),
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn is_plausible_default_arch_accepts_sm_forms() {
+        assert!(is_plausible_default_arch("sm_80"));
+        assert!(is_plausible_default_arch("sm_90a"));
+        assert!(is_plausible_default_arch("sm_100"));
+        assert!(!is_plausible_default_arch("compute_90"));
+        assert!(!is_plausible_default_arch("sm_"));
+        assert!(!is_plausible_default_arch("90"));
+        assert!(!is_plausible_default_arch("sm_90ab"));
     }
 
     #[test]

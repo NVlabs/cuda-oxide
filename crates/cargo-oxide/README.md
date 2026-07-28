@@ -318,6 +318,9 @@ extra-rustflags = ["--cfg", "my_device_cfg"]
 MY_BUILD_FLAG = "1"
 ```
 
+`cargo oxide doctor` validates this file when present: malformed TOML or a
+non-`sm_XX` `default-arch` fail the check, while ignored `[env]` keys such as
+`RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` are reported as warnings.
 Relative backend paths are resolved from the `.cargo` directory containing the
 config file. Each `extra-rustflags` array element remains one rustc argument,
 including values that contain spaces.
