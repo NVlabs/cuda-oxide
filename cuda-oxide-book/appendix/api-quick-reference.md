@@ -635,4 +635,4 @@ debug::prof_trigger::<7>();     // Nsight profiler trigger
 | `cuda-core`       | Safe RAII wrappers for contexts, streams, buffers, VMM, and P2P        |
 | `cuda-async`      | `DeviceOperation`, `DeviceFuture`, `DeviceBox<T>`                      |
 | `cuda-bindings`   | Raw `bindgen` FFI to `cuda.h`                                          |
-| `cargo-oxide`     | Cargo subcommand (`cargo oxide run`, `build`, `sanitize`, `debug`)     |
+| `cargo-oxide`     | Cargo subcommand (`cargo oxide run`, `build`, `inspect`, `clean`, `sanitize`, `debug`) |
