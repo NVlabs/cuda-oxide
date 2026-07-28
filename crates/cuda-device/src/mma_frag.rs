@@ -270,8 +270,13 @@ mod tests {
 // and nothing more.
 //
 // The predicate is per register rather than per lane, so it is returned as a
-// 4-bit mask. A kernel tests one mask instead of recomputing bounds per store,
-// and the warp stays convergent because every lane evaluates the same shape.
+// 4-bit mask. A kernel tests one mask instead of recomputing bounds per store.
+// Computing the mask adds no divergent control flow (every lane evaluates the
+// same straight-line expressions), but the masks themselves differ across
+// lanes, so stores guarded on mask bits can still diverge exactly as any
+// bounds check would. The mask buys fewer tests and a warp-uniform fast path
+// when `acc_mask_is_uniform` holds for every lane; it does not by itself keep
+// the warp convergent.
 
 /// Whether one accumulator register lies inside a logical extent.
 ///
