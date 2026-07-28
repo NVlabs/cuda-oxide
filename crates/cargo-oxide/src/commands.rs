@@ -2660,18 +2660,6 @@ fn run_cargo_fmt(dir: &Path, check: bool) -> bool {
 // Doctor command
 // =============================================================================
 
-/// Validate the development environment.
-///
-/// Checks for: Rust nightly toolchain, `rust-toolchain.toml`, the codegen
-/// backend `.so` (informational), CUDA headers (`cuda.h`), CUDA toolkit
-/// (`nvcc`, libNVVM, nvJitLink, libdevice), LLVM (`llc`), clang/libclang,
-/// the NVIDIA driver / GPU (informational), and optionally `cuda-gdb`.
-/// Exits non-zero if any required check fails.
-///
-/// Doctor itself needs neither the CUDA toolkit nor a driver: every check
-/// is a subprocess, a filesystem probe, or a runtime `dlopen`, and the
-/// caller resolves the context via [`resolve_doctor_context`] so nothing is
-/// built first. This is what lets it diagnose a bare machine (issue #87).
 /// Parsed contents of a `rust-toolchain.toml` pin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RustToolchainPin {
@@ -2679,8 +2667,29 @@ struct RustToolchainPin {
     components: Vec<String>,
 }
 
-/// Components that doctor treats as hard requirements for the cuda-oxide pipeline.
-const DOCTOR_REQUIRED_COMPONENTS: &[&str] = &["rust-src", "llvm-tools"];
+/// Components that doctor treats as hard requirements for the cuda-oxide
+/// pipeline even if `rust-toolchain.toml` stops listing them: `rust-src`
+/// (device-side core sources), `rustc-dev` (rustc_private, required to build
+/// the codegen backend), and `llvm-tools`.
+const DOCTOR_REQUIRED_COMPONENTS: &[&str] = &["rust-src", "rustc-dev", "llvm-tools"];
+
+/// The components doctor verifies for a pin: everything the pin itself lists,
+/// plus the [`DOCTOR_REQUIRED_COMPONENTS`] floor.
+///
+/// rustup auto-installs every component named in `rust-toolchain.toml` when it
+/// installs the pinned toolchain, so a pinned component that is absent from
+/// `rustup component list --installed` means a broken or manually trimmed
+/// install and is worth failing doctor over. The floor guards against a future
+/// edit of the pin file dropping a component the pipeline genuinely needs.
+fn doctor_verified_components(pin: &RustToolchainPin) -> Vec<String> {
+    let mut required: Vec<String> = pin.components.clone();
+    for component in DOCTOR_REQUIRED_COMPONENTS {
+        if !required.iter().any(|existing| existing == component) {
+            required.push((*component).to_string());
+        }
+    }
+    required
+}
 
 /// Parse a `rust-toolchain.toml` document for channel and components.
 fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainPin, String> {
@@ -2721,7 +2730,14 @@ fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainPin, String>
 
 /// True when `rustup show active-toolchain` output matches the pinned channel.
 ///
-/// Accepts forms like `nightly-2026-04-03-aarch64-apple-darwin (default)`.
+/// The toolchain name is the first whitespace-delimited token of the first
+/// line in every rustup output format seen so far:
+///
+/// - pre-1.28 and 1.29+: `nightly-2026-04-03-<triple> (default)` or
+///   `nightly-2026-04-03-<triple> (overridden by '<path>')` on one line
+///   (verified against rustup 1.29.0);
+/// - 1.28.x: the bare name on the first line with the reason on a second
+///   `active because: ...` line.
 fn active_toolchain_matches_channel(active_toolchain: &str, channel: &str) -> bool {
     let active = active_toolchain
         .lines()
@@ -2737,10 +2753,10 @@ fn active_toolchain_matches_channel(active_toolchain: &str, channel: &str) -> bo
 }
 
 /// Return required components that are absent from `rustup component list --installed`.
-fn missing_rustup_components(installed_list: &str, required: &[&str]) -> Vec<String> {
+fn missing_rustup_components<S: AsRef<str>>(installed_list: &str, required: &[S]) -> Vec<String> {
     required
         .iter()
-        .copied()
+        .map(AsRef::as_ref)
         .filter(|component| !rustup_component_installed(installed_list, component))
         .map(str::to_string)
         .collect()
@@ -2819,7 +2835,7 @@ fn doctor_report_toolchain_pin(ctx: &Context, ok: &mut bool) {
         }
     }
 
-    let required = DOCTOR_REQUIRED_COMPONENTS;
+    let required = doctor_verified_components(&pin);
 
     print!("Required rustup components... ");
     match Command::new("rustup")
@@ -2834,7 +2850,7 @@ fn doctor_report_toolchain_pin(ctx: &Context, ok: &mut bool) {
     {
         Ok(output) if output.status.success() => {
             let installed = String::from_utf8_lossy(&output.stdout);
-            let missing = missing_rustup_components(&installed, required);
+            let missing = missing_rustup_components(&installed, &required);
             if missing.is_empty() {
                 println!("✓ {}", required.join(", "));
             } else {
@@ -2867,6 +2883,18 @@ fn doctor_report_toolchain_pin(ctx: &Context, ok: &mut bool) {
     }
 }
 
+/// Validate the development environment.
+///
+/// Checks for: Rust nightly toolchain, `rust-toolchain.toml`, the codegen
+/// backend `.so` (informational), CUDA headers (`cuda.h`), CUDA toolkit
+/// (`nvcc`, libNVVM, nvJitLink, libdevice), LLVM (`llc`), clang/libclang,
+/// the NVIDIA driver / GPU (informational), and optionally `cuda-gdb`.
+/// Exits non-zero if any required check fails.
+///
+/// Doctor itself needs neither the CUDA toolkit nor a driver: every check
+/// is a subprocess, a filesystem probe, or a runtime `dlopen`, and the
+/// caller resolves the context via [`resolve_doctor_context`] so nothing is
+/// built first. This is what lets it diagnose a bare machine (issue #87).
 pub fn doctor(ctx: &Context) {
     println!("cargo-oxide environment check");
     println!("==============================");
@@ -6612,6 +6640,63 @@ components = ["rust-src", "rustc-dev", "llvm-tools"]
             "nightly-2026-01-01-x86_64-unknown-linux-gnu (default)",
             "nightly-2026-04-03"
         ));
+    }
+
+    #[test]
+    fn active_toolchain_matches_channel_accepts_rustup_128_and_129_formats() {
+        // rustup 1.29 single-line form with an override annotation, as
+        // observed verbatim on a workspace with rust-toolchain.toml.
+        assert!(active_toolchain_matches_channel(
+            "nightly-2026-04-03-x86_64-unknown-linux-gnu (overridden by \
+             '/home/user/cuda-oxide/rust-toolchain.toml')",
+            "nightly-2026-04-03"
+        ));
+        // rustup 1.28 two-line form: bare name, then the reason line.
+        assert!(active_toolchain_matches_channel(
+            "nightly-2026-04-03-x86_64-unknown-linux-gnu\nactive because: \
+             overridden by '/home/user/cuda-oxide/rust-toolchain.toml'",
+            "nightly-2026-04-03"
+        ));
+        // A mismatched pin must not be rescued by later lines.
+        assert!(!active_toolchain_matches_channel(
+            "stable-x86_64-unknown-linux-gnu\nactive because: default",
+            "nightly-2026-04-03"
+        ));
+    }
+
+    #[test]
+    fn doctor_verified_components_unions_pin_list_with_required_floor() {
+        // Pin lists everything: order preserved, no duplicates appended.
+        let pin = RustToolchainPin {
+            channel: "nightly-2026-04-03".to_string(),
+            components: vec![
+                "rust-src".to_string(),
+                "rustc-dev".to_string(),
+                "rust-analyzer".to_string(),
+                "clippy".to_string(),
+                "llvm-tools".to_string(),
+            ],
+        };
+        assert_eq!(
+            doctor_verified_components(&pin),
+            vec![
+                "rust-src",
+                "rustc-dev",
+                "rust-analyzer",
+                "clippy",
+                "llvm-tools"
+            ]
+        );
+
+        // A trimmed pin still gets the hard floor appended.
+        let trimmed = RustToolchainPin {
+            channel: "nightly-2026-04-03".to_string(),
+            components: vec!["clippy".to_string()],
+        };
+        assert_eq!(
+            doctor_verified_components(&trimmed),
+            vec!["clippy", "rust-src", "rustc-dev", "llvm-tools"]
+        );
     }
 
     #[test]
