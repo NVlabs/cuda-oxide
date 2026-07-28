@@ -7012,7 +7012,7 @@ impl Parse for CudaLaunchInput {
 ///
 /// `cluster_dim` and `cooperative` may be combined. When both are set and
 /// `cooperative` is `true`, the expansion calls
-/// [`cuda_core::launch_kernel_ex_cooperative_on_stream`].
+/// `cuda_core::launch_kernel_ex_cooperative_on_stream`.
 ///
 /// # Argument forms
 ///
@@ -7231,7 +7231,7 @@ fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
         },
     };
 
-    let expanded = if has_closure {
+    if has_closure {
         let closure_expr = closure_info.expect("has_closure but no closure_info");
 
         // The on-wire PTX name comes from the kernel's
@@ -7299,9 +7299,7 @@ fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
                 #launch_call
             }
         }
-    };
-
-    expanded
+    }
 }
 
 // ============================================================================
