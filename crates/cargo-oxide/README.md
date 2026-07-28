@@ -318,9 +318,13 @@ extra-rustflags = ["--cfg", "my_device_cfg"]
 MY_BUILD_FLAG = "1"
 ```
 
-`cargo oxide doctor` validates this file when present: malformed TOML or a
-non-`sm_XX` `default-arch` fail the check, while ignored `[env]` keys such as
-`RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` are reported as warnings.
+`cargo oxide doctor` validates this file when present: malformed TOML,
+wrong-shaped fields, or a `default-arch` the CUDA arch parser rejects fail
+the check (doctor exits non-zero but still completes the full scan), while
+ignored `[env]` keys such as `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` and
+non-`sm_XX` `default-arch` spellings (`compute_90`, bare `90`) are reported
+as warnings. Build commands remain strict and refuse to run with an invalid
+config.
 Relative backend paths are resolved from the `.cargo` directory containing the
 config file. Each `extra-rustflags` array element remains one rustc argument,
 including values that contain spaces.

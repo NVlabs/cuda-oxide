@@ -196,7 +196,7 @@ fn digest_hex(digest: &[u8; 32]) -> String {
 }
 
 /// Project-local cuda-oxide defaults loaded from `.cargo/cuda-oxide.toml`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OxideConfig {
     /// Explicit backend shared object path.
     pub backend: Option<PathBuf>,
@@ -282,14 +282,16 @@ pub fn resolve_context() -> Context {
 ///
 /// Identical discovery to [`resolve_context`], except the backend `.so` is
 /// only located via [`backend::backend_so_candidate`], never built and never
-/// cloned. Passive commands such as `doctor` and `clean` must remain usable
+/// cloned, and an invalid `.cargo/cuda-oxide.toml` degrades to defaults with
+/// a warning instead of exiting (so `doctor` can report it as a failed
+/// check). Passive commands such as `doctor` and `clean` must remain usable
 /// without triggering backend setup or network access.
 /// `run`/`build`/`pipeline`/`setup` still build the backend on demand.
 pub fn resolve_passive_context() -> Context {
     if let Some(workspace_root) = backend::find_workspace_root() {
         let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
         let examples_dir = codegen_crate.join("examples");
-        let config = load_oxide_config(&workspace_root);
+        let config = load_oxide_config_lenient(&workspace_root);
         let backend_so = backend::backend_so_candidate(&workspace_root, config.backend.as_deref());
         return Context {
             workspace_root,
@@ -307,7 +309,7 @@ pub fn resolve_passive_context() -> Context {
     });
 
     if cwd.join("Cargo.toml").is_file() {
-        let config = load_oxide_config(&cwd);
+        let config = load_oxide_config_lenient(&cwd);
         let backend_so = backend::backend_so_candidate(&cwd, config.backend.as_deref());
         return Context {
             workspace_root: cwd.clone(),
@@ -4252,6 +4254,10 @@ pub fn setup(ctx: &Context) {
 // Helpers
 // =============================================================================
 
+/// Load `.cargo/cuda-oxide.toml`, exiting on an invalid config.
+///
+/// Build commands ([`resolve_context`]) stay strict: they must not run with
+/// a config the user wrote but cargo-oxide cannot honor.
 fn load_oxide_config(workspace_root: &Path) -> OxideConfig {
     match inspect_oxide_config(workspace_root) {
         OxideConfigInspection::Missing => OxideConfig::default(),
@@ -4269,6 +4275,35 @@ fn load_oxide_config(workspace_root: &Path) -> OxideConfig {
                 eprintln!("Error: {error}");
             }
             std::process::exit(1);
+        }
+    }
+}
+
+/// Load `.cargo/cuda-oxide.toml`, falling back to defaults on an invalid
+/// config instead of exiting.
+///
+/// Passive commands ([`resolve_passive_context`]: `doctor`, `clean`, ...)
+/// must stay usable with a broken config. `doctor` in particular re-inspects
+/// the file and reports the failure as a regular failed check, which it can
+/// only do if context resolution survives long enough for the scan to start.
+fn load_oxide_config_lenient(workspace_root: &Path) -> OxideConfig {
+    match inspect_oxide_config(workspace_root) {
+        OxideConfigInspection::Missing => OxideConfig::default(),
+        OxideConfigInspection::Valid { config, warnings } => {
+            for warning in warnings {
+                eprintln!("Warning: {warning}");
+            }
+            config
+        }
+        OxideConfigInspection::Invalid { errors, warnings } => {
+            for warning in warnings {
+                eprintln!("Warning: {warning}");
+            }
+            for error in errors {
+                eprintln!("Warning: {error}");
+            }
+            eprintln!("Warning: ignoring invalid cuda-oxide config and continuing with defaults");
+            OxideConfig::default()
         }
     }
 }
@@ -4335,7 +4370,7 @@ fn inspect_oxide_config(workspace_root: &Path) -> OxideConfigInspection {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
-    let backend = match optional_config_string_result(table, "backend", &config_path) {
+    let backend = match optional_config_string(table, "backend", &config_path) {
         Ok(value) => value
             .map(PathBuf::from)
             .map(|path| absolutize_config_path(path, &config_path)),
@@ -4344,16 +4379,33 @@ fn inspect_oxide_config(workspace_root: &Path) -> OxideConfigInspection {
             None
         }
     };
-    let default_arch = match optional_config_string_result(table, "default-arch", &config_path) {
+    let default_arch = match optional_config_string(table, "default-arch", &config_path) {
         Ok(value) => {
-            if let Some(ref arch) = value
-                && !is_plausible_default_arch(arch)
-            {
-                errors.push(format!(
-                    "cuda-oxide config {} field `default-arch` must look like `sm_XX` \
-                     (optionally with a letter suffix such as `sm_90a`); got `{arch}`",
-                    config_path.display()
-                ));
+            if let Some(ref arch) = value {
+                // Validate with the same parser the consumers use
+                // (`parse_nvvm_arch` normalizes `sm_XX` / `compute_XX` / bare
+                // `XX` into a `CudaArch`), so load-time validation is exactly
+                // as permissive as what a build would accept. Non-`sm_XX`
+                // spellings work but are advisory-warned: `sm_XX` is the form
+                // `--arch` and the rest of cargo-oxide document.
+                match parse_nvvm_arch(arch) {
+                    Ok(parsed) => {
+                        if !arch.starts_with("sm_") {
+                            warnings.push(format!(
+                                "cuda-oxide config {} spells `default-arch` as `{arch}`; \
+                                 prefer the `{}` form used by `--arch`",
+                                config_path.display(),
+                                parsed.sm()
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        errors.push(format!(
+                            "cuda-oxide config {} field `default-arch`: {error}",
+                            config_path.display()
+                        ));
+                    }
+                }
             }
             value
         }
@@ -4362,17 +4414,17 @@ fn inspect_oxide_config(workspace_root: &Path) -> OxideConfigInspection {
             None
         }
     };
-    let extra_rustflags =
-        match optional_config_string_array_result(table, "extra-rustflags", &config_path) {
-            Ok(value) => value,
-            Err(error) => {
-                errors.push(error);
-                Vec::new()
-            }
-        };
+    let extra_rustflags = match optional_config_string_array(table, "extra-rustflags", &config_path)
+    {
+        Ok(value) => value,
+        Err(error) => {
+            errors.push(error);
+            Vec::new()
+        }
+    };
     let env = match table.get("env") {
         None => Vec::new(),
-        Some(value) => match parse_config_env_result(value, &config_path) {
+        Some(value) => match parse_config_env(value, &config_path) {
             Ok(env) => {
                 for (key, _) in &env {
                     if matches!(key.as_str(), "RUSTFLAGS" | "CARGO_ENCODED_RUSTFLAGS") {
@@ -4407,53 +4459,58 @@ fn inspect_oxide_config(workspace_root: &Path) -> OxideConfigInspection {
     }
 }
 
-/// `default-arch` values cargo-oxide accepts in `.cargo/cuda-oxide.toml`.
-///
-/// Matches the CLI `--arch` spelling: `sm_` plus digits, optionally followed by
-/// a single letter suffix used by architecture variants (`sm_90a`).
-fn is_plausible_default_arch(arch: &str) -> bool {
-    let Some(rest) = arch.strip_prefix("sm_") else {
-        return false;
-    };
-    let mut chars = rest.chars();
-    let mut saw_digit = false;
-    while let Some(ch) = chars.next() {
-        if ch.is_ascii_digit() {
-            saw_digit = true;
-            continue;
-        }
-        // Optional single trailing letter (e.g. `a` for sm_90a / sm_100a).
-        return saw_digit && ch.is_ascii_alphabetic() && chars.next().is_none();
+/// Outcome of doctor's project-config check, separated from printing so
+/// tests can assert the doctor-level behavior (headline, detail lines,
+/// pass/fail) directly.
+struct OxideConfigCheck {
+    /// Line printed after the check label.
+    headline: String,
+    /// Indented detail lines (warnings, then errors).
+    details: Vec<String>,
+    /// Whether the check failed (flips doctor to a nonzero exit).
+    failed: bool,
+}
+
+fn check_oxide_config(workspace_root: &Path) -> OxideConfigCheck {
+    let config_path = workspace_root.join(".cargo/cuda-oxide.toml");
+    match inspect_oxide_config(workspace_root) {
+        OxideConfigInspection::Missing => OxideConfigCheck {
+            headline: "- not present (using defaults)".to_string(),
+            details: Vec::new(),
+            failed: false,
+        },
+        OxideConfigInspection::Valid { config, warnings } => OxideConfigCheck {
+            headline: match &config.default_arch {
+                Some(arch) => format!("✓ {} (default-arch = {arch})", config_path.display()),
+                None => format!("✓ {}", config_path.display()),
+            },
+            details: warnings
+                .into_iter()
+                .map(|warning| format!("⚠ {warning}"))
+                .collect(),
+            failed: false,
+        },
+        OxideConfigInspection::Invalid { errors, warnings } => OxideConfigCheck {
+            headline: format!("✗ {}", config_path.display()),
+            details: warnings
+                .into_iter()
+                .map(|warning| format!("⚠ {warning}"))
+                .chain(errors.into_iter().map(|error| format!("✗ {error}")))
+                .collect(),
+            failed: true,
+        },
     }
-    saw_digit
 }
 
 fn doctor_report_oxide_config(ctx: &Context, ok: &mut bool) {
-    let config_path = ctx.workspace_root.join(".cargo/cuda-oxide.toml");
     print!("Project config (.cargo/cuda-oxide.toml)... ");
-    match inspect_oxide_config(&ctx.workspace_root) {
-        OxideConfigInspection::Missing => {
-            println!("- not present (using defaults)");
-        }
-        OxideConfigInspection::Valid { config, warnings } => {
-            match &config.default_arch {
-                Some(arch) => println!("✓ {} (default-arch = {arch})", config_path.display()),
-                None => println!("✓ {}", config_path.display()),
-            }
-            for warning in warnings {
-                println!("  ⚠ {warning}");
-            }
-        }
-        OxideConfigInspection::Invalid { errors, warnings } => {
-            println!("✗ {}", config_path.display());
-            for warning in warnings {
-                println!("  ⚠ {warning}");
-            }
-            for error in errors {
-                eprintln!("  {error}");
-            }
-            *ok = false;
-        }
+    let check = check_oxide_config(&ctx.workspace_root);
+    println!("{}", check.headline);
+    for line in check.details {
+        println!("  {line}");
+    }
+    if check.failed {
+        *ok = false;
     }
 }
 
@@ -4467,14 +4524,7 @@ fn absolutize_config_path(path: PathBuf, config_path: &Path) -> PathBuf {
         .join(path)
 }
 
-fn optional_config_string(table: &toml::Table, key: &str, config_path: &Path) -> Option<String> {
-    optional_config_string_result(table, key, config_path).unwrap_or_else(|error| {
-        eprintln!("Error: {error}");
-        std::process::exit(1);
-    })
-}
-
-fn optional_config_string_result(
+fn optional_config_string(
     table: &toml::Table,
     key: &str,
     config_path: &Path,
@@ -4490,14 +4540,7 @@ fn optional_config_string_result(
     }
 }
 
-fn optional_config_string_array(table: &toml::Table, key: &str, config_path: &Path) -> Vec<String> {
-    optional_config_string_array_result(table, key, config_path).unwrap_or_else(|error| {
-        eprintln!("Error: {error}");
-        std::process::exit(1);
-    })
-}
-
-fn optional_config_string_array_result(
+fn optional_config_string_array(
     table: &toml::Table,
     key: &str,
     config_path: &Path,
@@ -4526,14 +4569,7 @@ fn optional_config_string_array_result(
     }
 }
 
-fn parse_config_env(value: &toml::Value, config_path: &Path) -> Vec<(String, String)> {
-    parse_config_env_result(value, config_path).unwrap_or_else(|error| {
-        eprintln!("Error: {error}");
-        std::process::exit(1);
-    })
-}
-
-fn parse_config_env_result(
+fn parse_config_env(
     value: &toml::Value,
     config_path: &Path,
 ) -> Result<Vec<(String, String)>, String> {
@@ -7138,7 +7174,7 @@ MY_BUILD_FLAG = "configured"
 
         std::fs::write(
             cargo_dir.join("cuda-oxide.toml"),
-            "default-arch = \"compute_90\"\n",
+            "default-arch = \"sm_9x\"\n",
         )
         .unwrap();
         match inspect_oxide_config(&root) {
@@ -7146,6 +7182,71 @@ MY_BUILD_FLAG = "configured"
                 assert!(errors.iter().any(|e| e.contains("default-arch")));
             }
             other => panic!("expected Invalid, got {other:?}"),
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `default-arch` load-time validation must be exactly as permissive as
+    /// the consumers: `parse_nvvm_arch` (NVVM path) accepts `sm_XX`,
+    /// `compute_XX`, and bare `XX`, so none of those may fail the load.
+    /// Non-`sm_XX` spellings only earn an advisory warning.
+    #[test]
+    fn default_arch_validation_matches_the_real_arch_parser() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_config_arch_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let cargo_dir = root.join(".cargo");
+        std::fs::create_dir_all(&cargo_dir).unwrap();
+        let config_path = cargo_dir.join("cuda-oxide.toml");
+
+        for accepted in ["sm_80", "sm_90a", "sm_100f", "sm_120"] {
+            std::fs::write(&config_path, format!("default-arch = \"{accepted}\"\n")).unwrap();
+            match inspect_oxide_config(&root) {
+                OxideConfigInspection::Valid { warnings, .. } => {
+                    assert!(warnings.is_empty(), "unexpected warnings for {accepted}");
+                }
+                other => panic!("expected {accepted} to be Valid, got {other:?}"),
+            }
+        }
+
+        // Spellings that genuinely work today (the NVVM path normalizes
+        // them) load fine but get the preferred-spelling advice.
+        for (works_with_warning, preferred) in [("compute_90", "sm_90"), ("90", "sm_90")] {
+            std::fs::write(
+                &config_path,
+                format!("default-arch = \"{works_with_warning}\"\n"),
+            )
+            .unwrap();
+            match inspect_oxide_config(&root) {
+                OxideConfigInspection::Valid { config, warnings } => {
+                    assert_eq!(config.default_arch.as_deref(), Some(works_with_warning));
+                    assert!(
+                        warnings.iter().any(|w| w.contains(preferred)),
+                        "expected a `{preferred}` spelling advisory for \
+                         {works_with_warning}, got {warnings:?}"
+                    );
+                }
+                other => panic!("expected {works_with_warning} to be Valid, got {other:?}"),
+            }
+        }
+
+        for rejected in ["sm_9", "sm_90x", "hopper"] {
+            std::fs::write(&config_path, format!("default-arch = \"{rejected}\"\n")).unwrap();
+            match inspect_oxide_config(&root) {
+                OxideConfigInspection::Invalid { errors, .. } => {
+                    assert!(
+                        errors.iter().any(|e| e.contains("default-arch")),
+                        "expected a default-arch error for {rejected}, got {errors:?}"
+                    );
+                }
+                other => panic!("expected {rejected} to be Invalid, got {other:?}"),
+            }
         }
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -7196,14 +7297,90 @@ MY_OK = "1"
     }
 
     #[test]
-    fn is_plausible_default_arch_accepts_sm_forms() {
-        assert!(is_plausible_default_arch("sm_80"));
-        assert!(is_plausible_default_arch("sm_90a"));
-        assert!(is_plausible_default_arch("sm_100"));
-        assert!(!is_plausible_default_arch("compute_90"));
-        assert!(!is_plausible_default_arch("sm_"));
-        assert!(!is_plausible_default_arch("90"));
-        assert!(!is_plausible_default_arch("sm_90ab"));
+    fn doctor_survives_malformed_config_and_reports_the_failed_check() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_doctor_config_bad_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let cargo_dir = root.join(".cargo");
+        std::fs::create_dir_all(&cargo_dir).unwrap();
+        std::fs::write(cargo_dir.join("cuda-oxide.toml"), "default-arch = [\n").unwrap();
+
+        // Passive context resolution must not exit: it degrades to defaults
+        // so the doctor scan can start at all.
+        assert_eq!(load_oxide_config_lenient(&root), OxideConfig::default());
+
+        // Doctor's own check re-inspects the file and fails.
+        let check = check_oxide_config(&root);
+        assert!(check.failed);
+        assert!(check.headline.starts_with('✗'), "{}", check.headline);
+        assert!(
+            check
+                .details
+                .iter()
+                .any(|line| line.contains("could not parse")),
+            "{:?}",
+            check.details
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn doctor_reports_env_rustflags_warning_without_failing_the_check() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_doctor_config_warn_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let cargo_dir = root.join(".cargo");
+        std::fs::create_dir_all(&cargo_dir).unwrap();
+        std::fs::write(
+            cargo_dir.join("cuda-oxide.toml"),
+            "default-arch = \"sm_90a\"\n\n[env]\nRUSTFLAGS = \"-C opt-level=3\"\n",
+        )
+        .unwrap();
+
+        let check = check_oxide_config(&root);
+        assert!(!check.failed);
+        assert!(check.headline.contains("default-arch = sm_90a"));
+        assert!(
+            check
+                .details
+                .iter()
+                .any(|line| line.contains("RUSTFLAGS") && line.contains("ignored")),
+            "{:?}",
+            check.details
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn doctor_reports_missing_config_as_informational() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_doctor_config_missing_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let check = check_oxide_config(&root);
+        assert!(!check.failed);
+        assert_eq!(check.headline, "- not present (using defaults)");
+        assert!(check.details.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
