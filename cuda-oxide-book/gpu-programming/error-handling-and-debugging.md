@@ -428,6 +428,8 @@ Doctor checks:
 | libdevice       | `libdevice.10.bc` discoverable (same)          |
 | LLVM            | `llc` (21+) available for PTX generation       |
 | Driver / GPU    | `nvidia-smi` reports a GPU and its compute cap |
+| cuda-gdb        | Optional; only needed for `cargo oxide debug`  |
+| compute-sanitizer | Optional; only needed for `cargo oxide sanitize` |
 
 The libNVVM / nvJitLink / libdevice checks fire only when a kernel calls
 CUDA libdevice math (`sin`, `cos`, `exp`, `pow`, `sqrt`, ...). If your

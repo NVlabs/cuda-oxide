@@ -3597,7 +3597,8 @@ fn doctor_report_toolchain_pin(ctx: &Context, ok: &mut bool) {
 /// Checks for: Rust nightly toolchain, `rust-toolchain.toml`, the codegen
 /// backend `.so` (informational), CUDA headers (`cuda.h`), CUDA toolkit
 /// (`nvcc`, libNVVM, nvJitLink, libdevice), LLVM (`llc`), clang/libclang,
-/// the NVIDIA driver / GPU (informational), and optionally `cuda-gdb`.
+/// the NVIDIA driver / GPU (informational), and optionally `cuda-gdb` /
+/// `compute-sanitizer`.
 /// Exits non-zero if any required check fails.
 ///
 /// Doctor itself needs neither the CUDA toolkit nor a driver: every check
@@ -3931,6 +3932,33 @@ pub fn doctor(ctx: &Context) {
         }
         _ => {
             println!("- not found (only needed for `cargo oxide debug`)");
+        }
+    }
+
+    // 10. compute-sanitizer (optional) — same discovery order as `sanitize`
+    print!("compute-sanitizer (optional)... ");
+    match find_cuda_toolkit_executable(
+        ctx,
+        "compute-sanitizer",
+        &[
+            "/usr/local/cuda/bin/compute-sanitizer",
+            "/opt/cuda/bin/compute-sanitizer",
+            "/usr/bin/compute-sanitizer",
+        ],
+    ) {
+        Some(path) => match Command::new(&path).arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout);
+                if let Some(line) = version.lines().next() {
+                    println!("✓ {} ({})", line.trim(), path.display());
+                } else {
+                    println!("✓ {}", path.display());
+                }
+            }
+            _ => println!("✓ {}", path.display()),
+        },
+        None => {
+            println!("- not found (only needed for `cargo oxide sanitize`)");
         }
     }
 
@@ -6687,6 +6715,50 @@ path = "src/other.rs"
 
         assert_eq!(
             find_cuda_toolkit_executable(&ctx, "cuda-oxide-test-sanitizer", &[]),
+            Some(tool)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn doctor_compute_sanitizer_lookup_matches_sanitize_discovery() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_doctor_sanitizer_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let tool = root.join("bin/compute-sanitizer");
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::write(&tool, b"#!/bin/sh\necho compute-sanitizer fake\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&tool).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&tool, perms).unwrap();
+        }
+        let ctx = test_context(OxideConfig {
+            env: vec![(
+                "CUDA_TOOLKIT_PATH".to_string(),
+                root.to_string_lossy().into_owned(),
+            )],
+            ..OxideConfig::default()
+        });
+
+        assert_eq!(
+            find_cuda_toolkit_executable(
+                &ctx,
+                "compute-sanitizer",
+                &[
+                    "/usr/local/cuda/bin/compute-sanitizer",
+                    "/opt/cuda/bin/compute-sanitizer",
+                    "/usr/bin/compute-sanitizer",
+                ],
+            ),
             Some(tool)
         );
         std::fs::remove_dir_all(root).unwrap();

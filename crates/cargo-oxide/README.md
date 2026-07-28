@@ -283,7 +283,9 @@ Formats all crates in the workspace: root workspace, `rustc-codegen-cuda`, and a
 Validates that your environment is correctly set up: Rust nightly toolchain,
 CUDA headers (`cuda.h`), CUDA toolkit (`nvcc`, libNVVM, nvJitLink,
 libdevice), LLVM (`llc`), clang/libclang, the NVIDIA driver / GPU, and the
-codegen backend `.so`. Every check reports what was found or how to fix it.
+codegen backend `.so`. Optional probes cover `cuda-gdb` (for `debug`) and
+`compute-sanitizer` (for `sanitize`). Every check reports what was found or
+how to fix it.
 
 `cargo-oxide` itself builds and runs without the CUDA toolkit and without an
 NVIDIA driver, and `doctor` never builds anything first, so it works on a
