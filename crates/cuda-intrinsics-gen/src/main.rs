@@ -4,6 +4,7 @@
  */
 
 mod abi_history;
+mod coverage;
 mod extract;
 mod generate;
 mod model;
@@ -70,6 +71,11 @@ fn try_main() -> Result<()> {
         "check" => {
             reject_extra(arguments)?;
             generate::run(&repo_root, true)
+        }
+        "coverage" => {
+            let family = take_option(&mut arguments, "--family")?;
+            reject_extra(arguments)?;
+            coverage::run(&repo_root, family.as_deref())
         }
         "probe" => match parse_probe_invocation(arguments)? {
             ProbeInvocation::Evidence {
@@ -183,6 +189,7 @@ fn print_usage() {
          cuda-intrinsics-gen extract --llvm-src DIR --llvm-tblgen FILE [--repo-root DIR]\n  \
          cuda-intrinsics-gen generate [--repo-root DIR]\n  \
          cuda-intrinsics-gen check [--repo-root DIR]\n  \
+         cuda-intrinsics-gen coverage [--family NAME] [--repo-root DIR]\n  \
          cuda-intrinsics-gen check-abi-history --base-ref REF [--repo-root DIR]\n  \
          cuda-intrinsics-gen probe [--all | --intrinsic ID] [--llc FILE] [--skip-terminal] [--repo-root DIR]\n  \
          cuda-intrinsics-gen probe --candidate --intrinsic ID --llc FILE --gpu-target TARGET --ptx-feature FEATURE (--ptxas FILE | --skip-terminal) [--repo-root DIR]"
