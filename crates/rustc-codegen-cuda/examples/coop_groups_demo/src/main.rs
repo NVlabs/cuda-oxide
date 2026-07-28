@@ -27,7 +27,8 @@ use cuda_device::cooperative_groups::{
     this_grid, this_thread_block, warp_reduce, warp_scan,
 };
 use cuda_device::{
-    DisjointSlice, SharedArray, cluster_launch, cooperative_launch, grid, kernel, thread, warp,
+    DisjointSlice, SharedArray, cluster_launch, cooperative_launch, grid, kernel, launch_bounds,
+    launch_contract, thread, warp,
 };
 use cuda_host::{cuda_launch, cuda_module};
 
