@@ -4018,6 +4018,16 @@ fn scaffold_readme(name: &str, async_mode: bool) -> String {
     } else {
         "cuda-oxide"
     };
+    let template_notes = if async_mode {
+        "The template is a vector-add kernel launched through `cuda-async`:\n\
+         `vecadd_async` returns a lazy `DeviceOperation` scheduled on the\n\
+         stream pool. See the cuda-oxide book getting-started chapter for the\n\
+         next steps."
+    } else {
+        "The template is a vector-add kernel. It uses `#[launch_contract]` and\n\
+         `PreparedLaunch` so geometry is checked before launch. See the\n\
+         cuda-oxide book getting-started chapter for the next steps."
+    };
     format!(
         r#"# {name}
 
@@ -4037,9 +4047,7 @@ Fix anything doctor reports before building.
 cargo oxide run
 ```
 
-The template is a vector-add kernel. The sync template uses
-`#[launch_contract]` and `PreparedLaunch` so geometry is checked before
-launch. See the cuda-oxide book getting-started chapter for the next steps.
+{template_notes}
 "#
     )
 }
@@ -4177,7 +4185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 "#
         .to_string()
     } else {
-        r#"use cuda_device::{kernel, thread, DisjointSlice};
+        r#"use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};
 use cuda_host::cuda_module;
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 
@@ -4260,8 +4268,11 @@ pub fn scaffold_new(name: &str, async_mode: bool) {
     let files = scaffold_files(name, async_mode);
     std::fs::write(project_dir.join("Cargo.toml"), files.cargo_toml)
         .expect("Failed to write Cargo.toml");
-    std::fs::write(project_dir.join("rust-toolchain.toml"), files.rust_toolchain_toml)
-        .expect("Failed to write rust-toolchain.toml");
+    std::fs::write(
+        project_dir.join("rust-toolchain.toml"),
+        files.rust_toolchain_toml,
+    )
+    .expect("Failed to write rust-toolchain.toml");
     std::fs::write(project_dir.join(".gitignore"), files.gitignore)
         .expect("Failed to write .gitignore");
     std::fs::write(project_dir.join("README.md"), files.readme).expect("Failed to write README.md");
@@ -6502,7 +6513,17 @@ device-owner = { path = "../device-owner" }
         assert!(files.readme.contains("cargo oxide doctor"));
         assert!(files.readme.contains("cargo oxide run"));
         assert!(files.gitignore.contains("/target/"));
-        assert!(files.main_rs.contains("#[launch_contract(domain = 1, block = (256, 1, 1))]"));
+        // The template uses the launch_bounds / launch_contract attribute
+        // macros, so the cuda_device import must bring them in; a scaffolded
+        // project fails to compile without this exact line.
+        assert!(files.main_rs.starts_with(
+            "use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};"
+        ));
+        assert!(
+            files
+                .main_rs
+                .contains("#[launch_contract(domain = 1, block = (256, 1, 1))]")
+        );
         assert!(files.main_rs.contains("prepare_vecadd"));
         assert!(files.main_rs.contains("LaunchConfig1D"));
         assert!(!files.main_rs.contains("LaunchConfig::for_num_elems"));
@@ -6515,6 +6536,10 @@ device-owner = { path = "../device-owner" }
         assert!(files.cargo_toml.contains("tokio"));
         assert!(files.readme.contains("async cuda-oxide"));
         assert!(files.readme.contains("cargo oxide doctor"));
+        // The async README must stand alone: it describes the async launch
+        // path and never talks about "the sync template".
+        assert!(files.readme.contains("DeviceOperation"));
+        assert!(!files.readme.contains("sync template"));
         assert!(files.gitignore.contains("**/*.ptx"));
         assert!(files.main_rs.contains("vecadd_async"));
     }
