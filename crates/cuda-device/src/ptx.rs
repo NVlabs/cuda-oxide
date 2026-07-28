@@ -60,6 +60,19 @@ macro_rules! define_ptx_asm_void {
     };
 }
 
+/// Typed identity helper for `in("C")` operands.
+///
+/// `ptx_asm!` wraps every `in("C")` operand in
+/// `const { __ptx_asm_c(...) }`: the signature rejects anything that is not
+/// a `&'static [u8; N]` byte string at type-check time, and the inline
+/// const keeps the operand a compile-time constant so the MIR importer can
+/// splice its text into the PTX template.
+#[doc(hidden)]
+#[inline(always)]
+pub const fn __ptx_asm_c<const N: usize>(value: &'static [u8; N]) -> &'static [u8; N] {
+    value
+}
+
 // Rust has no variadic generics, so expose marker stubs for fixed arities.
 // Output markers support up to 24 arguments: 16 explicit inputs plus up to
 // 8 hidden tied inputs generated for `inout` operands. Void markers require

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Validates that `ptx_asm!` supports multiple `out` operands (2, 4, and 8).
+//! Validates that `ptx_asm!` supports multiple `out` operands (2, 4, 8, and 16).
 
 #![allow(dead_code, unused_variables)]
 
@@ -135,6 +135,55 @@ fn eight_outputs() {
     }
 
     let _ = (a, b, c, d, e, f, g, h);
+}
+
+/// Sixteen outputs with one input (maximum supported count).
+fn sixteen_outputs() {
+    let a: u32;
+    let b: u32;
+    let c: u32;
+    let d: u32;
+    let e: u32;
+    let f: u32;
+    let g: u32;
+    let h: u32;
+    let i: u32;
+    let j: u32;
+    let k: u32;
+    let l: u32;
+    let m: u32;
+    let n: u32;
+    let o: u32;
+    let p: u32;
+
+    unsafe {
+        ptx_asm!(
+            "mov.b32 %0, %16;
+             mov.b32 %1, %16;
+             mov.b32 %2, %16;
+             mov.b32 %3, %16;
+             mov.b32 %4, %16;
+             mov.b32 %5, %16;
+             mov.b32 %6, %16;
+             mov.b32 %7, %16;
+             mov.b32 %8, %16;
+             mov.b32 %9, %16;
+             mov.b32 %10, %16;
+             mov.b32 %11, %16;
+             mov.b32 %12, %16;
+             mov.b32 %13, %16;
+             mov.b32 %14, %16;
+             mov.b32 %15, %16;",
+            out("=r") a, out("=r") b, out("=r") c, out("=r") d,
+            out("=r") e, out("=r") f, out("=r") g, out("=r") h,
+            out("=r") i, out("=r") j, out("=r") k, out("=r") l,
+            out("=r") m, out("=r") n, out("=r") o, out("=r") p,
+            in("r") 42u32,
+            options(register_only),
+        );
+    }
+
+    let _ = (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p);
 }
 
 /// Mixed output types (integer and floating point).

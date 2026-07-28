@@ -38,7 +38,7 @@ document. If this page ever disagrees with those, they win.
 unsafe {
     ptx_asm!(
         "<template>",
-        out("<constraint>") <place>,     // write-only output
+        out("<constraint>") <place>,    // write-only output
         inout("<constraint>") <place>,  // read-write output
         in("<constraint>") <expr>,      // explicit input
         clobber("<name>"),              // side-effect declarations
@@ -47,7 +47,7 @@ unsafe {
 }
 ```
 
-The macro supports at most 8 output operands across `out` and `inout`, plus at
+The macro supports at most 16 output operands across `out` and `inout`, plus at
 most 16 explicit `in` operands. Template placeholders use `%N` (zero-based) for
 user-visible operands and `%%reg` for literal PTX registers, such as
 `%%laneid` and `%%tid.x`.

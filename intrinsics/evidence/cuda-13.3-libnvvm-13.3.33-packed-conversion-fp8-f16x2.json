@@ -1,0 +1,622 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "cvt_rn_satfinite_e4m3x2_f16x2",
+      "source_record": "int_nvvm_f16x2_to_e4m3x2_rn",
+      "llvm_symbol": "llvm.nvvm.f16x2.to.e4m3x2.rn",
+      "llvm_arguments": [
+        "v2f16"
+      ],
+      "llvm_results": [
+        "i16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "satfinite",
+          "e4m3x2",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_satfinite_relu_e4m3x2_f16x2",
+      "source_record": "int_nvvm_f16x2_to_e4m3x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.f16x2.to.e4m3x2.rn.relu",
+      "llvm_arguments": [
+        "v2f16"
+      ],
+      "llvm_results": [
+        "i16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "satfinite",
+          "relu",
+          "e4m3x2",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_satfinite_e5m2x2_f16x2",
+      "source_record": "int_nvvm_f16x2_to_e5m2x2_rn",
+      "llvm_symbol": "llvm.nvvm.f16x2.to.e5m2x2.rn",
+      "llvm_arguments": [
+        "v2f16"
+      ],
+      "llvm_results": [
+        "i16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "satfinite",
+          "e5m2x2",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_satfinite_relu_e5m2x2_f16x2",
+      "source_record": "int_nvvm_f16x2_to_e5m2x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.f16x2.to.e5m2x2.rn.relu",
+      "llvm_arguments": [
+        "v2f16"
+      ],
+      "llvm_results": [
+        "i16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "satfinite",
+          "relu",
+          "e5m2x2",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_f16x2_e4m3x2",
+      "source_record": "int_nvvm_e4m3x2_to_f16x2_rn",
+      "llvm_symbol": "llvm.nvvm.e4m3x2.to.f16x2.rn",
+      "llvm_arguments": [
+        "i16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "f16x2",
+          "e4m3x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_relu_f16x2_e4m3x2",
+      "source_record": "int_nvvm_e4m3x2_to_f16x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.e4m3x2.to.f16x2.rn.relu",
+      "llvm_arguments": [
+        "i16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "relu",
+          "f16x2",
+          "e4m3x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_f16x2_e5m2x2",
+      "source_record": "int_nvvm_e5m2x2_to_f16x2_rn",
+      "llvm_symbol": "llvm.nvvm.e5m2x2.to.f16x2.rn",
+      "llvm_arguments": [
+        "i16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "f16x2",
+          "e5m2x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_rn_relu_f16x2_e5m2x2",
+      "source_record": "int_nvvm_e5m2x2_to_f16x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.e5m2x2.to.f16x2.rn.relu",
+      "llvm_arguments": [
+        "i16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_89",
+      "ptx_feature": "PTX ISA 8.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "compute_89",
+            "ptx93"
+          ],
+          "representation": "pure inline PTX with a single packed source operand",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,774-byte NVVM IR fixture (SHA-256 177071f5289fef1bade95e29f12afa689c91dc8f4c6f4d89cca810527c1317da) to 1,628-byte PTX (SHA-256 54595aa338e74747cf5ec117a0570f112c673a3d0266b7d2a5d850d3ba6c8ba4) and 2,268-byte LTOIR (SHA-256 dae644d035c13e6afec18e39d26ba16c8326caecab2d6425158b563d3d91a4ba). All eight forms retained their single packed source operand."
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM-emitted f16x2 and packed-FP8 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted all eight forms at sm_89 and produced a 3,624-byte cubin (SHA-256 c761f544931d83935d10c7965037bad1536fd8d1f30cea4ae52f3826b4e8821e). The same PTX emitted for compute_87 was rejected with \"Feature 'cvt.e4m3x2.f16x2' requires .target sm_89 or higher\".",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_89",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining all eight f16x2 and packed-FP8 conversions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 1,464-byte cubin (SHA-256 aadc245b2a8c0d63d2a3d5337bff8cb7c778022514b8f32d1e1efd61bf91ac3f) from the sm_89 LTOIR. Linking that same LTOIR for sm_87 failed with 'LTOIR arch newer than target arch'.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "relu",
+          "f16x2",
+          "e5m2x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    }
+  ]
+}
