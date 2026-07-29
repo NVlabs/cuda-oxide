@@ -364,6 +364,12 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     ///
     /// # Safety
     ///
+    /// - The slot must already be **initialized**. This reads by value, so a
+    ///   slot that was never written holds an indeterminate bit pattern, and
+    ///   producing a `T` from it is undefined behaviour for any `T` whose
+    ///   values are not all bit patterns (`bool`, `char`, enums, references).
+    ///   Buffers from `DeviceBuffer::zeroed` or `from_host` are initialized;
+    ///   those from `uninitialized_async` are not until written.
     /// - No thread may write to the same index while this read occurs.
     /// - If this index was written by another thread, explicit synchronization
     ///   (e.g., `sync_threads()`) must separate the write from this read.
