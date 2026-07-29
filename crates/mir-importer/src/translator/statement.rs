@@ -291,15 +291,9 @@ pub fn translate_statement(
                         // Alloca model: locate the element via
                         // `MirConstantOp` + `MirArrayElementAddrOp` from the
                         // local's slot and emit `mir.store`.
-
-                        if *from_end {
-                            return input_err!(
-                                loc,
-                                TranslationErr::unsupported(
-                                    "ConstantIndex with from_end=true not yet supported for writes"
-                                )
-                            );
-                        }
+                        // `from_end` resolves via
+                        // [`rvalue::resolve_constant_index`] using the known
+                        // array length.
 
                         let mut current_prev = prev_op;
                         if let Some(rvalue_op) = rvalue_op_opt {
@@ -318,7 +312,6 @@ pub fn translate_statement(
                         }
 
                         let local = place.local;
-                        let index = *offset as usize;
                         let Some(arr_ptr) = value_map.get_slot(local) else {
                             return input_err!(
                                 loc,
@@ -329,8 +322,14 @@ pub fn translate_statement(
                             );
                         };
 
-                        let (element_ty, address_space) =
+                        let (element_ty, address_space, sequence_len) =
                             slot_array_element_ty(ctx, arr_ptr, &loc)?;
+                        let index = rvalue::resolve_constant_index(
+                            *offset,
+                            *from_end,
+                            sequence_len,
+                            &loc,
+                        )?;
 
                         use dialect_mir::ops::MirConstantOp;
                         use pliron::builtin::attributes::IntegerAttr;
@@ -421,7 +420,7 @@ pub fn translate_statement(
                         )?;
                         current_prev = prev_op_after_index;
 
-                        let (element_ty, address_space) =
+                        let (element_ty, address_space, _) =
                             slot_array_element_ty(ctx, arr_ptr, &loc)?;
 
                         let store_op = emit_array_element_store(
@@ -1071,18 +1070,18 @@ fn store_through_place_address(
     Ok(Some(store_op))
 }
 
-/// Extract the element type and address space from a pointer that points
-/// to an array.
+/// Extract the element type, address space, and array length from a pointer
+/// that points to an array.
 ///
 /// Used by the statement-level element write helpers. Returns a structured
 /// error when the pointer's pointee isn't a [`MirArrayType`], which signals
 /// a structural mismatch (most likely the wrong MIR projection reaching
-/// this path).
+/// this path). The length is used for `ConstantIndex { from_end: true }`.
 fn slot_array_element_ty(
     ctx: &pliron::context::Context,
     arr_ptr: Value,
     loc: &Location,
-) -> TranslationResult<(pliron::r#type::TypeHandle, u32)> {
+) -> TranslationResult<(pliron::r#type::TypeHandle, u32, u64)> {
     let arr_ptr_ty = arr_ptr.get_type(ctx);
     let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
     let mir_ptr_ty = arr_ptr_ty_ref
@@ -1095,16 +1094,15 @@ fn slot_array_element_ty(
         })?;
     let address_space = mir_ptr_ty.address_space;
     let pointee_ref = mir_ptr_ty.pointee.deref(ctx);
-    let element_ty = pointee_ref
+    let arr_ty = pointee_ref
         .downcast_ref::<dialect_mir::types::MirArrayType>()
         .ok_or_else(|| {
             pliron::input_error!(
                 loc.clone(),
                 TranslationErr::unsupported("Array-index slot pointee is not MirArrayType",)
             )
-        })?
-        .element_type();
-    Ok((element_ty, address_space))
+        })?;
+    Ok((arr_ty.element_type(), address_space, arr_ty.size()))
 }
 
 /// Emit `mir.array_element_addr` + `mir.store` to assign `value` into

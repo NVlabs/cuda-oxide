@@ -3306,17 +3306,9 @@ fn translate_place_value_fallback(
                     // `MirConstantOp` + `MirArrayElementAddrOp` and load.
                     // `mem2reg` collapses the resulting load-after-store pairs
                     // back into SSA extracts for promotable arrays.
-
-                    let index = if *from_end {
-                        return input_err!(
-                            loc,
-                            TranslationErr::unsupported(
-                                "ConstantIndex with from_end=true not yet supported"
-                            )
-                        );
-                    } else {
-                        *offset as usize
-                    };
+                    //
+                    // `from_end` resolves via [`resolve_constant_index`] using
+                    // the known `MirArrayType` length.
 
                     // Load the current array value if we don't have a slot (ZST/edge case)
                     // so that we fall back to the SSA extract-field behaviour.
@@ -3340,12 +3332,12 @@ fn translate_place_value_fallback(
                         let anchor = prev_op_after_base.or(prev_op);
 
                         let array_ty = array_value.get_type(ctx);
-                        let element_ty = {
+                        let (element_ty, sequence_len) = {
                             let array_ty_ref = array_ty.deref(ctx);
                             if let Some(arr_ty) =
                                 array_ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>()
                             {
-                                arr_ty.element_type()
+                                (arr_ty.element_type(), arr_ty.size())
                             } else {
                                 return input_err!(
                                     loc,
@@ -3356,6 +3348,8 @@ fn translate_place_value_fallback(
                                 );
                             }
                         };
+                        let index =
+                            resolve_constant_index(*offset, *from_end, sequence_len, &loc)?;
 
                         let op = Operation::new(
                             ctx,
@@ -3386,7 +3380,7 @@ fn translate_place_value_fallback(
                     // Slot-backed path: GEP + load from the slot.
                     let mut current_prev = prev_op;
 
-                    let (element_ty, address_space) = {
+                    let (element_ty, address_space, sequence_len) = {
                         let arr_ptr_ty = arr_ptr.get_type(ctx);
                         let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
                         let mir_ptr_ty = arr_ptr_ty_ref
@@ -3401,16 +3395,16 @@ fn translate_place_value_fallback(
                                 )
                             })?;
                         let array_ty_ref = mir_ptr_ty.pointee.deref(ctx);
-                        let elem_ty = array_ty_ref
+                        let arr_ty = array_ty_ref
                             .downcast_ref::<dialect_mir::types::MirArrayType>()
                             .ok_or_else(|| {
                                 input_error_noloc!(TranslationErr::unsupported(
                                     "ConstantIndex base slot pointee is not MirArrayType"
                                 ))
-                            })?
-                            .element_type();
-                        (elem_ty, mir_ptr_ty.address_space)
+                            })?;
+                        (arr_ty.element_type(), mir_ptr_ty.address_space, arr_ty.size())
                     };
+                    let index = resolve_constant_index(*offset, *from_end, sequence_len, &loc)?;
 
                     use dialect_mir::ops::MirConstantOp;
                     use pliron::builtin::attributes::IntegerAttr;
@@ -3821,14 +3815,55 @@ pub(crate) fn translate_place_address(
     )
 }
 
+/// Resolve a MIR `ConstantIndex` into a 0-based element offset.
+///
+/// Rustc semantics: if `from_end` then index = `sequence_len - offset`, else
+/// `offset`. Callers must supply a known sequence length (typically
+/// [`MirArrayType::size`]); slices / unknown lengths must be rejected before
+/// invoking this so we never silently wrong-index.
+pub(crate) fn resolve_constant_index(
+    offset: u64,
+    from_end: bool,
+    sequence_len: u64,
+    loc: &Location,
+) -> TranslationResult<usize> {
+    if from_end {
+        if offset > sequence_len {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "ConstantIndex from_end offset {offset} exceeds sequence length {sequence_len}"
+                ))
+            );
+        }
+        Ok((sequence_len - offset) as usize)
+    } else {
+        Ok(offset as usize)
+    }
+}
+
+/// Length of the `[T; N]` pointee behind `ptr`, if any.
+fn mir_ptr_array_len(ctx: &Context, ptr: Value) -> Option<u64> {
+    let ptr_ty = ptr.get_type(ctx);
+    let ptr_ty_ref = ptr_ty.deref(ctx);
+    let mir_ptr = ptr_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>()?;
+    let pointee = mir_ptr.pointee;
+    pointee
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirArrayType>()
+        .map(|arr| arr.size())
+}
+
 /// Compute the in-memory address of `place` starting from its alloca `slot`.
 ///
 /// Walks the projection chain and emits the correct pliron ops for each
 /// element:
 ///
 /// - `Field(idx, _)`   → [`MirFieldAddrOp`]
-/// - `ConstantIndex {offset, from_end: false, ..}` → `MirConstantOp` + [`MirArrayElementAddrOp`]
-///   (array pointee) or `MirConstantOp` + [`MirPtrOffsetOp`] (slice data pointer)
+/// - `ConstantIndex {offset, from_end, ..}` → `MirConstantOp` + [`MirArrayElementAddrOp`]
+///   (array pointee; `from_end` resolves via [`resolve_constant_index`] using
+///   the known array length) or `MirConstantOp` + [`MirPtrOffsetOp`] (slice
+///   data pointer; forward indices only)
 /// - `Index(local)`    → `load_local(local)` + [`MirArrayElementAddrOp`]
 ///   (array pointee) or `load_local(local)` + [`MirPtrOffsetOp`] (slice data pointer)
 /// - `Deref`           → `MirLoadOp` of the pointer (the loaded pointer IS
@@ -3839,9 +3874,10 @@ pub(crate) fn translate_place_address(
 ///   so the walk continues against the ORIGINAL elements, while a trailing
 ///   fat deref (`&*s` reborrow) is just a load of the fat value.
 ///
-/// `Downcast` (enum payload addressing; issues #131/#146), `Subslice` and
-/// from-end `ConstantIndex` are NOT handled; the walker punts on them
-/// (returns `Ok(None)`).
+/// `Downcast` (enum payload addressing; issues #131/#146) and `Subslice` are
+/// NOT handled; the walker punts on them (returns `Ok(None)`). From-end
+/// `ConstantIndex` on non-array pointees (e.g. slice data pointers) also
+/// punts — only known-length arrays can resolve `from_end`.
 ///
 /// Returns `Ok(Some((addr, last_op)))` on success, `Ok(None)` if the
 /// projection chain contains an element this helper doesn't know how to
@@ -4158,9 +4194,6 @@ fn translate_place_addr_from_slot(
                 min_length: _,
                 from_end,
             } => {
-                if *from_end {
-                    return Ok(None);
-                }
                 let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
@@ -4169,8 +4202,20 @@ fn translate_place_addr_from_slot(
                     pointee_kind = PointeeKind::Direct;
                 }
 
+                // from_end needs a known array length. Slice data pointers
+                // (Direct) have no compile-time length — punt rather than
+                // silently wrong-index.
+                let index = if *from_end {
+                    let Some(seq_len) = mir_ptr_array_len(ctx, current) else {
+                        return Ok(None);
+                    };
+                    resolve_constant_index(*offset, true, seq_len, &loc)?
+                } else {
+                    *offset as usize
+                };
+
                 let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
-                let index_apint = APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+                let index_apint = APInt::from_i64(index as i64, NonZeroUsize::new(64).unwrap());
                 let const_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, index_apint);
                 let const_op_ptr = Operation::new(
                     ctx,
@@ -4257,10 +4302,11 @@ fn translate_place_addr_from_slot(
             // value copy and mutable borrows fail loudly at the caller.
             mir::ProjectionElem::Downcast(_) => return Ok(None),
 
-            // Remaining projection kinds (Subslice, from-end ConstantIndex,
-            // ...) aren't lowered to addresses here yet. Punt to the caller,
-            // which decides between a value fallback (shared borrows) and a
-            // hard error (mutable borrows).
+            // Remaining projection kinds (Subslice, ...) aren't lowered to
+            // addresses here yet. Punt to the caller, which decides between a
+            // value fallback (shared borrows) and a hard error (mutable
+            // borrows). From-end ConstantIndex on non-array pointees is
+            // handled above (returns Ok(None)).
             _ => return Ok(None),
         }
     }
@@ -4707,25 +4753,19 @@ pub fn translate_place_iterative(
                 min_length: _,
                 from_end,
             } => {
-                if *from_end {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(
-                            "ConstantIndex with from_end=true not yet supported"
-                        )
-                    );
-                }
-                let index = *offset as usize;
-
                 // Determine indexable kind upfront so we drop the immutable borrow
                 // before creating operations (which need &mut ctx).
                 enum ConstIndexKind {
                     Array {
                         element_ty: TypeHandle,
+                        sequence_len: u64,
                     },
                     Ptr {
                         element_ty: TypeHandle,
                         ptr_ty: TypeHandle,
+                        /// Known length when pointee is `[T; N]`; `None` for
+                        /// slice data pointers / other pointees.
+                        array_len: Option<u64>,
                     },
                 }
 
@@ -4737,13 +4777,20 @@ pub fn translate_place_iterative(
                     {
                         Ok(ConstIndexKind::Array {
                             element_ty: arr_ty.element_type(),
+                            sequence_len: arr_ty.size(),
                         })
                     } else if let Some(ptr_ty) =
                         cur_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>()
                     {
+                        let array_len = ptr_ty
+                            .pointee
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirArrayType>()
+                            .map(|arr| arr.size());
                         Ok(ConstIndexKind::Ptr {
                             element_ty: ptr_ty.pointee,
                             ptr_ty: cur_ty,
+                            array_len,
                         })
                     } else {
                         let ty_dbg = format!("{:?}", cur_ty_ref);
@@ -4752,7 +4799,12 @@ pub fn translate_place_iterative(
                 };
 
                 match kind {
-                    Ok(ConstIndexKind::Array { element_ty }) => {
+                    Ok(ConstIndexKind::Array {
+                        element_ty,
+                        sequence_len,
+                    }) => {
+                        let index =
+                            resolve_constant_index(*offset, *from_end, sequence_len, &loc)?;
                         let op = Operation::new(
                             ctx,
                             MirExtractFieldOp::get_concrete_op_info(),
@@ -4777,69 +4829,173 @@ pub fn translate_place_iterative(
                         current_value = extract_op.get_operation().deref(ctx).get_result(0);
                         current_prev_op = Some(extract_op.get_operation());
                     }
-                    Ok(ConstIndexKind::Ptr { element_ty, ptr_ty }) => {
-                        // Create constant index value
-                        let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-                        let apint = APInt::from_u32(index as u32, NonZeroUsize::new(32).unwrap());
-                        let index_attr =
-                            pliron::builtin::attributes::IntegerAttr::new(i32_ty, apint);
+                    Ok(ConstIndexKind::Ptr {
+                        element_ty,
+                        ptr_ty,
+                        array_len,
+                    }) => {
                         use dialect_mir::ops::MirConstantOp;
-                        let const_op = Operation::new(
-                            ctx,
-                            MirConstantOp::get_concrete_op_info(),
-                            vec![i32_ty.into()],
-                            vec![],
-                            vec![],
-                            0,
-                        );
-                        const_op.deref_mut(ctx).set_loc(loc.clone());
-                        let const_mir = MirConstantOp::new(const_op);
-                        const_mir.set_attr_value(ctx, index_attr);
-                        if let Some(prev) = current_prev_op {
-                            const_mir.get_operation().insert_after(ctx, prev);
-                        } else {
-                            const_mir.get_operation().insert_at_front(block_ptr, ctx);
-                        }
-                        current_prev_op = Some(const_mir.get_operation());
-                        let index_value = const_mir.get_operation().deref(ctx).get_result(0);
 
-                        // Pointer offset
-                        let offset_op = Operation::new(
-                            ctx,
-                            MirPtrOffsetOp::get_concrete_op_info(),
-                            vec![ptr_ty],
-                            vec![current_value, index_value],
-                            vec![],
-                            0,
-                        );
-                        offset_op.deref_mut(ctx).set_loc(loc.clone());
-                        if let Some(prev) = current_prev_op {
-                            offset_op.insert_after(ctx, prev);
-                        } else {
-                            offset_op.insert_at_front(block_ptr, ctx);
-                        }
-                        current_prev_op = Some(offset_op);
-                        let offset_ptr = offset_op.deref(ctx).get_result(0);
+                        // from_end on a pointer requires a known-length array
+                        // pointee; slice data pointers have no compile-time len.
+                        if *from_end {
+                            let Some(seq_len) = array_len else {
+                                return input_err!(
+                                    loc,
+                                    TranslationErr::unsupported(
+                                        "ConstantIndex with from_end=true requires a \
+                                         known-length array (got pointer to non-array)"
+                                    )
+                                );
+                            };
+                            let index = resolve_constant_index(*offset, true, seq_len, &loc)?;
+                            // `element_ty` here is the MirArrayType pointee; GEP
+                            // into it and load the scalar element.
+                            let arr_elem_ty = element_ty
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirArrayType>()
+                                .map(|arr| arr.element_type())
+                                .ok_or_else(|| {
+                                    input_error_noloc!(TranslationErr::unsupported(
+                                        "ConstantIndex from_end array_len set but \
+                                         pointee is not MirArrayType"
+                                    ))
+                                })?;
+                            let addr_space = ptr_ty
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirPtrType>()
+                                .map(|p| p.address_space)
+                                .unwrap_or(0);
 
-                        // Load element
-                        let load_op = Operation::new(
-                            ctx,
-                            MirLoadOp::get_concrete_op_info(),
-                            vec![element_ty],
-                            vec![offset_ptr],
-                            vec![],
-                            0,
-                        );
-                        load_op.deref_mut(ctx).set_loc(loc.clone());
-                        let load = MirLoadOp::new(load_op);
-                        if let Some(prev) = current_prev_op {
-                            load.get_operation().insert_after(ctx, prev);
-                        } else {
-                            load.get_operation().insert_at_front(block_ptr, ctx);
-                        }
+                            let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+                            let index_apint =
+                                APInt::from_i64(index as i64, NonZeroUsize::new(64).unwrap());
+                            let index_attr = pliron::builtin::attributes::IntegerAttr::new(
+                                i64_ty, index_apint,
+                            );
+                            let const_op = Operation::new(
+                                ctx,
+                                MirConstantOp::get_concrete_op_info(),
+                                vec![i64_ty.into()],
+                                vec![],
+                                vec![],
+                                0,
+                            );
+                            const_op.deref_mut(ctx).set_loc(loc.clone());
+                            MirConstantOp::new(const_op).set_attr_value(ctx, index_attr);
+                            if let Some(prev) = current_prev_op {
+                                const_op.insert_after(ctx, prev);
+                            } else {
+                                const_op.insert_at_front(block_ptr, ctx);
+                            }
+                            current_prev_op = Some(const_op);
+                            let index_value = const_op.deref(ctx).get_result(0);
 
-                        current_value = load.get_operation().deref(ctx).get_result(0);
-                        current_prev_op = Some(load.get_operation());
+                            use dialect_mir::ops::MirArrayElementAddrOp;
+                            let elem_ptr_ty = dialect_mir::types::MirPtrType::get(
+                                ctx, arr_elem_ty, false, addr_space,
+                            )
+                            .into();
+                            let addr_op = Operation::new(
+                                ctx,
+                                MirArrayElementAddrOp::get_concrete_op_info(),
+                                vec![elem_ptr_ty],
+                                vec![current_value, index_value],
+                                vec![],
+                                0,
+                            );
+                            addr_op.deref_mut(ctx).set_loc(loc.clone());
+                            if let Some(prev) = current_prev_op {
+                                addr_op.insert_after(ctx, prev);
+                            } else {
+                                addr_op.insert_at_front(block_ptr, ctx);
+                            }
+                            current_prev_op = Some(addr_op);
+                            let elem_ptr = addr_op.deref(ctx).get_result(0);
+
+                            let load_op = Operation::new(
+                                ctx,
+                                MirLoadOp::get_concrete_op_info(),
+                                vec![arr_elem_ty],
+                                vec![elem_ptr],
+                                vec![],
+                                0,
+                            );
+                            load_op.deref_mut(ctx).set_loc(loc.clone());
+                            if let Some(prev) = current_prev_op {
+                                load_op.insert_after(ctx, prev);
+                            } else {
+                                load_op.insert_at_front(block_ptr, ctx);
+                            }
+                            current_value = load_op.deref(ctx).get_result(0);
+                            current_prev_op = Some(load_op);
+                        } else {
+                            let index = *offset as usize;
+
+                            // Create constant index value
+                            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+                            let apint =
+                                APInt::from_u32(index as u32, NonZeroUsize::new(32).unwrap());
+                            let index_attr =
+                                pliron::builtin::attributes::IntegerAttr::new(i32_ty, apint);
+                            let const_op = Operation::new(
+                                ctx,
+                                MirConstantOp::get_concrete_op_info(),
+                                vec![i32_ty.into()],
+                                vec![],
+                                vec![],
+                                0,
+                            );
+                            const_op.deref_mut(ctx).set_loc(loc.clone());
+                            let const_mir = MirConstantOp::new(const_op);
+                            const_mir.set_attr_value(ctx, index_attr);
+                            if let Some(prev) = current_prev_op {
+                                const_mir.get_operation().insert_after(ctx, prev);
+                            } else {
+                                const_mir.get_operation().insert_at_front(block_ptr, ctx);
+                            }
+                            current_prev_op = Some(const_mir.get_operation());
+                            let index_value =
+                                const_mir.get_operation().deref(ctx).get_result(0);
+
+                            // Pointer offset
+                            let offset_op = Operation::new(
+                                ctx,
+                                MirPtrOffsetOp::get_concrete_op_info(),
+                                vec![ptr_ty],
+                                vec![current_value, index_value],
+                                vec![],
+                                0,
+                            );
+                            offset_op.deref_mut(ctx).set_loc(loc.clone());
+                            if let Some(prev) = current_prev_op {
+                                offset_op.insert_after(ctx, prev);
+                            } else {
+                                offset_op.insert_at_front(block_ptr, ctx);
+                            }
+                            current_prev_op = Some(offset_op);
+                            let offset_ptr = offset_op.deref(ctx).get_result(0);
+
+                            // Load element
+                            let load_op = Operation::new(
+                                ctx,
+                                MirLoadOp::get_concrete_op_info(),
+                                vec![element_ty],
+                                vec![offset_ptr],
+                                vec![],
+                                0,
+                            );
+                            load_op.deref_mut(ctx).set_loc(loc.clone());
+                            let load = MirLoadOp::new(load_op);
+                            if let Some(prev) = current_prev_op {
+                                load.get_operation().insert_after(ctx, prev);
+                            } else {
+                                load.get_operation().insert_at_front(block_ptr, ctx);
+                            }
+
+                            current_value = load.get_operation().deref(ctx).get_result(0);
+                            current_prev_op = Some(load.get_operation());
+                        }
                     }
                     Err(ty_dbg) => {
                         return input_err!(
@@ -4848,14 +5004,15 @@ pub fn translate_place_iterative(
                                 "ConstantIndex projection on unsupported type.\n\
                                  \n  pliron type: {}\n\
                                  \n  display    : {}\n\
-                                 \n  index      : {}\n\
+                                 \n  offset     : {} (from_end={})\n\
                                  \n\
                                  \nConstantIndex handles MirArrayType (extractvalue) and MirPtrType\n\
                                  (pointer offset + load, e.g. after Deref on a slice). The type above\n\
                                  matched neither. A new handler may need to be added.",
                                 ty_dbg,
                                 cur_ty.disp(ctx),
-                                index
+                                offset,
+                                from_end
                             ))
                         );
                     }
@@ -9057,6 +9214,43 @@ mod tests {
             Operation::get_op::<MirCastOp>(cast_op, &ctx).is_some(),
             "normalization must insert mir.cast"
         );
+    }
+}
+
+#[cfg(test)]
+mod constant_index_tests {
+    use super::resolve_constant_index;
+    use pliron::location::Location;
+
+    #[test]
+    fn resolve_constant_index_from_start() {
+        assert_eq!(
+            resolve_constant_index(2, false, 4, &Location::Unknown).unwrap(),
+            2
+        );
+        assert_eq!(
+            resolve_constant_index(0, false, 4, &Location::Unknown).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn resolve_constant_index_from_end() {
+        // `let [.., last] = [T; 4]` → offset=1, from_end → index 3
+        assert_eq!(
+            resolve_constant_index(1, true, 4, &Location::Unknown).unwrap(),
+            3
+        );
+        // offset == len → index 0
+        assert_eq!(
+            resolve_constant_index(4, true, 4, &Location::Unknown).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn resolve_constant_index_from_end_offset_exceeds_len() {
+        assert!(resolve_constant_index(5, true, 4, &Location::Unknown).is_err());
     }
 }
 
