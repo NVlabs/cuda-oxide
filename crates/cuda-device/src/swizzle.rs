@@ -73,9 +73,20 @@ pub const WARP_LANES: usize = 32;
 ///
 /// `M + B <= S` is required, and checked at compile time. Without it the XOR
 /// target bits overlap the bits being read, and the swizzle stops being its own
-/// inverse - so a store and a load through the same swizzle would disagree. It
-/// remains a bijection, but an involution is what makes it usable as "apply on
-/// the way in, apply again on the way out".
+/// inverse - so a store and a load through the same swizzle would disagree.
+/// Some rejected combinations are not even bijections: at `M == S` the sourced
+/// bits are XORed with themselves and zeroed outright, collapsing distinct
+/// offsets. An involution is what makes the type usable as "apply on the way
+/// in, apply again on the way out".
+///
+/// # Relation to CuTe's `Swizzle`
+///
+/// CuTe's `Swizzle<B, M, S>` measures its shift `S` relative to the base `M`
+/// (source bits start at `M + S`), while this type's `S` is the absolute
+/// source-bit position. A CuTe `Swizzle<B, M, S>` is this type's
+/// `Swizzle<B, M, M + S>`; conversely, `Swizzle<B, M, S>` here corresponds to
+/// CuTe's `Swizzle<B, M, S - M>`. The conventions coincide only at `M == 0`,
+/// so translate the third parameter explicitly when porting a CuTe layout.
 pub struct Swizzle<const B: usize, const M: usize, const S: usize>;
 
 impl<const B: usize, const M: usize, const S: usize> Swizzle<B, M, S> {
