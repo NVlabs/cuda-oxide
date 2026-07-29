@@ -41,9 +41,12 @@ and promoted-by-reference) also read every field at its rustc layout offset,
 so padded, reordered, `#[repr(C)]`, and nested shapes decode correctly, and a
 struct's stored size is its padded size, which fixes the element stride for
 arrays of padded structs inside constants. Arrays whose elements are structs
-or initialized unions are not yet materialized as constants. Pointer-bearing
-array, tuple, and struct constants are rejected with a diagnostic until
-aggregate relocations can be represented without losing provenance.
+or initialized unions are not yet materialized as constants. Thin pointer
+fields in array, tuple, and struct **const** values that relocate to device
+statics are materialized via `MirGlobalAllocOp` per field (see
+`struct_constant_provenance`, `tuple_constant_provenance`,
+`tuple_array_provenance`). Fat pointers, enum constants with relocations, and
+device-global *initializer* relocations remain rejected.
 
 ## Compiler: Closures
 
