@@ -15,7 +15,10 @@
 //! Run: `cargo oxide run vectorization`
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::cuda_module;
+use cuda_device::{access, cuda_module};
+
+/// Elements (or quads, for the view kernel) per launch; one per thread.
+const N: usize = 256;
 
 /// One row of the per-type report.
 struct Row {
@@ -155,10 +158,26 @@ mod view_kernels {
     }
 }
 
+/// The shape `f32x4_view_copy` relies on, derived by [`access::plan`] instead
+/// of by hand: a 128-bit transaction of `f32` is one 4-element quad per
+/// thread and needs `F32x4`'s 16-byte alignment, and the flat `N * 4`-element
+/// buffer is exactly one pass for the `N`-thread block `main` launches.
+const _: () = {
+    let plan = match access::plan::<f32>(access::TXN_128, N) {
+        Some(p) => p,
+        None => panic!("128 bits is a whole number of f32"),
+    };
+    assert!(plan.elems_per_thread == 4, "one F32x4 quad per thread");
+    assert!(plan.align == core::mem::align_of::<cuda_device::vector::F32x4>());
+    match plan.passes_for_tile(N * 4) {
+        Some(passes) => assert!(passes == 1, "whole buffer in one block-wide pass"),
+        None => panic!("N * 4 must be a whole number of block-wide accesses"),
+    }
+};
+
 fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
-    const N: usize = 256;
     let cfg = LaunchConfig::for_num_elems(N as u32);
 
     let module = ctx
