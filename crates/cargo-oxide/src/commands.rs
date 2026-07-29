@@ -9221,8 +9221,12 @@ edition = "2024"
         assert!(gitignore.contains("/target/"));
         assert!(gitignore.contains("**/*.bc"));
         for suffix in GENERATED_ARTIFACT_SUFFIXES {
+            // Match whole lines, not substrings: `**/*.cubin.target` contains
+            // `**/*.cubin` as a substring, so `contains()` would keep passing
+            // even if the `cubin` pattern itself were dropped.
+            let pattern = format!("**/*.{suffix}");
             assert!(
-                gitignore.contains(&format!("**/*.{suffix}")),
+                gitignore.lines().any(|line| line == pattern),
                 "scaffold .gitignore must ignore clean suffix `{suffix}`"
             );
         }
