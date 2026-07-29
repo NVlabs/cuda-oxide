@@ -25,7 +25,7 @@
 //!
 //! This is a reporting command. It reads the two JSON files and writes nothing.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -66,13 +66,19 @@ pub struct Coverage {
     pub imported: usize,
     /// Distinct intrinsics in `catalog.json`.
     pub generated: usize,
+    /// Imported records the catalog deliberately rejects via `llvm_exclusion`.
+    ///
+    /// Not backlog: kept out of every ungenerated count.
+    pub excluded: usize,
 }
 
 impl Coverage {
     /// Ungenerated records across every family.
     #[must_use]
     pub fn ungenerated(&self) -> usize {
-        self.imported.saturating_sub(self.generated)
+        self.imported
+            .saturating_sub(self.generated)
+            .saturating_sub(self.excluded)
     }
 
     /// Ungenerated records in compute-relevant families only.
@@ -96,8 +102,10 @@ impl Coverage {
 /// stay distinct - they have different coverage stories.
 fn family_of(name: &str) -> String {
     let stem = name.strip_prefix("int_nvvm_").unwrap_or(name);
-    // Longest known prefix wins, so `shfl_sync` groups under `shfl` rather than
-    // splitting into its own family.
+    // First matching prefix in array order wins (the prefixes do not overlap,
+    // so the order is not load-bearing). Everything else groups by its leading
+    // `_`-separated segment, which is how `shfl_sync` lands under `shfl`
+    // rather than splitting into its own family.
     for prefix in NON_COMPUTE_PREFIXES {
         if stem.starts_with(prefix) {
             return (*prefix).to_string();
@@ -186,7 +194,14 @@ pub fn compute(repo_root: &Path) -> Result<Coverage> {
     );
 
     let mut per_family: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut deliberately_rejected = 0;
     for name in &imported {
+        // A record the catalog deliberately rejects (`llvm_exclusion`) is not
+        // backlog: keep it out of every family's ungenerated count.
+        if excluded.contains(name) && !generated.contains(name) {
+            deliberately_rejected += 1;
+            continue;
+        }
         let entry = per_family.entry(family_of(name)).or_default();
         if generated.contains(name) {
             entry.0 += 1;
@@ -215,7 +230,51 @@ pub fn compute(repo_root: &Path) -> Result<Coverage> {
         families,
         imported: imported.len(),
         generated: generated.len(),
+        excluded: deliberately_rejected,
     })
+}
+
+/// Render the full report.
+///
+/// Separate from [`run`] so tests can assert on the exact text.
+fn render_report(coverage: &Coverage) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "pinned NVVM intrinsics: {} imported, {} generated, {} ungenerated",
+        coverage.imported,
+        coverage.generated,
+        coverage.ungenerated()
+    );
+    let _ = writeln!(
+        out,
+        "excluded (deliberately rejected): {}",
+        coverage.excluded
+    );
+    let _ = writeln!(
+        out,
+        "ungenerated in compute families: {}  (the rest is surface/texture)",
+        coverage.ungenerated_compute()
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "{:<20}{:>10}{:>13}",
+        "family", "generated", "ungenerated"
+    );
+    for f in coverage.families.iter().filter(|f| f.ungenerated > 0) {
+        let _ = writeln!(
+            out,
+            "{:<20}{:>10}{:>13}{}",
+            f.family,
+            f.generated,
+            f.ungenerated,
+            if f.compute { "" } else { "   [not compute]" }
+        );
+    }
+    out
 }
 
 /// Print the report.
@@ -227,8 +286,7 @@ pub fn run(repo_root: &Path, family: Option<&str>) -> Result<()> {
 
     if let Some(wanted) = family {
         let Some(f) = coverage.families.iter().find(|f| f.family == wanted) else {
-            println!("no family `{wanted}` in the pinned metadata");
-            return Ok(());
+            bail!("no family `{wanted}` in the pinned metadata");
         };
         println!(
             "{}: {} generated, {} ungenerated ({} total){}",
@@ -241,27 +299,7 @@ pub fn run(repo_root: &Path, family: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "pinned NVVM intrinsics: {} imported, {} generated, {} ungenerated",
-        coverage.imported,
-        coverage.generated,
-        coverage.ungenerated()
-    );
-    println!(
-        "ungenerated in compute families: {}  (the rest is surface/texture)",
-        coverage.ungenerated_compute()
-    );
-    println!();
-    println!("{:<20}{:>10}{:>13}", "family", "generated", "ungenerated");
-    for f in coverage.families.iter().filter(|f| f.ungenerated > 0) {
-        println!(
-            "{:<20}{:>10}{:>13}{}",
-            f.family,
-            f.generated,
-            f.ungenerated,
-            if f.compute { "" } else { "   [not compute]" }
-        );
-    }
+    print!("{}", render_report(&coverage));
     Ok(())
 }
 
@@ -298,12 +336,11 @@ mod tests {
             );
         }
         // And compute families must not be swept up with them.
-        for n in ["int_nvvm_fma_rn_f32", "int_nvvm_texsurf_handle"] {
-            let f = family_of(n);
-            if n.contains("fma") {
-                assert!(!NON_COMPUTE_PREFIXES.contains(&f.as_str()));
-            }
-        }
+        let f = family_of("int_nvvm_fma_rn_f32");
+        assert!(!NON_COMPUTE_PREFIXES.contains(&f.as_str()));
+        // `texsurf_handle` matches the `tex` prefix and lands in the
+        // non-compute bucket, which is right: it is a texture-handle helper.
+        assert_eq!(family_of("int_nvvm_texsurf_handle"), "tex");
     }
 
     #[test]
@@ -341,10 +378,15 @@ mod tests {
                     compute: false,
                 },
             ],
-            imported: 225,
+            imported: 226,
             generated: 10,
+            excluded: 1,
         };
-        assert_eq!(c.ungenerated(), 215);
+        assert_eq!(
+            c.ungenerated(),
+            215,
+            "a deliberate exclusion is not backlog"
+        );
         assert_eq!(c.ungenerated_compute(), 5, "surface work is excluded");
         assert_eq!(c.families[0].total(), 15);
     }
@@ -394,6 +436,43 @@ mod tests {
         assert!(
             !bound.contains("int_nvvm_read_ptx_sreg_gridid"),
             "a deliberately rejected intrinsic must never be reported as generated"
+        );
+
+        // And end to end: the report must surface the exclusion as its own
+        // line, not fold it into some family's ungenerated backlog.
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda-intrinsics-gen-coverage-{}-{unique}",
+            std::process::id()
+        ));
+        let directory = root.join("intrinsics");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("imported.json"),
+            r#"{"records": [{"id": "int_nvvm_bound"}, {"id": "int_nvvm_read_ptx_sreg_gridid"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(directory.join("catalog.json"), catalog.to_string()).unwrap();
+
+        let coverage = compute(&root).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+
+        assert_eq!(coverage.imported, 2);
+        assert_eq!(coverage.generated, 1);
+        assert_eq!(coverage.excluded, 1);
+        assert_eq!(coverage.ungenerated(), 0, "the exclusion is not backlog");
+        assert!(
+            coverage.families.iter().all(|f| f.ungenerated == 0),
+            "gridid must not surface as ungenerated in the `read` family"
+        );
+
+        let report = render_report(&coverage);
+        assert!(
+            report.contains("excluded (deliberately rejected): 1"),
+            "the report must state the exclusion:\n{report}"
         );
     }
 }
