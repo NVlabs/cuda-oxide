@@ -5498,23 +5498,24 @@ fn translate_struct_constant(
     };
     let struct_rust_ty = by_ref_pointee.unwrap_or(*rust_ty);
 
-    // Read the struct's own bytes, rejecting pointer relocations before their
-    // placeholder bytes can be decoded as field values. A relocation's stored
-    // bytes are the offset into the target allocation, not an address, and the
-    // per-field decoders below carry no provenance map to resolve them.
+    // Keep the allocation alongside its byte image for by-value structs. Pointer
+    // fields use the allocation's provenance side table to resolve relocations;
+    // the bytes at a relocated field contain only the target addend, not an
+    // address. Promoted references to structs retain the existing byte-only path
+    // for now because their backing allocation is owned by the resolution branch.
     let reject_struct_relocations = |relocations: usize| -> TranslationResult<()> {
         if relocations != 0 {
             return input_err!(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
-                    "Struct constant contains {relocations} pointer relocation(s); \
-                     cuda-oxide cannot yet preserve struct pointer provenance"
+                    "Promoted struct constant contains {relocations} pointer relocation(s); \
+                     cuda-oxide cannot yet preserve nested struct pointer provenance"
                 ))
             );
         }
         Ok(())
     };
-    let bytes = match constant.const_.kind() {
+    let (bytes, struct_allocation) = match constant.const_.kind() {
         ConstantKind::Allocated(alloc) => {
             if by_ref_pointee.is_some() {
                 // Follow the by-ref indirection to the actual struct allocation.
@@ -5553,13 +5554,16 @@ fn translate_struct_constant(
                 match GlobalAlloc::from(alloc_id) {
                     GlobalAlloc::Memory(target_alloc) => {
                         reject_struct_relocations(target_alloc.provenance.ptrs.len())?;
-                        target_alloc.raw_bytes().ok().unwrap_or_else(|| {
-                            target_alloc
-                                .bytes
-                                .iter()
-                                .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                                .collect::<Vec<u8>>()
-                        })
+                        (
+                            target_alloc.raw_bytes().ok().unwrap_or_else(|| {
+                                target_alloc
+                                    .bytes
+                                    .iter()
+                                    .map(|opt: &Option<u8>| opt.unwrap_or(0))
+                                    .collect::<Vec<u8>>()
+                            }),
+                            None,
+                        )
                     }
                     GlobalAlloc::Static(static_def) => {
                         let target_alloc = static_def.eval_initializer().map_err(|e| {
@@ -5569,13 +5573,16 @@ fn translate_struct_constant(
                             )))
                         })?;
                         reject_struct_relocations(target_alloc.provenance.ptrs.len())?;
-                        target_alloc.raw_bytes().ok().unwrap_or_else(|| {
-                            target_alloc
-                                .bytes
-                                .iter()
-                                .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                                .collect::<Vec<u8>>()
-                        })
+                        (
+                            target_alloc.raw_bytes().ok().unwrap_or_else(|| {
+                                target_alloc
+                                    .bytes
+                                    .iter()
+                                    .map(|opt: &Option<u8>| opt.unwrap_or(0))
+                                    .collect::<Vec<u8>>()
+                            }),
+                            None,
+                        )
                     }
                     other => {
                         return input_err!(
@@ -5588,21 +5595,24 @@ fn translate_struct_constant(
                     }
                 }
             } else {
-                // The allocation is the struct's own memory image.
-                reject_struct_relocations(alloc.provenance.ptrs.len())?;
-                alloc.raw_bytes().ok().unwrap_or_else(|| {
-                    alloc
-                        .bytes
-                        .iter()
-                        .map(|opt| opt.unwrap_or(0))
-                        .collect::<Vec<u8>>()
-                })
+                // The allocation is the struct's own memory image. Keep it so
+                // direct pointer fields can consume their relocation entries.
+                (
+                    alloc.raw_bytes().ok().unwrap_or_else(|| {
+                        alloc
+                            .bytes
+                            .iter()
+                            .map(|opt| opt.unwrap_or(0))
+                            .collect::<Vec<u8>>()
+                    }),
+                    Some(alloc),
+                )
             }
         }
         ConstantKind::ZeroSized => {
             // ZeroSized structs have no bytes - this shouldn't happen for non-ZST structs
             // but handle gracefully
-            vec![]
+            (vec![], None)
         }
         _ => {
             return input_err!(
@@ -5636,6 +5646,7 @@ fn translate_struct_constant(
 
     let mut field_values = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
+    let mut consumed_relocation_offsets = Vec::new();
 
     for (field_idx, field_ty_ptr) in field_types.iter().copied().enumerate() {
         let byte_offset = field_offsets[field_idx];
@@ -5687,6 +5698,13 @@ fn translate_struct_constant(
 
             FieldTypeKind::Integer { width, signedness } => {
                 let byte_size = (width as usize).div_ceil(8);
+                reject_relocations_in_non_pointer_struct_field(
+                    struct_allocation,
+                    byte_offset,
+                    byte_size,
+                    field_idx,
+                    loc.clone(),
+                )?;
 
                 // Extract bytes for this field
                 let field_bytes = if byte_offset + byte_size <= bytes.len() {
@@ -5740,6 +5758,13 @@ fn translate_struct_constant(
 
             FieldTypeKind::Float16 => {
                 let byte_size = 2;
+                reject_relocations_in_non_pointer_struct_field(
+                    struct_allocation,
+                    byte_offset,
+                    byte_size,
+                    field_idx,
+                    loc.clone(),
+                )?;
 
                 let field_bytes = if byte_offset + byte_size <= bytes.len() {
                     &bytes[byte_offset..byte_offset + byte_size]
@@ -5782,6 +5807,13 @@ fn translate_struct_constant(
 
             FieldTypeKind::Float32 => {
                 let byte_size = 4;
+                reject_relocations_in_non_pointer_struct_field(
+                    struct_allocation,
+                    byte_offset,
+                    byte_size,
+                    field_idx,
+                    loc.clone(),
+                )?;
 
                 let field_bytes = if byte_offset + byte_size <= bytes.len() {
                     &bytes[byte_offset..byte_offset + byte_size]
@@ -5832,7 +5864,7 @@ fn translate_struct_constant(
             }
 
             FieldTypeKind::Pointer => {
-                let byte_size = 8; // 64-bit pointers
+                let byte_size = rustc_public::target::MachineInfo::target_pointer_width().bytes();
 
                 let field_bytes = if byte_offset + byte_size <= bytes.len() {
                     &bytes[byte_offset..byte_offset + byte_size]
@@ -5849,65 +5881,146 @@ fn translate_struct_constant(
                     );
                 };
 
-                let mut ptr_val: u64 = 0;
-                for (i, &byte) in field_bytes.iter().enumerate() {
-                    ptr_val |= (byte as u64) << (i * 8);
+                let relocation_offsets =
+                    struct_field_relocation_offsets(struct_allocation, byte_offset, byte_size);
+
+                if relocation_offsets.is_empty() {
+                    // No provenance entry means this is an exposed-address pointer
+                    // constant, including null. Preserve the established int-to-ptr
+                    // path, but derive the integer width from the compilation target.
+                    let pointer_bits = u32::try_from(byte_size * 8).map_err(|_| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Target pointer width {} bytes does not fit the MIR integer width",
+                            byte_size
+                        )))
+                    })?;
+                    let ptr_val = read_uint_from_bytes(field_bytes);
+                    let int_ty = IntegerType::get(ctx, pointer_bits, Signedness::Unsigned);
+                    let apint = APInt::from_u128(
+                        ptr_val,
+                        NonZeroUsize::new(pointer_bits as usize).unwrap(),
+                    );
+                    let int_attr = pliron::builtin::attributes::IntegerAttr::new(int_ty, apint);
+
+                    let op = Operation::new(
+                        ctx,
+                        MirConstantOp::get_concrete_op_info(),
+                        vec![int_ty.into()],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    op.deref_mut(ctx).set_loc(loc.clone());
+
+                    let const_op = MirConstantOp::new(op);
+                    const_op.set_attr_value(ctx, int_attr);
+
+                    if let Some(prev) = current_prev_op {
+                        const_op.get_operation().insert_after(ctx, prev);
+                    } else {
+                        const_op.get_operation().insert_at_front(block_ptr, ctx);
+                    }
+
+                    let const_value = const_op.get_operation().deref(ctx).get_result(0);
+                    let cast_op = Operation::new(
+                        ctx,
+                        MirCastOp::get_concrete_op_info(),
+                        vec![field_ty_ptr],
+                        vec![const_value],
+                        vec![],
+                        0,
+                    );
+                    cast_op.deref_mut(ctx).set_loc(loc.clone());
+                    MirCastOp::new(cast_op)
+                        .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+                    cast_op.insert_after(ctx, const_op.get_operation());
+
+                    current_prev_op = Some(cast_op);
+                    field_values.push(cast_op.deref(ctx).get_result(0));
+                    continue;
                 }
 
-                // Create integer constant then cast to pointer
-                let i64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
-                let apint = APInt::from_u64(ptr_val, NonZeroUsize::new(64).unwrap());
-                let int_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
-
-                use dialect_mir::ops::MirConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![i64_ty.into()],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                let const_op = MirConstantOp::new(op);
-                const_op.set_attr_value(ctx, int_attr);
-
-                if let Some(prev) = current_prev_op {
-                    const_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    const_op.get_operation().insert_at_front(block_ptr, ctx);
+                if relocation_offsets.len() != 1 || relocation_offsets[0] != byte_offset {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Struct constant pointer field {} at byte offset {} overlaps relocation(s) at {:?}; expected exactly one relocation at the field start",
+                            field_idx, byte_offset, relocation_offsets
+                        ))
+                    );
                 }
 
-                // Cast to pointer type
-                use dialect_mir::ops::MirCastOp;
-                let const_value = const_op.get_operation().deref(ctx).get_result(0);
-                let cast_op = Operation::new(
-                    ctx,
-                    MirCastOp::get_concrete_op_info(),
-                    vec![field_ty_ptr],
-                    vec![const_value],
-                    vec![],
-                    0,
+                let allocation = struct_allocation.expect(
+                    "relocation offsets can only be returned for a retained struct allocation",
                 );
-                cast_op.deref_mut(ctx).set_loc(loc.clone());
-                MirCastOp::new(cast_op)
-                    .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
-                cast_op.insert_after(ctx, const_op.get_operation());
+                let static_target = static_target_from_allocation_relocation(
+                    allocation,
+                    byte_offset,
+                )?
+                    .ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                        "Struct constant pointer field {} targets an anonymous allocation; only Rust static targets are currently supported",
+                        field_idx
+                    )))
+                    })?;
 
-                current_prev_op = Some(cast_op);
-                field_values.push(cast_op.deref(ctx).get_result(0));
+                let (pointee_ty, is_mutable) = {
+                    let field_ty = field_ty_ptr.deref(ctx);
+                    let pointer_ty = field_ty
+                        .downcast_ref::<dialect_mir::types::MirPtrType>()
+                        .expect("FieldTypeKind::Pointer must contain MirPtrType");
+                    (pointer_ty.pointee, pointer_ty.is_mutable)
+                };
+
+                let static_mir_ty = types::translate_type(ctx, &static_target.static_def.ty())?;
+                if static_target.byte_offset == 0 && static_mir_ty != pointee_ty {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Struct constant pointer field {} targets static {} with type {:?}, but the field points to {:?}",
+                            field_idx,
+                            static_target.static_def.name(),
+                            static_target.static_def.ty(),
+                            pointee_ty.deref(ctx)
+                        ))
+                    );
+                }
+
+                let (pointer_value, last_op) = translate_static_global_pointer(
+                    ctx,
+                    &static_target.static_def,
+                    pointee_ty,
+                    field_ty_ptr,
+                    is_mutable,
+                    static_target.byte_offset,
+                    block_ptr,
+                    current_prev_op,
+                    loc.clone(),
+                )?;
+
+                consumed_relocation_offsets.push(byte_offset);
+                current_prev_op = last_op;
+                field_values.push(pointer_value);
             }
 
             FieldTypeKind::Unsupported => {
                 // Nested aggregate (e.g. a `Vec3` field inside a const `Mat3`):
-                // recursively build it from its byte slice.
+                // recursively build it from its byte slice. Relocations nested
+                // inside aggregates remain separate support gaps and must not be
+                // flattened into placeholder bytes here.
                 let byte_size = constant_storage_size(ctx, field_ty_ptr).ok_or_else(|| {
                     input_error_noloc!(TranslationErr::unsupported(format!(
                         "Struct constant field {} has unsupported type (no storage size).",
                         field_idx
                     )))
                 })?;
+                reject_relocations_in_non_pointer_struct_field(
+                    struct_allocation,
+                    byte_offset,
+                    byte_size,
+                    field_idx,
+                    loc.clone(),
+                )?;
                 let field_bytes = if byte_offset + byte_size <= bytes.len() {
                     &bytes[byte_offset..byte_offset + byte_size]
                 } else {
@@ -5930,6 +6043,25 @@ fn translate_struct_constant(
                 current_prev_op = p;
                 field_values.push(v);
             }
+        }
+    }
+
+    if let Some(allocation) = struct_allocation {
+        let unconsumed: Vec<usize> = allocation
+            .provenance
+            .ptrs
+            .iter()
+            .map(|(offset, _)| *offset)
+            .filter(|offset| !consumed_relocation_offsets.contains(offset))
+            .collect();
+        if !unconsumed.is_empty() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Struct constant contains unconsumed pointer relocation(s) at byte offset(s) {:?}",
+                    unconsumed
+                ))
+            );
         }
     }
 
@@ -7986,24 +8118,97 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
     }
 }
 
+fn struct_field_relocation_offsets(
+    allocation: Option<&rustc_public::ty::Allocation>,
+    field_offset: usize,
+    field_size: usize,
+) -> Vec<usize> {
+    let Some(allocation) = allocation else {
+        return Vec::new();
+    };
+    let field_end = field_offset.saturating_add(field_size);
+    allocation
+        .provenance
+        .ptrs
+        .iter()
+        .map(|(offset, _)| *offset)
+        .filter(|offset| *offset >= field_offset && *offset < field_end)
+        .collect()
+}
+
+fn reject_relocations_in_non_pointer_struct_field(
+    allocation: Option<&rustc_public::ty::Allocation>,
+    field_offset: usize,
+    field_size: usize,
+    field_index: usize,
+    loc: Location,
+) -> TranslationResult<()> {
+    let relocation_offsets = struct_field_relocation_offsets(allocation, field_offset, field_size);
+    if relocation_offsets.is_empty() {
+        return Ok(());
+    }
+
+    input_err!(
+        loc,
+        TranslationErr::unsupported(format!(
+            "Struct constant non-pointer field {} at byte range {}..{} overlaps pointer relocation(s) at {:?}",
+            field_index,
+            field_offset,
+            field_offset.saturating_add(field_size),
+            relocation_offsets
+        ))
+    )
+}
+
 /// Resolve a constant pointer/reference to the Rust static it points at, if any.
 ///
-/// The outer allocation also stores the pointer's byte addend. Keep it next to
-/// the target definition so an interior pointer can never silently degrade to
-/// the static's base address. Null pointers and pointers to anonymous memory
-/// allocations deliberately return `None`; they continue through normal
-/// constant handling.
+/// The source allocation stores the pointer's byte addend at the relocation
+/// offset, while the provenance entry identifies the target allocation. Keeping
+/// both pieces together prevents interior pointers from silently degrading to
+/// the static's base address. Anonymous allocations return `None`.
 struct StaticPointerTarget {
     static_def: rustc_public::mir::mono::StaticDef,
     byte_offset: u64,
+}
+
+fn static_target_from_allocation_relocation(
+    allocation: &rustc_public::ty::Allocation,
+    provenance_offset: usize,
+) -> TranslationResult<Option<StaticPointerTarget>> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let Some(&(_, provenance)) = allocation
+        .provenance
+        .ptrs
+        .iter()
+        .find(|entry| entry.0 == provenance_offset)
+    else {
+        return Ok(None);
+    };
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let byte_offset = allocation
+        .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read constant static-pointer addend at byte offset {}: {:?}",
+                provenance_offset, error
+            )))
+        })? as u64;
+
+    match GlobalAlloc::from(provenance.0) {
+        GlobalAlloc::Static(static_def) => Ok(Some(StaticPointerTarget {
+            static_def,
+            byte_offset,
+        })),
+        _ => Ok(None),
+    }
 }
 
 fn static_target_from_constant(
     constant: &mir::ConstOperand,
     loc: Location,
 ) -> TranslationResult<Option<StaticPointerTarget>> {
-    use rustc_public::mir::alloc::GlobalAlloc;
-
     let ConstantKind::Allocated(alloc) = constant.const_.kind() else {
         return Ok(None);
     };
@@ -8011,7 +8216,7 @@ fn static_target_from_constant(
         return Ok(None);
     }
 
-    let Some(&(provenance_offset, prov)) = alloc.provenance.ptrs.first() else {
+    let Some(&(provenance_offset, _)) = alloc.provenance.ptrs.first() else {
         return Ok(None);
     };
     if alloc.provenance.ptrs.len() != 1 {
@@ -8024,22 +8229,7 @@ fn static_target_from_constant(
         );
     }
 
-    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
-    let byte_offset = alloc
-        .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
-        .map_err(|e| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "Failed to read constant static-pointer addend: {e:?}"
-            )))
-        })? as u64;
-
-    match GlobalAlloc::from(prov.0) {
-        GlobalAlloc::Static(static_def) => Ok(Some(StaticPointerTarget {
-            static_def,
-            byte_offset,
-        })),
-        _ => Ok(None),
-    }
+    static_target_from_allocation_relocation(alloc, provenance_offset)
 }
 
 /// The byte image and ABI alignment of a global initializer.
