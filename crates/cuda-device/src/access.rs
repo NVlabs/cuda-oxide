@@ -47,6 +47,17 @@
 //! So `align` is a necessary condition, and for loads not a sufficient one:
 //! touching individual lanes lets the optimiser split the local apart and load
 //! the lanes separately whatever the alignment. Stores have no such condition.
+//!
+//! That limit is specific to a *direct blocked* load, where the wide value
+//! itself feeds the per-element arithmetic. CUB's `BLOCK_LOAD_VECTORIZE`
+//! reaches the width for such kernels anyway, by splitting the layouts: load
+//! *striped* with wide loads (where nothing decomposes the value), then
+//! exchange through shared memory into the blocked arrangement the arithmetic
+//! wants. Decomposition still happens, but on registers that never came from
+//! a wide load. cuda-oxide has no striped/blocked exchange primitive yet, so
+//! a decomposing kernel currently cannot reach the width - the gap is the
+//! missing layout change, not anything about alignment.
+//!
 //! A plan therefore describes the shape a width *needs*, not a width the kernel
 //! is guaranteed to get - the data has to move as whole elements as well.
 //! See the `vectorization` example for the alignment half.
@@ -77,17 +88,26 @@ pub struct AccessPlan {
 }
 
 impl AccessPlan {
-    /// Smallest extent of one tile axis, given the extent of the other.
+    /// Smallest extent of one tile axis, given the contiguous extent of the
+    /// other.
     ///
-    /// A tile of `extent x other` must hold a whole number of block-wide
-    /// accesses, so `other` has to divide `elems_per_block`. Returns `None` when
-    /// it does not, because rounding here would silently change the tile.
+    /// This models a strided operand, the CUTLASS shape rule: `other` is the
+    /// contiguous extent (the row length of a row-major tile), and rows are
+    /// not assumed adjacent in memory, so no access may cross a row boundary.
+    /// Two divisibilities follow: each thread's access must fit a whole
+    /// number of times in a row (`elems_per_thread` divides `other`), and a
+    /// block-wide access must cover whole rows (`other` divides
+    /// `elems_per_block`). Returns `None` when either fails, because rounding
+    /// here would silently change the tile.
     ///
     /// This is the CUTLASS derivation: with 1024 elements per block-wide access
     /// and `K = 32`, the minimum `M` is 32.
     #[must_use]
     pub const fn min_extent(&self, other: usize) -> Option<usize> {
-        if other == 0 || !self.elems_per_block.is_multiple_of(other) {
+        if other == 0
+            || !other.is_multiple_of(self.elems_per_thread)
+            || !self.elems_per_block.is_multiple_of(other)
+        {
             return None;
         }
         Some(self.elems_per_block / other)
@@ -260,6 +280,23 @@ mod tests {
         assert_eq!(p.min_extent(64), Some(8));
         assert_eq!(p.min_extent(48), None, "48 does not divide 512");
         assert_eq!(p.min_extent(0), None);
+    }
+
+    /// A row shorter than one thread's access is shape-impossible on a
+    /// strided operand: the access would cross the row boundary. So `other`
+    /// must be a multiple of `elems_per_thread`, not merely a divisor of
+    /// `elems_per_block`.
+    #[test]
+    fn refuses_extents_shorter_than_one_thread_access() {
+        // f16 at 128-bit across 128 threads: 8 elements per thread, 1024 per
+        // block.
+        let p = plan_for_elem_size(2, TXN_128, 128).unwrap();
+        // 4 divides 1024, but a row of 4 f16 (8 bytes) cannot hold one
+        // thread's 16-byte access.
+        assert_eq!(p.min_extent(4), None, "4 f16 cannot hold a 128-bit access");
+        // The smallest legal extent is exactly one thread access: 8 elements,
+        // for 1024 / 8 = 128 rows.
+        assert_eq!(p.min_extent(8), Some(128));
     }
 
     #[test]
