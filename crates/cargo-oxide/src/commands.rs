@@ -59,6 +59,33 @@ fn prepare_materialization(
     )
 }
 
+/// `prepare_materialization` with the ambient `CUDA_OXIDE_MATERIALIZE_CUBIN`
+/// injected, so `cargo_passthrough_command_with_env` can reach
+/// `materialization_requested_with_env`.
+///
+/// Note this still exits the process on error, which inside a unit test aborts
+/// the whole test binary rather than failing one case -- a further reason tests
+/// must not reach the ambient read.
+fn prepare_materialization_with_env(
+    ctx: &Context,
+    cli_requested: bool,
+    cli_arch: Option<&str>,
+    emit_nvvm_ir: bool,
+    materialize_env: Option<std::ffi::OsString>,
+) -> MaterializationMode {
+    prepare_materialization_result_with_env(
+        ctx,
+        cli_requested,
+        cli_arch,
+        emit_nvvm_ir,
+        materialize_env,
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    })
+}
+
 const EMIT_NVVM_IR_ENV: &str = "CUDA_OXIDE_EMIT_NVVM_IR";
 
 fn nvvm_ir_requested(ctx: &Context) -> Result<bool, String> {
@@ -89,11 +116,27 @@ fn nvvm_ir_requested_with_env(
 }
 
 fn materialization_requested(ctx: &Context, cli_requested: bool) -> Result<bool, String> {
+    materialization_requested_with_env(ctx, cli_requested, std::env::var_os(MATERIALIZE_ENV))
+}
+
+/// `materialization_requested` with the ambient `CUDA_OXIDE_MATERIALIZE_CUBIN`
+/// injected.
+///
+/// The process value outranks project config, so resolution has to be
+/// injectable for unit tests: an exported value would otherwise turn
+/// materialization on for tests that pass `materialize_cubin: false`, sending
+/// them into `discover_materializer_provenance`. Same rationale as
+/// `nvvm_ir_requested_with_env`.
+fn materialization_requested_with_env(
+    ctx: &Context,
+    cli_requested: bool,
+    env_value: Option<std::ffi::OsString>,
+) -> Result<bool, String> {
     if cli_requested {
         return Ok(true);
     }
 
-    if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
+    if let Some(value) = env_value {
         let value = value
             .into_string()
             .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
@@ -113,7 +156,26 @@ fn prepare_materialization_result(
     cli_arch: Option<&str>,
     emit_nvvm_ir: bool,
 ) -> Result<MaterializationMode, String> {
-    let enabled = materialization_requested(ctx, cli_requested)?;
+    prepare_materialization_result_with_env(
+        ctx,
+        cli_requested,
+        cli_arch,
+        emit_nvvm_ir,
+        std::env::var_os(MATERIALIZE_ENV),
+    )
+}
+
+/// `prepare_materialization_result` with the ambient
+/// `CUDA_OXIDE_MATERIALIZE_CUBIN` injected, forwarded to
+/// `materialization_requested_with_env`.
+fn prepare_materialization_result_with_env(
+    ctx: &Context,
+    cli_requested: bool,
+    cli_arch: Option<&str>,
+    emit_nvvm_ir: bool,
+    materialize_env: Option<std::ffi::OsString>,
+) -> Result<MaterializationMode, String> {
+    let enabled = materialization_requested_with_env(ctx, cli_requested, materialize_env)?;
     if !enabled {
         return Ok(MaterializationMode::default());
     }
@@ -2948,9 +3010,38 @@ fn cargo_passthrough_command(
     opts: &CargoPassthroughOptions<'_>,
     cargo_args: &[String],
 ) -> Result<Command, String> {
+    cargo_passthrough_command_with_env(
+        ctx,
+        cargo_subcommand,
+        opts,
+        cargo_args,
+        std::env::var_os(MATERIALIZE_ENV),
+    )
+}
+
+/// `cargo_passthrough_command` with the ambient
+/// `CUDA_OXIDE_MATERIALIZE_CUBIN` injected.
+///
+/// Unit tests must call this with `None`: the ambient value outranks
+/// `opts.materialize_cubin`, so an exported one turns materialization on and
+/// sends the test into `discover_materializer_provenance`, which re-executes
+/// `current_exe` -- the libtest binary under `cargo test` -- and then exits the
+/// process over the unusable digest, taking the whole suite with it.
+fn cargo_passthrough_command_with_env(
+    ctx: &Context,
+    cargo_subcommand: CargoPassthroughSubcommand,
+    opts: &CargoPassthroughOptions<'_>,
+    cargo_args: &[String],
+    materialize_env: Option<std::ffi::OsString>,
+) -> Result<Command, String> {
     let target_arch = configured_arch(ctx, opts.arch);
-    let materialization =
-        prepare_materialization(ctx, opts.materialize_cubin, opts.arch, opts.emit_nvvm_ir);
+    let materialization = prepare_materialization_with_env(
+        ctx,
+        opts.materialize_cubin,
+        opts.arch,
+        opts.emit_nvvm_ir,
+        materialize_env,
+    );
     let owner_filter = configured_device_codegen_crates(ctx, opts.device_codegen_crate)?;
     // Device-owning macros track this identity in their crate dep-info. Keep it
     // out of global rustflags so host-only dependencies retain one cache key.
@@ -4368,7 +4459,21 @@ pub fn plan_update(is_workspace: bool, force: bool) -> UpdatePlan {
 /// cache would never be consulted while either is set. `update` refuses
 /// rather than mislead.
 fn update_pin_refusal(ctx: &Context) -> Option<String> {
-    if std::env::var_os("CUDA_OXIDE_BACKEND").is_some() {
+    update_pin_refusal_with_env(ctx, std::env::var_os("CUDA_OXIDE_BACKEND"))
+}
+
+/// `update_pin_refusal` with the ambient `CUDA_OXIDE_BACKEND` injected.
+///
+/// The env var is checked before the project pin, so resolution has to be
+/// injectable for unit tests: a developer with `CUDA_OXIDE_BACKEND` exported
+/// would otherwise get the env refusal for every input, including the
+/// unpinned case that must return `None`. Same rationale as
+/// `nvvm_ir_requested_with_env`.
+fn update_pin_refusal_with_env(
+    ctx: &Context,
+    backend_env: Option<std::ffi::OsString>,
+) -> Option<String> {
+    if backend_env.is_some() {
         return Some(
             "CUDA_OXIDE_BACKEND is set, so `cargo oxide update` will not\n\
              modify the shared cache. Unset CUDA_OXIDE_BACKEND and re-run, or\n\
@@ -6046,12 +6151,29 @@ mod tests {
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     }
 
+    /// `cargo_passthrough_command` with an empty ambient
+    /// `CUDA_OXIDE_MATERIALIZE_CUBIN`.
+    ///
+    /// Every test builds the command through this. Reading the real variable
+    /// would let an exported value override `opts.materialize_cubin` and drive
+    /// the test into materializer discovery, which re-executes the libtest
+    /// binary and then exits the process -- aborting the whole suite instead of
+    /// failing one case.
+    fn passthrough_command_for_test(
+        ctx: &Context,
+        cargo_subcommand: CargoPassthroughSubcommand,
+        opts: &CargoPassthroughOptions<'_>,
+        cargo_args: &[String],
+    ) -> Result<Command, String> {
+        cargo_passthrough_command_with_env(ctx, cargo_subcommand, opts, cargo_args, None)
+    }
+
     fn cargo_artifact_freshness(
         ctx: &Context,
         opts: &CargoPassthroughOptions<'_>,
         materializer_provenance: Option<&str>,
     ) -> BTreeMap<String, bool> {
-        let mut cmd = cargo_passthrough_command(
+        let mut cmd = passthrough_command_for_test(
             ctx,
             CargoPassthroughSubcommand::Build,
             opts,
@@ -7237,7 +7359,7 @@ path = "src/other.rs"
             vec!["--release".to_string()],
             vec!["--profile".to_string(), "ci".to_string()],
         ] {
-            let cmd = cargo_passthrough_command(
+            let cmd = passthrough_command_for_test(
                 &ctx,
                 CargoPassthroughSubcommand::Test,
                 &opts,
@@ -7696,9 +7818,13 @@ MY_OK = "1"
             "--nocapture".to_string(),
         ];
 
-        let cmd =
-            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Test, &opts, &cargo_args)
-                .unwrap();
+        let cmd = passthrough_command_for_test(
+            &ctx,
+            CargoPassthroughSubcommand::Test,
+            &opts,
+            &cargo_args,
+        )
+        .unwrap();
         assert_eq!(
             cmd.get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
@@ -7772,8 +7898,8 @@ MY_OK = "1"
             materialize_cubin: false,
         };
 
-        let cmd =
-            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Test, &opts, &[]).unwrap();
+        let cmd = passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Test, &opts, &[])
+            .unwrap();
         assert_eq!(
             cmd.get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
@@ -7798,13 +7924,14 @@ MY_OK = "1"
             materialize_cubin: false,
         };
         let base_cmd =
-            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Build, &base, &[]).unwrap();
+            passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &base, &[])
+                .unwrap();
         let different_mode = CargoPassthroughOptions {
             emit_nvvm_ir: true,
             arch: Some("sm_90"),
             ..base
         };
-        let different_cmd = cargo_passthrough_command(
+        let different_cmd = passthrough_command_for_test(
             &ctx,
             CargoPassthroughSubcommand::Build,
             &different_mode,
@@ -8646,12 +8773,21 @@ components = ["rust-src", "rustc-dev", "llvm-tools"]
             backend: Some(PathBuf::from("/tmp/pinned-backend.so")),
             ..OxideConfig::default()
         });
-        let refusal = update_pin_refusal(&pinned).expect("config pin must refuse update");
+        // `None` stands in for an unset ambient `CUDA_OXIDE_BACKEND`. Reading
+        // the real one would let an exported value produce the env refusal for
+        // both inputs, including the unpinned case asserted to be `None`.
+        let refusal =
+            update_pin_refusal_with_env(&pinned, None).expect("config pin must refuse update");
         assert!(refusal.contains("pins the backend"), "{refusal}");
         assert!(refusal.contains("/tmp/pinned-backend.so"), "{refusal}");
 
         let unpinned = test_context(OxideConfig::default());
-        assert_eq!(update_pin_refusal(&unpinned), None);
+        assert_eq!(update_pin_refusal_with_env(&unpinned, None), None);
+
+        // The env var outranks the project pin: set, it refuses even unpinned.
+        let from_env = update_pin_refusal_with_env(&unpinned, Some("/tmp/env-backend.so".into()))
+            .expect("exported CUDA_OXIDE_BACKEND must refuse update");
+        assert!(from_env.contains("CUDA_OXIDE_BACKEND is set"), "{from_env}");
     }
 
     #[test]
