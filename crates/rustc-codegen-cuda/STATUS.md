@@ -27,7 +27,6 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | `error_static_initializer_provenance` | support-gap         | Device-global pointer relocation    |
 | `error_static_slice_addend`           | support-gap         | Unsized interior-static pointee     |
 | `error_tuple_array_provenance`        | support-gap         | Tuple-array pointer relocation      |
-| `error_tuple_constant_provenance`     | support-gap         | Direct tuple pointer relocation     |
 | `error_struct_constant_provenance`    | support-gap         | Struct pointer relocation           |
 | `error_wgmma_mma_unimplemented`       | support-gap         | WGMMA MMA lowering                  |
 

@@ -5047,15 +5047,21 @@ fn validate_ptr_to_array_constant_type(
     )
 }
 
-fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
+fn constant_allocation(constant: &mir::ConstOperand) -> Option<&rustc_public::ty::Allocation> {
     match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
+        ConstantKind::Allocated(alloc) => Some(alloc),
         ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
-            _ => 0,
+            rustc_public::ty::TyConstKind::Value(_, alloc) => Some(alloc),
+            _ => None,
         },
-        _ => 0,
+        _ => None,
     }
+}
+
+fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
+    constant_allocation(constant)
+        .map(|allocation| allocation.provenance.ptrs.len())
+        .unwrap_or(0)
 }
 
 /// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
@@ -5964,7 +5970,123 @@ fn translate_struct_constant(
     Ok((val, Some(op)))
 }
 
-/// Translate a non-empty tuple constant from its raw allocation bytes.
+/// Materialize one thin pointer/reference field from a tuple allocation.
+///
+/// The field's bytes contain only the addend into the provenance target. They
+/// are not an exposed address and must never be lowered through int-to-pointer.
+#[allow(clippy::too_many_arguments)]
+fn translate_tuple_static_pointer_field(
+    ctx: &mut Context,
+    allocation: &rustc_public::ty::Allocation,
+    relocation_offset: usize,
+    rust_field_ty: rustc_public::ty::Ty,
+    field_ty: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_field_ty) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Tuple constant pointer relocation at byte {relocation_offset} belongs to \
+                 unsupported Rust field type {rust_field_ty:?}"
+            ))
+        );
+    };
+
+    if !field_ty.deref(ctx).is::<dialect_mir::types::MirPtrType>() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Tuple constant pointer relocation at byte {relocation_offset} requires a \
+                 thin pointer field, but the translated field type is {:?}",
+                field_ty.deref(ctx)
+            ))
+        );
+    }
+
+    let Some(static_target) = static_target_from_allocation_at(allocation, relocation_offset)?
+    else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Tuple constant pointer relocation at byte {relocation_offset} does not target \
+                 a device static; promoted-memory, function, and vtable targets are not yet \
+                 supported in tuple constants"
+            ))
+        );
+    };
+
+    let static_ty = static_target.static_def.ty();
+    let pointee_mir_ty = types::translate_type(ctx, &pointee_ty)?;
+    let static_mir_ty = types::translate_type(ctx, &static_ty)?;
+
+    // Direct tuple support is intentionally limited to thin pointers. A base
+    // pointer must therefore denote the complete static object with the same
+    // translated pointee type. Array-to-slice coercions need metadata and are
+    // handled only by the top-level constant path.
+    if static_target.byte_offset == 0 && pointee_mir_ty != static_mir_ty {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Tuple constant pointer to device static {} has pointee type {:?}, but the \
+                 complete static has type {:?}; tuple pointer fields currently require the \
+                 same sized pointee type",
+                static_target.static_def.name(),
+                pointee_ty,
+                static_ty
+            ))
+        );
+    }
+
+    if static_target.byte_offset != 0 {
+        let pointee_layout = pointee_ty.layout().map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Tuple constant pointer into device static {} has byte offset {}, but \
+                     pointee type {:?} does not have a sized layout: {:?}",
+                    static_target.static_def.name(),
+                    static_target.byte_offset,
+                    pointee_ty,
+                    error
+                ))
+            )
+        })?;
+        if !pointee_layout.shape().is_sized() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Tuple constant pointer into device static {} has byte offset {}, but \
+                     pointee type {:?} is unsized; tuple constants do not yet preserve \
+                     fat-pointer metadata",
+                    static_target.static_def.name(),
+                    static_target.byte_offset,
+                    pointee_ty
+                ))
+            );
+        }
+    }
+
+    translate_static_global_pointer(
+        ctx,
+        &static_target.static_def,
+        pointee_mir_ty,
+        field_ty,
+        is_mutable,
+        static_target.byte_offset,
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
+/// Translate a non-empty tuple constant from its own allocation image.
+///
+/// Unlike `constant_bytes`, this must not follow the first provenance entry:
+/// for a by-value tuple, that entry names one pointer field's target, while the
+/// allocation itself still contains the tuple's scalar fields and padding.
 fn translate_tuple_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -5974,20 +6096,42 @@ fn translate_tuple_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let relocation_count = constant_pointer_relocation_count(constant);
-    if relocation_count != 0 {
-        return input_err!(
-            loc,
+    let allocation = constant_allocation(constant).ok_or_else(|| {
+        input_error!(
+            loc.clone(),
             TranslationErr::unsupported(format!(
-                "Tuple constant contains {relocation_count} pointer relocation(s); cuda-oxide cannot yet preserve tuple pointer provenance"
+                "Tuple constant must be backed by an allocation, found {:?}",
+                constant.const_.kind()
             ))
-        );
-    }
-    let bytes = constant_bytes(constant, "tuple", loc.clone())?;
-    translate_tuple_constant_from_bytes(ctx, rust_ty, const_ty_ptr, &bytes, block_ptr, prev_op, loc)
+        )
+    })?;
+
+    // Undefined bytes are padding. Zero them deterministically while keeping
+    // the provenance map separately for pointer-field reconstruction.
+    let bytes = allocation
+        .bytes
+        .iter()
+        .map(|byte| byte.unwrap_or(0))
+        .collect::<Vec<_>>();
+
+    translate_tuple_constant_from_bytes(
+        ctx,
+        rust_ty,
+        const_ty_ptr,
+        &bytes,
+        block_ptr,
+        prev_op,
+        loc,
+        Some(allocation),
+    )
 }
 
 /// Translate a tuple constant from bytes using rustc's field offsets.
+///
+/// `allocation` is present only for a top-level tuple constant. Nested tuples
+/// decoded from a parent byte slice have no independent provenance map and
+/// continue through the ordinary byte-only path.
+#[allow(clippy::too_many_arguments)]
 fn translate_tuple_constant_from_bytes(
     ctx: &mut Context,
     rust_ty: &rustc_public::ty::Ty,
@@ -5996,6 +6140,7 @@ fn translate_tuple_constant_from_bytes(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
+    allocation: Option<&rustc_public::ty::Allocation>,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     let (field_types, mir_field_offsets, mir_memory_order, mir_total_size, mir_abi_align) = {
         let ty_ref = const_ty_ptr.deref(ctx);
@@ -6114,6 +6259,8 @@ fn translate_tuple_constant_from_bytes(
         }
     }
 
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let mut consumed_relocations = Vec::new();
     let mut values = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
 
@@ -6151,17 +6298,95 @@ fn translate_tuple_constant_from_bytes(
             );
         };
 
-        let (value, new_prev_op) = translate_constant_value_from_bytes(
-            ctx,
-            rust_field_ty,
-            field_ty,
-            field_bytes,
-            block_ptr,
-            current_prev_op,
-            loc.clone(),
-        )?;
+        let overlapping_relocations = allocation
+            .map(|allocation| {
+                allocation
+                    .provenance
+                    .ptrs
+                    .iter()
+                    .filter_map(|(relocation_offset, _)| {
+                        let relocation_end = relocation_offset.saturating_add(pointer_width);
+                        (*relocation_offset < field_end && relocation_end > byte_offset)
+                            .then_some(*relocation_offset)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let (value, new_prev_op) = if overlapping_relocations.is_empty() {
+            translate_constant_value_from_bytes(
+                ctx,
+                rust_field_ty,
+                field_ty,
+                field_bytes,
+                block_ptr,
+                current_prev_op,
+                loc.clone(),
+            )?
+        } else {
+            if overlapping_relocations.len() != 1
+                || overlapping_relocations[0] != byte_offset
+                || byte_size != pointer_width
+            {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Tuple constant field {field_idx} at bytes {byte_offset}..{field_end} \
+                         does not exactly contain one pointer relocation; overlapping relocation \
+                         offsets are {:?}",
+                        overlapping_relocations
+                    ))
+                );
+            }
+
+            let is_thin_pointer = get_static_pointer_info(rust_field_ty).is_some()
+                && field_ty.deref(ctx).is::<dialect_mir::types::MirPtrType>();
+            if !is_thin_pointer {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Tuple constant field {field_idx} contains pointer provenance but is not \
+                         a supported thin pointer or reference"
+                    ))
+                );
+            }
+
+            let relocation_offset = overlapping_relocations[0];
+            consumed_relocations.push(relocation_offset);
+            translate_tuple_static_pointer_field(
+                ctx,
+                allocation.expect("overlapping relocation requires an allocation"),
+                relocation_offset,
+                *rust_field_ty,
+                field_ty,
+                block_ptr,
+                current_prev_op,
+                loc.clone(),
+            )?
+        };
+
         values.push(value);
         current_prev_op = new_prev_op;
+    }
+
+    if let Some(allocation) = allocation {
+        let unconsumed = allocation
+            .provenance
+            .ptrs
+            .iter()
+            .map(|(offset, _)| *offset)
+            .filter(|offset| !consumed_relocations.contains(offset))
+            .collect::<Vec<_>>();
+        if !unconsumed.is_empty() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Tuple constant contains pointer relocation(s) at byte offsets {:?} that do \
+                     not belong to supported direct pointer fields",
+                    unconsumed
+                ))
+            );
+        }
     }
 
     use dialect_mir::ops::MirConstructTupleOp;
@@ -6854,7 +7079,7 @@ fn translate_constant_value_from_bytes(
     // recover a Rust aggregate's active variant or field metadata.
     if ty_ptr.deref(ctx).is::<dialect_mir::types::MirTupleType>() {
         return translate_tuple_constant_from_bytes(
-            ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc,
+            ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc, None,
         );
     }
 
@@ -8002,38 +8227,68 @@ fn static_target_from_constant(
     constant: &mir::ConstOperand,
     loc: Location,
 ) -> TranslationResult<Option<StaticPointerTarget>> {
-    use rustc_public::mir::alloc::GlobalAlloc;
-
-    let ConstantKind::Allocated(alloc) = constant.const_.kind() else {
+    let ConstantKind::Allocated(allocation) = constant.const_.kind() else {
         return Ok(None);
     };
-    if alloc.is_null().unwrap_or(false) {
+
+    if allocation.is_null().unwrap_or(false) {
         return Ok(None);
     }
 
-    let Some(&(provenance_offset, prov)) = alloc.provenance.ptrs.first() else {
+    let Some(&(relocation_offset, _)) = allocation.provenance.ptrs.first() else {
         return Ok(None);
     };
-    if alloc.provenance.ptrs.len() != 1 {
+
+    if allocation.provenance.ptrs.len() != 1 {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
                 "constant pointer contains {} provenance entries; expected one static target",
-                alloc.provenance.ptrs.len()
+                allocation.provenance.ptrs.len()
             ))
         );
     }
+    static_target_from_allocation_at(allocation, relocation_offset)
+}
+
+/// Resolve the pointer relocation beginning at `relocation_offset` to a static.
+///
+/// Unlike `static_target_from_constant`, this operates on an aggregate's own
+/// allocation and therefore does not require that the allocation contain only
+/// one relocation.
+fn static_target_from_allocation_at(
+    allocation: &rustc_public::ty::Allocation,
+    relocation_offset: usize,
+) -> TranslationResult<Option<StaticPointerTarget>> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let Some(&(provenance_offset, provenance)) = allocation
+        .provenance
+        .ptrs
+        .iter()
+        .find(|(offset, _)| *offset == relocation_offset)
+    else {
+        return Ok(None);
+    };
 
     let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
-    let byte_offset = alloc
-        .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
-        .map_err(|e| {
+    let pointer_end = provenance_offset
+        .checked_add(pointer_width)
+        .ok_or_else(|| {
             input_error_noloc!(TranslationErr::unsupported(format!(
-                "Failed to read constant static-pointer addend: {e:?}"
+                "constant static-pointer relocation at byte {provenance_offset} overflowed"
+            )))
+        })?;
+    let byte_offset = allocation
+        .read_partial_uint(provenance_offset..pointer_end)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read constant static-pointer addend at byte {provenance_offset}: \
+                 {error:?}"
             )))
         })? as u64;
 
-    match GlobalAlloc::from(prov.0) {
+    match GlobalAlloc::from(provenance.0) {
         GlobalAlloc::Static(static_def) => Ok(Some(StaticPointerTarget {
             static_def,
             byte_offset,
