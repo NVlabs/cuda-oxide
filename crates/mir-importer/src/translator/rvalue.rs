@@ -1708,13 +1708,70 @@ pub fn translate_rvalue(
 
             Ok((None, value, last_inserted))
         }
-        mir::Rvalue::Len(place) => input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Rvalue::Len for place {:?} not yet implemented",
-                place
-            ))
-        ),
+        mir::Rvalue::Len(place) => {
+            use dialect_mir::types::{MirArrayType, MirSliceType};
+            use pliron::builtin::attributes::IntegerAttr;
+            use pliron::builtin::types::{IntegerType, Signedness};
+
+            let (place_val, prev_op_after) =
+                translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
+
+            let place_ty = place_val.get_type(ctx);
+            let is_array = place_ty.deref(ctx).downcast_ref::<MirArrayType>().is_some();
+            let is_slice = place_ty.deref(ctx).downcast_ref::<MirSliceType>().is_some();
+
+            if is_array {
+                let size = place_ty
+                    .deref(ctx)
+                    .downcast_ref::<MirArrayType>()
+                    .expect("checked above")
+                    .size();
+
+                let i64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+                let apint = APInt::from_u64(size, NonZeroUsize::new(64).unwrap());
+                let int_attr = IntegerAttr::new(i64_ty, apint);
+
+                use dialect_mir::ops::MirConstantOp;
+                let op = Operation::new(
+                    ctx,
+                    MirConstantOp::get_concrete_op_info(),
+                    vec![i64_ty.into()],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                op.deref_mut(ctx).set_loc(loc.clone());
+                let const_op = MirConstantOp::new(op);
+                const_op.set_attr_value(ctx, int_attr);
+
+                let result = op.deref(ctx).get_result(0);
+                Ok((Some(op), result, prev_op_after))
+            } else if is_slice {
+                let usize_ty = types::get_usize_type(ctx);
+                let extract_op = Operation::new(
+                    ctx,
+                    MirExtractFieldOp::get_concrete_op_info(),
+                    vec![usize_ty.to_handle()],
+                    vec![place_val],
+                    vec![],
+                    0,
+                );
+                extract_op.deref_mut(ctx).set_loc(loc.clone());
+                MirExtractFieldOp::new(extract_op)
+                    .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+
+                let result = extract_op.deref(ctx).get_result(0);
+                Ok((Some(extract_op), result, prev_op_after))
+            } else {
+                input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Rvalue::Len for place {:?}: expected array or slice type",
+                        place
+                    ))
+                )
+            }
+        }
         mir::Rvalue::ThreadLocalRef(item) => input_err!(
             loc,
             TranslationErr::unsupported(format!(
