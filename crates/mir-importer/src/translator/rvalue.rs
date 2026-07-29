@@ -2005,7 +2005,8 @@ pub fn translate_operand(
                         TranslationErr::unsupported(format!(
                             "constant pointer to device static {} has pointee type {:?}, \
                              but the full static has type {:?}; zero-addend pointee \
-                             reinterpretations and unsized coercions are not supported",
+                             reinterpretations and unsized coercions other than \
+                             same-element array\u{2192}slice unsize are not supported",
                             static_target.static_def.name(),
                             pointee_ty,
                             static_ty
@@ -8244,6 +8245,12 @@ fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> S
 /// from the constant's own fat-pointer metadata word, which is what makes
 /// zero-addend prefix subslices (e.g. `split_at(2).0` over the static) carry
 /// their true length instead of the whole array's.
+///
+/// The `static_elem == slice_elem` restriction is deliberate: a zero-addend
+/// *flattening* view (e.g. `&NESTED[0]` over `[[f32; 2]; 3]` typed as
+/// `&[f32]`) is valid Rust but stays a diagnosed support gap; accepting it
+/// would need element-count arithmetic across the reinterpreted shape, not
+/// just the stored metadata word.
 fn array_to_slice_unsize_info(
     static_ty: &rustc_public::ty::Ty,
     pointee_ty: &rustc_public::ty::Ty,
