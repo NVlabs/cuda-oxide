@@ -316,6 +316,25 @@ pub fn counted_loop_from_step(ctx: &mut Context, start: i64, n: i64, step: i64) 
 /// test in a separate merge block, which the kernel macro sidesteps by
 /// canonicalizing annotated range loops to counted `while` form).
 pub fn eq_wrapped_guard_loop(ctx: &mut Context, n: i64) -> CountedLoop {
+    eq_wrapped_guard_loop_with(ctx, n, 1, true)
+}
+
+/// The flip-path variant of [`eq_wrapped_guard_loop`]: the guard is
+/// `eq (i < n), false` and the BODY sits on the false edge, so the analysis
+/// must compose both negations (`body_when_cmp_true ^ eq_flip`) to recover
+/// the keep-going predicate `i < n`.
+pub fn eq_wrapped_false_guard_loop(ctx: &mut Context, n: i64) -> CountedLoop {
+    eq_wrapped_guard_loop_with(ctx, n, 0, false)
+}
+
+/// Shared builder: guard is `eq (i < n), wrap_const`, and `body_on_true`
+/// picks which cond_br edge holds the latch.
+fn eq_wrapped_guard_loop_with(
+    ctx: &mut Context,
+    n: i64,
+    wrap_const: i64,
+    body_on_true: bool,
+) -> CountedLoop {
     let (module, region) = empty_func(ctx);
     let u32 = u32t(ctx);
     let i1ty = i1(ctx);
@@ -340,17 +359,23 @@ pub fn eq_wrapped_guard_loop(ctx: &mut Context, n: i64) -> CountedLoop {
         i,
         nconst
     );
-    let one = iconst(ctx, header, i1ty, 1);
+    let wrap = iconst(ctx, header, i1ty, wrap_const);
     let eq = op2!(
         ctx,
         header,
         MirEqOp::get_concrete_op_info(),
         i1ty.into(),
         lt,
-        one
+        wrap
     );
-    // True successor is the latch (body); false is exit — keep going while eq.
-    cond_br(ctx, header, eq, latch, exit);
+    if body_on_true {
+        // True successor is the latch (body); false is exit — keep going
+        // while eq holds.
+        cond_br(ctx, header, eq, latch, exit);
+    } else {
+        // Body on the FALSE edge: keep going while eq does NOT hold.
+        cond_br(ctx, header, eq, exit, latch);
+    }
 
     let acc1 = op2!(
         ctx,

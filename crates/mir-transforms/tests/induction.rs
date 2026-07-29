@@ -10,7 +10,8 @@
 mod common;
 
 use common::{
-    counted_loop, counted_loop_from, eq_wrapped_guard_loop, mir_ctx, multi_latch_counted_loop,
+    counted_loop, counted_loop_from, eq_wrapped_false_guard_loop, eq_wrapped_guard_loop, mir_ctx,
+    multi_latch_counted_loop,
 };
 use mir_transforms::analyses::induction::{ArgKind, CmpPred, analyze};
 use mir_transforms::analyses::loop_info::LoopInfo;
@@ -83,6 +84,28 @@ fn analyzes_eq_wrapped_guard() {
         }
         ref other => panic!("i should be a BasicIv, got {other:?}"),
     }
+    assert_eq!(rec.continue_pred, Some(CmpPred::Lt));
+    assert_eq!(rec.bound, Some(8));
+    assert_eq!(rec.trip_count, Some(8));
+}
+
+#[test]
+fn analyzes_eq_wrapped_false_guard_with_body_on_the_false_edge() {
+    // Flip path: cond_br (eq (i < n), false) [exit, body]. Both negations
+    // (const false, body on the false edge) must compose back to `i < n`.
+    let mut ctx = mir_ctx();
+    let lp = eq_wrapped_false_guard_loop(&mut ctx, 8);
+
+    let mut dom = DomInfo::default();
+    let info = {
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    let id = info.innermost_loop(lp.header).unwrap();
+    let ph = info.preheader(&ctx, lp.region, id).unwrap();
+    let rec = analyze(&ctx, &info, id, ph);
+
+    assert_eq!(rec.primary_iv, Some(1));
     assert_eq!(rec.continue_pred, Some(CmpPred::Lt));
     assert_eq!(rec.bound, Some(8));
     assert_eq!(rec.trip_count, Some(8));

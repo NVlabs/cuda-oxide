@@ -6131,12 +6131,24 @@ impl LoopUnrollAttrVisitor {
     /// If `attrs` contains an outer `#[unroll]` / `#[unroll(N)]`, remove it and
     /// return the parsed factor. Returns `None` when no `unroll` attribute is
     /// present (leaving `attrs` untouched). Records a parse error and returns
-    /// `None` if the attribute is malformed.
+    /// `None` if the attribute is malformed or appears more than once (a
+    /// duplicate would otherwise plant two conflicting hints on a desugared
+    /// range loop, or surface as an opaque rustc error on a `while`).
     fn take_unroll_factor(&mut self, attrs: &mut Vec<syn::Attribute>) -> Option<ConstU32Expr> {
         let idx = attrs
             .iter()
             .position(|attr| attr.path().is_ident("unroll"))?;
         let attr = attrs.remove(idx);
+
+        if let Some(duplicate) = attrs.iter().find(|a| a.path().is_ident("unroll")) {
+            if self.error.is_none() {
+                self.error = Some(syn::Error::new_spanned(
+                    duplicate,
+                    "a loop can carry only one #[unroll] / #[unroll(N)] attribute",
+                ));
+            }
+            return None;
+        }
 
         // `#[unroll]` (bare) is `Meta::Path`; `#[unroll(N)]` is `Meta::List`.
         let factor = match &attr.meta {
@@ -6179,15 +6191,17 @@ impl LoopUnrollAttrVisitor {
     /// pass recognizes:
     ///
     /// ```text
-    /// {
-    ///     let mut __idx = lo;          // bounds evaluated once, in order,
-    ///     let __end = hi;              // exactly like Range construction
+    /// #(#attrs)*                       // the loop's other attributes move to
+    /// {                                // the wrapper, so #[cfg(off)] strips
+    ///     let mut __idx = lo;          // the bounds too; bounds evaluated
+    ///     let __end = hi;              // once, in order, like Range construction
     ///     'label: while __idx < __end {
     ///         __unroll_config::<F>();  // marker on the canonical loop
-    ///         let pat = __idx;         // fresh binding per iteration
-    ///         __idx += 1;              // BEFORE the body: `continue` must
-    ///         { body }                 // still advance the counter
-    ///     }
+    ///         let __cur = __idx;       // the yielded item, then advance the
+    ///         __idx += 1;              // counter BEFORE the body: `continue`
+    ///         let pat = __cur;         // must not skip the increment, and a
+    ///         { body }                 // `ref` pattern borrows the item, not
+    ///     }                            // the live counter
     /// }
     /// ```
     ///
@@ -6200,11 +6214,17 @@ impl LoopUnrollAttrVisitor {
     ///
     /// The rewrite preserves `for` semantics for integer ranges: bounds are
     /// evaluated once (in order), the binding is a fresh copy per iteration
-    /// (a `mut` pattern can be reassigned without affecting iteration),
-    /// labeled and unlabeled `break`/`continue` keep their meaning, and an
-    /// empty or reversed range runs zero times. Non-integer `Step` types
-    /// (e.g. `char` ranges) would fail on `+= 1` instead of warning, which is
-    /// acceptable for a device-side unroll request.
+    /// (a `mut` pattern can be reassigned without affecting iteration; `ref`
+    /// patterns borrow the per-iteration item), labeled and unlabeled
+    /// `break`/`continue` keep their meaning, and an empty or reversed range
+    /// runs zero times. The generated locals use [`Span::mixed_site`]
+    /// hygiene, so they can neither capture nor be captured by user
+    /// identifiers of the same name. Non-integer `Step` types (e.g. `char`
+    /// ranges) would fail on `+= 1` instead of warning, which is acceptable
+    /// for a device-side unroll request. One knowingly accepted divergence:
+    /// temporaries inside the bound expressions drop at the end of their
+    /// `let` instead of living across the whole loop; kernels are `no_std`
+    /// and do not hold `Drop` temporaries in loop bounds.
     ///
     /// Returns `None` (caller falls back to marker-into-body, which warns
     /// downstream) for anything that is not a plain exclusive range with both
@@ -6239,17 +6259,27 @@ impl LoopUnrollAttrVisitor {
         let pat = &for_loop.pat;
         let body = &for_loop.body;
 
-        Some(parse_quote!({
-            let mut __cuda_oxide_unroll_idx = #lo;
-            let __cuda_oxide_unroll_end = #hi;
+        // Mixed-site hygiene: these resolve at the macro definition site, so
+        // a user variable spelled the same way (say, as a loop bound) is a
+        // different binding and neither side can shadow the other.
+        let idx = Ident::new("__cuda_oxide_unroll_idx", proc_macro2::Span::mixed_site());
+        let end = Ident::new("__cuda_oxide_unroll_end", proc_macro2::Span::mixed_site());
+        let cur = Ident::new("__cuda_oxide_unroll_cur", proc_macro2::Span::mixed_site());
+
+        Some(parse_quote!(
             #(#attrs)*
-            #label while __cuda_oxide_unroll_idx < __cuda_oxide_unroll_end {
-                #marker
-                let #pat = __cuda_oxide_unroll_idx;
-                __cuda_oxide_unroll_idx += 1;
-                #body
+            {
+                let mut #idx = #lo;
+                let #end = #hi;
+                #label while #idx < #end {
+                    #marker
+                    let #cur = #idx;
+                    #idx += 1;
+                    let #pat = #cur;
+                    #body
+                }
             }
-        }))
+        ))
     }
 }
 
@@ -9851,16 +9881,80 @@ mod tests {
             "the marker must land in the canonical loop: {out}"
         );
         assert!(
-            out.contains("leti=__cuda_oxide_unroll_idx;"),
-            "the user binding must be a fresh copy of the counter: {out}"
+            out.contains("leti=__cuda_oxide_unroll_cur;"),
+            "the user binding must be a fresh copy of the per-iteration item: {out}"
         );
         let marker_pos = out.find("__unroll_config").unwrap();
-        let binding_pos = out.find("leti=__cuda_oxide_unroll_idx;").unwrap();
+        let item_pos = out
+            .find("let__cuda_oxide_unroll_cur=__cuda_oxide_unroll_idx;")
+            .unwrap();
         let increment_pos = out.find("__cuda_oxide_unroll_idx+=1").unwrap();
+        let binding_pos = out.find("leti=__cuda_oxide_unroll_cur;").unwrap();
         assert!(
-            marker_pos < binding_pos && binding_pos < increment_pos,
-            "marker, binding, then increment before the body (continue must \
-             still advance the counter): {out}"
+            marker_pos < item_pos && item_pos < increment_pos && increment_pos < binding_pos,
+            "marker, item copy, increment, then the user binding before the \
+             body (continue must still advance the counter, and a ref \
+             pattern must borrow the item, not the live counter): {out}"
+        );
+    }
+
+    #[test]
+    fn unroll_parenthesized_range_for_is_canonicalized() {
+        let out = rewrite_unroll_to_compact_string(parse_quote! {
+            fn k() {
+                let mut acc = 0u32;
+                #[unroll]
+                for i in (0..8u32) {
+                    acc = acc.wrapping_add(i);
+                }
+            }
+        });
+
+        assert!(
+            out.contains("while__cuda_oxide_unroll_idx<__cuda_oxide_unroll_end"),
+            "a parenthesized range must desugar the same way: {out}"
+        );
+    }
+
+    #[test]
+    fn unroll_cfg_attr_moves_to_the_desugared_wrapper() {
+        let out = rewrite_unroll_to_compact_string(parse_quote! {
+            fn k() {
+                let mut acc = 0u32;
+                #[cfg(feature = "wide")]
+                #[unroll]
+                for i in 0..8u32 {
+                    acc = acc.wrapping_add(i);
+                }
+            }
+        });
+
+        let cfg_pos = out.find("#[cfg(feature=\"wide\")]").expect("cfg kept");
+        let bounds_pos = out.find("letmut__cuda_oxide_unroll_idx=").unwrap();
+        assert!(
+            cfg_pos < bounds_pos,
+            "the cfg must guard the whole wrapper (bounds included), so \
+             cfg-off strips the bound evaluations too: {out}"
+        );
+    }
+
+    #[test]
+    fn duplicate_unroll_attrs_are_a_hard_error() {
+        let mut function: ItemFn = parse_quote! {
+            fn k() {
+                let mut acc = 0u32;
+                #[unroll]
+                #[unroll(4)]
+                for i in 0..8u32 {
+                    acc = acc.wrapping_add(i);
+                }
+            }
+        };
+        let err = rewrite_loop_unroll_attrs(&mut function)
+            .expect_err("duplicate unroll attributes must be rejected");
+        assert!(
+            err.to_string().contains("only one #[unroll]"),
+            "unexpected error: {err}"
         );
     }
 
