@@ -28,7 +28,7 @@
 //! - [`translate_operand`]: Translates operands (Copy/Move/Constant/RuntimeChecks)
 //! - [`translate_place`]: Translates places to their SSA values (handles ghost locals)
 //! - `translate_constant`: Translates MIR constants to `dialect-mir`
-//! - `create_ghost_enum_default`: Synthesises a placeholder for never-assigned enum locals
+//! - `create_ghost_enum_default`: Synthesizes a placeholder for enum locals with no assignment
 
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
@@ -71,7 +71,7 @@ use std::num::NonZeroUsize;
 /// to the generic address space, following LLVM's model where generic pointers
 /// can hold any address space pointer.
 ///
-/// Returns the (possibly casted) value and the last inserted operation.
+/// Returns the (possibly cast) value and the last inserted operation.
 fn cast_to_generic_addrspace_if_needed(
     ctx: &mut Context,
     value: Value,
@@ -722,45 +722,47 @@ pub fn translate_rvalue(
             Ok((None, val, last_inserted))
         }
         mir::Rvalue::Ref(_region, borrow_kind, place) => {
-            // Ref creates a reference to a place: &place or &mut place.
+            // `Ref` creates a reference to a place: `&place` or `&mut place`.
             //
-            // Strategy:
+            // Lowering strategy:
             //
-            // 1. `&local` / `&mut local` -- return the local's alloca slot
-            //    pointer directly (ZST locals get a synthesised pointer).
-            // 2. Any projected place -- compute the real in-memory address
-            //    by walking the FULL projection list from the base local's
-            //    slot via `translate_place_address`: `&(*ptr)` loads the
-            //    pointer, `&(*ptr).field` adds a `mir.field_addr`,
-            //    `&x.arr[i]` adds a `mir.array_element_addr`, and arbitrary
-            //    combinations compose. Borrows produced this way ALIAS the
-            //    original storage, which is what Rust requires: e.g.
-            //    `Enumerate::next` takes `&mut (*_1).0` and `Iter::next`
-            //    must advance the ORIGINAL Iter in place -- a `mir.ref` of
-            //    an extracted field VALUE would mutate a copy and loop
-            //    forever.
-            // 3. Only when no address can be computed (slot-less computed
-            //    value, or a projection the walker cannot lower, e.g.
-            //    Downcast) do we fall back to materialising the VALUE and
-            //    wrapping it in `mir.ref` (fresh slot + store of a COPY).
-            //    That is sound for shared borrows (reads through a copy)
-            //    and a silent miscompile for mutable ones (writes land in
-            //    the copy), so mutable borrows hard-error instead.
+            // 1. For a bare local, return a pointer to the local's backing slot.
+            //    ZST locals, which have no backing storage, receive a synthesized
+            //    pointer.
+            //
+            // 2. For a projected place, compute its address by walking the complete
+            //    projection chain from the base local's slot through
+            //    `translate_place_address`. For example, `&(*ptr)` loads the stored
+            //    pointer, `&(*ptr).field` emits `mir.field_addr`, and `&x.arr[i]`
+            //    emits `mir.array_element_addr`. These operations compose for deeper
+            //    projection chains.
+            //
+            //    The resulting borrow aliases the original storage, as required by
+            //    Rust. For example, `Enumerate::next` borrows `&mut (*_1).0`, and
+            //    `Iter::next` must update the original iterator. Constructing a
+            //    `mir.ref` from an extracted field value would instead borrow a copy,
+            //    so mutations would not reach the original iterator.
+            //
+            // 3. If no address can be computed, either because the value has no
+            //    backing slot or because the projection is unsupported, fall back to
+            //    materializing the value and wrapping a copy in `mir.ref`. This is
+            //    sound for shared borrows, which only read through the reference.
+            //    Mutable borrows reject this fallback because writes would modify the
+            //    copy rather than the original place.
 
-            // Case 1: bare local reference `&local` / `&mut local`.
+            // Case 1: bare local reference, `&local` or `&mut local`.
             //
-            // Alloca + load/store model: every non-ZST MIR local is backed by
-            // a stack slot emitted at the top of the entry block. Taking the
-            // address of the local therefore just returns that slot pointer --
-            // no extra allocation is needed. `mem2reg` folds this back into
-            // SSA when the borrow doesn't escape.
+            // Every non-ZST MIR local has a backing slot created in the entry block.
+            // Taking the local's address therefore returns the existing slot pointer
+            // without creating additional storage. `mem2reg` can later promote the
+            // slot back to SSA when its address does not escape.
             //
-            // Mutability: slots are always allocated mutable (we may store
-            // into them regardless of the Rust mutability of the local).
-            // Callers that expect a `*const T` pointer handle the coercion
-            // via `MirCastOp::PointerCoercionMutToConst`; most consumers in
-            // the dialect (FieldAddr, ArrayElementAddr, Load, Store) are
-            // mutability-agnostic at the pliron level.
+            // Slots use mutable pointer types because the importer may write to them
+            // independently of the Rust source-level mutability of the local. Callers
+            // requiring `*const T` apply `MirCastOp::PointerCoercionMutToConst`.
+            // Addressing and memory operations such as `FieldAddr`,
+            // `ArrayElementAddr`, `Load`, and `Store` do not otherwise depend on this
+            // mutability distinction at the pliron level.
             let is_mutable = matches!(borrow_kind, mir::BorrowKind::Mut { .. });
             if place.projection.is_empty() {
                 if let Some(slot) = value_map.get_slot(place.local) {
@@ -861,7 +863,7 @@ pub fn translate_rvalue(
             }
 
             // Case 3: shared-borrow fallback -- reference to a computed
-            // value that has no backing slot (e.g. the result of an rvalue
+            // value that has no backing slot (e.g. the result of a rvalue
             // expression) or whose projection the address walker cannot
             // lower (e.g. enum Downcast, issues #131/#146). Emit `mir.ref`
             // which allocates a fresh slot, stores a COPY of the value, and
@@ -942,7 +944,7 @@ pub fn translate_rvalue(
             // would be silently lost -- refuse loudly. Exception: a bare
             // slot-less local is a ZST (no bytes), so a copy cannot lose
             // writes; let it use the fallback for both mutabilities, the
-            // same way `Rvalue::Ref` synthesises ZST borrows.
+            // same way `Rvalue::Ref` syntheses ZST borrows.
             if is_mutable && !place.projection.is_empty() {
                 return input_err!(
                     loc,
@@ -1028,19 +1030,21 @@ pub fn translate_rvalue(
                             };
 
                             if !is_struct_type {
-                                // Scalar-lowered ADT: layout collapsed to a single runtime
-                                // value. The MIR Aggregate may still list ZST fields
-                                // (PhantomData, etc.) -- those translate to types other
-                                // than `adt_ty`, so filtering by "type matches the
-                                // collapsed scalar" reliably picks the one runtime field.
+                                // Scalar-lowered ADT: rustc's layout collapses the aggregate
+                                // to a single runtime value. The MIR aggregate may still contain
+                                // ZST fields such as `PhantomData`; those fields translate to
+                                // types different from `adt_ty`. Filtering for the field whose
+                                // translated type equals `adt_ty` therefore identifies the single
+                                // runtime-carrying field.
                                 //
-                                // This works for shapes like
+                                // This covers shapes such as:
+                                //
                                 //     ThreadIndex { raw: usize, _kernel: PhantomData<...>, ... }
-                                // where exactly one field shares the scalar type. If a
-                                // future scalar-lowered ADT has two runtime fields with
-                                // the same type, the filter returns >1 match and we bail
-                                // -- the assumption is wrong and the translator needs an
-                                // explicit story for that shape.
+                                //
+                                // Exactly one field is expected to match the scalar-lowered type.
+                                // If multiple fields match, the layout assumption is ambiguous,
+                                // so reject the aggregate explicitly until that representation
+                                // has dedicated lowering support.
                                 let runtime_fields: Vec<Value> = field_values
                                     .iter()
                                     .copied()
@@ -1995,6 +1999,7 @@ pub fn translate_operand(
                             elem_ty,
                             len,
                             is_mutable,
+                            0,
                             block_ptr,
                             prev_op,
                             loc.clone(),
@@ -2011,6 +2016,42 @@ pub fn translate_operand(
                             pointee_ty,
                             static_ty
                         ))
+                    );
+                }
+
+                if static_target.byte_offset != 0
+                    && let Some((elem_ty, remaining_len)) = interior_array_to_slice_unsize_info(
+                        &static_ty,
+                        &pointee_ty,
+                        static_target.byte_offset,
+                        loc.clone(),
+                    )?
+                {
+                    let len = slice_len_from_constant(constant, loc.clone())?;
+
+                    if len > remaining_len {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "constant slice over device static {} stores length {}, \
+                                 which exceeds the selected array region's remaining length {}",
+                                static_target.static_def.name(),
+                                len,
+                                remaining_len,
+                            ))
+                        );
+                    }
+
+                    return translate_static_array_as_slice(
+                        ctx,
+                        &static_target.static_def,
+                        elem_ty,
+                        len,
+                        is_mutable,
+                        static_target.byte_offset,
+                        block_ptr,
+                        prev_op,
+                        loc.clone(),
                     );
                 }
 
@@ -3011,14 +3052,13 @@ fn translate_place_value_fallback(
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     if place.projection.is_empty() {
         let local = place.local;
-        // Alloca + load/store model: emit `mir.load slot`. Every non-ZST local
-        // has a slot allocated in the entry block, so the loaded value is the
-        // local's current contents. `mem2reg` promotes these loads back into
-        // SSA form when the slot's address doesn't escape.
+        // Slot-backed local: load the local's current value from its backing slot.
+        // Every non-ZST local receives a slot in the entry block. `mem2reg` later
+        // promotes eligible slots to SSA when their addresses do not escape.
         if let Some((load_op, val)) = value_map.load_local(ctx, local, block_ptr, prev_op) {
             return Ok((val, Some(load_op)));
         }
-        // ZST or unsupported local -- synthesise a value for it so callers
+        // ZST or unsupported local -- synthesize a value for it so callers
         // can uniformly consume a `Value`. An enum gets its variant-0 default
         // (ghost-enum), a struct/tuple ZST gets an empty aggregate. Loads of
         // these are otherwise meaningless.
@@ -5142,7 +5182,7 @@ fn rust_array_type_info(
 
 /// Build a `MirConstructArrayOp` (and the necessary scalar / nested-array
 /// element ops) from a slice of raw bytes for an `array_ty`. Recurses on
-/// `MirArrayType` element types so multi-dimensional arrays (`[[T; M]; N]`,
+/// `MirArrayType` element types so multidimensional arrays (`[[T; M]; N]`,
 /// etc.) are handled by repeated decomposition.
 fn build_array_op_from_bytes(
     ctx: &mut Context,
@@ -6848,10 +6888,11 @@ fn translate_constant_value_from_bytes(
         );
     }
 
-    // Aggregate decoders own their complete field model, including non-empty
-    // aggregates whose every field is zero-sized. Dispatch them before the
-    // generic ZST synthesizer, which only has the translated type and cannot
-    // recover a Rust aggregate's active variant or field metadata.
+    // Decode aggregates before generic ZST handling. Even when every field is
+    // zero-sized, the Rust aggregate may still carry structural information such
+    // as its fields or active enum variant. That information is available only to
+    // the aggregate-specific decoder; the generic ZST path sees only the translated
+    // type and cannot reconstruct it.
     if ty_ptr.deref(ctx).is::<dialect_mir::types::MirTupleType>() {
         return translate_tuple_constant_from_bytes(
             ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc,
@@ -8277,6 +8318,91 @@ fn array_to_slice_unsize_info(
     }
 }
 
+/// Detect an interior array→slice unsize within a device static.
+///
+/// The walk is intentionally limited to arrays. At each nesting level, the
+/// byte addend selects one array element; when that array's element type
+/// matches the slice element type, the remaining element count is returned.
+/// This supports both an offset into a flat `[T; N]` and a slice over an array
+/// nested inside outer arrays, while keeping structs, tuples, enums, and other
+/// DST reinterpretations outside this lowering path.
+fn interior_array_to_slice_unsize_info(
+    static_ty: &rustc_public::ty::Ty,
+    pointee_ty: &rustc_public::ty::Ty,
+    byte_offset: u64,
+    loc: Location,
+) -> TranslationResult<Option<(rustc_public::ty::Ty, u64)>> {
+    use rustc_public::ty::{RigidTy, Ty, TyKind};
+
+    let TyKind::RigidTy(RigidTy::Slice(slice_elem)) = pointee_ty.kind() else {
+        return Ok(None);
+    };
+
+    fn find_region(
+        array_ty: Ty,
+        slice_elem: Ty,
+        byte_offset: u64,
+        loc: &Location,
+    ) -> TranslationResult<Option<u64>> {
+        let TyKind::RigidTy(RigidTy::Array(array_elem, len_const)) = array_ty.kind() else {
+            return Ok(None);
+        };
+
+        let len = len_const.eval_target_usize().map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to evaluate array length for interior static slice unsize: {error:?}"
+                ))
+            )
+        })?;
+        let elem_size = rust_type_layout_size(array_elem, loc.clone())? as u64;
+        let array_size = elem_size.checked_mul(len).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Array byte size overflowed while resolving an interior static slice: \
+                 {len} elements x {elem_size} bytes"
+            )))
+        })?;
+
+        if byte_offset > array_size {
+            return Ok(None);
+        }
+
+        if array_elem == slice_elem {
+            // A non-zero byte addend cannot distinguish positions between
+            // zero-sized elements. Keep that case outside this path rather
+            // than manufacturing an arbitrary element index.
+            if elem_size == 0 || !byte_offset.is_multiple_of(elem_size) {
+                return Ok(None);
+            }
+
+            let start = byte_offset / elem_size;
+            if start > len {
+                return Ok(None);
+            }
+            return Ok(Some(len - start));
+        }
+
+        // Descend only through the concrete outer element containing the
+        // addend. An offset one-past this array has no child array region to
+        // inspect, even though it may be valid for an empty slice at this
+        // array's own element type (handled by the matching arm above).
+        if elem_size == 0 || byte_offset >= array_size {
+            return Ok(None);
+        }
+
+        let element_index = byte_offset / elem_size;
+        if element_index >= len {
+            return Ok(None);
+        }
+
+        find_region(array_elem, slice_elem, byte_offset % elem_size, loc)
+    }
+
+    Ok(find_region(*static_ty, slice_elem, byte_offset, &loc)?
+        .map(|remaining_len| (slice_elem, remaining_len)))
+}
+
 /// Read the slice length from a fat-pointer constant's metadata word.
 ///
 /// A `&[T]` / `*const [T]` constant is a two-word image: the data word (which
@@ -8326,14 +8452,19 @@ fn slice_len_from_constant(constant: &mir::ConstOperand, loc: Location) -> Trans
     Ok(len)
 }
 
-/// Materialize `&STATIC_ARRAY` (or `*const STATIC_ARRAY`) as a fat `&[T]` /
-/// `*const [T]` by pairing the thin global pointer with the array length.
+/// Materialize a region of a device static as a fat `&[T]` / `*const [T]`.
+///
+/// A zero addend preserves the established whole-array path. A non-zero
+/// addend reuses the byte-addressed static-pointer lowering to produce the
+/// interior `*T` data pointer before pairing it with the length stored in the
+/// constant's metadata word.
 fn translate_static_array_as_slice(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
     elem_ty: rustc_public::ty::Ty,
     len: u64,
     is_mutable: bool,
+    byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -8341,36 +8472,54 @@ fn translate_static_array_as_slice(
     use dialect_mir::ops::MirConstructSliceOp;
     use dialect_mir::types::MirSliceType;
 
-    let static_ty = static_def.ty();
-    let array_mir_ty = types::translate_type(ctx, &static_ty)?;
     let elem_mir_ty = types::translate_type(ctx, &elem_ty)?;
 
-    // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
-    let thin_array_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
+    let (data_ptr, prev_after_data) = if byte_offset == 0 {
+        let static_ty = static_def.ty();
+        let array_mir_ty = types::translate_type(ctx, &static_ty)?;
 
-    let (array_ptr, prev_after_array) = translate_static_global_pointer(
-        ctx,
-        static_def,
-        array_mir_ty,
-        thin_array_ptr_ty,
-        is_mutable,
-        0,
-        block_ptr,
-        prev_op,
-        loc.clone(),
-    )?;
+        // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
+        let thin_array_ptr_ty: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
 
-    // Fat-pointer data slot is a generic `*T` / `*mut T`.
-    let (data_ptr, prev_after_data) = coerce_slice_data_pointee(
-        ctx,
-        array_ptr,
-        elem_mir_ty,
-        is_mutable,
-        block_ptr,
-        prev_after_array,
-        loc.clone(),
-    );
+        let (array_ptr, prev_after_array) = translate_static_global_pointer(
+            ctx,
+            static_def,
+            array_mir_ty,
+            thin_array_ptr_ty,
+            is_mutable,
+            0,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?;
+
+        // Fat-pointer data slot is a generic `*T` / `*mut T`.
+        coerce_slice_data_pointee(
+            ctx,
+            array_ptr,
+            elem_mir_ty,
+            is_mutable,
+            block_ptr,
+            prev_after_array,
+            loc.clone(),
+        )
+    } else {
+        let data_ptr_ty: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(ctx, elem_mir_ty, is_mutable).into();
+
+        translate_static_global_pointer(
+            ctx,
+            static_def,
+            elem_mir_ty,
+            data_ptr_ty,
+            is_mutable,
+            byte_offset,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?
+    };
 
     let usize_ty = types::get_usize_type(ctx);
     let len_attr = pliron::builtin::attributes::IntegerAttr::new(
