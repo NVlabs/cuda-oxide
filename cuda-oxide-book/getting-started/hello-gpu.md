@@ -211,7 +211,8 @@ The `--async` flag generates a project with `tokio` and `cuda-async` dependencie
 Here's the generated async vecadd template (with minor formatting edits for readability):
 
 ```rust
-use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
+use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_host::cuda_module;
 use cuda_async::device_context::init_device_contexts;
 use cuda_async::device_operation::DeviceOperation;
 use cuda_core::LaunchConfig;
@@ -223,9 +224,9 @@ mod kernels {
     #[kernel]
     pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
-        let i = idx.get();
+        let idx_raw = idx.get();
         if let Some(c_elem) = c.get_mut(idx) {
-            *c_elem = a[i] + b[i];
+            *c_elem = a[idx_raw] + b[idx_raw];
         }
     }
 }
@@ -251,13 +252,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (a_dev, b_dev, mut c_dev) =
         cuda_async::device_context::with_cuda_context(0, |ctx| {
             let stream = ctx.default_stream();
-            let bytes = N * mem::size_of::<f32>();
+            let num_bytes = N * mem::size_of::<f32>();
             unsafe {
-                let a = malloc_async(stream.cu_stream(), bytes).unwrap();
-                let b = malloc_async(stream.cu_stream(), bytes).unwrap();
-                let c = malloc_async(stream.cu_stream(), bytes).unwrap();
-                memcpy_htod_async(a, a_host.as_ptr(), bytes, stream.cu_stream()).unwrap();
-                memcpy_htod_async(b, b_host.as_ptr(), bytes, stream.cu_stream()).unwrap();
+                let a = malloc_async(stream.cu_stream(), num_bytes).unwrap();
+                let b = malloc_async(stream.cu_stream(), num_bytes).unwrap();
+                let c = malloc_async(stream.cu_stream(), num_bytes).unwrap();
+                memcpy_htod_async(a, a_host.as_ptr(), num_bytes, stream.cu_stream()).unwrap();
+                memcpy_htod_async(b, b_host.as_ptr(), num_bytes, stream.cu_stream()).unwrap();
                 stream.synchronize().unwrap();
                 (
                     DeviceBox::<[f32]>::from_raw_parts(a, N, 0),
@@ -268,8 +269,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     // 4. Launch -- returns a lazy DeviceOperation, no GPU work yet.
-    // SAFETY: this is 1D, buffers contain N elements, and module/scheduler
-    // both use device 0's context.
+    // SAFETY: this is a 1D launch and `vecadd` guards its index against the
+    // output length before writing.
     unsafe {
         module.vecadd_async(
             LaunchConfig::for_num_elems(N as u32),

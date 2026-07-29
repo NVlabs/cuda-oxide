@@ -192,6 +192,15 @@ enum Commands {
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
+        /// Disable FMA contraction (default: on, matching nvcc --fmad=true).
+        /// Also settable via CUDA_OXIDE_NO_FMA=1.
+        #[arg(long)]
+        no_fmad: bool,
+        /// Elide slice/array bounds checks in every device kernel
+        /// (out-of-bounds indexing becomes UB, like get_unchecked).
+        /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
+        #[arg(long)]
+        unchecked_indexing: bool,
         /// Cargo test arguments. Use after `--`; empty runs plain `cargo test`.
         #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
         cargo_args: Vec<String>,
@@ -613,6 +622,8 @@ fn main() {
             device_codegen_crate,
             device_cfgs,
             verbose,
+            no_fmad,
+            unchecked_indexing,
             cargo_args,
         } => {
             let ctx = commands::resolve_context();
@@ -634,8 +645,8 @@ fn main() {
                     cargo_target_dir: cargo_target_dir.as_deref(),
                     device_codegen_crate: device_codegen_crate.as_deref(),
                     device_cfgs: &device_cfgs,
-                    no_fmad: false,
-                    unchecked_indexing: false,
+                    no_fmad,
+                    unchecked_indexing,
                     materialize_cubin,
                 },
                 &cargo_args,
@@ -965,10 +976,18 @@ mod tests {
     fn empty_test_and_explicit_empty_build_passthrough_are_distinct() {
         let test_cli = Cli::try_parse_from(["cargo-oxide", "test"])
             .expect("cargo oxide test should accept no Cargo arguments");
-        let Commands::Test { cargo_args, .. } = test_cli.command else {
+        let Commands::Test {
+            cargo_args,
+            no_fmad,
+            unchecked_indexing,
+            ..
+        } = test_cli.command
+        else {
             panic!("expected test command");
         };
         assert!(cargo_args.is_empty());
+        assert!(!no_fmad);
+        assert!(!unchecked_indexing);
 
         let build_args = strings(&["cargo-oxide", "build", "--"]);
         assert!(has_passthrough_separator(&build_args));
@@ -977,6 +996,32 @@ mod tests {
             panic!("expected build command");
         };
         assert!(cargo_args.is_empty());
+    }
+
+    #[test]
+    fn test_parser_accepts_codegen_flags() {
+        let cli = Cli::try_parse_from([
+            "cargo-oxide",
+            "test",
+            "--no-fmad",
+            "--unchecked-indexing",
+            "--",
+            "-p",
+            "gpu-app",
+        ])
+        .expect("test codegen flags should parse");
+        let Commands::Test {
+            no_fmad,
+            unchecked_indexing,
+            cargo_args,
+            ..
+        } = cli.command
+        else {
+            panic!("expected test command");
+        };
+        assert!(no_fmad);
+        assert!(unchecked_indexing);
+        assert_eq!(cargo_args, strings(&["-p", "gpu-app"]));
     }
 
     #[test]

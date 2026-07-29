@@ -1966,13 +1966,47 @@ pub fn translate_operand(
 
                 // A zero addend must still refer to the complete static object.
                 // Reinterpreting the base address as an unrelated pointee remains unsupported.
+                // The one supported exception is array→slice unsize (`&[T; N]` → `&[T]` /
+                // `*const [T]`), which needs a fat pointer carrying the array length.
                 if static_target.byte_offset == 0 && pointee_mir_ty != static_mir_ty {
+                    if let Some((elem_ty, array_len)) =
+                        array_to_slice_unsize_info(&static_ty, &pointee_ty, loc.clone())?
+                    {
+                        // The emitted length is the constant's own metadata
+                        // word, not the array's N: a zero-addend prefix
+                        // subslice (`split_at(k).0` over the static) stores
+                        // k there. The array length only bounds it.
+                        let len = slice_len_from_constant(constant, loc.clone())?;
+                        if len > array_len {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "constant slice over device static {} stores length {}, \
+                                     which exceeds the static array's length {}",
+                                    static_target.static_def.name(),
+                                    len,
+                                    array_len
+                                ))
+                            );
+                        }
+                        return translate_static_array_as_slice(
+                            ctx,
+                            &static_target.static_def,
+                            elem_ty,
+                            len,
+                            is_mutable,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        );
+                    }
                     return input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
                             "constant pointer to device static {} has pointee type {:?}, \
                              but the full static has type {:?}; zero-addend pointee \
-                             reinterpretations and unsized coercions are not supported",
+                             reinterpretations and unsized coercions other than \
+                             same-element array\u{2192}slice unsize are not supported",
                             static_target.static_def.name(),
                             pointee_ty,
                             static_ty
@@ -8201,6 +8235,177 @@ fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> S
         ty.len(),
         bytes.len() / 2
     )
+}
+
+/// Detect zero-addend array→slice unsize: static `[T; N]` viewed as `[T]`.
+///
+/// Returns `(element_ty, N)` when the pointee is a slice of the same element
+/// type as the static array. Other pointee mismatches stay unsupported.
+/// `N` is an upper bound for validation only; the emitted slice length comes
+/// from the constant's own fat-pointer metadata word, which is what makes
+/// zero-addend prefix subslices (e.g. `split_at(2).0` over the static) carry
+/// their true length instead of the whole array's.
+///
+/// The `static_elem == slice_elem` restriction is deliberate: a zero-addend
+/// *flattening* view (e.g. `&NESTED[0]` over `[[f32; 2]; 3]` typed as
+/// `&[f32]`) is valid Rust but stays a diagnosed support gap; accepting it
+/// would need element-count arithmetic across the reinterpreted shape, not
+/// just the stored metadata word.
+fn array_to_slice_unsize_info(
+    static_ty: &rustc_public::ty::Ty,
+    pointee_ty: &rustc_public::ty::Ty,
+    loc: Location,
+) -> TranslationResult<Option<(rustc_public::ty::Ty, u64)>> {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    match (static_ty.kind(), pointee_ty.kind()) {
+        (
+            TyKind::RigidTy(RigidTy::Array(static_elem, len_const)),
+            TyKind::RigidTy(RigidTy::Slice(slice_elem)),
+        ) if static_elem == slice_elem => {
+            let len = len_const.eval_target_usize().map_err(|error| {
+                input_error!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Failed to evaluate array length for static slice unsize: {error:?}"
+                    ))
+                )
+            })?;
+            Ok(Some((static_elem, len)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Read the slice length from a fat-pointer constant's metadata word.
+///
+/// A `&[T]` / `*const [T]` constant is a two-word image: the data word (which
+/// carries the provenance to the static, read by `static_target_from_constant`)
+/// followed by the `usize` length. The length word is the source of truth for
+/// the emitted slice: a const like `split_at(2).0` over a `[f32; 4]` static is
+/// a zero-addend pointer whose stored length is 2, not the array's 4.
+fn slice_len_from_constant(constant: &mir::ConstOperand, loc: Location) -> TranslationResult<u64> {
+    let ConstantKind::Allocated(alloc) = constant.const_.kind() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "static slice unsize constant is not an allocated constant".to_string()
+            )
+        );
+    };
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let Some(&(provenance_offset, _)) = alloc.provenance.ptrs.first() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "static slice unsize constant has no provenance for its data pointer".to_string()
+            )
+        );
+    };
+    if provenance_offset != 0 || alloc.bytes.len() != 2 * pointer_width {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "static slice unsize constant has an unexpected fat-pointer image \
+                 (provenance at byte {}, {} bytes total; expected the data word at 0 \
+                 followed by one usize length word)",
+                provenance_offset,
+                alloc.bytes.len()
+            ))
+        );
+    }
+
+    let len = alloc
+        .read_partial_uint(pointer_width..2 * pointer_width)
+        .map_err(|e| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read static slice unsize length metadata: {e:?}"
+            )))
+        })? as u64;
+    Ok(len)
+}
+
+/// Materialize `&STATIC_ARRAY` (or `*const STATIC_ARRAY`) as a fat `&[T]` /
+/// `*const [T]` by pairing the thin global pointer with the array length.
+fn translate_static_array_as_slice(
+    ctx: &mut Context,
+    static_def: &rustc_public::mir::mono::StaticDef,
+    elem_ty: rustc_public::ty::Ty,
+    len: u64,
+    is_mutable: bool,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use dialect_mir::ops::MirConstructSliceOp;
+    use dialect_mir::types::MirSliceType;
+
+    let static_ty = static_def.ty();
+    let array_mir_ty = types::translate_type(ctx, &static_ty)?;
+    let elem_mir_ty = types::translate_type(ctx, &elem_ty)?;
+
+    // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
+    let thin_array_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
+
+    let (array_ptr, prev_after_array) = translate_static_global_pointer(
+        ctx,
+        static_def,
+        array_mir_ty,
+        thin_array_ptr_ty,
+        is_mutable,
+        0,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    // Fat-pointer data slot is a generic `*T` / `*mut T`.
+    let (data_ptr, prev_after_data) = coerce_slice_data_pointee(
+        ctx,
+        array_ptr,
+        elem_mir_ty,
+        is_mutable,
+        block_ptr,
+        prev_after_array,
+        loc.clone(),
+    );
+
+    let usize_ty = types::get_usize_type(ctx);
+    let len_attr = pliron::builtin::attributes::IntegerAttr::new(
+        usize_ty,
+        APInt::from_u64(len, NonZeroUsize::new(64).unwrap()),
+    );
+    let len_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![],
+        vec![],
+        0,
+    );
+    len_op.deref_mut(ctx).set_loc(loc.clone());
+    MirConstantOp::new(len_op).set_attr_value(ctx, len_attr);
+    match prev_after_data {
+        Some(prev) => len_op.insert_after(ctx, prev),
+        None => len_op.insert_at_front(block_ptr, ctx),
+    };
+    let len_val = len_op.deref(ctx).get_result(0);
+
+    let slice_ty = MirSliceType::get(ctx, elem_mir_ty);
+    let construct = Operation::new(
+        ctx,
+        MirConstructSliceOp::get_concrete_op_info(),
+        vec![slice_ty.into()],
+        vec![data_ptr, len_val],
+        vec![],
+        0,
+    );
+    construct.deref_mut(ctx).set_loc(loc);
+    construct.insert_after(ctx, len_op);
+
+    Ok((construct.deref(ctx).get_result(0), Some(construct)))
 }
 
 fn translate_static_global_pointer(
