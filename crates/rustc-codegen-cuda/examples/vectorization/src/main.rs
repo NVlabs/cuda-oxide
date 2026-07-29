@@ -173,6 +173,26 @@ const _: () = {
         Some(passes) => assert!(passes == 1, "whole buffer in one block-wide pass"),
         None => panic!("N * 4 must be a whole number of block-wide accesses"),
     }
+
+    // The same shape checked for global coalescing, which `plan` cannot see:
+    // one 16-byte access per lane laid end to end, so a warp covers 512
+    // contiguous bytes and touches the four lines that is the floor for them.
+    // A strided variant with the identical plan would waste three of four.
+    let mut lanes = [0usize; cuda_device::swizzle::WARP_LANES];
+    let mut lane = 0;
+    while lane < cuda_device::swizzle::WARP_LANES {
+        lanes[lane] = lane;
+        lane += 1;
+    }
+    let elem = core::mem::size_of::<cuda_device::vector::F32x4>();
+    assert!(
+        access::lines_touched(&lanes, elem) == 4,
+        "a warp of F32x4 spans exactly four cache lines"
+    );
+    assert!(
+        access::is_fully_coalesced(&lanes, elem),
+        "the view-kernel access pattern must not waste bandwidth"
+    );
 };
 
 fn main() {
