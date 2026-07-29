@@ -52,7 +52,7 @@ cargo oxide update --force          # inside the workspace, run setup via update
 |------------------------------|----------------------------------|-------------------------------------------------|
 | `--materialize-cubin`        | run, sanitize, build, test, pipeline, debug | Finalize and embed target-specific native GPU code during the host build |
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
-| `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir, inspect | Target architecture override |
+| `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir, inspect, debug | Target architecture override |
 | `--features <F>`             | run, sanitize, debug, build, build passthrough, emit-ltoir, inspect | Comma-separated cargo features to enable |
 | `--bin <NAME>`               | run, sanitize, debug                | Specific binary target to build/run      |
 | `--tool <T>`                 | sanitize                         | Compute Sanitizer tool: `memcheck`, `racecheck`, `initcheck`, or `synccheck` |
