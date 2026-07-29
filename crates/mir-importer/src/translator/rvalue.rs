@@ -1969,9 +1969,26 @@ pub fn translate_operand(
                 // The one supported exception is array→slice unsize (`&[T; N]` → `&[T]` /
                 // `*const [T]`), which needs a fat pointer carrying the array length.
                 if static_target.byte_offset == 0 && pointee_mir_ty != static_mir_ty {
-                    if let Some((elem_ty, len)) =
+                    if let Some((elem_ty, array_len)) =
                         array_to_slice_unsize_info(&static_ty, &pointee_ty, loc.clone())?
                     {
+                        // The emitted length is the constant's own metadata
+                        // word, not the array's N: a zero-addend prefix
+                        // subslice (`split_at(k).0` over the static) stores
+                        // k there. The array length only bounds it.
+                        let len = slice_len_from_constant(constant, loc.clone())?;
+                        if len > array_len {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "constant slice over device static {} stores length {}, \
+                                     which exceeds the static array's length {}",
+                                    static_target.static_def.name(),
+                                    len,
+                                    array_len
+                                ))
+                            );
+                        }
                         return translate_static_array_as_slice(
                             ctx,
                             &static_target.static_def,
@@ -8223,6 +8240,10 @@ fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> S
 ///
 /// Returns `(element_ty, N)` when the pointee is a slice of the same element
 /// type as the static array. Other pointee mismatches stay unsupported.
+/// `N` is an upper bound for validation only; the emitted slice length comes
+/// from the constant's own fat-pointer metadata word, which is what makes
+/// zero-addend prefix subslices (e.g. `split_at(2).0` over the static) carry
+/// their true length instead of the whole array's.
 fn array_to_slice_unsize_info(
     static_ty: &rustc_public::ty::Ty,
     pointee_ty: &rustc_public::ty::Ty,
@@ -8231,9 +8252,10 @@ fn array_to_slice_unsize_info(
     use rustc_public::ty::{RigidTy, TyKind};
 
     match (static_ty.kind(), pointee_ty.kind()) {
-        (TyKind::RigidTy(RigidTy::Array(static_elem, len_const)), TyKind::RigidTy(RigidTy::Slice(slice_elem)))
-            if static_elem == slice_elem =>
-        {
+        (
+            TyKind::RigidTy(RigidTy::Array(static_elem, len_const)),
+            TyKind::RigidTy(RigidTy::Slice(slice_elem)),
+        ) if static_elem == slice_elem => {
             let len = len_const.eval_target_usize().map_err(|error| {
                 input_error!(
                     loc,
@@ -8246,6 +8268,55 @@ fn array_to_slice_unsize_info(
         }
         _ => Ok(None),
     }
+}
+
+/// Read the slice length from a fat-pointer constant's metadata word.
+///
+/// A `&[T]` / `*const [T]` constant is a two-word image: the data word (which
+/// carries the provenance to the static, read by `static_target_from_constant`)
+/// followed by the `usize` length. The length word is the source of truth for
+/// the emitted slice: a const like `split_at(2).0` over a `[f32; 4]` static is
+/// a zero-addend pointer whose stored length is 2, not the array's 4.
+fn slice_len_from_constant(constant: &mir::ConstOperand, loc: Location) -> TranslationResult<u64> {
+    let ConstantKind::Allocated(alloc) = constant.const_.kind() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "static slice unsize constant is not an allocated constant".to_string()
+            )
+        );
+    };
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let Some(&(provenance_offset, _)) = alloc.provenance.ptrs.first() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "static slice unsize constant has no provenance for its data pointer".to_string()
+            )
+        );
+    };
+    if provenance_offset != 0 || alloc.bytes.len() != 2 * pointer_width {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "static slice unsize constant has an unexpected fat-pointer image \
+                 (provenance at byte {}, {} bytes total; expected the data word at 0 \
+                 followed by one usize length word)",
+                provenance_offset,
+                alloc.bytes.len()
+            ))
+        );
+    }
+
+    let len = alloc
+        .read_partial_uint(pointer_width..2 * pointer_width)
+        .map_err(|e| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read static slice unsize length metadata: {e:?}"
+            )))
+        })? as u64;
+    Ok(len)
 }
 
 /// Materialize `&STATIC_ARRAY` (or `*const STATIC_ARRAY`) as a fat `&[T]` /
