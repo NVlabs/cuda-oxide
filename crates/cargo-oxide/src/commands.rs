@@ -9245,6 +9245,31 @@ edition = "2024"
     }
 
     #[test]
+    fn nvvm_ir_requested_env_disable_overrides_enabled_project_configuration() {
+        let ctx = Context {
+            workspace_root: PathBuf::from("/tmp/project"),
+            codegen_crate: PathBuf::from("/tmp/project"),
+            examples_dir: PathBuf::from("/tmp/project"),
+            backend_so: PathBuf::from("/tmp/backend.so"),
+            is_workspace: false,
+            config: OxideConfig {
+                env: vec![("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), "true".to_string())],
+                ..OxideConfig::default()
+            },
+        };
+
+        // The process environment outranks `cuda-oxide.toml`: an explicit
+        // false in the environment wins over the project's `true`, in either
+        // accepted spelling.
+        for disabled in ["false", "0"] {
+            assert_eq!(
+                nvvm_ir_requested_with_env(&ctx, Some(disabled.into())),
+                Ok(false)
+            );
+        }
+    }
+
+    #[test]
     fn scaffold_sync_template_uses_launch_contract_and_docs() {
         let files = scaffold_files("demo_kernel", false);
         assert!(files.cargo_toml.contains("name = \"demo_kernel\""));
