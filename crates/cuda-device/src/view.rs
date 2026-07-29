@@ -130,6 +130,13 @@ impl<'a, T> InBounds32<'a, T> {
     }
 
     /// Load a `Copy` value from the proven element.
+    ///
+    /// The element must already be **initialized**. This copies the value out,
+    /// so a slot that was never written holds an indeterminate bit pattern, and
+    /// producing a `T` from it is undefined behaviour for any `T` whose values
+    /// are not all bit patterns (`bool`, `char`, enums, references). Buffers
+    /// from `DeviceBuffer::zeroed` or `from_host` are initialized; those from
+    /// `uninitialized_async` are not until written.
     #[inline(always)]
     pub fn read(&self) -> T
     where
@@ -175,6 +182,13 @@ impl<'a, T> InBoundsMut32<'a, T> {
     }
 
     /// Load a `Copy` value from the proven element.
+    ///
+    /// The element must already be **initialized**. This copies the value out,
+    /// so a slot that was never written holds an indeterminate bit pattern, and
+    /// producing a `T` from it is undefined behaviour for any `T` whose values
+    /// are not all bit patterns (`bool`, `char`, enums, references). Buffers
+    /// from `DeviceBuffer::zeroed` or `from_host` are initialized; those from
+    /// `uninitialized_async` are not until written.
     #[inline(always)]
     pub fn read(&self) -> T
     where
@@ -645,6 +659,13 @@ impl<'a, T> RowView32<'a, T> {
     }
 
     /// Load element `i` with a single bounds compare.
+    ///
+    /// The element must already be **initialized**. This copies the value out,
+    /// so a slot that was never written holds an indeterminate bit pattern, and
+    /// producing a `T` from it is undefined behaviour for any `T` whose values
+    /// are not all bit patterns (`bool`, `char`, enums, references). Buffers
+    /// from `DeviceBuffer::zeroed` or `from_host` are initialized; those from
+    /// `uninitialized_async` are not until written.
     #[inline(always)]
     pub fn get(&self, i: u32) -> Option<T>
     where
@@ -751,6 +772,13 @@ impl<'a, T> ColView32<'a, T> {
 
     /// Load element `i` (flat offset `i * stride`) with a single bounds
     /// compare.
+    ///
+    /// The element must already be **initialized**. This copies the value out,
+    /// so a slot that was never written holds an indeterminate bit pattern, and
+    /// producing a `T` from it is undefined behaviour for any `T` whose values
+    /// are not all bit patterns (`bool`, `char`, enums, references). Buffers
+    /// from `DeviceBuffer::zeroed` or `from_host` are initialized; those from
+    /// `uninitialized_async` are not until written.
     #[inline(always)]
     pub fn get(&self, i: u32) -> Option<T>
     where
