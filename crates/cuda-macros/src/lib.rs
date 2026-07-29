@@ -3980,10 +3980,12 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// `generic_const_exprs` feature. Partial factors must be in `2..=1024`; an
 /// invalid specialization fails compilation instead of becoming a no-op.
 ///
-/// The pass recognizes counted `while` loops and range `for i in lo..hi` forms
-/// whose exit test lowers to a relational comparison (including an equality
-/// against that comparison's boolean result). Other iterators are not yet
-/// recognized.
+/// The pass recognizes explicit counted `while` loops. An annotated
+/// exclusive-range `for i in lo..hi` is canonicalized by this macro into that
+/// counted `while` form before rustc ever sees it, so the idiomatic range
+/// form unrolls too. Other iterator forms (`step_by`, inclusive ranges,
+/// custom `IntoIterator`) are not recognized; the pass warns and leaves them
+/// as written.
 ///
 /// Only the annotated loop is unrolled. Inner loops are copied intact unless
 /// they carry their own annotation. Several `continue` paths (multiple
@@ -6104,6 +6106,11 @@ impl Parse for UnrollArgs {
 /// 2. inserts `cuda_device::thread::__unroll_config::<FACTOR>();` as the FIRST
 ///    statement of that loop's body block.
 ///
+/// An annotated `for pat in lo..hi` over an exclusive range is additionally
+/// canonicalized into the counted `while` form the unroll pass recognizes
+/// (see [`Self::desugar_counted_range_for`]); the marker then lands in the
+/// canonical loop's body.
+///
 /// `FACTOR` follows [`UnrollArgs`]: bare `#[unroll]` => `0` (full unroll),
 /// `#[unroll(N)]` => `N`. The importer reads the marker from the block it lands
 /// in, so the request applies to that loop only.
@@ -6166,6 +6173,84 @@ impl LoopUnrollAttrVisitor {
             cuda_device::thread::__unroll_config::<{ #expr }>();
         }
     }
+
+    /// Canonicalize an annotated `for pat in lo..hi { body }` (exclusive
+    /// range, both bounds present) into the counted `while` form the unroll
+    /// pass recognizes:
+    ///
+    /// ```text
+    /// {
+    ///     let mut __idx = lo;          // bounds evaluated once, in order,
+    ///     let __end = hi;              // exactly like Range construction
+    ///     'label: while __idx < __end {
+    ///         __unroll_config::<F>();  // marker on the canonical loop
+    ///         let pat = __idx;         // fresh binding per iteration
+    ///         __idx += 1;              // BEFORE the body: `continue` must
+    ///         { body }                 // still advance the counter
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// This is why idiomatic `#[unroll] for i in 0..N` unrolls: without the
+    /// rewrite, rustc desugars the range through `Iterator::next` and the
+    /// imported loop tests an `Option` discriminant in a separate block, a
+    /// shape the induction analysis (deliberately) does not claim to
+    /// understand. The macro owns the loop AST before rustc ever sees it, so
+    /// the counted form above imports as the exact shape the pass handles.
+    ///
+    /// The rewrite preserves `for` semantics for integer ranges: bounds are
+    /// evaluated once (in order), the binding is a fresh copy per iteration
+    /// (a `mut` pattern can be reassigned without affecting iteration),
+    /// labeled and unlabeled `break`/`continue` keep their meaning, and an
+    /// empty or reversed range runs zero times. Non-integer `Step` types
+    /// (e.g. `char` ranges) would fail on `+= 1` instead of warning, which is
+    /// acceptable for a device-side unroll request.
+    ///
+    /// Returns `None` (caller falls back to marker-into-body, which warns
+    /// downstream) for anything that is not a plain exclusive range with both
+    /// bounds: inclusive `..=` (its overflow-free semantics need the iterator
+    /// protocol), `step_by`, `rev`, and arbitrary iterators.
+    fn desugar_counted_range_for(
+        for_loop: &syn::ExprForLoop,
+        factor: &ConstU32Expr,
+    ) -> Option<Expr> {
+        // Strip no-op wrappers so `for i in (0..8)` is recognized too.
+        let mut iter_expr: &Expr = &for_loop.expr;
+        loop {
+            match iter_expr {
+                Expr::Paren(inner) => iter_expr = &inner.expr,
+                Expr::Group(inner) => iter_expr = &inner.expr,
+                _ => break,
+            }
+        }
+        let Expr::Range(range) = iter_expr else {
+            return None;
+        };
+        if !matches!(range.limits, syn::RangeLimits::HalfOpen(_)) {
+            return None;
+        }
+        let (Some(lo), Some(hi)) = (&range.start, &range.end) else {
+            return None;
+        };
+
+        let marker = Self::marker_stmt(factor);
+        let attrs = &for_loop.attrs;
+        let label = &for_loop.label;
+        let pat = &for_loop.pat;
+        let body = &for_loop.body;
+
+        Some(parse_quote!({
+            let mut __cuda_oxide_unroll_idx = #lo;
+            let __cuda_oxide_unroll_end = #hi;
+            #(#attrs)*
+            #label while __cuda_oxide_unroll_idx < __cuda_oxide_unroll_end {
+                #marker
+                let #pat = __cuda_oxide_unroll_idx;
+                __cuda_oxide_unroll_idx += 1;
+                #body
+            }
+        }))
+    }
 }
 
 impl VisitMut for LoopUnrollAttrVisitor {
@@ -6173,10 +6258,18 @@ impl VisitMut for LoopUnrollAttrVisitor {
         // Pull the unroll factor (if any) off this loop expr and inject the
         // marker into its body. We act only on loop expressions; everything
         // else falls through to the default recursion below.
+        let mut replacement: Option<Expr> = None;
         match expr {
             Expr::ForLoop(for_loop) => {
                 if let Some(factor) = self.take_unroll_factor(&mut for_loop.attrs) {
-                    for_loop.body.stmts.insert(0, Self::marker_stmt(&factor));
+                    // An annotated exclusive-range `for` is canonicalized to
+                    // the counted `while` shape the unroll pass recognizes;
+                    // other iterator forms keep the marker-in-body path (the
+                    // pass warns and leaves them as written).
+                    match Self::desugar_counted_range_for(for_loop, &factor) {
+                        Some(desugared) => replacement = Some(desugared),
+                        None => for_loop.body.stmts.insert(0, Self::marker_stmt(&factor)),
+                    }
                 }
             }
             Expr::While(while_loop) => {
@@ -6191,9 +6284,14 @@ impl VisitMut for LoopUnrollAttrVisitor {
             }
             _ => {}
         }
+        if let Some(desugared) = replacement {
+            *expr = desugared;
+        }
 
         // Recurse into nested expressions/blocks so annotated loops nested
-        // inside other loops, `if`s, or blocks are also handled.
+        // inside other loops, `if`s, or blocks are also handled. A desugared
+        // range loop is recursed into as well, so nested annotations inside
+        // its body still work.
         visit_mut::visit_expr_mut(self, expr);
     }
 }
@@ -6417,9 +6515,9 @@ pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Loop unrolling
 ///
 /// Loop annotations work the same way in device function definitions as they do
-/// in kernels. Counted `while` loops and range `for i in lo..hi` forms whose
-/// exit test lowers to a relational comparison are recognized; other iterators
-/// are not yet. Partial factors must be `N >= 2`. Multiple `continue`
+/// in kernels. Counted `while` loops are recognized, and an annotated
+/// exclusive-range `for i in lo..hi` is canonicalized to that form by the
+/// macro; other iterators are not. Partial factors must be `N >= 2`. Multiple `continue`
 /// paths are supported; full unrolling preserves `break` and multiple exit
 /// targets. Partial unrolling requires a positive counter step, a `<` or `<=`
 /// test, an unchanging limit, and no exit besides the normal header test.
@@ -9718,6 +9816,123 @@ mod tests {
 
         expand_cuda_module(module).expect(
             "minimum blocks affects device occupancy metadata, not the host launch contract",
+        );
+    }
+
+    /// Run the per-loop unroll rewrite over a function and return the result
+    /// as a whitespace-free string for shape assertions.
+    fn rewrite_unroll_to_compact_string(mut function: ItemFn) -> String {
+        rewrite_loop_unroll_attrs(&mut function).expect("unroll rewrite failed");
+        quote! { #function }.to_string().replace(' ', "")
+    }
+
+    #[test]
+    fn unroll_range_for_is_canonicalized_to_a_counted_while() {
+        let out = rewrite_unroll_to_compact_string(parse_quote! {
+            fn k() {
+                let mut acc = 0u32;
+                #[unroll]
+                for i in 0..8u32 {
+                    acc = acc.wrapping_add(i);
+                }
+            }
+        });
+
+        assert!(
+            !out.contains("foriin"),
+            "the range for must be desugared away: {out}"
+        );
+        assert!(
+            out.contains("while__cuda_oxide_unroll_idx<__cuda_oxide_unroll_end"),
+            "the counted while guard must be emitted: {out}"
+        );
+        assert!(
+            out.contains("__unroll_config"),
+            "the marker must land in the canonical loop: {out}"
+        );
+        assert!(
+            out.contains("leti=__cuda_oxide_unroll_idx;"),
+            "the user binding must be a fresh copy of the counter: {out}"
+        );
+        let marker_pos = out.find("__unroll_config").unwrap();
+        let binding_pos = out.find("leti=__cuda_oxide_unroll_idx;").unwrap();
+        let increment_pos = out.find("__cuda_oxide_unroll_idx+=1").unwrap();
+        assert!(
+            marker_pos < binding_pos && binding_pos < increment_pos,
+            "marker, binding, then increment before the body (continue must \
+             still advance the counter): {out}"
+        );
+    }
+
+    #[test]
+    fn unroll_labeled_range_for_keeps_its_label() {
+        let out = rewrite_unroll_to_compact_string(parse_quote! {
+            fn k() {
+                let mut acc = 0u32;
+                #[unroll]
+                'outer: for i in 0..4u32 {
+                    if i == 2 {
+                        break 'outer;
+                    }
+                    acc = acc.wrapping_add(i);
+                }
+            }
+        });
+
+        assert!(
+            out.contains("'outer:while__cuda_oxide_unroll_idx"),
+            "the label must move to the canonical while loop: {out}"
+        );
+    }
+
+    #[test]
+    fn unroll_non_range_for_keeps_the_marker_in_body() {
+        let out = rewrite_unroll_to_compact_string(parse_quote! {
+            fn k(xs: &[u32]) {
+                let mut acc = 0u32;
+                #[unroll]
+                for x in xs.iter() {
+                    acc = acc.wrapping_add(*x);
+                }
+            }
+        });
+
+        assert!(
+            out.contains("forxinxs.iter()"),
+            "a non-range iterator loop is left as written: {out}"
+        );
+        assert!(
+            out.contains("__unroll_config"),
+            "the marker still lands in the loop body: {out}"
+        );
+        assert!(
+            !out.contains("__cuda_oxide_unroll_idx"),
+            "no counter is invented for iterator loops: {out}"
+        );
+    }
+
+    #[test]
+    fn unroll_inclusive_range_for_is_not_desugared() {
+        // `..=` needs the iterator protocol's overflow-free semantics
+        // (`0..=u8::MAX` visits every value); the canonical counter form
+        // cannot express that, so the loop is left as written.
+        let out = rewrite_unroll_to_compact_string(parse_quote! {
+            fn k() {
+                let mut acc = 0u32;
+                #[unroll]
+                for i in 0..=8u32 {
+                    acc = acc.wrapping_add(i);
+                }
+            }
+        });
+
+        assert!(
+            out.contains("foriin0..=8u32"),
+            "inclusive ranges are left as written: {out}"
+        );
+        assert!(
+            !out.contains("__cuda_oxide_unroll_idx"),
+            "no counter is invented for inclusive ranges: {out}"
         );
     }
 }

@@ -10,7 +10,7 @@
 mod common;
 
 use common::{
-    counted_loop, counted_loop_from, mir_ctx, multi_latch_counted_loop, range_for_eq_wrapped_loop,
+    counted_loop, counted_loop_from, eq_wrapped_guard_loop, mir_ctx, multi_latch_counted_loop,
 };
 use mir_transforms::analyses::induction::{ArgKind, CmpPred, analyze};
 use mir_transforms::analyses::loop_info::LoopInfo;
@@ -61,10 +61,10 @@ fn analyzes_counted_loop_recurrence() {
 }
 
 #[test]
-fn analyzes_range_for_eq_wrapped_guard() {
-    // Post-import range-for shape: cond_br (eq (i < n), true) [body, exit].
+fn analyzes_eq_wrapped_guard() {
+    // Eq-wrapped guard: cond_br (eq (i < n), true) [body, exit].
     let mut ctx = mir_ctx();
-    let lp = range_for_eq_wrapped_loop(&mut ctx, 8);
+    let lp = eq_wrapped_guard_loop(&mut ctx, 8);
 
     let mut dom = DomInfo::default();
     let info = {

@@ -298,8 +298,8 @@ pub fn counted_loop_from_step(ctx: &mut Context, start: i64, n: i64, step: i64) 
     }
 }
 
-/// Build a counted loop whose exit test matches the common post-import shape of
-/// a range `for` after `switchInt` lowering: `cond_br (eq (i < n), true)`.
+/// Build a counted loop whose guard is a relational comparison wrapped in an
+/// equality against a boolean constant: `cond_br (eq (i < n), true)`.
 ///
 /// ```text
 ///   preheader:        acc0=0; i0=0;            goto header(acc0, i0)
@@ -308,11 +308,14 @@ pub fn counted_loop_from_step(ctx: &mut Context, start: i64, n: i64, step: i64) 
 ///   exit:             return
 /// ```
 ///
-/// The classic `while` fixture uses `not(i < n)` with the exit on the true side.
-/// Range `for` desugaring more often leaves an equality against the comparison
-/// result (or against an Option discriminant derived from it); induction must
-/// see through that wrapper.
-pub fn range_for_eq_wrapped_loop(ctx: &mut Context, n: i64) -> CountedLoop {
+/// The classic `while` fixture uses `not(i < n)` with the exit on the true
+/// side. This wrapped form is a robustness fixture: it arises from
+/// hand-written guards like `while (i < n) == true` or from foreign IR
+/// producers, and induction must see through the wrapper. It is NOT the shape
+/// rustc's range-`for` desugaring produces (that is an `Option` discriminant
+/// test in a separate merge block, which the kernel macro sidesteps by
+/// canonicalizing annotated range loops to counted `while` form).
+pub fn eq_wrapped_guard_loop(ctx: &mut Context, n: i64) -> CountedLoop {
     let (module, region) = empty_func(ctx);
     let u32 = u32t(ctx);
     let i1ty = i1(ctx);

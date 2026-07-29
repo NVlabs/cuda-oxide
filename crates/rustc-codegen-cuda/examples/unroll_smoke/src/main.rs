@@ -44,6 +44,79 @@ mod kernels {
         }
     }
 
+    /// Full unroll of the idiomatic range form. The `#[kernel]` macro
+    /// canonicalizes an annotated `for i in lo..hi` into the counted `while`
+    /// shape the pass recognizes, so this must behave exactly like
+    /// `full_unroll`: `out[tid] == tid + 12`.
+    #[kernel]
+    pub fn full_range(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let base = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = base;
+            #[unroll]
+            for i in 0..8u32 {
+                acc = acc.wrapping_add(i & 3);
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Partial unroll (by 4) of a runtime-bound range form: `for i in 0..n`
+    /// canonicalized to a counted `while`, so `out[tid] == n*(n-1)/2` like
+    /// `partial_unroll`.
+    #[kernel]
+    pub fn partial_range(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            #[unroll(4)]
+            for i in 0..n {
+                acc = acc.wrapping_add(i);
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Range form with a `continue` path: the canonicalized counter advances
+    /// before the body runs, so `continue` must not skip the increment. Odd
+    /// `i` is skipped; the sum of even `i` in `0..8` is `0+2+4+6 = 12`.
+    #[kernel]
+    pub fn full_range_continue(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let base = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = base;
+            #[unroll]
+            for i in 0..8u32 {
+                if i & 1 == 1 {
+                    continue;
+                }
+                acc = acc.wrapping_add(i);
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Range form with an early `break`, mirroring `full_early_break`: only
+    /// `i = 0..=4` reach the addition, so `out[tid] == tid + 10`.
+    #[kernel]
+    pub fn full_range_break(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let base = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = base;
+            #[unroll]
+            for i in 0..8u32 {
+                if i == 5 {
+                    break;
+                }
+                acc = acc.wrapping_add(i);
+            }
+            *out_elem = acc;
+        }
+    }
+
     /// Partial unroll (by 4) of a runtime-trip-count loop: `out[tid]` is the
     /// sum `0 + 1 + ... + (n-1) == n*(n-1)/2`.
     #[kernel]
@@ -383,7 +456,31 @@ fn main() {
     unsafe { module.full_unroll(stream.as_ref(), cfg, &mut d_full) }.expect("launch full_unroll");
     let got_full = d_full.to_host_vec(&stream).unwrap();
 
+    let mut d_full_range = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.full_range(stream.as_ref(), cfg, &mut d_full_range) }
+        .expect("launch full_range");
+    let got_full_range = d_full_range.to_host_vec(&stream).unwrap();
+
+    let mut d_range_continue = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.full_range_continue(stream.as_ref(), cfg, &mut d_range_continue) }
+        .expect("launch full_range_continue");
+    let got_range_continue = d_range_continue.to_host_vec(&stream).unwrap();
+
+    let mut d_range_break = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.full_range_break(stream.as_ref(), cfg, &mut d_range_break) }
+        .expect("launch full_range_break");
+    let got_range_break = d_range_break.to_host_vec(&stream).unwrap();
+
     let trip: u32 = 10;
+    let mut d_range_part = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_range(stream.as_ref(), cfg, &mut d_range_part, trip) }
+        .expect("launch partial_range");
+    let got_range_part = d_range_part.to_host_vec(&stream).unwrap();
+
     let mut d_part = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe { module.partial_unroll(stream.as_ref(), cfg, &mut d_part, trip) }
@@ -502,6 +599,36 @@ fn main() {
             println!(
                 "FAIL tid={tid}: full_unroll={} expected={want_full}",
                 got_full[tid]
+            );
+            failures += 1;
+        }
+        if got_full_range[tid] != want_full {
+            println!(
+                "FAIL tid={tid}: full_range={} expected={want_full}",
+                got_full_range[tid]
+            );
+            failures += 1;
+        }
+        let want_range_continue = tid as u32 + 12;
+        if got_range_continue[tid] != want_range_continue {
+            println!(
+                "FAIL tid={tid}: full_range_continue={} expected={want_range_continue}",
+                got_range_continue[tid]
+            );
+            failures += 1;
+        }
+        let want_range_break = tid as u32 + 10;
+        if got_range_break[tid] != want_range_break {
+            println!(
+                "FAIL tid={tid}: full_range_break={} expected={want_range_break}",
+                got_range_break[tid]
+            );
+            failures += 1;
+        }
+        if got_range_part[tid] != want_part {
+            println!(
+                "FAIL tid={tid}: partial_range={} expected={want_part}",
+                got_range_part[tid]
             );
             failures += 1;
         }

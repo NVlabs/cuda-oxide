@@ -1094,10 +1094,12 @@ pub fn __unchecked_indexing_config<const ENABLED: bool>() {
 /// }
 /// ```
 ///
-/// The pass recognizes counted `while` loops and range `for i in lo..hi` forms
-/// whose exit test lowers to a relational comparison (including an equality
-/// against that comparison's boolean result). Other iterators (`step_by`,
-/// inclusive ranges, custom `IntoIterator`) are not yet recognized.
+/// The pass recognizes explicit counted `while` loops. An annotated
+/// exclusive-range `for i in lo..hi` is canonicalized by the kernel macro
+/// into that counted `while` form before rustc ever sees it, so the idiomatic
+/// range form unrolls too. Other iterator forms (`step_by`, inclusive ranges,
+/// custom `IntoIterator`) are not recognized; the pass warns and leaves them
+/// as written.
 ///
 /// Loops with several `continue` paths are supported. Full `#[unroll]` also
 /// preserves `break` paths and multiple exit targets. Partial `#[unroll(N)]`

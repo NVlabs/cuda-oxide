@@ -212,9 +212,17 @@ fn match_cmp(ctx: &Context, op: Ptr<Operation>) -> Option<(CmpPred, Value, Value
     Some((pred, o.get_operand(0), o.get_operand(1)))
 }
 
-/// Recognize a relational comparison, including the form rustc/switch lowering
-/// often leaves for range `for` loops: `MirEq`/`MirNe` of a `<`/`<=`/`>`/`>=`
-/// result against a boolean constant.
+/// Recognize a relational comparison, seeing through one `MirEq`/`MirNe`
+/// wrapper against a boolean constant (`eq (i < n), true`).
+///
+/// This is defense in depth for guards that arrive pre-wrapped, e.g. a
+/// hand-written `while (i < n) == true` or IR from a foreign producer. It is
+/// NOT how idiomatic `for i in lo..hi` is handled: rustc desugars ranges
+/// through `Iterator::next` into an `Option` discriminant test in a separate
+/// block, which this analysis does not model; the kernel macro instead
+/// canonicalizes annotated range `for` loops into counted `while` form before
+/// import (see `LoopUnrollAttrVisitor::desugar_counted_range_for` in
+/// cuda-macros).
 ///
 /// Returns `(pred, lhs, rhs, flip)` where `flip` means the keep-going sense of
 /// `pred` must be negated (e.g. `MirEq(i < n, false)`).
@@ -247,9 +255,9 @@ fn match_cmp_through_bool_eq(
         // i1 true/false as 1/0 (sign-extended forms still non-zero / zero).
         let const_is_true = bit != 0;
         let flip = match (is_eq, const_is_true) {
-            (true, true) => false,  // eq(cmp, true)  == cmp
-            (true, false) => true,  // eq(cmp, false) == !cmp
-            (false, true) => true,  // ne(cmp, true)  == !cmp
+            (true, true) => false,   // eq(cmp, true)  == cmp
+            (true, false) => true,   // eq(cmp, false) == !cmp
+            (false, true) => true,   // ne(cmp, true)  == !cmp
             (false, false) => false, // ne(cmp, false) == cmp
         };
         return Some((pred, a, b, flip));
