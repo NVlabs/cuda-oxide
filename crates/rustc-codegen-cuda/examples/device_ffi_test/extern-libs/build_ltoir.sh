@@ -65,10 +65,16 @@ compile_ltoir() {
     if [ -f "${base}.ltoir" ]; then
         echo "  Binary LTOIR: ${base}.ltoir ($(wc -c < ${base}.ltoir) bytes)"
 
-        # Optionally convert binary LTOIR to text format for debugging
+        # Optionally convert binary LTOIR to text format for debugging.
+        # This is best-effort: an nvvm-dis older than the CUDA toolkit cannot
+        # parse newer LTOIR, and that must not fail the build (set -e).
         if [ -x "$NVVM_DIS" ]; then
-            "$NVVM_DIS" "${base}.ltoir" > "${base}_text.ltoir" 2>&1
-            echo "  Text LTOIR:   ${base}_text.ltoir ($(wc -c < ${base}_text.ltoir) bytes)"
+            if "$NVVM_DIS" "${base}.ltoir" > "${base}_text.ltoir" 2>&1; then
+                echo "  Text LTOIR:   ${base}_text.ltoir ($(wc -c < ${base}_text.ltoir) bytes)"
+            else
+                echo "  Text LTOIR:   skipped (nvvm-dis cannot parse this LTOIR)"
+                rm -f "${base}_text.ltoir"
+            fi
         fi
     else
         echo "  ERROR: LTOIR not generated for $src"
