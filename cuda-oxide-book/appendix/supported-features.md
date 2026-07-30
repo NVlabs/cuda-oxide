@@ -41,9 +41,10 @@ and promoted-by-reference) also read every field at its rustc layout offset,
 so padded, reordered, `#[repr(C)]`, and nested shapes decode correctly, and a
 struct's stored size is its padded size, which fixes the element stride for
 arrays of padded structs inside constants. Arrays whose elements are structs
-or initialized unions are not yet materialized as constants. Pointer-bearing
-array, tuple, and struct constants are rejected with a diagnostic until
-aggregate relocations can be represented without losing provenance.
+or initialized unions are not yet materialized as constants. Tuple array
+constants may contain supported pointers to device statics, including sized
+static subobjects. Pointer-bearing direct tuple, struct, enum, and
+device-global initializers remain unsupported.
 
 ## Compiler: Closures
 

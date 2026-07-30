@@ -5047,21 +5047,262 @@ fn validate_ptr_to_array_constant_type(
     )
 }
 
-fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
-    match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
-        ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
-            _ => 0,
-        },
-        _ => 0,
+fn aggregate_allocation_bytes(alloc: &rustc_public::ty::Allocation) -> Vec<u8> {
+    alloc.raw_bytes().ok().unwrap_or_else(|| {
+        alloc
+            .bytes
+            .iter()
+            .map(|byte: &Option<u8>| byte.unwrap_or(0))
+            .collect()
+    })
+}
+
+fn relocation_range_end(relocation_offset: usize, loc: Location) -> TranslationResult<usize> {
+    relocation_offset
+        .checked_add(rustc_public::target::MachineInfo::target_pointer_width().bytes())
+        .ok_or_else(|| {
+            input_error!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Pointer relocation at byte offset {relocation_offset} overflows its range"
+                ))
+            )
+        })
+}
+
+/// Return relocations fully contained in `[range_start, range_start + range_len)`.
+///
+/// A relocation is pointer-width storage. If it overlaps the requested range
+/// without fitting completely inside it, the aggregate layout is inconsistent:
+/// decoding either side independently would split one pointer placeholder.
+fn relocation_offsets_in_range(
+    alloc: &rustc_public::ty::Allocation,
+    range_start: usize,
+    range_len: usize,
+    description: &str,
+    loc: Location,
+) -> TranslationResult<Vec<usize>> {
+    let range_end = range_start.checked_add(range_len).ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{description} byte range overflows: start {range_start}, length {range_len}"
+            ))
+        )
+    })?;
+
+    let mut offsets = Vec::new();
+    for &(relocation_offset, _) in &alloc.provenance.ptrs {
+        let relocation_end = relocation_range_end(relocation_offset, loc.clone())?;
+        let overlaps = relocation_offset < range_end && relocation_end > range_start;
+        if overlaps && !(relocation_offset >= range_start && relocation_end <= range_end) {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Pointer relocation bytes {relocation_offset}..{relocation_end} cross the \
+                     boundary of {description} bytes {range_start}..{range_end}"
+                ))
+            );
+        }
+        if relocation_offset >= range_start && relocation_end <= range_end {
+            offsets.push(relocation_offset);
+        }
     }
+    Ok(offsets)
+}
+
+fn validate_all_relocations_within_range(
+    alloc: &rustc_public::ty::Allocation,
+    range_start: usize,
+    range_len: usize,
+    description: &str,
+    loc: Location,
+) -> TranslationResult<()> {
+    let range_end = range_start.checked_add(range_len).ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{description} byte range overflows: start {range_start}, length {range_len}"
+            ))
+        )
+    })?;
+
+    for &(relocation_offset, _) in &alloc.provenance.ptrs {
+        let relocation_end = relocation_range_end(relocation_offset, loc.clone())?;
+        if relocation_offset < range_start || relocation_end > range_end {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Pointer relocation bytes {relocation_offset}..{relocation_end} lie outside \
+                     {description} bytes {range_start}..{range_end}"
+                ))
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Materialize one aggregate pointer field from the allocation relocation at
+/// `relocation_offset`.
+///
+/// The allocation bytes at that position contain only the target byte addend.
+/// The relocation identifies the target allocation and is therefore the source
+/// of pointer identity. Reconstructing the bytes with `inttoptr` would erase
+/// that identity.
+#[allow(clippy::too_many_arguments)]
+fn translate_pointer_relocation_from_allocation(
+    ctx: &mut Context,
+    alloc: &rustc_public::ty::Allocation,
+    relocation_offset: usize,
+    rust_pointer_ty: &rustc_public::ty::Ty,
+    result_ptr_ty: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    if !result_ptr_ty
+        .deref(ctx)
+        .is::<dialect_mir::types::MirPtrType>()
+    {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Pointer relocation at byte offset {relocation_offset} has non-pointer MIR type {:?}",
+                result_ptr_ty.deref(ctx)
+            ))
+        );
+    }
+
+    let mut matching_provenance = None;
+    for &(offset, provenance) in &alloc.provenance.ptrs {
+        if offset != relocation_offset {
+            continue;
+        }
+        if matching_provenance.replace(provenance).is_some() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Multiple pointer relocations start at byte offset {relocation_offset}"
+                ))
+            );
+        }
+    }
+    let Some(provenance) = matching_provenance else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Missing pointer relocation at byte offset {relocation_offset}"
+            ))
+        );
+    };
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let relocation_end = relocation_offset
+        .checked_add(pointer_width)
+        .ok_or_else(|| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Pointer relocation at byte offset {relocation_offset} overflows"
+                ))
+            )
+        })?;
+    let byte_offset = alloc
+        .read_partial_uint(relocation_offset..relocation_end)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read pointer relocation addend at byte offset {relocation_offset}: \
+                 {error:?}"
+            )))
+        })? as u64;
+
+    let Some((pointee_ty, is_mutable)) = get_static_pointer_info(rust_pointer_ty) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate pointer relocation has unsupported Rust pointer type \
+                 {rust_pointer_ty:?}"
+            ))
+        );
+    };
+
+    let static_def = match GlobalAlloc::from(provenance.0) {
+        GlobalAlloc::Static(static_def) => static_def,
+        other => {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Aggregate pointer relocation at byte offset {relocation_offset} points to \
+                     unsupported allocation {other:?}; only device statics are supported"
+                ))
+            );
+        }
+    };
+
+    let static_ty = static_def.ty();
+    let pointee_mir_ty = types::translate_type(ctx, &pointee_ty)?;
+    let static_mir_ty = types::translate_type(ctx, &static_ty)?;
+
+    if byte_offset == 0 && pointee_mir_ty != static_mir_ty {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate pointer relocation to device static {} has pointee type {:?}, but \
+                 the complete static has type {:?}; zero-addend reinterpretations and unsized \
+                 coercions are not supported",
+                static_def.name(),
+                pointee_ty,
+                static_ty
+            ))
+        );
+    }
+
+    if byte_offset != 0 {
+        let pointee_layout = pointee_ty.layout().map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Aggregate pointer relocation into device static {} has byte offset {}, but \
+                     pointee type {:?} has no usable layout: {error:?}",
+                    static_def.name(),
+                    byte_offset,
+                    pointee_ty
+                ))
+            )
+        })?;
+        if !pointee_layout.shape().is_sized() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Aggregate pointer relocation into device static {} has byte offset {}, but \
+                     pointee type {:?} is unsized; fat-pointer metadata is not preserved",
+                    static_def.name(),
+                    byte_offset,
+                    pointee_ty
+                ))
+            );
+        }
+    }
+
+    translate_static_global_pointer(
+        ctx,
+        &static_def,
+        pointee_mir_ty,
+        result_ptr_ty,
+        is_mutable,
+        byte_offset,
+        block_ptr,
+        prev_op,
+        loc,
+    )
 }
 
 /// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
-/// [..]` indexed by runtime value) to a `MirConstructArrayOp`. Element stride
-/// and aggregate field offsets come from rustc layout; pointer relocations are
-/// rejected before their placeholder bytes can be mistaken for pointer bits.
+/// [..]` indexed by runtime value) to a `MirConstructArrayOp`. Element stride,
+/// aggregate field offsets, and pointer relocations are interpreted against the
+/// original rustc allocation.
 fn translate_array_value_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -5082,24 +5323,88 @@ fn translate_array_value_constant(
             );
         }
     }
-    let relocation_count = constant_pointer_relocation_count(constant);
-    if relocation_count != 0 {
-        return input_err!(
+
+    let rust_array_ty = constant.const_.ty();
+    match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => {
+            let bytes = aggregate_allocation_bytes(alloc);
+            validate_all_relocations_within_range(
+                alloc,
+                0,
+                bytes.len(),
+                "array constant",
+                loc.clone(),
+            )?;
+            translate_array_value_constant_inner(
+                ctx,
+                Some(alloc),
+                &bytes,
+                0,
+                const_ty_ptr,
+                rust_array_ty,
+                block_ptr,
+                prev_op,
+                loc,
+            )
+        }
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            rustc_public::ty::TyConstKind::Value(_, alloc) => {
+                let bytes = aggregate_allocation_bytes(alloc);
+                validate_all_relocations_within_range(
+                    alloc,
+                    0,
+                    bytes.len(),
+                    "array constant",
+                    loc.clone(),
+                )?;
+                translate_array_value_constant_inner(
+                    ctx,
+                    Some(alloc),
+                    &bytes,
+                    0,
+                    const_ty_ptr,
+                    rust_array_ty,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                )
+            }
+            rustc_public::ty::TyConstKind::ZSTValue(_) => translate_array_value_constant_inner(
+                ctx,
+                None,
+                &[],
+                0,
+                const_ty_ptr,
+                rust_array_ty,
+                block_ptr,
+                prev_op,
+                loc,
+            ),
+            other => input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Array value constant must be byte-backed, found TyConstKind::{other:?}"
+                ))
+            ),
+        },
+        ConstantKind::ZeroSized => translate_array_value_constant_inner(
+            ctx,
+            None,
+            &[],
+            0,
+            const_ty_ptr,
+            rust_array_ty,
+            block_ptr,
+            prev_op,
+            loc,
+        ),
+        other => input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "Array value constant contains {relocation_count} pointer relocation(s); cuda-oxide cannot yet preserve array pointer provenance"
+                "Array value constant must be Allocated or Ty::Value, got {other:?}"
             ))
-        );
+        ),
     }
-    translate_array_value_constant_inner(
-        ctx,
-        constant,
-        const_ty_ptr,
-        constant.const_.ty(),
-        block_ptr,
-        prev_op,
-        loc,
-    )
 }
 
 fn rust_type_layout_size(ty: rustc_public::ty::Ty, loc: Location) -> TranslationResult<usize> {
@@ -5144,25 +5449,26 @@ fn rust_array_type_info(
 /// element ops) from a slice of raw bytes for an `array_ty`. Recurses on
 /// `MirArrayType` element types so multi-dimensional arrays (`[[T; M]; N]`,
 /// etc.) are handled by repeated decomposition.
-fn build_array_op_from_bytes(
+fn build_array_op_from_allocation(
     ctx: &mut Context,
     array_ty: TypeHandle,
     rust_array_ty: rustc_public::ty::Ty,
+    allocation: Option<&rustc_public::ty::Allocation>,
     bytes: &[u8],
+    base_offset: usize,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
 
-    // Element type + count.
     let (element_ty_ptr, element_count) = {
         let arr_ty_obj = array_ty.deref(ctx);
         let arr_ty = arr_ty_obj
             .downcast_ref::<dialect_mir::types::MirArrayType>()
             .ok_or_else(|| {
                 input_error_noloc!(TranslationErr::unsupported(
-                    "build_array_op_from_bytes: expected array type"
+                    "build_array_op_from_allocation: expected array type"
                 ))
             })?;
         (arr_ty.element_type(), arr_ty.size())
@@ -5177,8 +5483,32 @@ fn build_array_op_from_bytes(
             ))
         );
     }
-    let element_byte_size = rust_type_layout_size(rust_element_ty, loc.clone())?;
 
+    // Preserve the established array-value boundary. Struct and enum array
+    // elements remain separate work even though their byte decoders exist for
+    // nested aggregate fields.
+    let element_supported = {
+        let element_ty = element_ty_ptr.deref(ctx);
+        element_ty.is::<IntegerType>()
+            || element_ty.is::<MirFP16Type>()
+            || element_ty.is::<FP32Type>()
+            || element_ty.is::<FP64Type>()
+            || element_ty.is::<dialect_mir::types::MirArrayType>()
+            || element_ty.is::<dialect_mir::types::MirTupleType>()
+    };
+    if !element_supported {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Array constant element type is not supported by allocation lowering: {:?}. \
+                 Supported array constants are primitive scalars, tuples with supported fields, \
+                 or nested arrays of those.",
+                element_ty_ptr.deref(ctx)
+            ))
+        );
+    }
+
+    let element_byte_size = rust_type_layout_size(rust_element_ty, loc.clone())?;
     let element_count_usize = usize::try_from(element_count).map_err(|_| {
         input_error_noloc!(TranslationErr::unsupported(format!(
             "Array constant element count {element_count} does not fit usize"
@@ -5205,199 +5535,55 @@ fn build_array_op_from_bytes(
         );
     }
 
-    #[derive(Clone, Copy)]
-    enum ElemKind {
-        F64,
-        F32,
-        F16,
-        Int { width: u32, signedness: Signedness },
-        Array,
-        Tuple,
-    }
-    let elem_kind = {
-        let elem_obj = element_ty_ptr.deref(ctx);
-        if elem_obj.is::<FP64Type>() {
-            ElemKind::F64
-        } else if elem_obj.is::<FP32Type>() {
-            ElemKind::F32
-        } else if elem_obj.is::<MirFP16Type>() {
-            ElemKind::F16
-        } else if let Some(int_ty) = elem_obj.downcast_ref::<IntegerType>() {
-            ElemKind::Int {
-                width: int_ty.width(),
-                signedness: int_ty.signedness(),
-            }
-        } else if elem_obj.is::<dialect_mir::types::MirArrayType>() {
-            ElemKind::Array
-        } else if elem_obj.is::<dialect_mir::types::MirTupleType>() {
-            ElemKind::Tuple
-        } else {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "Array constant element type is not supported by byte lowering: {:?}. \
-                     Supported array constants are primitive scalars, tuples with supported \
-                     fields, or nested arrays of those.",
-                    elem_obj
-                ))
-            );
-        }
-    };
-
     let mut element_values = Vec::with_capacity(element_count_usize);
     let mut last_op = prev_op;
 
-    for i in 0..element_count_usize {
-        let chunk = &bytes[i * element_byte_size..(i + 1) * element_byte_size];
-
-        let (elem_val, elem_last_op) = match elem_kind {
-            ElemKind::F64 => {
-                let mut buf = [0u8; 8];
-                buf.copy_from_slice(chunk);
-                let float_val = match rustc_public::target::MachineInfo::target_endianness() {
-                    rustc_public::target::Endian::Little => f64::from_le_bytes(buf),
-                    rustc_public::target::Endian::Big => f64::from_be_bytes(buf),
-                };
-                let float_attr = pliron::builtin::attributes::FPDoubleAttr::from(float_val);
-
-                use dialect_mir::ops::MirFloatConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirFloatConstantOp::get_concrete_op_info(),
-                    vec![element_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-                let float_op = MirFloatConstantOp::new(op);
-                float_op.set_attr_float_value_f64(ctx, float_attr);
-
-                if let Some(prev) = last_op {
-                    float_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    float_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-                (
-                    float_op.get_operation().deref(ctx).get_result(0),
-                    Some(float_op.get_operation()),
+    for element_index in 0..element_count_usize {
+        let relative_start = element_index
+            .checked_mul(element_byte_size)
+            .ok_or_else(|| {
+                input_error!(
+                    loc.clone(),
+                    TranslationErr::unsupported(format!(
+                        "Array constant element {element_index} offset overflowed"
+                    ))
                 )
-            }
-            ElemKind::F32 => {
-                let mut buf = [0u8; 4];
-                buf.copy_from_slice(chunk);
-                let float_val = match rustc_public::target::MachineInfo::target_endianness() {
-                    rustc_public::target::Endian::Little => f32::from_le_bytes(buf),
-                    rustc_public::target::Endian::Big => f32::from_be_bytes(buf),
-                };
-                let float_attr = pliron::builtin::attributes::FPSingleAttr::from(float_val);
-
-                use dialect_mir::ops::MirFloatConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirFloatConstantOp::get_concrete_op_info(),
-                    vec![element_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-                let float_op = MirFloatConstantOp::new(op);
-                float_op.set_attr_float_value(ctx, float_attr);
-
-                if let Some(prev) = last_op {
-                    float_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    float_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-                (
-                    float_op.get_operation().deref(ctx).get_result(0),
-                    Some(float_op.get_operation()),
+            })?;
+        let relative_end = relative_start
+            .checked_add(element_byte_size)
+            .ok_or_else(|| {
+                input_error!(
+                    loc.clone(),
+                    TranslationErr::unsupported(format!(
+                        "Array constant element {element_index} end offset overflowed"
+                    ))
                 )
-            }
-            ElemKind::F16 => {
-                let bits = read_uint_from_bytes(chunk) as u16;
-                let float_attr = MirFP16Attr::from_bits(bits);
-
-                use dialect_mir::ops::MirFloatConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirFloatConstantOp::get_concrete_op_info(),
-                    vec![element_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-                let float_op = MirFloatConstantOp::new(op);
-                float_op.set_attr_float_value_f16(ctx, float_attr);
-
-                if let Some(prev) = last_op {
-                    float_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    float_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-                (
-                    float_op.get_operation().deref(ctx).get_result(0),
-                    Some(float_op.get_operation()),
-                )
-            }
-            ElemKind::Int { width, signedness } => {
-                let val = read_uint_from_bytes(chunk);
-                let apint = APInt::from_u128(val, NonZeroUsize::new(width as usize).unwrap());
-                let int_attr = pliron::builtin::attributes::IntegerAttr::new(
-                    IntegerType::get(ctx, width, signedness),
-                    apint,
-                );
-
-                use dialect_mir::ops::MirConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![element_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-                let const_op = MirConstantOp::new(op);
-                const_op.set_attr_value(ctx, int_attr);
-
-                if let Some(prev) = last_op {
-                    const_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    const_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-                (
-                    const_op.get_operation().deref(ctx).get_result(0),
-                    Some(const_op.get_operation()),
-                )
-            }
-            ElemKind::Array => build_array_op_from_bytes(
-                ctx,
-                element_ty_ptr,
-                rust_element_ty,
-                chunk,
-                block_ptr,
-                last_op,
+            })?;
+        let absolute_start = base_offset.checked_add(relative_start).ok_or_else(|| {
+            input_error!(
                 loc.clone(),
-            )?,
-            ElemKind::Tuple => translate_constant_value_from_bytes(
-                ctx,
-                &rust_element_ty,
-                element_ty_ptr,
-                chunk,
-                block_ptr,
-                last_op,
-                loc.clone(),
-            )?,
-        };
+                TranslationErr::unsupported(format!(
+                    "Array constant element {element_index} absolute offset overflowed"
+                ))
+            )
+        })?;
 
-        element_values.push(elem_val);
-        last_op = elem_last_op;
+        let chunk = &bytes[relative_start..relative_end];
+        let (element_value, element_last_op) = translate_constant_value_from_allocation(
+            ctx,
+            &rust_element_ty,
+            element_ty_ptr,
+            allocation,
+            chunk,
+            absolute_start,
+            block_ptr,
+            last_op,
+            loc.clone(),
+        )?;
+        element_values.push(element_value);
+        last_op = element_last_op;
     }
 
-    use dialect_mir::ops::MirConstructArrayOp;
     let construct_op = Operation::new(
         ctx,
         MirConstructArrayOp::get_concrete_op_info(),
@@ -5413,30 +5599,32 @@ fn build_array_op_from_bytes(
     } else {
         construct_op.insert_at_front(block_ptr, ctx);
     }
-    last_op = Some(construct_op);
 
     let array_val = construct_op.deref(ctx).get_result(0);
-    Ok((array_val, last_op))
+    Ok((array_val, Some(construct_op)))
 }
 
-/// Extract the raw allocation bytes for a bare array value, then recursively
-/// build the corresponding `MirConstructArrayOp`.
+/// Recursively materialize a bare array value from one rustc allocation while
+/// retaining the allocation-relative offset of the current array.
+#[allow(clippy::too_many_arguments)]
 fn translate_array_value_constant_inner(
     ctx: &mut Context,
-    constant: &mir::ConstOperand,
+    allocation: Option<&rustc_public::ty::Allocation>,
+    bytes: &[u8],
+    base_offset: usize,
     array_ty: TypeHandle,
     rust_array_ty: rustc_public::ty::Ty,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let bytes = constant_bytes(constant, "Array", loc.clone())?;
-
-    build_array_op_from_bytes(
+    build_array_op_from_allocation(
         ctx,
         array_ty,
         rust_array_ty,
-        &bytes,
+        allocation,
+        bytes,
+        base_offset,
         block_ptr,
         prev_op,
         loc,
@@ -5964,7 +6152,21 @@ fn translate_struct_constant(
     Ok((val, Some(op)))
 }
 
-/// Translate a non-empty tuple constant from its raw allocation bytes.
+fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
+    match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+/// Translate a non-empty direct tuple constant from its raw allocation bytes.
+///
+/// Direct tuple constants containing pointer relocations remain unsupported.
+/// Tuple elements nested in arrays use the allocation-aware decoder below.
 fn translate_tuple_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -5979,20 +6181,53 @@ fn translate_tuple_constant(
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "Tuple constant contains {relocation_count} pointer relocation(s); cuda-oxide cannot yet preserve tuple pointer provenance"
+                "Tuple constant contains {relocation_count} pointer relocation(s); \
+                 cuda-oxide cannot yet preserve tuple pointer provenance"
             ))
         );
     }
+
     let bytes = constant_bytes(constant, "tuple", loc.clone())?;
     translate_tuple_constant_from_bytes(ctx, rust_ty, const_ty_ptr, &bytes, block_ptr, prev_op, loc)
 }
 
-/// Translate a tuple constant from bytes using rustc's field offsets.
+/// Byte-only compatibility wrapper for aggregate decoders whose source contains
+/// no provenance map.
 fn translate_tuple_constant_from_bytes(
     ctx: &mut Context,
     rust_ty: &rustc_public::ty::Ty,
     const_ty_ptr: TypeHandle,
     bytes: &[u8],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    translate_tuple_constant_from_allocation(
+        ctx,
+        rust_ty,
+        const_ty_ptr,
+        None,
+        bytes,
+        0,
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
+/// Translate a tuple range from an allocation using rustc's field offsets.
+///
+/// `base_offset` is absolute within `allocation`; `bytes` is exactly the tuple
+/// range beginning there. This lets nested arrays and tuples partition one
+/// provenance map without rebasing or losing relocation identity.
+#[allow(clippy::too_many_arguments)]
+fn translate_tuple_constant_from_allocation(
+    ctx: &mut Context,
+    rust_ty: &rustc_public::ty::Ty,
+    const_ty_ptr: TypeHandle,
+    allocation: Option<&rustc_public::ty::Allocation>,
+    bytes: &[u8],
+    base_offset: usize,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -6023,8 +6258,7 @@ fn translate_tuple_constant_from_bytes(
             return input_err!(
                 loc,
                 TranslationErr::unsupported(format!(
-                    "Tuple constant expected Rust tuple type, got {:?}",
-                    other
+                    "Tuple constant expected Rust tuple type, got {other:?}"
                 ))
             );
         }
@@ -6114,6 +6348,82 @@ fn translate_tuple_constant_from_bytes(
         }
     }
 
+    let field_sizes = rust_field_types
+        .iter()
+        .map(|field_ty| rust_type_layout_size(*field_ty, loc.clone()))
+        .collect::<TranslationResult<Vec<_>>>()?;
+
+    // Every tuple relocation must belong to exactly one field. A relocation in
+    // tuple padding has no Rust field identity and must not be guessed.
+    if let Some(alloc) = allocation {
+        let tuple_relocations = relocation_offsets_in_range(
+            alloc,
+            base_offset,
+            tuple_size,
+            "tuple constant",
+            loc.clone(),
+        )?;
+        let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+
+        for relocation_offset in tuple_relocations {
+            let relocation_end = relocation_offset
+                .checked_add(pointer_width)
+                .ok_or_else(|| {
+                    input_error!(
+                        loc.clone(),
+                        TranslationErr::unsupported(format!(
+                            "Tuple pointer relocation at byte offset {relocation_offset} overflows"
+                        ))
+                    )
+                })?;
+
+            let mut containing_field = None;
+            for (field_index, (&field_offset, &field_size)) in
+                field_offsets.iter().zip(field_sizes.iter()).enumerate()
+            {
+                let field_start = base_offset.checked_add(field_offset).ok_or_else(|| {
+                    input_error!(
+                        loc.clone(),
+                        TranslationErr::unsupported(format!(
+                            "Tuple field {field_index} absolute offset overflowed"
+                        ))
+                    )
+                })?;
+                let field_end = field_start.checked_add(field_size).ok_or_else(|| {
+                    input_error!(
+                        loc.clone(),
+                        TranslationErr::unsupported(format!(
+                            "Tuple field {field_index} end offset overflowed"
+                        ))
+                    )
+                })?;
+
+                if relocation_offset >= field_start
+                    && relocation_end <= field_end
+                    && containing_field.replace(field_index).is_some()
+                {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Tuple pointer relocation bytes {relocation_offset}..{relocation_end} \
+                             belong to multiple overlapping fields"
+                        ))
+                    );
+                }
+            }
+
+            if containing_field.is_none() {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Tuple pointer relocation bytes {relocation_offset}..{relocation_end} lie \
+                         in tuple padding or cross a field boundary"
+                    ))
+                );
+            }
+        }
+    }
+
     let mut values = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
 
@@ -6124,7 +6434,7 @@ fn translate_tuple_constant_from_bytes(
         .enumerate()
     {
         let byte_offset = field_offsets[field_idx];
-        let byte_size = rust_type_layout_size(*rust_field_ty, loc.clone())?;
+        let byte_size = field_sizes[field_idx];
 
         let field_end = byte_offset.checked_add(byte_size).ok_or_else(|| {
             input_error!(
@@ -6150,12 +6460,22 @@ fn translate_tuple_constant_from_bytes(
                 ))
             );
         };
+        let absolute_field_offset = base_offset.checked_add(byte_offset).ok_or_else(|| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Tuple constant field {field_idx} absolute offset overflowed"
+                ))
+            )
+        })?;
 
-        let (value, new_prev_op) = translate_constant_value_from_bytes(
+        let (value, new_prev_op) = translate_constant_value_from_allocation(
             ctx,
             rust_field_ty,
             field_ty,
+            allocation,
             field_bytes,
+            absolute_field_offset,
             block_ptr,
             current_prev_op,
             loc.clone(),
@@ -6826,6 +7146,143 @@ fn translate_struct_constant_from_bytes(
     }
 
     Ok((op.deref(ctx).get_result(0), Some(op)))
+}
+
+/// Translate one allocation range into a constant value without discarding
+/// pointer provenance.
+///
+/// Tuple and array ranges recurse with the same allocation and absolute offset.
+/// A thin pointer range with one matching relocation is materialized from its
+/// target. Any other value kind must have no relocations before it can use the
+/// byte-only decoder.
+#[allow(clippy::too_many_arguments)]
+fn translate_constant_value_from_allocation(
+    ctx: &mut Context,
+    rust_ty: &rustc_public::ty::Ty,
+    ty_ptr: TypeHandle,
+    allocation: Option<&rustc_public::ty::Allocation>,
+    bytes: &[u8],
+    absolute_offset: usize,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let relocations = match allocation {
+        Some(alloc) => relocation_offsets_in_range(
+            alloc,
+            absolute_offset,
+            bytes.len(),
+            "aggregate constant field",
+            loc.clone(),
+        )?,
+        None => Vec::new(),
+    };
+
+    let value_kind = {
+        let ty = ty_ptr.deref(ctx);
+        if ty.is::<dialect_mir::types::MirArrayType>() {
+            0u8
+        } else if ty.is::<dialect_mir::types::MirTupleType>() {
+            1
+        } else if ty.is::<dialect_mir::types::MirPtrType>() {
+            2
+        } else {
+            3
+        }
+    };
+
+    match value_kind {
+        0 => {
+            return build_array_op_from_allocation(
+                ctx,
+                ty_ptr,
+                *rust_ty,
+                allocation,
+                bytes,
+                absolute_offset,
+                block_ptr,
+                prev_op,
+                loc,
+            );
+        }
+        1 => {
+            return translate_tuple_constant_from_allocation(
+                ctx,
+                rust_ty,
+                ty_ptr,
+                allocation,
+                bytes,
+                absolute_offset,
+                block_ptr,
+                prev_op,
+                loc,
+            );
+        }
+        2 => {
+            if relocations.len() > 1 {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Pointer field at byte offset {absolute_offset} contains {} relocations; \
+                         expected at most one",
+                        relocations.len()
+                    ))
+                );
+            }
+
+            if let Some(&relocation_offset) = relocations.first() {
+                if relocation_offset != absolute_offset {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Pointer relocation starts at byte offset {relocation_offset}, but its \
+                             pointer field starts at {absolute_offset}"
+                        ))
+                    );
+                }
+
+                let pointer_width =
+                    rustc_public::target::MachineInfo::target_pointer_width().bytes();
+                if bytes.len() != pointer_width {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Pointer field at byte offset {absolute_offset} has {} bytes, but the \
+                             target pointer width is {pointer_width}",
+                            bytes.len()
+                        ))
+                    );
+                }
+
+                let alloc = allocation.expect("relocations can only come from an allocation");
+                return translate_pointer_relocation_from_allocation(
+                    ctx,
+                    alloc,
+                    relocation_offset,
+                    rust_ty,
+                    ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                );
+            }
+        }
+        _ => {}
+    }
+
+    if !relocations.is_empty() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate constant field of Rust type {rust_ty:?} at byte offset \
+                 {absolute_offset} contains {} pointer relocation(s), but its MIR type is not a \
+                 supported pointer, tuple, or array",
+                relocations.len()
+            ))
+        );
+    }
+
+    translate_constant_value_from_bytes(ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc)
 }
 
 /// Translate one field-sized byte slice into a constant value.
