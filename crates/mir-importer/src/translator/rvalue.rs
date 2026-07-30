@@ -5508,9 +5508,7 @@ fn translate_struct_constant(
         {
             return input_err!(
                 loc,
-                TranslationErr::unsupported(
-                    "translate_struct_constant called on non-struct type"
-                )
+                TranslationErr::unsupported("translate_struct_constant called on non-struct type")
             );
         }
     }
@@ -5568,12 +5566,14 @@ fn translate_struct_constant(
                 let alloc_id = prov.0;
                 match GlobalAlloc::from(alloc_id) {
                     GlobalAlloc::Memory(target_alloc) => target_alloc,
-                    GlobalAlloc::Static(static_def) => static_def.eval_initializer().map_err(|e| {
-                        input_error_noloc!(TranslationErr::unsupported(format!(
-                            "Failed to evaluate static initializer for struct constant: {:?}",
-                            e
-                        )))
-                    })?,
+                    GlobalAlloc::Static(static_def) => {
+                        static_def.eval_initializer().map_err(|e| {
+                            input_error_noloc!(TranslationErr::unsupported(format!(
+                                "Failed to evaluate static initializer for struct constant: {:?}",
+                                e
+                            )))
+                        })?
+                    }
                     other => {
                         return input_err!(
                             loc,
@@ -5651,7 +5651,13 @@ fn translate_tuple_constant(
         },
         ConstantKind::ZeroSized => {
             return translate_tuple_constant_from_bytes(
-                ctx, rust_ty, const_ty_ptr, &[], block_ptr, prev_op, loc,
+                ctx,
+                rust_ty,
+                const_ty_ptr,
+                &[],
+                block_ptr,
+                prev_op,
+                loc,
             );
         }
         other => {
@@ -8333,9 +8339,7 @@ fn translate_constant_value_from_alloc(
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     use rustc_public::ty::{RigidTy, TyKind};
 
-    let is_ptr = ty_ptr
-        .deref(ctx)
-        .is::<dialect_mir::types::MirPtrType>();
+    let is_ptr = ty_ptr.deref(ctx).is::<dialect_mir::types::MirPtrType>();
     if is_ptr {
         return translate_thin_pointer_at_alloc_offset(
             ctx,
@@ -8348,9 +8352,7 @@ fn translate_constant_value_from_alloc(
         );
     }
 
-    let is_slice = ty_ptr
-        .deref(ctx)
-        .is::<dialect_mir::types::MirSliceType>();
+    let is_slice = ty_ptr.deref(ctx).is::<dialect_mir::types::MirSliceType>();
     if is_slice {
         let size = rust_type_layout_size(*rust_ty, loc.clone())?;
         if alloc_has_provenance_in_range(alloc, absolute_byte_offset, size) {
@@ -8363,16 +8365,19 @@ fn translate_constant_value_from_alloc(
                 )
             );
         }
-        let bytes =
-            alloc_slice_bytes_zeroing_uninit(alloc, absolute_byte_offset, size, "Slice field", &loc)?;
+        let bytes = alloc_slice_bytes_zeroing_uninit(
+            alloc,
+            absolute_byte_offset,
+            size,
+            "Slice field",
+            &loc,
+        )?;
         return translate_constant_value_from_bytes(
             ctx, rust_ty, ty_ptr, &bytes, block_ptr, prev_op, loc,
         );
     }
 
-    let is_tuple = ty_ptr
-        .deref(ctx)
-        .is::<dialect_mir::types::MirTupleType>();
+    let is_tuple = ty_ptr.deref(ctx).is::<dialect_mir::types::MirTupleType>();
     if is_tuple {
         return translate_tuple_constant_from_alloc(
             ctx,
@@ -8386,9 +8391,7 @@ fn translate_constant_value_from_alloc(
         );
     }
 
-    let is_struct = ty_ptr
-        .deref(ctx)
-        .is::<dialect_mir::types::MirStructType>();
+    let is_struct = ty_ptr.deref(ctx).is::<dialect_mir::types::MirStructType>();
     if is_struct {
         return translate_struct_constant_from_alloc(
             ctx,
@@ -8402,9 +8405,7 @@ fn translate_constant_value_from_alloc(
         );
     }
 
-    let is_array = ty_ptr
-        .deref(ctx)
-        .is::<dialect_mir::types::MirArrayType>();
+    let is_array = ty_ptr.deref(ctx).is::<dialect_mir::types::MirArrayType>();
     if is_array {
         return translate_array_constant_from_alloc(
             ctx,
@@ -8424,10 +8425,11 @@ fn translate_constant_value_from_alloc(
         if alloc_has_provenance_in_range(alloc, absolute_byte_offset, size) {
             return input_err!(
                 loc,
-                TranslationErr::unsupported(format!(
+                TranslationErr::unsupported(
                     "Enum constant contains pointer relocation(s); cuda-oxide cannot yet \
                      preserve enum pointer provenance"
-                ))
+                        .to_string()
+                )
             );
         }
     }
