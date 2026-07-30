@@ -5071,18 +5071,25 @@ fn translate_array_value_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    {
+    let element_ty = {
         let ty_obj = const_ty_ptr.deref(ctx);
-        if ty_obj
-            .downcast_ref::<dialect_mir::types::MirArrayType>()
-            .is_none()
-        {
+        let Some(array_ty) = ty_obj.downcast_ref::<dialect_mir::types::MirArrayType>() else {
             return input_err!(
                 loc,
                 TranslationErr::unsupported("translate_array_value_constant: expected array type")
             );
-        }
-    }
+        };
+        array_ty.element_type()
+    };
+
+    // Keep bare array value constants on the same element contract as the
+    // byte lowering this path replaced: primitive scalars, tuples with
+    // supported fields, or nested arrays of those. Bare arrays whose
+    // elements are structs or enums are still not materialized as constants
+    // (arrays of structs nested inside struct constants remain supported,
+    // as before); admitting them here would silently widen that documented
+    // boundary.
+    validate_array_value_element_type(ctx, element_ty, &loc)?;
 
     let rust_array_ty = constant.const_.ty();
     let alloc = match constant.const_.kind() {
@@ -8632,6 +8639,48 @@ fn translate_struct_constant_from_alloc(
         op.insert_at_front(block_ptr, ctx);
     }
     Ok((op.deref(ctx).get_result(0), Some(op)))
+}
+
+/// Element kinds admitted by a bare array value constant
+/// (`translate_array_value_constant`).
+///
+/// The alloc-based path replaced a byte-only lowering that supported
+/// primitive scalar, tuple, and nested-array elements at this entry, and the
+/// supported-features appendix documents that arrays of structs are not
+/// materialized as constants. Nested arrays are walked recursively, exactly
+/// like the old byte lowering did, so an unsupported leaf cannot hide behind
+/// nesting. Arrays that sit inside a struct or tuple constant are dispatched
+/// through [`translate_constant_value_from_alloc`] instead and keep their
+/// wider, pre-existing element support.
+fn validate_array_value_element_type(
+    ctx: &Context,
+    element_ty: TypeHandle,
+    loc: &Location,
+) -> TranslationResult<()> {
+    let nested_element_ty = {
+        let elem_obj = element_ty.deref(ctx);
+        if elem_obj.is::<IntegerType>()
+            || elem_obj.is::<MirFP16Type>()
+            || elem_obj.is::<FP32Type>()
+            || elem_obj.is::<FP64Type>()
+            || elem_obj.is::<dialect_mir::types::MirTupleType>()
+        {
+            return Ok(());
+        }
+        let Some(array_ty) = elem_obj.downcast_ref::<dialect_mir::types::MirArrayType>() else {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Array constant element type is not supported: {:?}. Supported array \
+                     constants are primitive scalars, tuples with supported fields, or \
+                     nested arrays of those.",
+                    elem_obj
+                ))
+            );
+        };
+        array_ty.element_type()
+    };
+    validate_array_value_element_type(ctx, nested_element_ty, loc)
 }
 
 fn translate_array_constant_from_alloc(
