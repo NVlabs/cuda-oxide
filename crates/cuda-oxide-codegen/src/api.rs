@@ -160,7 +160,9 @@ impl CompileOptions {
     ///
     /// [`Linking::SelfContained`], the default, rejects any unresolved
     /// external symbol. [`Linking::Libdevice`] resolves `__nv_*` calls
-    /// against `libdevice.10.bc`.
+    /// against `libdevice.10.bc` and fails with
+    /// [`CompileError::LibdeviceUnavailable`] when the toolchain cannot
+    /// perform that link.
     pub fn with_linking(mut self, linking: Linking) -> Self {
         self.linking = linking;
         self
@@ -901,6 +903,13 @@ pub enum CompileError {
         /// Sorted, deduplicated unresolved symbol names.
         symbols: Vec<String>,
     },
+    /// Libdevice linking was requested, but the toolchain cannot perform it.
+    #[error("libdevice linking is unavailable: {message}")]
+    LibdeviceUnavailable {
+        /// Which piece is missing: `libdevice.10.bc`, or a same-major
+        /// `llvm-link`.
+        message: String,
+    },
     /// LLVM text export failed.
     #[error("LLVM IR export failed: {message}")]
     Export {
@@ -941,7 +950,9 @@ impl CompileError {
             }
             Self::Verification { .. } => CompilationStage::MirPreparation,
             Self::Lowering { .. } | Self::LoweredVerification { .. } => CompilationStage::Lowering,
-            Self::UnsupportedLinking { .. } => CompilationStage::Linking,
+            Self::UnsupportedLinking { .. } | Self::LibdeviceUnavailable { .. } => {
+                CompilationStage::Linking
+            }
             Self::Export { .. } => CompilationStage::Export,
             Self::Codegen { .. } | Self::Io { .. } => CompilationStage::Codegen,
         }
@@ -968,6 +979,9 @@ impl From<PipelineError> for CompileError {
                 Self::LoweredVerification { message, operation }
             }
             PipelineError::UnsupportedLinking { symbols } => Self::UnsupportedLinking { symbols },
+            PipelineError::LibdeviceUnavailable { message } => {
+                Self::LibdeviceUnavailable { message }
+            }
             PipelineError::Export(message) => Self::Export { message },
             PipelineError::TargetSelection { target, reason } => {
                 Self::TargetSelection { target, reason }

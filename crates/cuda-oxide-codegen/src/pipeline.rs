@@ -368,6 +368,14 @@ pub fn compile_translated_module(
     }
 
     if let OutputPolicy::SelfContainedPtx { allow_libdevice } = request.output_policy {
+        if let Some(error) = libdevice_availability_error(
+            allow_libdevice,
+            needs_libdevice,
+            can_ir_link_libdevice,
+            libdevice_path.is_some(),
+        ) {
+            return Err(error);
+        }
         let symbols = unlinkable_symbols(unresolved_external_symbols(ctx, module), allow_libdevice);
         if !symbols.is_empty() {
             return Err(PipelineError::UnsupportedLinking { symbols });
@@ -613,6 +621,35 @@ fn unlinkable_symbols(mut symbols: Vec<String>, allow_libdevice: bool) -> Vec<St
         symbols.retain(|symbol| !crate::export::is_libdevice_symbol(symbol));
     }
     symbols
+}
+
+/// Whether a compilation that opted into libdevice can be completed.
+///
+/// Returns the failure to report, or `None` when compilation may continue.
+/// Factored out of `compile_translated_module` so the decision is testable
+/// with no module, no toolchain, and no CUDA installation.
+///
+/// `can_ir_link_libdevice` is false when either piece is missing, so
+/// `libdevice_found` is what separates a missing CUDA toolkit from an
+/// incomplete LLVM toolchain. Neither is a defect in the caller's module,
+/// and the two have different fixes, so the message names which one it is.
+fn libdevice_availability_error(
+    allow_libdevice: bool,
+    needs_libdevice: bool,
+    can_ir_link_libdevice: bool,
+    libdevice_found: bool,
+) -> Option<PipelineError> {
+    if !allow_libdevice || !needs_libdevice || can_ir_link_libdevice {
+        return None;
+    }
+    let message = if libdevice_found {
+        "no `llvm-link` sharing the selected `llc`'s LLVM major was found"
+    } else {
+        "`libdevice.10.bc` was not found in any CUDA installation"
+    };
+    Some(PipelineError::LibdeviceUnavailable {
+        message: message.to_string(),
+    })
 }
 
 fn as_lowered_verification(error: PipelineError) -> PipelineError {
@@ -1034,5 +1071,36 @@ mod tests {
         assert!(!crate::export::is_libdevice_symbol("__nvvm_thing"));
         assert!(!crate::export::is_libdevice_symbol("nv_sqrtf"));
         assert!(!crate::export::is_libdevice_symbol("my___nv_sqrtf"));
+    }
+
+    #[test]
+    fn libdevice_availability_names_the_missing_piece() {
+        // Missing bitcode: the CUDA toolkit was not found.
+        let error = libdevice_availability_error(true, true, false, false)
+            .expect("an unlinkable libdevice module must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("libdevice.10.bc"),
+            "message names the missing bitcode: {message}"
+        );
+
+        // Bitcode present, linker absent: the LLVM toolchain is incomplete.
+        let error = libdevice_availability_error(true, true, false, true)
+            .expect("an unlinkable libdevice module must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("llvm-link"),
+            "message names the missing linker: {message}"
+        );
+    }
+
+    #[test]
+    fn libdevice_availability_permits_every_compilable_case() {
+        // Not opted in: the ordinary unresolved-symbol rejection handles it.
+        assert!(libdevice_availability_error(false, true, false, false).is_none());
+        // Opted in but the module needs no libdevice: nothing to link.
+        assert!(libdevice_availability_error(true, false, false, false).is_none());
+        // Opted in, needed, and linkable: the ordinary path proceeds.
+        assert!(libdevice_availability_error(true, true, true, true).is_none());
     }
 }
