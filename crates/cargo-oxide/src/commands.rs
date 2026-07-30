@@ -59,6 +59,33 @@ fn prepare_materialization(
     )
 }
 
+/// `prepare_materialization` with the ambient `CUDA_OXIDE_MATERIALIZE_CUBIN`
+/// injected, so `cargo_passthrough_command_with_env` can reach
+/// `materialization_requested_with_env`.
+///
+/// Note this still exits the process on error, which inside a unit test aborts
+/// the whole test binary rather than failing one case -- a further reason tests
+/// must not reach the ambient read.
+fn prepare_materialization_with_env(
+    ctx: &Context,
+    cli_requested: bool,
+    cli_arch: Option<&str>,
+    emit_nvvm_ir: bool,
+    materialize_env: Option<std::ffi::OsString>,
+) -> MaterializationMode {
+    prepare_materialization_result_with_env(
+        ctx,
+        cli_requested,
+        cli_arch,
+        emit_nvvm_ir,
+        materialize_env,
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    })
+}
+
 const EMIT_NVVM_IR_ENV: &str = "CUDA_OXIDE_EMIT_NVVM_IR";
 
 fn nvvm_ir_requested(ctx: &Context) -> Result<bool, String> {
@@ -89,11 +116,27 @@ fn nvvm_ir_requested_with_env(
 }
 
 fn materialization_requested(ctx: &Context, cli_requested: bool) -> Result<bool, String> {
+    materialization_requested_with_env(ctx, cli_requested, std::env::var_os(MATERIALIZE_ENV))
+}
+
+/// `materialization_requested` with the ambient `CUDA_OXIDE_MATERIALIZE_CUBIN`
+/// injected.
+///
+/// The process value outranks project config, so resolution has to be
+/// injectable for unit tests: an exported value would otherwise turn
+/// materialization on for tests that pass `materialize_cubin: false`, sending
+/// them into `discover_materializer_provenance`. Same rationale as
+/// `nvvm_ir_requested_with_env`.
+fn materialization_requested_with_env(
+    ctx: &Context,
+    cli_requested: bool,
+    env_value: Option<std::ffi::OsString>,
+) -> Result<bool, String> {
     if cli_requested {
         return Ok(true);
     }
 
-    if let Some(value) = std::env::var_os(MATERIALIZE_ENV) {
+    if let Some(value) = env_value {
         let value = value
             .into_string()
             .map_err(|_| format!("{MATERIALIZE_ENV} is not valid Unicode"))?;
@@ -113,7 +156,26 @@ fn prepare_materialization_result(
     cli_arch: Option<&str>,
     emit_nvvm_ir: bool,
 ) -> Result<MaterializationMode, String> {
-    let enabled = materialization_requested(ctx, cli_requested)?;
+    prepare_materialization_result_with_env(
+        ctx,
+        cli_requested,
+        cli_arch,
+        emit_nvvm_ir,
+        std::env::var_os(MATERIALIZE_ENV),
+    )
+}
+
+/// `prepare_materialization_result` with the ambient
+/// `CUDA_OXIDE_MATERIALIZE_CUBIN` injected, forwarded to
+/// `materialization_requested_with_env`.
+fn prepare_materialization_result_with_env(
+    ctx: &Context,
+    cli_requested: bool,
+    cli_arch: Option<&str>,
+    emit_nvvm_ir: bool,
+    materialize_env: Option<std::ffi::OsString>,
+) -> Result<MaterializationMode, String> {
+    let enabled = materialization_requested_with_env(ctx, cli_requested, materialize_env)?;
     if !enabled {
         return Ok(MaterializationMode::default());
     }
@@ -972,6 +1034,7 @@ pub fn codegen_run(
     bin: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     materialize_cubin: bool,
     app_args: &[String],
 ) {
@@ -1071,12 +1134,20 @@ pub fn codegen_run(
         cmd.arg("--").args(app_args);
     }
 
-    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad, unchecked_indexing);
+    apply_common_codegen_env(
+        &mut cmd,
+        ctx,
+        verbose,
+        no_fmad,
+        unchecked_indexing,
+        device_debug,
+    );
     let fingerprint = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         emit_nvvm_ir,
         target_arch,
         detected_device_arch.as_deref(),
@@ -1125,6 +1196,7 @@ pub fn codegen_sanitize(
     bin: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     materialize_cubin: bool,
 ) {
     let example_dir = if ctx.is_workspace {
@@ -1201,6 +1273,7 @@ pub fn codegen_sanitize(
         bin,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         &materialization,
     );
     run_compute_sanitizer(
@@ -1450,6 +1523,7 @@ fn build_interop_device_crate(
         verbose,
         options.no_fmad,
         options.unchecked_indexing,
+        DeviceDebug::Off,
         arch,
         detected_device_arch,
         &ptx_dir,
@@ -1557,6 +1631,7 @@ fn codegen_build_host_binary(
     bin: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     materialization: &MaterializationMode,
 ) -> PathBuf {
     let mut cmd = Command::new("cargo");
@@ -1569,13 +1644,21 @@ fn codegen_build_host_binary(
         cmd.args(["--features", features]);
     }
 
-    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad, unchecked_indexing);
-    apply_default_sanitizer_line_tables(&mut cmd, ctx);
+    apply_common_codegen_env(
+        &mut cmd,
+        ctx,
+        verbose,
+        no_fmad,
+        unchecked_indexing,
+        device_debug,
+    );
+    apply_default_sanitizer_line_tables(&mut cmd, ctx, device_debug);
     let fingerprint = sanitize_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         arch,
         detected_device_arch,
         None,
@@ -2150,6 +2233,7 @@ pub fn codegen_build(
     features: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
@@ -2195,12 +2279,20 @@ pub fn codegen_build(
         cmd.args(["--features", features]);
     }
 
-    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad, unchecked_indexing);
+    apply_common_codegen_env(
+        &mut cmd,
+        ctx,
+        verbose,
+        no_fmad,
+        unchecked_indexing,
+        device_debug,
+    );
     let fingerprint = standard_codegen_fingerprint(
         ctx,
         verbose,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         emit_nvvm_ir,
         target_arch,
         None,
@@ -2239,6 +2331,7 @@ pub fn codegen_inspect_ptx(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
 ) {
     let materialization_enabled = materialization_requested(ctx, false).unwrap_or_else(|error| {
         eprintln!("Error: {error}");
@@ -2269,6 +2362,7 @@ pub fn codegen_inspect_ptx(
         features,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         false,
     );
 
@@ -2313,6 +2407,7 @@ pub fn emit_ltoir(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
 ) {
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
@@ -2347,6 +2442,7 @@ pub fn emit_ltoir(
         features,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         false,
     );
 
@@ -2495,6 +2591,53 @@ fn finalization_options_from_artifact(
         .with_debug_policy(debug)
 }
 
+/// Device debug-information policy requested on the command line.
+///
+/// Mirrors nvcc: `--lineinfo` is `-lineinfo` (line tables, optimization intact)
+/// and `--device-debug` is `-G` (full debug, libNVVM optimization disabled).
+/// The two are ordered, not exclusive: asking for both yields [`Self::Full`],
+/// because full debug already carries line tables.
+///
+/// This is the CLI surface for a policy that already exists end to end --
+/// `CUDA_OXIDE_DEBUG`, `ArtifactCompileOptions`'s debug bits, and
+/// `FinalizationOptions::with_debug_policy` all predate it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DeviceDebug {
+    /// Request no device debug information (the default).
+    #[default]
+    Off,
+    /// Preserve source line mappings without disabling optimization.
+    LineTables,
+    /// Emit full debug information; libNVVM finalization runs unoptimized.
+    Full,
+}
+
+impl DeviceDebug {
+    /// Resolve the two independent CLI booleans into one ordered policy.
+    #[must_use]
+    pub fn from_flags(lineinfo: bool, device_debug: bool) -> Self {
+        match (device_debug, lineinfo) {
+            (true, _) => Self::Full,
+            (false, true) => Self::LineTables,
+            (false, false) => Self::Off,
+        }
+    }
+
+    /// Value for `CUDA_OXIDE_DEBUG`, or `None` when nothing must be exported.
+    ///
+    /// `Off` deliberately returns `None` rather than `"off"`: exporting `off`
+    /// would override a debug level the surrounding environment had already
+    /// asked for, turning an absent flag into an active opt-out.
+    #[must_use]
+    pub fn env_value(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::LineTables => Some("line"),
+            Self::Full => Some("full"),
+        }
+    }
+}
+
 /// Options for `cargo oxide build -- ...` / `cargo oxide test -- ...`.
 #[derive(Clone, Copy)]
 pub struct CargoPassthroughOptions<'a> {
@@ -2508,6 +2651,7 @@ pub struct CargoPassthroughOptions<'a> {
     pub no_fmad: bool,
     pub unchecked_indexing: bool,
     pub materialize_cubin: bool,
+    pub device_debug: DeviceDebug,
 }
 
 /// Cargo operations supported by the passthrough path.
@@ -2679,6 +2823,9 @@ fn passthrough_codegen_fingerprint_with_env(
     if opts.unchecked_indexing {
         effective_env.insert("CUDA_OXIDE_UNCHECKED_INDEXING".to_string(), b"1".to_vec());
     }
+    if let Some(level) = opts.device_debug.env_value() {
+        effective_env.insert("CUDA_OXIDE_DEBUG".to_string(), level.as_bytes().to_vec());
+    }
     if opts.emit_nvvm_ir || materialization.enabled() {
         effective_env.insert("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), b"1".to_vec());
     }
@@ -2735,6 +2882,7 @@ fn sanitize_codegen_fingerprint(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     ptx_dir: Option<&Path>,
@@ -2745,6 +2893,7 @@ fn sanitize_codegen_fingerprint(
         verbose,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         target_arch,
         detected_device_arch,
         ptx_dir,
@@ -2761,6 +2910,7 @@ fn sanitize_codegen_fingerprint_with_env(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     ptx_dir: Option<&Path>,
@@ -2778,6 +2928,7 @@ fn sanitize_codegen_fingerprint_with_env(
         no_fmad,
         unchecked_indexing,
         materialize_cubin: materialization.enabled(),
+        device_debug,
     };
     let base = passthrough_codegen_fingerprint_with_env(
         ctx,
@@ -2807,6 +2958,7 @@ fn standard_codegen_fingerprint(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     emit_nvvm_ir: bool,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
@@ -2823,6 +2975,7 @@ fn standard_codegen_fingerprint(
         no_fmad,
         unchecked_indexing,
         materialize_cubin: materialization.enabled(),
+        device_debug,
     };
     let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
     let mut hash = sha2::Sha256::new();
@@ -2840,6 +2993,7 @@ fn pipeline_codegen_fingerprint(
     ctx: &Context,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     emit_nvvm_ir: bool,
     target_arch: Option<&str>,
     materialization: &MaterializationMode,
@@ -2849,6 +3003,7 @@ fn pipeline_codegen_fingerprint(
         true,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         emit_nvvm_ir,
         target_arch,
         None,
@@ -2872,6 +3027,7 @@ fn interop_codegen_fingerprint(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     ptx_dir: &Path,
@@ -2883,6 +3039,7 @@ fn interop_codegen_fingerprint(
         verbose,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         false,
         target_arch,
         detected_device_arch,
@@ -2948,9 +3105,38 @@ fn cargo_passthrough_command(
     opts: &CargoPassthroughOptions<'_>,
     cargo_args: &[String],
 ) -> Result<Command, String> {
+    cargo_passthrough_command_with_env(
+        ctx,
+        cargo_subcommand,
+        opts,
+        cargo_args,
+        std::env::var_os(MATERIALIZE_ENV),
+    )
+}
+
+/// `cargo_passthrough_command` with the ambient
+/// `CUDA_OXIDE_MATERIALIZE_CUBIN` injected.
+///
+/// Unit tests must call this with `None`: the ambient value outranks
+/// `opts.materialize_cubin`, so an exported one turns materialization on and
+/// sends the test into `discover_materializer_provenance`, which re-executes
+/// `current_exe` -- the libtest binary under `cargo test` -- and then exits the
+/// process over the unusable digest, taking the whole suite with it.
+fn cargo_passthrough_command_with_env(
+    ctx: &Context,
+    cargo_subcommand: CargoPassthroughSubcommand,
+    opts: &CargoPassthroughOptions<'_>,
+    cargo_args: &[String],
+    materialize_env: Option<std::ffi::OsString>,
+) -> Result<Command, String> {
     let target_arch = configured_arch(ctx, opts.arch);
-    let materialization =
-        prepare_materialization(ctx, opts.materialize_cubin, opts.arch, opts.emit_nvvm_ir);
+    let materialization = prepare_materialization_with_env(
+        ctx,
+        opts.materialize_cubin,
+        opts.arch,
+        opts.emit_nvvm_ir,
+        materialize_env,
+    );
     let owner_filter = configured_device_codegen_crates(ctx, opts.device_codegen_crate)?;
     // Device-owning macros track this identity in their crate dep-info. Keep it
     // out of global rustflags so host-only dependencies retain one cache key.
@@ -2976,6 +3162,7 @@ fn cargo_passthrough_command(
         opts.verbose,
         opts.no_fmad,
         opts.unchecked_indexing,
+        opts.device_debug,
     );
     apply_codegen_configuration(
         &mut cmd,
@@ -3059,6 +3246,7 @@ pub fn codegen_cargo_passthrough(
 /// `dialect-mir` module (pre- and post-`mem2reg`), the LLVM dialect
 /// module, textual LLVM IR, and the final PTX or NVVM IR. After the build,
 /// generated artifacts are printed to stdout.
+#[allow(clippy::too_many_arguments)]
 pub fn codegen_show_pipeline(
     ctx: &Context,
     example: &str,
@@ -3066,6 +3254,7 @@ pub fn codegen_show_pipeline(
     arch: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
@@ -3128,6 +3317,7 @@ pub fn codegen_show_pipeline(
         ctx,
         no_fmad,
         unchecked_indexing,
+        device_debug,
         emit_nvvm_ir,
         target_arch,
         &materialization,
@@ -3148,6 +3338,9 @@ pub fn codegen_show_pipeline(
     }
     if unchecked_indexing {
         cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
+    }
+    if let Some(level) = device_debug.env_value() {
+        cmd.env("CUDA_OXIDE_DEBUG", level);
     }
 
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
@@ -3258,6 +3451,7 @@ pub fn codegen_debug(
         false,
         false,
         false,
+        DeviceDebug::Off,
         false,
         target_arch,
         detected_device_arch.as_deref(),
@@ -4368,7 +4562,21 @@ pub fn plan_update(is_workspace: bool, force: bool) -> UpdatePlan {
 /// cache would never be consulted while either is set. `update` refuses
 /// rather than mislead.
 fn update_pin_refusal(ctx: &Context) -> Option<String> {
-    if std::env::var_os("CUDA_OXIDE_BACKEND").is_some() {
+    update_pin_refusal_with_env(ctx, std::env::var_os("CUDA_OXIDE_BACKEND"))
+}
+
+/// `update_pin_refusal` with the ambient `CUDA_OXIDE_BACKEND` injected.
+///
+/// The env var is checked before the project pin, so resolution has to be
+/// injectable for unit tests: a developer with `CUDA_OXIDE_BACKEND` exported
+/// would otherwise get the env refusal for every input, including the
+/// unpinned case that must return `None`. Same rationale as
+/// `nvvm_ir_requested_with_env`.
+fn update_pin_refusal_with_env(
+    ctx: &Context,
+    backend_env: Option<std::ffi::OsString>,
+) -> Option<String> {
+    if backend_env.is_some() {
         return Some(
             "CUDA_OXIDE_BACKEND is set, so `cargo oxide update` will not\n\
              modify the shared cache. Unset CUDA_OXIDE_BACKEND and re-run, or\n\
@@ -5170,6 +5378,7 @@ fn apply_common_codegen_env(
     verbose: bool,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
 ) {
     apply_config_env(cmd, ctx);
     if verbose {
@@ -5181,17 +5390,32 @@ fn apply_common_codegen_env(
     if unchecked_indexing {
         cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
     }
+    // An explicit flag outranks an ambient `CUDA_OXIDE_DEBUG`, matching how
+    // `--no-fmad` outranks `CUDA_OXIDE_NO_FMA`. `DeviceDebug::Off` exports
+    // nothing rather than `off`, so omitting the flag cannot silently cancel a
+    // debug level the environment or project config already asked for.
+    if let Some(level) = device_debug.env_value() {
+        cmd.env("CUDA_OXIDE_DEBUG", level);
+    }
     apply_ld_library_path(cmd, ctx);
 }
 
 /// Give Compute Sanitizer source line attribution without disabling normal
 /// device optimization. An explicit process or project setting remains
-/// authoritative, including an intentional `CUDA_OXIDE_DEBUG=off`.
-fn apply_default_sanitizer_line_tables(cmd: &mut Command, ctx: &Context) {
+/// authoritative, including an intentional `CUDA_OXIDE_DEBUG=off`. So does an
+/// explicit `--lineinfo` / `--device-debug` flag: `apply_common_codegen_env`
+/// has already exported its level onto `cmd`, and the default must not
+/// overwrite it.
+fn apply_default_sanitizer_line_tables(
+    cmd: &mut Command,
+    ctx: &Context,
+    device_debug: DeviceDebug,
+) {
     apply_default_sanitizer_line_tables_with_env(
         cmd,
         ctx,
         std::env::var_os("CUDA_OXIDE_DEBUG").is_some(),
+        device_debug,
     );
 }
 
@@ -5200,13 +5424,19 @@ fn apply_default_sanitizer_line_tables(cmd: &mut Command, ctx: &Context) {
 ///
 /// `env_debug_set` is presence-only, matching the `var_os` check it replaces.
 /// Injected so a unit test can assert the defaulting without an exported
-/// `CUDA_OXIDE_DEBUG` suppressing it.
+/// `CUDA_OXIDE_DEBUG` suppressing it. `device_debug` carries the CLI flag:
+/// any level other than [`DeviceDebug::Off`] is an explicit request that
+/// outranks the line-tables default.
 fn apply_default_sanitizer_line_tables_with_env(
     cmd: &mut Command,
     ctx: &Context,
     env_debug_set: bool,
+    device_debug: DeviceDebug,
 ) {
-    if !env_debug_set && project_config_env(ctx, "CUDA_OXIDE_DEBUG").is_none() {
+    if device_debug == DeviceDebug::Off
+        && !env_debug_set
+        && project_config_env(ctx, "CUDA_OXIDE_DEBUG").is_none()
+    {
         cmd.env("CUDA_OXIDE_DEBUG", "line-tables");
     }
 }
@@ -5241,9 +5471,10 @@ fn apply_interop_device_codegen_options_with_env(
         verbose,
         options.no_fmad,
         options.unchecked_indexing,
+        DeviceDebug::Off,
     );
     if options.sanitizer_line_tables {
-        apply_default_sanitizer_line_tables_with_env(cmd, ctx, env_debug_set);
+        apply_default_sanitizer_line_tables_with_env(cmd, ctx, env_debug_set, DeviceDebug::Off);
     }
 }
 
@@ -6046,12 +6277,29 @@ mod tests {
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     }
 
+    /// `cargo_passthrough_command` with an empty ambient
+    /// `CUDA_OXIDE_MATERIALIZE_CUBIN`.
+    ///
+    /// Every test builds the command through this. Reading the real variable
+    /// would let an exported value override `opts.materialize_cubin` and drive
+    /// the test into materializer discovery, which re-executes the libtest
+    /// binary and then exits the process -- aborting the whole suite instead of
+    /// failing one case.
+    fn passthrough_command_for_test(
+        ctx: &Context,
+        cargo_subcommand: CargoPassthroughSubcommand,
+        opts: &CargoPassthroughOptions<'_>,
+        cargo_args: &[String],
+    ) -> Result<Command, String> {
+        cargo_passthrough_command_with_env(ctx, cargo_subcommand, opts, cargo_args, None)
+    }
+
     fn cargo_artifact_freshness(
         ctx: &Context,
         opts: &CargoPassthroughOptions<'_>,
         materializer_provenance: Option<&str>,
     ) -> BTreeMap<String, bool> {
-        let mut cmd = cargo_passthrough_command(
+        let mut cmd = passthrough_command_for_test(
             ctx,
             CargoPassthroughSubcommand::Build,
             opts,
@@ -6154,7 +6402,14 @@ mod tests {
         });
         let discovery = materializer_discovery_command(&ctx, Path::new("/fake/cargo-oxide"));
         let mut rustc_child = Command::new("cargo");
-        apply_common_codegen_env(&mut rustc_child, &ctx, false, false, false);
+        apply_common_codegen_env(
+            &mut rustc_child,
+            &ctx,
+            false,
+            false,
+            false,
+            DeviceDebug::Off,
+        );
 
         for key in [
             "CUDA_OXIDE_LIBDEVICE",
@@ -6983,6 +7238,7 @@ path = "src/other.rs"
             false,
             true,
             false,
+            DeviceDebug::Off,
             Some("sm_80"),
             None,
             Some(Path::new("/tmp/generated-ptx")),
@@ -7001,6 +7257,24 @@ path = "src/other.rs"
         assert_eq!(
             command_env(&cmd, CODEGEN_FINGERPRINT_ENV).as_deref(),
             Some(fingerprint.as_str())
+        );
+    }
+
+    #[test]
+    fn sanitize_device_debug_flag_overrides_the_line_tables_default() {
+        let ctx = test_context(OxideConfig::default());
+        let mut cmd = Command::new("cargo");
+
+        // Mirror codegen_build_host_binary's ordering: the flag's level lands
+        // on `cmd` first, then the sanitizer default runs. `env_debug_set` is
+        // injected as false, so with no ambient CUDA_OXIDE_DEBUG the explicit
+        // flag alone must suppress the line-tables default.
+        apply_common_codegen_env(&mut cmd, &ctx, false, false, false, DeviceDebug::Full);
+        apply_default_sanitizer_line_tables_with_env(&mut cmd, &ctx, false, DeviceDebug::Full);
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_DEBUG").as_deref(),
+            Some("full")
         );
     }
 
@@ -7061,6 +7335,7 @@ path = "src/other.rs"
                 false,
                 no_fmad,
                 unchecked_indexing,
+                DeviceDebug::Off,
                 target_arch,
                 detected_device_arch,
                 ptx_dir,
@@ -7097,6 +7372,7 @@ path = "src/other.rs"
             true,
             false,
             false,
+            DeviceDebug::Off,
             false,
             Some("sm_86"),
             None,
@@ -7106,6 +7382,7 @@ path = "src/other.rs"
             &ctx,
             false,
             false,
+            DeviceDebug::Off,
             false,
             Some("sm_86"),
             &materialization,
@@ -7232,12 +7509,13 @@ path = "src/other.rs"
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
         for cargo_args in [
             vec!["--release".to_string()],
             vec!["--profile".to_string(), "ci".to_string()],
         ] {
-            let cmd = cargo_passthrough_command(
+            let cmd = passthrough_command_for_test(
                 &ctx,
                 CargoPassthroughSubcommand::Test,
                 &opts,
@@ -7688,6 +7966,7 @@ MY_OK = "1"
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
         let cargo_args = vec![
             "-p".to_string(),
@@ -7696,9 +7975,13 @@ MY_OK = "1"
             "--nocapture".to_string(),
         ];
 
-        let cmd =
-            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Test, &opts, &cargo_args)
-                .unwrap();
+        let cmd = passthrough_command_for_test(
+            &ctx,
+            CargoPassthroughSubcommand::Test,
+            &opts,
+            &cargo_args,
+        )
+        .unwrap();
         assert_eq!(
             cmd.get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
@@ -7770,10 +8053,11 @@ MY_OK = "1"
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
 
-        let cmd =
-            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Test, &opts, &[]).unwrap();
+        let cmd = passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Test, &opts, &[])
+            .unwrap();
         assert_eq!(
             cmd.get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
@@ -7796,15 +8080,17 @@ MY_OK = "1"
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
         let base_cmd =
-            cargo_passthrough_command(&ctx, CargoPassthroughSubcommand::Build, &base, &[]).unwrap();
+            passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &base, &[])
+                .unwrap();
         let different_mode = CargoPassthroughOptions {
             emit_nvvm_ir: true,
             arch: Some("sm_90"),
             ..base
         };
-        let different_cmd = cargo_passthrough_command(
+        let different_cmd = passthrough_command_for_test(
             &ctx,
             CargoPassthroughSubcommand::Build,
             &different_mode,
@@ -7942,6 +8228,7 @@ device-owner = { path = "../device-owner" }
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
 
         let cold = cargo_artifact_freshness(&ctx, &base, None);
@@ -8039,6 +8326,7 @@ device-owner = { path = "../device-owner" }
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
         let inherited_env = BTreeMap::new();
         let base_hash = passthrough_codegen_fingerprint_with_env(
@@ -8171,6 +8459,7 @@ device-owner = { path = "../device-owner" }
             no_fmad: false,
             unchecked_indexing: false,
             materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
         };
         let fingerprint = |inherited_env: &BTreeMap<String, Vec<u8>>| {
             passthrough_codegen_fingerprint_with_env(
@@ -8273,7 +8562,7 @@ device-owner = { path = "../device-owner" }
             ..OxideConfig::default()
         });
         let mut cmd = Command::new("cargo");
-        apply_common_codegen_env(&mut cmd, &ctx, false, false, false);
+        apply_common_codegen_env(&mut cmd, &ctx, false, false, false, DeviceDebug::Off);
         cmd.env("CUDA_OXIDE_PTX_DIR", "internal-ptx");
         assert_eq!(
             command_env(&cmd, "CUDA_OXIDE_PTX_DIR").as_deref(),
@@ -8646,12 +8935,21 @@ components = ["rust-src", "rustc-dev", "llvm-tools"]
             backend: Some(PathBuf::from("/tmp/pinned-backend.so")),
             ..OxideConfig::default()
         });
-        let refusal = update_pin_refusal(&pinned).expect("config pin must refuse update");
+        // `None` stands in for an unset ambient `CUDA_OXIDE_BACKEND`. Reading
+        // the real one would let an exported value produce the env refusal for
+        // both inputs, including the unpinned case asserted to be `None`.
+        let refusal =
+            update_pin_refusal_with_env(&pinned, None).expect("config pin must refuse update");
         assert!(refusal.contains("pins the backend"), "{refusal}");
         assert!(refusal.contains("/tmp/pinned-backend.so"), "{refusal}");
 
         let unpinned = test_context(OxideConfig::default());
-        assert_eq!(update_pin_refusal(&unpinned), None);
+        assert_eq!(update_pin_refusal_with_env(&unpinned, None), None);
+
+        // The env var outranks the project pin: set, it refuses even unpinned.
+        let from_env = update_pin_refusal_with_env(&unpinned, Some("/tmp/env-backend.so".into()))
+            .expect("exported CUDA_OXIDE_BACKEND must refuse update");
+        assert!(from_env.contains("CUDA_OXIDE_BACKEND is set"), "{from_env}");
     }
 
     #[test]
@@ -9367,5 +9665,63 @@ edition = "2024"
                 "scaffold .gitignore must ignore clean suffix `{suffix}`"
             );
         }
+    }
+
+    #[test]
+    fn device_debug_env_value_matches_the_backend_parser() {
+        // These must be strings `device_debug_kind_with_override` accepts; a typo
+        // would silently fall through to the profile-derived default instead of
+        // failing, so pin them.
+        assert_eq!(DeviceDebug::Off.env_value(), None);
+        assert_eq!(DeviceDebug::LineTables.env_value(), Some("line"));
+        assert_eq!(DeviceDebug::Full.env_value(), Some("full"));
+    }
+
+    #[test]
+    fn passthrough_fingerprint_separates_the_device_debug_policies() {
+        let ctx = test_context(OxideConfig::default());
+        let base = CargoPassthroughOptions {
+            verbose: false,
+            emit_nvvm_ir: false,
+            arch: None,
+            features: None,
+            cargo_target_dir: None,
+            device_codegen_crate: None,
+            device_cfgs: &[],
+            no_fmad: false,
+            unchecked_indexing: false,
+            materialize_cubin: false,
+            device_debug: DeviceDebug::Off,
+        };
+        let line_tables = CargoPassthroughOptions {
+            device_debug: DeviceDebug::LineTables,
+            ..base
+        };
+        let full = CargoPassthroughOptions {
+            device_debug: DeviceDebug::Full,
+            ..base
+        };
+        let materialization = MaterializationMode::default();
+        // Empty inherited env, for the same reason as the sibling fingerprint
+        // tests: an ambient CUDA_OXIDE_DEBUG is folded in on its own, which would
+        // collapse these onto the base.
+        let inherited_env = BTreeMap::new();
+        let fp = |opts: &CargoPassthroughOptions<'_>| {
+            passthrough_codegen_fingerprint_with_env(
+                &ctx,
+                opts,
+                None,
+                None,
+                &materialization,
+                &inherited_env,
+            )
+        };
+        // The policy changes what libNVVM and nvJitLink are asked to do (`-g`,
+        // `-opt=0`, `-lineinfo`), so it must not share a fingerprint with the
+        // default -- otherwise Cargo reuses artifacts built without it.
+        let off = fp(&base);
+        assert_ne!(off, fp(&line_tables));
+        assert_ne!(off, fp(&full));
+        assert_ne!(fp(&line_tables), fp(&full));
     }
 }

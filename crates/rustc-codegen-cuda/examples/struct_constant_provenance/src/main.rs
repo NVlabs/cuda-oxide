@@ -1,19 +1,15 @@
-/*
- * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
- */
+// SPDX-License-Identifier: Apache-2.0
 
-//! Struct constant with a thin pointer field to a device static.
+//! Runtime regression for pointer provenance in a direct struct constant.
 //!
-//! Aggregate const values materialize each thin pointer field via
-//! `MirGlobalAllocOp`; the kernel reads through that pointer and a sibling
-//! scalar field.
-//!
-//! Run: `cargo oxide run struct_constant_provenance`
+//! The pointer field's stored bytes contain the addend into the target
+//! allocation, while the allocation's provenance table identifies the Rust
+//! static being referenced. The importer must combine both pieces, materialize
+//! a pointer to the corresponding device global, and preserve that pointer when
+//! the struct constant is consumed by GPU code.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{kernel, thread};
-use cuda_host::cuda_module;
+use cuda_device::{cuda_module, kernel, DisjointSlice};
 
 static FIRST: [u8; 16] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -31,42 +27,45 @@ const DIRECT: Holder = Holder {
 mod kernels {
     use super::*;
 
-    /// # Safety
-    ///
-    /// `output` must point to writable device-accessible storage for one `u8` per
-    /// launched thread.
     #[kernel]
-    pub unsafe fn direct_struct_pointer(output: *mut u8) {
-        let index = thread::index_1d().get();
-        let holder = DIRECT;
-        unsafe {
-            output
-                .add(index)
-                .write(holder.pointer[index & 15] + holder.flag as u8);
+    pub fn direct_struct_pointer(mut output: DisjointSlice<u8>) {
+        if let Some((slot, index)) = output.get_mut_indexed() {
+            let holder = DIRECT;
+            *slot = holder.pointer[index.get() & 15] + holder.flag as u8;
         }
     }
 }
 
 fn main() {
-    let ctx = CudaContext::new(0).expect("create CUDA context");
+    println!("=== struct_constant_provenance ===");
+
+    const N: usize = 64;
+
+    let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
-    let module = kernels::load(&ctx).expect("load module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
 
-    let out = DeviceBuffer::<u8>::zeroed(&stream, 1).expect("alloc out");
-    // SAFETY: one-thread launch writing a single u8.
+    let mut output =
+        DeviceBuffer::<u8>::zeroed(&stream, N).expect("Failed to allocate device output buffer");
+
+    // SAFETY: the launch is one-dimensional and the output buffer contains one
+    // element for every launched thread.
     unsafe {
-        module
-            .direct_struct_pointer(
-                &stream,
-                LaunchConfig::for_num_elems(1),
-                out.cu_deviceptr() as *mut u8,
-            )
-            .expect("launch");
+        module.direct_struct_pointer(&stream, LaunchConfig::for_num_elems(N as u32), &mut output)
     }
-    stream.synchronize().expect("sync");
+    .expect("direct_struct_pointer launch failed");
 
-    let host = out.to_host_vec(&stream).expect("dtoh");
-    let expected = FIRST[0] + true as u8;
-    assert_eq!(host[0], expected, "got {} expected {}", host[0], expected);
-    println!("struct_constant_provenance: PASS ({})", host[0]);
+    let actual = output
+        .to_host_vec(&stream)
+        .expect("Failed to copy device output to host");
+    let expected: Vec<u8> = (0..N)
+        .map(|index| FIRST[index & 15] + u8::from(DIRECT.flag))
+        .collect();
+
+    assert_eq!(
+        actual, expected,
+        "struct constant pointer provenance produced incorrect GPU output"
+    );
+
+    println!("PASS: struct constant pointer provenance preserved at runtime");
 }

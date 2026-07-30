@@ -2,13 +2,9 @@
 name = "tuple_constant_provenance"
 version = "0.1.0"
 edition = "2024"
-authors = ["NVIDIA CORPORATION"]
 license = "Apache-2.0"
 
 [workspace]
-
-# Tuple constant thin-pointer provenance to a device static.
-#   cargo oxide run tuple_constant_provenance
 
 [dependencies]
 cuda-core = { path = "../../../cuda-core" }

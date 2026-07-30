@@ -1995,6 +1995,7 @@ pub fn translate_operand(
                             elem_ty,
                             len,
                             is_mutable,
+                            0,
                             block_ptr,
                             prev_op,
                             loc.clone(),
@@ -2011,6 +2012,42 @@ pub fn translate_operand(
                             pointee_ty,
                             static_ty
                         ))
+                    );
+                }
+
+                if static_target.byte_offset != 0
+                    && let Some((elem_ty, remaining_len)) = interior_array_to_slice_unsize_info(
+                        &static_ty,
+                        &pointee_ty,
+                        static_target.byte_offset,
+                        loc.clone(),
+                    )?
+                {
+                    let len = slice_len_from_constant(constant, loc.clone())?;
+
+                    if len > remaining_len {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "constant slice over device static {} stores length {}, \
+                                 which exceeds the selected array region's remaining length {}",
+                                static_target.static_def.name(),
+                                len,
+                                remaining_len,
+                            ))
+                        );
+                    }
+
+                    return translate_static_array_as_slice(
+                        ctx,
+                        &static_target.static_def,
+                        elem_ty,
+                        len,
+                        is_mutable,
+                        static_target.byte_offset,
+                        block_ptr,
+                        prev_op,
+                        loc.clone(),
                     );
                 }
 
@@ -5047,15 +5084,21 @@ fn validate_ptr_to_array_constant_type(
     )
 }
 
-fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
+fn constant_allocation(constant: &mir::ConstOperand) -> Option<&rustc_public::ty::Allocation> {
     match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => alloc.provenance.ptrs.len(),
+        ConstantKind::Allocated(alloc) => Some(alloc),
         ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.provenance.ptrs.len(),
-            _ => 0,
+            rustc_public::ty::TyConstKind::Value(_, alloc) => Some(alloc),
+            _ => None,
         },
-        _ => 0,
+        _ => None,
     }
+}
+
+fn constant_pointer_relocation_count(constant: &mir::ConstOperand) -> usize {
+    constant_allocation(constant)
+        .map(|allocation| allocation.provenance.ptrs.len())
+        .unwrap_or(0)
 }
 
 /// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
@@ -5632,8 +5675,38 @@ fn translate_struct_constant(
     )
 }
 
-/// Translate a non-empty tuple constant, resolving thin-pointer relocations to
-/// device statics when present in the allocation.
+/// Byte image for a tuple constant, or `None` when a sized tuple has no
+/// backing allocation.
+///
+/// Undefined bytes in an allocation are padding; they are zeroed
+/// deterministically while the provenance map stays available separately for
+/// pointer-field reconstruction. `ConstantKind::ZeroSized`-style constants
+/// (e.g. `((), ())`) carry no allocation at all; a zero-byte layout is
+/// reproduced exactly by an empty image.
+fn tuple_constant_byte_image(
+    allocation: Option<&rustc_public::ty::Allocation>,
+    layout_size: usize,
+) -> Option<Vec<u8>> {
+    match allocation {
+        Some(allocation) => Some(
+            allocation
+                .bytes
+                .iter()
+                .map(|byte| byte.unwrap_or(0))
+                .collect(),
+        ),
+        None if layout_size == 0 => Some(Vec::new()),
+        None => None,
+    }
+}
+
+/// Translate a non-empty tuple constant from its own allocation image.
+///
+/// Unlike `constant_bytes`, this must not follow the first provenance entry:
+/// for a by-value tuple, that entry names one pointer field's target, while the
+/// allocation itself still contains the tuple's scalar fields and padding.
+/// Pointer fields consume their relocation entries through the
+/// allocation-aware decoder below.
 fn translate_tuple_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -5643,43 +5716,45 @@ fn translate_tuple_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let alloc = match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => alloc.clone(),
-        ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            rustc_public::ty::TyConstKind::Value(_, alloc) => alloc.clone(),
-            other => {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "Tuple constant must be backed by bytes, found TyConstKind::{other:?}"
-                    ))
-                );
-            }
-        },
-        ConstantKind::ZeroSized => {
-            return translate_tuple_constant_from_bytes(
-                ctx,
-                rust_ty,
-                const_ty_ptr,
-                &[],
-                block_ptr,
-                prev_op,
-                loc,
-            );
-        }
-        other => {
-            return input_err!(
-                loc,
+    let layout_size = rust_ty
+        .layout()
+        .map_err(|error| {
+            input_error!(
+                loc.clone(),
                 TranslationErr::unsupported(format!(
-                    "Tuple constant must be Allocated or Ty::Value, got {other:?}"
+                    "Failed to query layout for tuple constant: {error:?}"
                 ))
-            );
-        }
+            )
+        })?
+        .shape()
+        .size
+        .bytes();
+
+    let Some(allocation) = constant_allocation(constant) else {
+        let bytes = tuple_constant_byte_image(None, layout_size).ok_or_else(|| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Tuple constant of {layout_size} byte(s) must be backed by an allocation, \
+                     found {:?}",
+                    constant.const_.kind()
+                ))
+            )
+        })?;
+        return translate_tuple_constant_from_bytes(
+            ctx,
+            rust_ty,
+            const_ty_ptr,
+            &bytes,
+            block_ptr,
+            prev_op,
+            loc,
+        );
     };
 
     translate_tuple_constant_from_alloc(
         ctx,
-        &alloc,
+        allocation,
         0,
         rust_ty,
         const_ty_ptr,
@@ -7470,11 +7545,10 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
 
 /// Resolve a constant pointer/reference to the Rust static it points at, if any.
 ///
-/// The outer allocation also stores the pointer's byte addend. Keep it next to
-/// the target definition so an interior pointer can never silently degrade to
-/// the static's base address. Null pointers and pointers to anonymous memory
-/// allocations deliberately return `None`; they continue through normal
-/// constant handling.
+/// The source allocation stores the pointer's byte addend at the relocation
+/// offset, while the provenance entry identifies the target allocation. Keeping
+/// both pieces together prevents interior pointers from silently degrading to
+/// the static's base address. Anonymous allocations return `None`.
 struct StaticPointerTarget {
     static_def: rustc_public::mir::mono::StaticDef,
     byte_offset: u64,
@@ -7484,38 +7558,68 @@ fn static_target_from_constant(
     constant: &mir::ConstOperand,
     loc: Location,
 ) -> TranslationResult<Option<StaticPointerTarget>> {
-    use rustc_public::mir::alloc::GlobalAlloc;
-
-    let ConstantKind::Allocated(alloc) = constant.const_.kind() else {
+    let ConstantKind::Allocated(allocation) = constant.const_.kind() else {
         return Ok(None);
     };
-    if alloc.is_null().unwrap_or(false) {
+
+    if allocation.is_null().unwrap_or(false) {
         return Ok(None);
     }
 
-    let Some(&(provenance_offset, prov)) = alloc.provenance.ptrs.first() else {
+    let Some(&(relocation_offset, _)) = allocation.provenance.ptrs.first() else {
         return Ok(None);
     };
-    if alloc.provenance.ptrs.len() != 1 {
+
+    if allocation.provenance.ptrs.len() != 1 {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
                 "constant pointer contains {} provenance entries; expected one static target",
-                alloc.provenance.ptrs.len()
+                allocation.provenance.ptrs.len()
             ))
         );
     }
+    static_target_from_allocation_at(allocation, relocation_offset)
+}
+
+/// Resolve the pointer relocation beginning at `relocation_offset` to a static.
+///
+/// Unlike `static_target_from_constant`, this operates on an aggregate's own
+/// allocation and therefore does not require that the allocation contain only
+/// one relocation.
+fn static_target_from_allocation_at(
+    allocation: &rustc_public::ty::Allocation,
+    relocation_offset: usize,
+) -> TranslationResult<Option<StaticPointerTarget>> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let Some(&(provenance_offset, provenance)) = allocation
+        .provenance
+        .ptrs
+        .iter()
+        .find(|(offset, _)| *offset == relocation_offset)
+    else {
+        return Ok(None);
+    };
 
     let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
-    let byte_offset = alloc
-        .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
-        .map_err(|e| {
+    let pointer_end = provenance_offset
+        .checked_add(pointer_width)
+        .ok_or_else(|| {
             input_error_noloc!(TranslationErr::unsupported(format!(
-                "Failed to read constant static-pointer addend: {e:?}"
+                "constant static-pointer relocation at byte {provenance_offset} overflowed"
+            )))
+        })?;
+    let byte_offset = allocation
+        .read_partial_uint(provenance_offset..pointer_end)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read constant static-pointer addend at byte {provenance_offset}: \
+                 {error:?}"
             )))
         })? as u64;
 
-    match GlobalAlloc::from(prov.0) {
+    match GlobalAlloc::from(provenance.0) {
         GlobalAlloc::Static(static_def) => Ok(Some(StaticPointerTarget {
             static_def,
             byte_offset,
@@ -7759,6 +7863,91 @@ fn array_to_slice_unsize_info(
     }
 }
 
+/// Detect an interior array→slice unsize within a device static.
+///
+/// The walk is intentionally limited to arrays. At each nesting level, the
+/// byte addend selects one array element; when that array's element type
+/// matches the slice element type, the remaining element count is returned.
+/// This supports both an offset into a flat `[T; N]` and a slice over an array
+/// nested inside outer arrays, while keeping structs, tuples, enums, and other
+/// DST reinterpretations outside this lowering path.
+fn interior_array_to_slice_unsize_info(
+    static_ty: &rustc_public::ty::Ty,
+    pointee_ty: &rustc_public::ty::Ty,
+    byte_offset: u64,
+    loc: Location,
+) -> TranslationResult<Option<(rustc_public::ty::Ty, u64)>> {
+    use rustc_public::ty::{RigidTy, Ty, TyKind};
+
+    let TyKind::RigidTy(RigidTy::Slice(slice_elem)) = pointee_ty.kind() else {
+        return Ok(None);
+    };
+
+    fn find_region(
+        array_ty: Ty,
+        slice_elem: Ty,
+        byte_offset: u64,
+        loc: &Location,
+    ) -> TranslationResult<Option<u64>> {
+        let TyKind::RigidTy(RigidTy::Array(array_elem, len_const)) = array_ty.kind() else {
+            return Ok(None);
+        };
+
+        let len = len_const.eval_target_usize().map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to evaluate array length for interior static slice unsize: {error:?}"
+                ))
+            )
+        })?;
+        let elem_size = rust_type_layout_size(array_elem, loc.clone())? as u64;
+        let array_size = elem_size.checked_mul(len).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Array byte size overflowed while resolving an interior static slice: \
+                 {len} elements x {elem_size} bytes"
+            )))
+        })?;
+
+        if byte_offset > array_size {
+            return Ok(None);
+        }
+
+        if array_elem == slice_elem {
+            // A non-zero byte addend cannot distinguish positions between
+            // zero-sized elements. Keep that case outside this path rather
+            // than manufacturing an arbitrary element index.
+            if elem_size == 0 || !byte_offset.is_multiple_of(elem_size) {
+                return Ok(None);
+            }
+
+            let start = byte_offset / elem_size;
+            if start > len {
+                return Ok(None);
+            }
+            return Ok(Some(len - start));
+        }
+
+        // Descend only through the concrete outer element containing the
+        // addend. An offset one-past this array has no child array region to
+        // inspect, even though it may be valid for an empty slice at this
+        // array's own element type (handled by the matching arm above).
+        if elem_size == 0 || byte_offset >= array_size {
+            return Ok(None);
+        }
+
+        let element_index = byte_offset / elem_size;
+        if element_index >= len {
+            return Ok(None);
+        }
+
+        find_region(array_elem, slice_elem, byte_offset % elem_size, loc)
+    }
+
+    Ok(find_region(*static_ty, slice_elem, byte_offset, &loc)?
+        .map(|remaining_len| (slice_elem, remaining_len)))
+}
+
 /// Read the slice length from a fat-pointer constant's metadata word.
 ///
 /// A `&[T]` / `*const [T]` constant is a two-word image: the data word (which
@@ -7808,14 +7997,19 @@ fn slice_len_from_constant(constant: &mir::ConstOperand, loc: Location) -> Trans
     Ok(len)
 }
 
-/// Materialize `&STATIC_ARRAY` (or `*const STATIC_ARRAY`) as a fat `&[T]` /
-/// `*const [T]` by pairing the thin global pointer with the array length.
+/// Materialize a region of a device static as a fat `&[T]` / `*const [T]`.
+///
+/// A zero addend preserves the established whole-array path. A non-zero
+/// addend reuses the byte-addressed static-pointer lowering to produce the
+/// interior `*T` data pointer before pairing it with the length stored in the
+/// constant's metadata word.
 fn translate_static_array_as_slice(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
     elem_ty: rustc_public::ty::Ty,
     len: u64,
     is_mutable: bool,
+    byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -7823,36 +8017,54 @@ fn translate_static_array_as_slice(
     use dialect_mir::ops::MirConstructSliceOp;
     use dialect_mir::types::MirSliceType;
 
-    let static_ty = static_def.ty();
-    let array_mir_ty = types::translate_type(ctx, &static_ty)?;
     let elem_mir_ty = types::translate_type(ctx, &elem_ty)?;
 
-    // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
-    let thin_array_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
+    let (data_ptr, prev_after_data) = if byte_offset == 0 {
+        let static_ty = static_def.ty();
+        let array_mir_ty = types::translate_type(ctx, &static_ty)?;
 
-    let (array_ptr, prev_after_array) = translate_static_global_pointer(
-        ctx,
-        static_def,
-        array_mir_ty,
-        thin_array_ptr_ty,
-        is_mutable,
-        0,
-        block_ptr,
-        prev_op,
-        loc.clone(),
-    )?;
+        // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
+        let thin_array_ptr_ty: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
 
-    // Fat-pointer data slot is a generic `*T` / `*mut T`.
-    let (data_ptr, prev_after_data) = coerce_slice_data_pointee(
-        ctx,
-        array_ptr,
-        elem_mir_ty,
-        is_mutable,
-        block_ptr,
-        prev_after_array,
-        loc.clone(),
-    );
+        let (array_ptr, prev_after_array) = translate_static_global_pointer(
+            ctx,
+            static_def,
+            array_mir_ty,
+            thin_array_ptr_ty,
+            is_mutable,
+            0,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?;
+
+        // Fat-pointer data slot is a generic `*T` / `*mut T`.
+        coerce_slice_data_pointee(
+            ctx,
+            array_ptr,
+            elem_mir_ty,
+            is_mutable,
+            block_ptr,
+            prev_after_array,
+            loc.clone(),
+        )
+    } else {
+        let data_ptr_ty: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(ctx, elem_mir_ty, is_mutable).into();
+
+        translate_static_global_pointer(
+            ctx,
+            static_def,
+            elem_mir_ty,
+            data_ptr_ty,
+            is_mutable,
+            byte_offset,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?
+    };
 
     let usize_ty = types::get_usize_type(ctx);
     let len_attr = pliron::builtin::attributes::IntegerAttr::new(
@@ -9281,6 +9493,39 @@ mod enum_niche_decode_tests {
             decode_niche_variant_index(0, u8::MAX.into(), u8::MAX.into(), 3, 4, 1),
             4,
             "u8 carrier value 0 is one step after niche_start 255"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tuple_constant_byte_image_tests {
+    use super::tuple_constant_byte_image;
+    use rustc_public::mir::Mutability;
+    use rustc_public::ty::{Allocation, ProvenanceMap};
+
+    #[test]
+    fn zst_tuple_constant_without_allocation_is_an_empty_image() {
+        // `ConstantKind::ZeroSized`-style tuple constants such as `((), ())`
+        // carry no allocation; a zero-byte layout translates as empty bytes.
+        assert_eq!(tuple_constant_byte_image(None, 0), Some(Vec::new()));
+    }
+
+    #[test]
+    fn sized_tuple_constant_without_allocation_is_rejected() {
+        assert_eq!(tuple_constant_byte_image(None, 16), None);
+    }
+
+    #[test]
+    fn allocation_padding_bytes_are_zeroed_deterministically() {
+        let allocation = Allocation {
+            bytes: vec![Some(0xAB), None, None, Some(0xCD)],
+            provenance: ProvenanceMap { ptrs: Vec::new() },
+            align: 4,
+            mutability: Mutability::Not,
+        };
+        assert_eq!(
+            tuple_constant_byte_image(Some(&allocation), 4),
+            Some(vec![0xAB, 0, 0, 0xCD])
         );
     }
 }

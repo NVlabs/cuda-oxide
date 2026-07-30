@@ -1,5 +1,5 @@
 [package]
-name = "error_static_slice_addend"
+name = "static_slice_addend"
 version = "0.1.0"
 edition = "2024"
 authors = ["NVIDIA CORPORATION"]

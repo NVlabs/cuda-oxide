@@ -18,6 +18,24 @@
 //! The pointer fields are private. Safe code can obtain a view only through a
 //! checked slice constructor or a `DisjointSlice` method that consumes a
 //! thread-unique [`crate::thread::ThreadIndex32`].
+//!
+//! # Initialization
+//!
+//! The by-value readers ([`InBounds32::read`], [`InBoundsMut32::read`],
+//! [`RowView32::get`], [`ColView32::get`], [`RowViewIter32::next`],
+//! [`ColViewIter32::next`] and [`ZipView32::next`]) copy the element out of
+//! the underlying buffer, so every slot they touch must already be
+//! **initialized**. Reading a slot that was never written is undefined
+//! behavior for any element type: Rust treats even integers and floats read
+//! from uninitialized memory as invalid. Beyond being written at all, the
+//! slot must hold a valid value of the type, which zeroed memory does not
+//! guarantee for types with invalid bit patterns such as references or enums
+//! without a zero variant.
+//!
+//! In practice: buffers from `DeviceBuffer::zeroed` or
+//! `DeviceBuffer::from_host` arrive fully initialized, while one from
+//! `DeviceBuffer::uninitialized_async` must not be read until a kernel or
+//! copy has written it, exactly as that constructor's safety contract says.
 
 use crate::DisjointSlice;
 use crate::thread::{Index1D, ThreadCoord2D32, ThreadIndex32};
@@ -130,6 +148,9 @@ impl<'a, T> InBounds32<'a, T> {
     }
 
     /// Load a `Copy` value from the proven element.
+    ///
+    /// The element must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     pub fn read(&self) -> T
     where
@@ -175,6 +196,9 @@ impl<'a, T> InBoundsMut32<'a, T> {
     }
 
     /// Load a `Copy` value from the proven element.
+    ///
+    /// The element must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     pub fn read(&self) -> T
     where
@@ -645,6 +669,9 @@ impl<'a, T> RowView32<'a, T> {
     }
 
     /// Load element `i` with a single bounds compare.
+    ///
+    /// The element must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     pub fn get(&self, i: u32) -> Option<T>
     where
@@ -751,6 +778,9 @@ impl<'a, T> ColView32<'a, T> {
 
     /// Load element `i` (flat offset `i * stride`) with a single bounds
     /// compare.
+    ///
+    /// The element must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     pub fn get(&self, i: u32) -> Option<T>
     where
@@ -817,6 +847,8 @@ pub struct RowViewIter32<'a, T> {
 impl<'a, T: Copy> Iterator for RowViewIter32<'a, T> {
     type Item = T;
 
+    /// Every element yielded must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     fn next(&mut self) -> Option<T> {
         if self.next < self.len {
@@ -846,6 +878,8 @@ pub struct ColViewIter32<'a, T> {
 impl<'a, T: Copy> Iterator for ColViewIter32<'a, T> {
     type Item = T;
 
+    /// Every element yielded must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     fn next(&mut self) -> Option<T> {
         if self.next < self.len {
@@ -881,6 +915,8 @@ pub struct ZipView32<'a, T> {
 impl<'a, T: Copy> Iterator for ZipView32<'a, T> {
     type Item = (T, T);
 
+    /// Every element of both bands must already be initialized; see
+    /// [Initialization](self#initialization) in the module docs.
     #[inline(always)]
     fn next(&mut self) -> Option<(T, T)> {
         if self.next < self.len {
