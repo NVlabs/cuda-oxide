@@ -9312,6 +9312,186 @@ mod pointer_array_constant_type_tests {
 }
 
 #[cfg(test)]
+mod aggregate_relocation_tests {
+    use super::{
+        decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
+        provenance_starts_in_range, validate_array_value_element_type,
+    };
+    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::context::Context;
+    use pliron::location::Location;
+    use pliron::r#type::TypeHandle;
+    use rustc_public::target::Endian;
+
+    #[test]
+    fn relocation_matching_is_anchored_to_the_field_base() {
+        let ptrs = [(0usize, 1u32), (16, 2)];
+        assert_eq!(
+            match_thin_pointer_relocation(&ptrs, 16, 24),
+            Ok(Some(2)),
+            "the entry at the field base must be matched"
+        );
+        assert_eq!(
+            match_thin_pointer_relocation(&ptrs, 8, 16),
+            Ok(None),
+            "entries outside the field belong to sibling fields, not this one"
+        );
+    }
+
+    #[test]
+    fn relocation_matching_rejects_duplicate_entries_at_the_base() {
+        let ptrs = [(8usize, 1u32), (8, 2)];
+        let error = match_thin_pointer_relocation(&ptrs, 8, 16)
+            .expect_err("two provenance entries at one offset must fail closed");
+        assert!(
+            error.contains("2 provenance entries"),
+            "diagnostic must count the entries: {error}"
+        );
+    }
+
+    #[test]
+    fn relocation_matching_rejects_interior_provenance() {
+        let ptrs = [(12usize, 7u32)];
+        let error = match_thin_pointer_relocation(&ptrs, 8, 16)
+            .expect_err("provenance strictly inside a thin field is fat-pointer bits");
+        assert!(
+            error.contains("interior provenance at byte 12"),
+            "diagnostic must name the interior byte: {error}"
+        );
+    }
+
+    #[test]
+    fn relocation_addend_decodes_with_the_given_endianness() {
+        let mut bytes = vec![Some(0u8); 16];
+        bytes[8] = Some(0x28);
+        assert_eq!(
+            decode_relocation_addend(&bytes, 8, 8, Endian::Little),
+            Ok(0x28),
+            "little-endian addend must read the low byte first"
+        );
+        assert_eq!(
+            decode_relocation_addend(&bytes, 8, 8, Endian::Big),
+            Ok(0x28u128 << 56),
+            "big-endian addend must read the high byte first"
+        );
+    }
+
+    #[test]
+    fn relocation_addend_rejects_uninitialized_and_out_of_bounds_bytes() {
+        let mut bytes = vec![Some(0u8); 16];
+        bytes[10] = None;
+        let error = decode_relocation_addend(&bytes, 8, 8, Endian::Little)
+            .expect_err("addend bytes under a relocation are always initialized");
+        assert!(
+            error.contains("uninitialized"),
+            "diagnostic must name the failure: {error}"
+        );
+
+        let error = decode_relocation_addend(&bytes, 12, 8, Endian::Little)
+            .expect_err("an addend past the allocation end must fail closed");
+        assert!(
+            error.contains("needs 8 bytes"),
+            "diagnostic must name the missing width: {error}"
+        );
+    }
+
+    #[test]
+    fn non_pointer_fields_detect_overlapping_relocations() {
+        let ptrs = [(4usize, ())];
+        assert!(
+            provenance_starts_in_range(&ptrs, 4, 4),
+            "a relocation at the field base overlaps the field"
+        );
+        assert!(
+            provenance_starts_in_range(&ptrs, 0, 8),
+            "a relocation inside the field range overlaps the field"
+        );
+        assert!(
+            !provenance_starts_in_range(&ptrs, 8, 8),
+            "a relocation before the field does not start inside it"
+        );
+        assert!(
+            !provenance_starts_in_range(&ptrs, 4, 0),
+            "a zero-sized field cannot overlap any relocation"
+        );
+    }
+
+    #[test]
+    fn unconsumed_relocation_audit_flags_padding_only() {
+        let padding_relocation = [(12usize, ())];
+        assert_eq!(
+            find_unconsumed_relocation(&padding_relocation, 0, 16, &[(0, 8), (8, 4)]),
+            Some(12),
+            "a relocation in padding is consumed by no field and must be reported"
+        );
+        assert_eq!(
+            find_unconsumed_relocation(&padding_relocation, 0, 16, &[(0, 8), (8, 8)]),
+            None,
+            "a relocation covered by a field is that field's responsibility"
+        );
+        assert_eq!(
+            find_unconsumed_relocation(&padding_relocation, 16, 16, &[(16, 8)]),
+            None,
+            "relocations outside the aggregate's range belong to its siblings"
+        );
+        assert_eq!(
+            find_unconsumed_relocation(&padding_relocation, 0, 16, &[(0, 12), (12, 0)]),
+            Some(12),
+            "a zero-sized field consumes nothing"
+        );
+    }
+
+    #[test]
+    fn bare_array_elements_stay_on_the_documented_contract() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        assert!(
+            validate_array_value_element_type(&ctx, u32_ty, &Location::Unknown).is_ok(),
+            "primitive scalar elements remain supported"
+        );
+
+        let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty]).into();
+        assert!(
+            validate_array_value_element_type(&ctx, tuple_ty, &Location::Unknown).is_ok(),
+            "tuple elements remain supported"
+        );
+
+        let nested_array_ty: TypeHandle = MirArrayType::get(&mut ctx, u32_ty, 4).into();
+        assert!(
+            validate_array_value_element_type(&ctx, nested_array_ty, &Location::Unknown).is_ok(),
+            "nested array elements remain supported"
+        );
+
+        let struct_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "ArrayValueElement".into(),
+            vec!["value".into()],
+            vec![u32_ty],
+        )
+        .into();
+        assert!(
+            validate_array_value_element_type(&ctx, struct_ty, &Location::Unknown).is_err(),
+            "bare arrays of structs are documented as not materialized and must stay rejected"
+        );
+
+        let struct_array_ty: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 2).into();
+        assert!(
+            validate_array_value_element_type(&ctx, struct_array_ty, &Location::Unknown).is_err(),
+            "nesting must not hide an unsupported struct leaf"
+        );
+
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        assert!(
+            validate_array_value_element_type(&ctx, ptr_ty, &Location::Unknown).is_err(),
+            "direct pointer elements were never part of the bare array contract"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use dialect_mir::types::{MirPtrType, MirStructType};
