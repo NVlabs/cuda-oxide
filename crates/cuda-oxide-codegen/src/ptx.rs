@@ -510,8 +510,8 @@ fn generate_ptx_impl(
     // `__CUDA_FTZ` is left unset deliberately: nvcc defaults `-ftz=false`,
     // which 0 already matches.
     //
-    // Not every libdevice build branches division on `__CUDA_PREC_DIV`; the
-    // toolkit on this machine defines no such reflect name, so here the
+    // Not every libdevice build branches division on `__CUDA_PREC_DIV`;
+    // current libdevice builds define no such reflect name, so here the
     // argument matches no `__nvvm_reflect` call and has no effect. It stays
     // because `NVVMReflectPass` silently drops a name absent from the
     // module, emitting neither a warning nor a failure, and any libdevice
@@ -986,7 +986,7 @@ mod tests {
     /// nvcc defaults `-prec-sqrt=true`. Without the reflect arguments on `llc`,
     /// a `sqrt` kernel silently compiles to `sqrt.approx.f32`.
     #[test]
-    fn linked_libdevice_honours_nvcc_precision_defaults() {
+    fn linked_libdevice_honors_nvcc_precision_defaults() {
         let opts = BackendOptions {
             target_arch: Some("sm_80".to_string()),
             ..BackendOptions::default()

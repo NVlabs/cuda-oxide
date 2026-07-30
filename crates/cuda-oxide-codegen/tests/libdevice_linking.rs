@@ -296,7 +296,7 @@ fn libdevice_linking_resolves_a_frontend_declared_symbol() {
     );
     assert!(
         !text.contains(".extern .func __nv_"),
-        "the declared symbol was resolved, not left extern:\n{text}"
+        "the declared symbol resolved to a definition:\n{text}"
     );
     // erff is a polynomial evaluation in libdevice, so the linked body
     // arrives as real arithmetic rather than a single instruction.
@@ -340,8 +340,7 @@ fn libdevice_linking_rejects_a_symbol_libdevice_does_not_define() {
 
 /// Return the sole top-level block of `module`, creating it if the module is
 /// still empty. Mirrors `module_block` in `tests/compile_to_ptx.rs`; kept
-/// separate here rather than lifted out of `build_unary_call_kernel`, which
-/// stays as Task 6 left it.
+/// separate here rather than lifted out of `build_unary_call_kernel`.
 fn module_block(
     ctx: &mut Context,
     module: &pliron::builtin::ops::ModuleOp,
@@ -361,8 +360,8 @@ fn module_block(
 /// Insert a body-less LLVM-dialect function declaration named `name` into
 /// `module`. Mirrors `add_llvm_declaration` in `tests/compile_to_ptx.rs`.
 ///
-/// This is the only way to place a genuinely unresolved external symbol into
-/// a standalone-API module: MIR lowering self-declares a callee only when it
+/// This is the only way to place an unresolved external symbol into a
+/// standalone-API module: MIR lowering self-declares a callee only when it
 /// resolves to a `__nv_*` name, so a `mir.call` to any other bare symbol has
 /// no matching declaration and fails LLVM-dialect verification before the
 /// unresolved-symbol scan that `UnsupportedLinking` comes from ever runs.
