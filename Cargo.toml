@@ -49,9 +49,9 @@ repository = "https://github.com/NVlabs/cuda-oxide.git"
 # cuda-oxide consumes the dialect modeling only, not the FFI bridge.
 # `crates/rustc-codegen-cuda/Cargo.toml` MUST stay on this same rev, or pliron
 # resolves to two distinct crates and types stop unifying.
-pliron = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854" }
-pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854" }
-pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854", default-features = false, features = [
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "0d3f25df6d0e76b6c6f23d6e17172142b50c715c" }
+pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "0d3f25df6d0e76b6c6f23d6e17172142b50c715c" }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "0d3f25df6d0e76b6c6f23d6e17172142b50c715c", default-features = false, features = [
     "std",
 ] }
 
@@ -109,8 +109,3 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 [profile.dev.package.sha2]
 opt-level = 3
 
-# TEMPORARY (pliron PR 182/191 regression testing): use the local pliron clone.
-[patch."https://github.com/pliron-org/pliron"]
-pliron = { path = "/home/nihalp/dev/pliron" }
-pliron-derive = { path = "/home/nihalp/dev/pliron/pliron-derive" }
-pliron-llvm = { path = "/home/nihalp/dev/pliron/pliron-llvm" }
