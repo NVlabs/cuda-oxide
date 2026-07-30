@@ -49,6 +49,12 @@ non-zero byte addends into a static (see `struct_constant_provenance`,
 constants with relocations, and device-global *initializer* relocations
 remain rejected.
 
+Enum constants with direct thin-reference payloads preserve relocations to
+device statics, including non-zero byte addends. This includes niche-encoded
+`Option<&T>` and direct-tagged enum layouts. Anonymous promoted allocations and
+pointer relocations nested inside array, tuple, struct, or enum payload fields
+remain unsupported.
+
 ## Compiler: Closures
 
 | Feature | Status | Description |

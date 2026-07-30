@@ -54,8 +54,8 @@ LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test l
 LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05 tuple_constant_provenance)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05 tuple_constant_provenance)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 # Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
 NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
@@ -352,12 +352,6 @@ verdict_error() {
     # The generated-intrinsic fixtures protect fail-closed compiler contracts,
     # so merely observing an unrelated compile error is not enough.
     case "${ex}" in
-        error_enum_constant_provenance)
-            if ! grep -Fq 'Enum constant contains 1 pointer relocation(s); cuda-oxide cannot yet preserve enum pointer provenance' "${log}"; then
-                echo "FAIL (missing enum pointer-relocation diagnostic)"
-                return 1
-            fi
-            ;;
         error_enum_pointer_overlap)
             if ! grep -Fq 'overlapping pointer and non-identical storage' "${log}"; then
                 echo "FAIL (missing overlapping enum pointer-provenance diagnostic)"
