@@ -677,7 +677,15 @@ impl Compiler {
         (|| {
             let generated =
                 compile_translated_module(ctx, module, &request).map_err(CompileError::from)?;
-            debug_assert_eq!(generated.artifact_kind, ModuleArtifactKind::Ptx);
+            if generated.artifact_kind != ModuleArtifactKind::Ptx {
+                return Err(CompileError::Codegen {
+                    message: format!(
+                        "the standalone pipeline produced {:?} where PTX was required; \
+                         this path never emits NVVM IR",
+                        generated.artifact_kind
+                    ),
+                });
+            }
             let ptx = std::fs::read(&ptx_path).map_err(|source| CompileError::Io {
                 action: "read generated PTX",
                 path: ptx_path.clone(),
