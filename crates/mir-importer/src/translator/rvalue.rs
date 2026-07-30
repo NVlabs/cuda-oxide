@@ -7178,21 +7178,28 @@ fn translate_constant_value_from_allocation(
         None => Vec::new(),
     };
 
+    enum ValueKind {
+        Array,
+        Tuple,
+        Pointer,
+        Other,
+    }
+
     let value_kind = {
         let ty = ty_ptr.deref(ctx);
         if ty.is::<dialect_mir::types::MirArrayType>() {
-            0u8
+            ValueKind::Array
         } else if ty.is::<dialect_mir::types::MirTupleType>() {
-            1
+            ValueKind::Tuple
         } else if ty.is::<dialect_mir::types::MirPtrType>() {
-            2
+            ValueKind::Pointer
         } else {
-            3
+            ValueKind::Other
         }
     };
 
     match value_kind {
-        0 => {
+        ValueKind::Array => {
             return build_array_op_from_allocation(
                 ctx,
                 ty_ptr,
@@ -7205,7 +7212,7 @@ fn translate_constant_value_from_allocation(
                 loc,
             );
         }
-        1 => {
+        ValueKind::Tuple => {
             return translate_tuple_constant_from_allocation(
                 ctx,
                 rust_ty,
@@ -7218,7 +7225,7 @@ fn translate_constant_value_from_allocation(
                 loc,
             );
         }
-        2 => {
+        ValueKind::Pointer => {
             if relocations.len() > 1 {
                 return input_err!(
                     loc,
@@ -7267,7 +7274,7 @@ fn translate_constant_value_from_allocation(
                 );
             }
         }
-        _ => {}
+        ValueKind::Other => {}
     }
 
     if !relocations.is_empty() {
