@@ -102,6 +102,20 @@ require_shape \
     "padded tuple-array enum value in LLVM slot 2" \
     'insertvalue \{ i1, \[3 x i8\], \{ i32 \} \} .* \{ i32 \} .* 2'
 
+pointer_tuple_symbol='array_constants__kernels__pointer_tuple_array_value'
+
+# Device globals use backend-generated internal symbols, so source-level static
+# names are not stable in LLVM IR. Runtime coverage checks the zero-addend
+# whole-static case. This assertion pins the non-zero interior-static
+# projection and ensures provenance is not reconstructed from placeholder bytes.
+require_symbol_shape "${llvm_ir}" llvm "${pointer_tuple_symbol}" \
+    "eight-byte device-static subobject projection" \
+    'getelementptr( inbounds)? i8,.*i64 8([^0-9]|$)'
+
+reject_symbol_shape "${llvm_ir}" llvm "${pointer_tuple_symbol}" \
+    "placeholder-byte inttoptr reconstruction" \
+    'inttoptr'
+
 # A non-empty tuple made entirely of ZST fields must still be decoded by the
 # tuple path. Its stripped LLVM representation leaves the outer u32 intact.
 require_shape \

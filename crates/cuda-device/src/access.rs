@@ -61,6 +61,21 @@
 //! A plan therefore describes the shape a width *needs*, not a width the kernel
 //! is guaranteed to get - the data has to move as whole elements as well.
 //! See the `vectorization` example for the alignment half.
+//!
+//! # Coalescing is the same kind of claim
+//!
+//! [`lines_touched`] and friends answer the global-memory question that
+//! [`crate::swizzle::conflict_degree`] answers for shared memory: how many
+//! hardware transactions a static access pattern costs. They carry the identical
+//! caveat, and it is worth stating rather than implying.
+//!
+//! **These are necessary-condition checkers.** They bound what the *layout*
+//! permits; they cannot report what codegen delivers. This module already
+//! contains the proof: it reports `TXN_128` for a tile shape whose measured SASS
+//! is four scalar `LDG.E`, because SROA splits any decomposed value. Likewise
+//! `wasted_lines == 0` proves the pattern does not forbid a coalesced access; it
+//! never proves one happened. A green assertion that is read as a guarantee is
+//! worse than no assertion.
 
 /// One 32-bit transaction (`LDG.E` / `STG.E`).
 pub const TXN_32: usize = 4;
@@ -218,6 +233,158 @@ pub const fn widest<T>(tile_elems: usize, threads: usize) -> Option<AccessPlan> 
     None
 }
 
+/// Bytes in one L1/L2 cache line. A warp's global accesses are serviced in
+/// whole lines, so the count of distinct lines touched -- not the bytes
+/// requested -- is what the memory system pays for.
+pub const LINE_BYTES: usize = 128;
+
+/// Bytes in one L2 sector. A line is four sectors, and a partially-used line
+/// still costs whole sectors, so sector counting is the finer-grained metric.
+pub const SECTOR_BYTES: usize = 32;
+
+/// Distinct cache lines a warp's accesses touch.
+///
+/// The global-memory counterpart of [`swizzle::conflict_degree`], and takes the
+/// same shape: element offsets per lane plus the element size. Lane `i` reads
+/// `elem_size` bytes at element `offsets[i]`, so its byte span is
+/// `offsets[i] * elem_size .. + elem_size`, and a lane whose span crosses a line
+/// boundary is counted against both lines.
+///
+/// [`swizzle::conflict_degree`]: crate::swizzle::conflict_degree
+///
+/// # Base alignment
+///
+/// Line indices are computed from byte offset 0, so element offset 0 is assumed
+/// to sit at the start of a 128-byte cache line. That holds for allocation
+/// bases -- device allocations are at least 256-byte aligned -- but not for an
+/// arbitrary sub-slice base, which can start mid-line and straddle one more
+/// line than reported.
+///
+/// # Interpretation
+///
+/// Compare against [`minimum_lines`]. Equality means the pattern is as coalesced
+/// as the requested bytes allow; any excess is lines fetched and partly discarded.
+///
+/// Returns 0 when `elem_size` is 0 -- a zero-sized element touches no memory.
+///
+/// # Example
+///
+/// ```rust
+/// use cuda_device::access::{lines_touched, minimum_lines, LINE_BYTES};
+///
+/// // Each lane takes 4 contiguous f32, i.e. one 16-byte access per lane, and
+/// // lane `i` starts where lane `i - 1` ended: element offsets 0, 1, 2, ...
+/// let mut contiguous = [0usize; 32];
+/// let mut lane = 0;
+/// while lane < 32 {
+///     contiguous[lane] = lane;
+///     lane += 1;
+/// }
+/// // 32 lanes x 16 bytes = 512 contiguous bytes = exactly 4 lines, the floor.
+/// assert_eq!(lines_touched(&contiguous, 16), 4);
+/// assert_eq!(minimum_lines(32 * 16), 4);
+/// assert_eq!(LINE_BYTES, 128);
+/// ```
+#[must_use]
+pub const fn lines_touched(
+    offsets: &[usize; crate::swizzle::WARP_LANES],
+    elem_size: usize,
+) -> usize {
+    if elem_size == 0 {
+        return 0;
+    }
+    let lanes = crate::swizzle::WARP_LANES;
+    let mut count = 0;
+    let mut lane = 0;
+    while lane < lanes {
+        let (first, last) = line_span(offsets[lane], elem_size);
+        let mut line = first;
+        while line <= last {
+            // A line is new unless some earlier lane already spanned it. Lines
+            // within one lane's own span are distinct by construction, so only
+            // earlier lanes need checking -- which keeps this O(lanes^2) with no
+            // scratch buffer, and therefore `const`-evaluable.
+            let mut seen = false;
+            let mut earlier = 0;
+            while earlier < lane {
+                let (f, l) = line_span(offsets[earlier], elem_size);
+                if f <= line && line <= l {
+                    seen = true;
+                }
+                earlier += 1;
+            }
+            if !seen {
+                count += 1;
+            }
+            if line == usize::MAX {
+                break;
+            }
+            line += 1;
+        }
+        lane += 1;
+    }
+    count
+}
+
+/// First and last line index a lane's access spans, saturating rather than
+/// wrapping so a pathological offset cannot fold back onto a low line.
+const fn line_span(elem_offset: usize, elem_size: usize) -> (usize, usize) {
+    let start = elem_offset.saturating_mul(elem_size);
+    let end = start.saturating_add(elem_size - 1);
+    (start / LINE_BYTES, end / LINE_BYTES)
+}
+
+/// Fewest lines that could service `total_bytes`, i.e. the floor
+/// [`lines_touched`] is measured against.
+///
+/// This is the count for a perfectly contiguous, line-aligned access. A real
+/// pattern can equal it but never beat it.
+#[must_use]
+pub const fn minimum_lines(total_bytes: usize) -> usize {
+    total_bytes.div_ceil(LINE_BYTES)
+}
+
+/// Lines fetched beyond the minimum -- bandwidth requested and discarded.
+///
+/// Zero means fully coalesced.
+#[must_use]
+pub const fn wasted_lines(
+    offsets: &[usize; crate::swizzle::WARP_LANES],
+    elem_size: usize,
+) -> usize {
+    let touched = lines_touched(offsets, elem_size);
+    let floor = minimum_lines(crate::swizzle::WARP_LANES.saturating_mul(elem_size));
+    touched.saturating_sub(floor)
+}
+
+/// Whether the warp touches no more lines than the requested bytes require.
+///
+/// Suitable for a `const {}` assertion, which turns a layout that cannot
+/// coalesce into a build error:
+///
+/// ```rust
+/// use cuda_device::access::is_fully_coalesced;
+///
+/// const LANES: usize = 32;
+/// const CONTIGUOUS: [usize; LANES] = {
+///     let mut o = [0usize; LANES];
+///     let mut i = 0;
+///     while i < LANES {
+///         o[i] = i;
+///         i += 1;
+///     }
+///     o
+/// };
+/// const _: () = assert!(is_fully_coalesced(&CONTIGUOUS, 4));
+/// ```
+#[must_use]
+pub const fn is_fully_coalesced(
+    offsets: &[usize; crate::swizzle::WARP_LANES],
+    elem_size: usize,
+) -> bool {
+    wasted_lines(offsets, elem_size) == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +503,106 @@ mod tests {
         const _: () = assert!(MIN_M == 16);
         assert_eq!(P.elems_per_block, 1024);
         assert_eq!(MIN_M, 16);
+    }
+
+    const fn ramp(step: usize) -> [usize; crate::swizzle::WARP_LANES] {
+        let mut o = [0usize; crate::swizzle::WARP_LANES];
+        let mut i = 0;
+        while i < crate::swizzle::WARP_LANES {
+            o[i] = i * step;
+            i += 1;
+        }
+        o
+    }
+
+    /// The measured case this was built for: each lane takes 4 contiguous f32,
+    /// i.e. one 16-byte access per lane laid end to end, so a warp covers 512
+    /// contiguous bytes -- exactly 4 lines, the floor.
+    #[test]
+    fn a_contiguous_vector_access_is_minimal() {
+        let offsets = ramp(1);
+        assert_eq!(lines_touched(&offsets, 16), 4);
+        assert_eq!(minimum_lines(crate::swizzle::WARP_LANES * 16), 4);
+        assert_eq!(wasted_lines(&offsets, 16), 0);
+        assert!(is_fully_coalesced(&offsets, 16));
+    }
+
+    /// The distinction that makes the metric worth having. Striding by 4 elements
+    /// while reading only one of them requests the same 128 bytes as a
+    /// contiguous single-element access, but spreads them over 4 lines -- so 3
+    /// lines are fetched and discarded. `AccessPlan` cannot see this: the tile
+    /// shape is identical either way.
+    #[test]
+    fn a_strided_scalar_access_wastes_lines() {
+        let offsets = ramp(4);
+        assert_eq!(lines_touched(&offsets, 4), 4);
+        assert_eq!(minimum_lines(crate::swizzle::WARP_LANES * 4), 1);
+        assert_eq!(wasted_lines(&offsets, 4), 3);
+        assert!(!is_fully_coalesced(&offsets, 4));
+    }
+
+    /// One f32 per lane: 128 contiguous bytes, one line.
+    #[test]
+    fn one_element_per_lane_is_a_single_line() {
+        let offsets = ramp(1);
+        assert_eq!(lines_touched(&offsets, 4), 1);
+        assert!(is_fully_coalesced(&offsets, 4));
+    }
+
+    /// A stride that puts every lane on its own line is the worst case: 32 lines
+    /// fetched to deliver 128 bytes, so 31 are wasted.
+    #[test]
+    fn a_line_sized_stride_wastes_every_line_but_one() {
+        let offsets = ramp(LINE_BYTES / 4); // 32 f32 apart = 128 B apart
+        assert_eq!(lines_touched(&offsets, 4), 32);
+        assert_eq!(minimum_lines(crate::swizzle::WARP_LANES * 4), 1);
+        assert_eq!(wasted_lines(&offsets, 4), 31);
+        assert!(!is_fully_coalesced(&offsets, 4));
+    }
+
+    /// Every lane at the same offset is a broadcast: one line, and the floor for
+    /// 32 lanes of f32 is also one, so it counts as coalesced.
+    #[test]
+    fn a_broadcast_touches_one_line() {
+        let offsets = [7usize; crate::swizzle::WARP_LANES];
+        assert_eq!(lines_touched(&offsets, 4), 1);
+        assert!(is_fully_coalesced(&offsets, 4));
+    }
+
+    /// A 16-byte element straddling a line boundary is charged to both lines.
+    #[test]
+    fn an_access_crossing_a_boundary_counts_both_lines() {
+        // A 16-byte element at element offset 7 occupies bytes 112..=127, which
+        // ends exactly on the line edge -- one line.
+        let aligned = [7usize; crate::swizzle::WARP_LANES];
+        assert_eq!(lines_touched(&aligned, 16), 1, "112..128 stays in line 0");
+
+        // A 12-byte element at element offset 10 occupies 120..=131, so it is
+        // charged to both lines. Element units cannot express a 1-byte shift,
+        // hence the odd element size.
+        let straddle = [10usize; crate::swizzle::WARP_LANES];
+        assert_eq!(
+            lines_touched(&straddle, 12),
+            2,
+            "120..132 spans lines 0 and 1"
+        );
+    }
+
+    /// A zero-sized element touches no memory.
+    #[test]
+    fn zero_sized_elements_touch_nothing() {
+        let offsets = ramp(1);
+        assert_eq!(lines_touched(&offsets, 0), 0);
+    }
+
+    /// The whole point is `const` evaluation, so prove it happens.
+    #[test]
+    fn the_metrics_are_const_evaluable() {
+        const OFFSETS: [usize; crate::swizzle::WARP_LANES] = ramp(1);
+        const TOUCHED: usize = lines_touched(&OFFSETS, 16);
+        const WASTED: usize = wasted_lines(&OFFSETS, 16);
+        const _: () = assert!(is_fully_coalesced(&OFFSETS, 16));
+        assert_eq!(TOUCHED, 4);
+        assert_eq!(WASTED, 0);
     }
 }

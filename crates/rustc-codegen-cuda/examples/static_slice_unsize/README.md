@@ -22,8 +22,8 @@ const TABLE_HEAD: &[f32] = {
 };
 ```
 
-Interior addends such as `&TABLE[2] as &[f32]` remain unsupported
-(`error_static_slice_addend`).
+Interior addends are covered by `static_slice_addend`, which verifies that both
+the interior data-pointer offset and the stored slice length are preserved.
 
 ```bash
 cargo oxide run static_slice_unsize

@@ -14,7 +14,9 @@
 //! - tuple arrays whose fields rustc reorders in memory,
 //! - tuple arrays containing an over-aligned zero-sized field,
 //! - direct padded tuple constants,
-//! - pointer-to-array constants (`&[T; N]`), which predate bare-array support.
+//! - pointer-to-array constants (`&[T; N]`), which predate bare-array support,
+//! - tuple arrays containing pointers to device statics,
+//! - tuple-array pointer relocations with non-zero static addends.
 //!
 //! Run with:
 //!   cargo oxide run array_constants
@@ -37,6 +39,7 @@ const TUPLE_TABLE: [(bool, Side); 6] = [
 ];
 const NESTED_TUPLE_TABLE: [((u8, ()), u32); 2] = [((3, ()), 17), ((5, ()), 29)];
 const ALL_ZST_TUPLE_TABLE: [(((), ()), u32); 2] = [(((), ()), 59), (((), ()), 61)];
+
 // rustc lays these fields out at offsets 4, 0, and 8 respectively on the
 // supported 64-bit target. Reading the allocation in declaration order would
 // therefore corrupt both of the first two values.
@@ -44,12 +47,19 @@ const REORDERED_TUPLE_TABLE: [(u8, u32, u64); 2] = [
     (0xa5, 0x1122_3344, 0x0102_0304_0506_0708),
     (0x5a, 0x99aa_bbcc, 0x8877_6655_4433_2211),
 ];
+
 #[derive(Clone, Copy)]
 #[repr(align(32))]
 struct Align32;
 
 const OVERALIGNED_ZST_TUPLE_TABLE: [(Align32, u8); 2] = [(Align32, 0x12), (Align32, 0x34)];
 const DIRECT_TUPLE: (u8, u32) = (7, 41);
+
+static FIRST_POINTER_VALUE: u32 = 11;
+static POINTER_VALUES: [u32; 3] = [11, 17, 23];
+
+const POINTER_TUPLE_TABLE: [(&u32, bool); 2] =
+    [(&FIRST_POINTER_VALUE, false), (&POINTER_VALUES[2], true)];
 
 #[derive(Clone, Copy)]
 #[repr(u32)]
@@ -126,6 +136,12 @@ mod kernels {
         DIRECT_TUPLE
     }
 
+    #[inline(never)]
+    fn pointer_tuple_array_value(i: usize) -> u32 {
+        let (pointer, flag) = POINTER_TUPLE_TABLE[i & 1];
+        *pointer + flag as u32
+    }
+
     #[kernel]
     pub fn check_array_constants(mut out_f32: DisjointSlice<f32>, mut out_u32: DisjointSlice<u32>) {
         let tid = thread::index_1d();
@@ -139,6 +155,7 @@ mod kernels {
         if let Some(slot) = out_u32.get_mut(tid_u32) {
             let nested = nested_array_value(i);
             let pointer = pointer_to_array_value(i);
+            let pointer_tuple = pointer_tuple_array_value(i);
             let tuple = tuple_array_value(i);
             let nested_tuple = nested_tuple_array_value(i);
             let (direct_tag, direct_value) = direct_tuple_value();
@@ -146,9 +163,12 @@ mod kernels {
             let all_zst = all_zst_tuple_array_value(i);
             let reordered = reordered_tuple_array_value(i);
             let overaligned_zst = overaligned_zst_tuple_array_value(i);
+
             *slot = nested
                 .wrapping_mul(257)
                 .wrapping_add(pointer)
+                .wrapping_mul(257)
+                .wrapping_add(pointer_tuple)
                 .wrapping_mul(257)
                 .wrapping_add(tuple)
                 .wrapping_mul(257)
@@ -174,13 +194,21 @@ fn expected_u32(i: usize) -> u32 {
     let col = (i / 2) % 3;
     let nested = NESTED_TABLE[row][col];
     let pointer = POINTER_TABLE[i & 3];
+
+    let (pointer_ref, pointer_flag) = POINTER_TUPLE_TABLE[i & 1];
+    let pointer_tuple = *pointer_ref + pointer_flag as u32;
+
     let (is_high, side) = TUPLE_TABLE[i % 6];
     let tuple = (side as u32) * 10 + (is_high as u32);
+
     let ((tag, ()), value) = NESTED_TUPLE_TABLE[i & 1];
     let nested_tuple = tag as u32 + value;
+
     let (direct_tag, direct_value) = DIRECT_TUPLE;
     let direct = direct_tag as u32 + direct_value;
+
     let (((), ()), all_zst) = ALL_ZST_TUPLE_TABLE[i & 1];
+
     let (byte, word, wide) = REORDERED_TUPLE_TABLE[i & 1];
     let reordered = (byte as u32)
         .wrapping_mul(257)
@@ -189,10 +217,14 @@ fn expected_u32(i: usize) -> u32 {
         .wrapping_add(wide as u32)
         .wrapping_mul(257)
         .wrapping_add((wide >> 32) as u32);
+
     let (_, overaligned_zst) = OVERALIGNED_ZST_TUPLE_TABLE[i & 1];
+
     nested
         .wrapping_mul(257)
         .wrapping_add(pointer)
+        .wrapping_mul(257)
+        .wrapping_add(pointer_tuple)
         .wrapping_mul(257)
         .wrapping_add(tuple)
         .wrapping_mul(257)
@@ -255,7 +287,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, pointer-to-array constants)"
+            "array_constants: PASS ({N} threads; primitive, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, pointer-to-array, and tuple-array static-pointer constants)"
         );
         Ok(())
     } else {
