@@ -7875,6 +7875,97 @@ fn translate_static_array_as_slice(
     Ok((construct.deref(ctx).get_result(0), Some(construct)))
 }
 
+/// Match the provenance entries of a thin-pointer field spanning
+/// `pointer_offset..field_end`.
+///
+/// Returns the payload of the single relocation anchored at the field's base
+/// offset, or `None` when no entry starts inside the field (null or exposed
+/// provenance bytes). More than one entry anchored at the base, or an entry
+/// starting strictly inside the field (fat or multi-word pointer bits), is a
+/// hard error. Generic over the payload so the matching rules are unit
+/// testable without a rustc session (`Prov` wraps an unconstructible
+/// `AllocId`).
+fn match_thin_pointer_relocation<P: Copy>(
+    ptrs: &[(usize, P)],
+    pointer_offset: usize,
+    field_end: usize,
+) -> Result<Option<P>, String> {
+    let matches: Vec<P> = ptrs
+        .iter()
+        .filter(|(pos, _)| *pos == pointer_offset)
+        .map(|&(_, prov)| prov)
+        .collect();
+    if matches.len() > 1 {
+        return Err(format!(
+            "Thin pointer field at offset {pointer_offset} has {} provenance entries; \
+             expected at most one",
+            matches.len()
+        ));
+    }
+
+    // A fat pointer spans two pointer-sized words; reject any additional
+    // provenance that lands inside this thin field's byte range.
+    if let Some(&(interior_pos, _)) = ptrs
+        .iter()
+        .find(|(pos, _)| *pos > pointer_offset && *pos < field_end)
+    {
+        return Err(format!(
+            "Pointer field at offset {pointer_offset} has interior provenance at byte \
+             {interior_pos}; fat or multi-word pointer provenance in aggregate constants \
+             is not supported"
+        ));
+    }
+
+    Ok(matches.first().copied())
+}
+
+/// Decode the byte addend stored under a thin-pointer relocation at
+/// `pointer_offset..pointer_offset + ptr_width`.
+///
+/// The bytes under a relocation encode the offset into the target allocation
+/// and are always initialized by rustc, so an uninitialized byte is a hard
+/// error rather than a zero. Endianness is a parameter so the decoding is
+/// unit testable without a rustc session.
+fn decode_relocation_addend(
+    bytes: &[Option<u8>],
+    pointer_offset: usize,
+    ptr_width: usize,
+    endianness: rustc_public::target::Endian,
+) -> Result<u128, String> {
+    if ptr_width > 16 {
+        return Err(format!(
+            "relocation addend width {ptr_width} exceeds the 16-byte decode limit"
+        ));
+    }
+    let field_end = pointer_offset
+        .checked_add(ptr_width)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| {
+            format!(
+                "relocation addend at offset {pointer_offset} needs {ptr_width} bytes, \
+                 but the allocation holds {}",
+                bytes.len()
+            )
+        })?;
+    let raw = bytes[pointer_offset..field_end]
+        .iter()
+        .copied()
+        .collect::<Option<Vec<u8>>>()
+        .ok_or_else(|| {
+            format!("relocation addend at offset {pointer_offset} contains uninitialized bytes")
+        })?;
+    Ok(match endianness {
+        rustc_public::target::Endian::Little => {
+            raw.iter().enumerate().fold(0u128, |acc, (idx, byte)| {
+                acc | ((*byte as u128) << (idx * 8))
+            })
+        }
+        rustc_public::target::Endian::Big => raw
+            .iter()
+            .fold(0u128, |acc, byte| (acc << 8) | (*byte as u128)),
+    })
+}
+
 /// Materialize a thin pointer field from an aggregate constant's allocation.
 ///
 /// Aggregate **const** values with thin pointers to device statics are
@@ -7916,53 +8007,25 @@ fn translate_thin_pointer_at_alloc_offset(
         );
     }
 
-    let matches: Vec<_> = alloc
-        .provenance
-        .ptrs
-        .iter()
-        .filter(|(pos, _)| *pos == pointer_offset)
-        .collect();
-    if matches.len() > 1 {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Thin pointer field at offset {pointer_offset} has {} provenance entries; \
-                 expected at most one",
-                matches.len()
-            ))
-        );
-    }
+    let relocation =
+        match_thin_pointer_relocation(&alloc.provenance.ptrs, pointer_offset, field_end)
+            .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
 
-    // A fat pointer spans two pointer-sized words; reject any additional
-    // provenance that lands inside this thin field's byte range.
-    let overlapping: Vec<_> = alloc
-        .provenance
-        .ptrs
-        .iter()
-        .filter(|(pos, _)| *pos > pointer_offset && *pos < field_end)
-        .collect();
-    if !overlapping.is_empty() {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Pointer field at offset {pointer_offset} has interior provenance at byte {}; \
-                 fat or multi-word pointer provenance in aggregate constants is not supported",
-                overlapping[0].0
-            ))
-        );
-    }
-
-    if let Some(&(_, prov)) = matches.first() {
-        let addend = alloc
-            .read_partial_uint(pointer_offset..pointer_offset + ptr_width)
-            .map_err(|e| {
-                input_error!(
-                    loc.clone(),
-                    TranslationErr::unsupported(format!(
-                        "Failed to read thin-pointer addend at offset {pointer_offset}: {e:?}"
-                    ))
-                )
-            })? as u64;
+    if let Some(prov) = relocation {
+        let addend = decode_relocation_addend(
+            &alloc.bytes,
+            pointer_offset,
+            ptr_width,
+            rustc_public::target::MachineInfo::target_endianness(),
+        )
+        .map_err(|message| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to read thin-pointer addend at offset {pointer_offset}: {message}"
+                ))
+            )
+        })? as u64;
 
         let (pointee_ty, is_mutable) = {
             let ty_ref = result_ptr_ty.deref(ctx);
@@ -8085,17 +8148,93 @@ fn alloc_slice_bytes_zeroing_uninit(
         .collect())
 }
 
+/// Whether any provenance entry starts inside `offset..offset + size`.
+/// Generic over the payload so the predicate is unit testable without a
+/// rustc session.
+fn provenance_starts_in_range<P>(ptrs: &[(usize, P)], offset: usize, size: usize) -> bool {
+    let end = offset.saturating_add(size);
+    ptrs.iter().any(|(pos, _)| *pos >= offset && *pos < end)
+}
+
 fn alloc_has_provenance_in_range(
     alloc: &rustc_public::ty::Allocation,
     offset: usize,
     size: usize,
 ) -> bool {
-    let end = offset.saturating_add(size);
-    alloc
-        .provenance
-        .ptrs
-        .iter()
-        .any(|(pos, _)| *pos >= offset && *pos < end)
+    provenance_starts_in_range(&alloc.provenance.ptrs, offset, size)
+}
+
+/// Return the start offset of the first provenance entry that lies inside
+/// the aggregate's byte range but inside none of its fields.
+///
+/// Field translation consumes (thin pointer) or rejects (every other kind)
+/// the relocations under the bytes it decodes, so a survivor here sits in
+/// padding: no field would ever consume it, and dropping it would silently
+/// strip a pointer from the constant. Generic over the payload so the audit
+/// is unit testable without a rustc session.
+fn find_unconsumed_relocation<P>(
+    ptrs: &[(usize, P)],
+    aggregate_start: usize,
+    aggregate_size: usize,
+    field_ranges: &[(usize, usize)],
+) -> Option<usize> {
+    let aggregate_end = aggregate_start.saturating_add(aggregate_size);
+    ptrs.iter().map(|(pos, _)| *pos).find(|&pos| {
+        pos >= aggregate_start
+            && pos < aggregate_end
+            && !field_ranges
+                .iter()
+                .any(|&(start, size)| pos >= start && pos < start.saturating_add(size))
+    })
+}
+
+/// Fail-closed audit run after all of an aggregate's fields have been
+/// translated: any relocation inside the aggregate's byte range that no
+/// field consumed is a hard error.
+fn audit_aggregate_relocations(
+    alloc: &rustc_public::ty::Allocation,
+    aggregate_start: usize,
+    aggregate_size: usize,
+    field_ranges: &[(usize, usize)],
+    what: &str,
+    loc: &Location,
+) -> TranslationResult<()> {
+    if let Some(pos) = find_unconsumed_relocation(
+        &alloc.provenance.ptrs,
+        aggregate_start,
+        aggregate_size,
+        field_ranges,
+    ) {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{what} constant has a pointer relocation at byte {pos} that no field \
+                 consumes; provenance in padding bytes cannot be preserved"
+            ))
+        );
+    }
+    Ok(())
+}
+
+/// Byte width of a constant field: rustc layout when available, the dialect
+/// type's storage size as a fallback. Shared by the scalar decode path and
+/// the per-aggregate relocation audit so both see the same field extents.
+fn constant_field_byte_size(
+    ctx: &Context,
+    rust_ty: &rustc_public::ty::Ty,
+    ty_ptr: TypeHandle,
+    loc: &Location,
+) -> TranslationResult<usize> {
+    rust_type_layout_size(*rust_ty, loc.clone()).or_else(|_| {
+        constant_storage_size(ctx, ty_ptr).ok_or_else(|| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Cannot determine storage size for constant field of type {rust_ty:?}"
+                ))
+            )
+        })
+    })
 }
 
 /// Decode one typed value from an allocation at an absolute byte offset,
@@ -8208,16 +8347,20 @@ fn translate_constant_value_from_alloc(
         }
     }
 
-    let size = rust_type_layout_size(*rust_ty, loc.clone()).or_else(|_| {
-        constant_storage_size(ctx, ty_ptr).ok_or_else(|| {
-            input_error!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "Cannot determine storage size for constant field of type {rust_ty:?}"
-                ))
-            )
-        })
-    })?;
+    let size = constant_field_byte_size(ctx, rust_ty, ty_ptr, &loc)?;
+    // Fail closed: the bytes under a relocation are an addend into the target
+    // allocation, not literal data. Decoding them as a non-pointer value
+    // would silently strip the pointer they represent.
+    if alloc_has_provenance_in_range(alloc, absolute_byte_offset, size) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Constant field of type {rust_ty:?} at byte offset {absolute_byte_offset} \
+                 overlaps a pointer relocation; only thin pointer fields can carry \
+                 provenance in aggregate constants"
+            ))
+        );
+    }
     // ZSTs: layout size 0.
     if size == 0 || types::is_zst_type(ctx, ty_ptr) {
         // Still need Rust ADT metadata for empty aggregates.
@@ -8308,6 +8451,7 @@ fn translate_tuple_constant_from_alloc(
     }
 
     let mut values = Vec::with_capacity(field_types.len());
+    let mut field_ranges = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
     for (field_idx, (field_ty, rust_field_ty)) in field_types
         .iter()
@@ -8325,6 +8469,8 @@ fn translate_tuple_constant_from_alloc(
                     ))
                 )
             })?;
+        let field_size = constant_field_byte_size(ctx, rust_field_ty, field_ty, &loc)?;
+        field_ranges.push((abs, field_size));
         let (value, new_prev_op) = translate_constant_value_from_alloc(
             ctx,
             alloc,
@@ -8338,6 +8484,9 @@ fn translate_tuple_constant_from_alloc(
         values.push(value);
         current_prev_op = new_prev_op;
     }
+
+    let tuple_size = rust_type_layout_size(*rust_ty, loc.clone())?;
+    audit_aggregate_relocations(alloc, base_offset, tuple_size, &field_ranges, "Tuple", &loc)?;
 
     use dialect_mir::ops::MirConstructTupleOp;
     let op = Operation::new(
@@ -8412,6 +8561,7 @@ fn translate_struct_constant_from_alloc(
     })?;
 
     let mut field_values = Vec::with_capacity(field_types.len());
+    let mut field_ranges = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
     for (field_idx, field_ty_ptr) in field_types.iter().copied().enumerate() {
         let fields = struct_variant.fields();
@@ -8432,6 +8582,8 @@ fn translate_struct_constant_from_alloc(
                     ))
                 )
             })?;
+        let field_size = constant_field_byte_size(ctx, &rust_field_ty, field_ty_ptr, &loc)?;
+        field_ranges.push((abs, field_size));
         let (field_val, new_prev_op) = translate_constant_value_from_alloc(
             ctx,
             alloc,
@@ -8445,6 +8597,16 @@ fn translate_struct_constant_from_alloc(
         field_values.push(field_val);
         current_prev_op = new_prev_op;
     }
+
+    let struct_size = rust_type_layout_size(*rust_ty, loc.clone())?;
+    audit_aggregate_relocations(
+        alloc,
+        base_offset,
+        struct_size,
+        &field_ranges,
+        "Struct",
+        &loc,
+    )?;
 
     let (casted_field_values, prev_after_casts) = cast_struct_fields_to_expected_types(
         ctx,
@@ -8512,6 +8674,7 @@ fn translate_array_constant_from_alloc(
     })?;
 
     let mut element_values = Vec::with_capacity(element_count_usize);
+    let mut element_ranges = Vec::with_capacity(element_count_usize);
     let mut last_op = prev_op;
     for i in 0..element_count_usize {
         let abs = base_offset
@@ -8525,6 +8688,7 @@ fn translate_array_constant_from_alloc(
                     "Array constant element {i} absolute offset overflowed"
                 )))
             })?;
+        element_ranges.push((abs, element_byte_size));
         let (elem_val, elem_last_op) = translate_constant_value_from_alloc(
             ctx,
             alloc,
@@ -8538,6 +8702,16 @@ fn translate_array_constant_from_alloc(
         element_values.push(elem_val);
         last_op = elem_last_op;
     }
+
+    let array_size = rust_type_layout_size(*rust_array_ty, loc.clone())?;
+    audit_aggregate_relocations(
+        alloc,
+        base_offset,
+        array_size,
+        &element_ranges,
+        "Array",
+        &loc,
+    )?;
 
     let op = Operation::new(
         ctx,
