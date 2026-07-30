@@ -23,7 +23,7 @@
 //!   ./crates/rustc-codegen-cuda/examples/array_constants/verify-code-shape.sh
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
 const BARE_TABLE: [f32; 4] = [1.25, -2.5, 5.0, 10.5];
