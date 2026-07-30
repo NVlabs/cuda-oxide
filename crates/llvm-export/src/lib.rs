@@ -264,6 +264,137 @@ pub mod ops {
     /// Op-attribute key for a `GlobalOp`'s Rust static initializer bytes,
     /// encoded as lowercase hex.
     const GLOBAL_INITIALIZER_HEX_KEY: &str = "cuda_oxide_global_initializer_hex";
+    /// Stable rustc-side identity of the static represented by a `GlobalOp`.
+    ///
+    /// The emitted LLVM symbol is not sufficient for relocation lookup because
+    /// ordinary device globals receive generated `__device_global_N` names.
+    const GLOBAL_SOURCE_KEY: &str = "cuda_oxide_global_source_key";
+    /// Versioned, length-prefixed pointer-relocation metadata for an initialized
+    /// Rust static.
+    const GLOBAL_INITIALIZER_RELOCATIONS_KEY: &str = "cuda_oxide_global_initializer_relocations";
+
+    /// One pointer-width relocation inside an evaluated Rust static initializer.
+    ///
+    /// `source_offset` and `target_addend` are byte offsets. `target_key` is the
+    /// stable rustc global key, not the generated LLVM symbol name.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct GlobalInitializerRelocation {
+        pub source_offset: u64,
+        pub width_bytes: u32,
+        pub target_address_space: u32,
+        pub target_addend: u64,
+        pub target_key: String,
+    }
+
+    /// Encode initializer relocations using a versioned, length-prefixed format.
+    ///
+    /// The target key is length-prefixed rather than delimiter-escaped because
+    /// Rust mangled symbols may contain punctuation that is meaningful to simpler
+    /// ad-hoc formats.
+    pub fn encode_global_initializer_relocations(
+        relocations: &[GlobalInitializerRelocation],
+    ) -> String {
+        fn put_u64(out: &mut String, value: u64) {
+            out.push_str(&value.to_string());
+            out.push(' ');
+        }
+
+        fn put_str(out: &mut String, value: &str) {
+            put_u64(out, value.len() as u64);
+            out.push_str(value);
+            out.push(' ');
+        }
+
+        let mut encoded = String::from("v1 ");
+        put_u64(&mut encoded, relocations.len() as u64);
+        for relocation in relocations {
+            put_u64(&mut encoded, relocation.source_offset);
+            put_u64(&mut encoded, u64::from(relocation.width_bytes));
+            put_u64(&mut encoded, u64::from(relocation.target_address_space));
+            put_u64(&mut encoded, relocation.target_addend);
+            put_str(&mut encoded, &relocation.target_key);
+        }
+        encoded
+    }
+
+    /// Decode the format produced by [`encode_global_initializer_relocations`].
+    pub fn decode_global_initializer_relocations(
+        encoded: &str,
+    ) -> Result<Vec<GlobalInitializerRelocation>, String> {
+        fn take_u64(bytes: &[u8], pos: &mut usize, field: &str) -> Result<u64, String> {
+            let start = *pos;
+            while *pos < bytes.len() && bytes[*pos].is_ascii_digit() {
+                *pos += 1;
+            }
+            if start == *pos || *pos >= bytes.len() || bytes[*pos] != b' ' {
+                return Err(format!(
+                    "malformed global initializer relocation metadata while reading {field}"
+                ));
+            }
+            let value = std::str::from_utf8(&bytes[start..*pos])
+                .map_err(|_| format!("non-UTF-8 digits in relocation {field}"))?
+                .parse::<u64>()
+                .map_err(|_| format!("invalid integer in relocation {field}"))?;
+            *pos += 1;
+            Ok(value)
+        }
+
+        fn take_str(bytes: &[u8], pos: &mut usize, field: &str) -> Result<String, String> {
+            let len = usize::try_from(take_u64(bytes, pos, &format!("{field} length"))?)
+                .map_err(|_| format!("relocation {field} length does not fit usize"))?;
+            let end = (*pos)
+                .checked_add(len)
+                .ok_or_else(|| format!("relocation {field} length overflows"))?;
+            let raw = bytes
+                .get(*pos..end)
+                .ok_or_else(|| format!("truncated relocation {field}"))?;
+            let value = std::str::from_utf8(raw)
+                .map_err(|_| format!("relocation {field} is not UTF-8"))?
+                .to_string();
+            *pos = end;
+            if *pos >= bytes.len() || bytes[*pos] != b' ' {
+                return Err(format!("relocation {field} is missing its terminator"));
+            }
+            *pos += 1;
+            Ok(value)
+        }
+
+        let bytes = encoded.as_bytes();
+        if !bytes.starts_with(b"v1 ") {
+            return Err("unsupported global initializer relocation metadata version".to_string());
+        }
+        let mut pos = 3;
+        let count = usize::try_from(take_u64(bytes, &mut pos, "relocation count")?)
+            .map_err(|_| "relocation count does not fit usize".to_string())?;
+        if count > bytes.len() {
+            return Err("global initializer relocation count is implausibly large".to_string());
+        }
+
+        let mut relocations = Vec::with_capacity(count);
+        for index in 0..count {
+            let source_offset = take_u64(bytes, &mut pos, "source offset")?;
+            let width_bytes = u32::try_from(take_u64(bytes, &mut pos, "pointer width")?)
+                .map_err(|_| format!("relocation {index} pointer width does not fit u32"))?;
+            let target_address_space =
+                u32::try_from(take_u64(bytes, &mut pos, "target address space")?).map_err(
+                    |_| format!("relocation {index} target address space does not fit u32"),
+                )?;
+            let target_addend = take_u64(bytes, &mut pos, "target addend")?;
+            let target_key = take_str(bytes, &mut pos, "target key")?;
+            relocations.push(GlobalInitializerRelocation {
+                source_offset,
+                width_bytes,
+                target_address_space,
+                target_addend,
+                target_key,
+            });
+        }
+
+        if pos != bytes.len() {
+            return Err("trailing bytes in global initializer relocation metadata".to_string());
+        }
+        Ok(relocations)
+    }
 
     /// Op-attribute key under which a memory op's (`load` / `store` / `alloca`)
     /// explicit ABI alignment is stashed. Stamped by the mir-lower alignment
@@ -999,6 +1130,14 @@ pub mod ops {
         fn set_initializer_hex(&self, ctx: &mut Context, hex: &str);
         /// Read lowered Rust static initializer bytes, encoded as hex.
         fn initializer_hex(&self, ctx: &Context) -> Option<String>;
+        /// Attach the stable rustc global key represented by this LLVM global.
+        fn set_source_global_key(&self, ctx: &mut Context, key: &str);
+        /// Read the stable rustc global key represented by this LLVM global.
+        fn source_global_key(&self, ctx: &Context) -> Option<String>;
+        /// Attach serialized initializer relocation metadata.
+        fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str);
+        /// Read serialized initializer relocation metadata.
+        fn initializer_relocations(&self, ctx: &Context) -> Option<String>;
     }
 
     impl GlobalOpExt for GlobalOp {
@@ -1046,12 +1185,50 @@ pub mod ops {
                 .get::<StringAttr>(&key)
                 .map(|attr| String::from((*attr).clone()))
         }
+
+        fn set_source_global_key(&self, ctx: &mut Context, source_key: &str) {
+            let key = Identifier::try_new(GLOBAL_SOURCE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(source_key.to_string()));
+        }
+
+        fn source_global_key(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_SOURCE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str) {
+            let key = Identifier::try_new(GLOBAL_INITIALIZER_RELOCATIONS_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(encoded.to_string()));
+        }
+
+        fn initializer_relocations(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_INITIALIZER_RELOCATIONS_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
+        }
     }
 
     #[cfg(test)]
     mod tests {
         use super::{
-            DebugLocalTypeKind, DebugTypeMember, deserialize_debug_type, serialize_debug_type,
+            DebugLocalTypeKind, DebugTypeMember, GlobalInitializerRelocation,
+            decode_global_initializer_relocations, deserialize_debug_type,
+            encode_global_initializer_relocations, serialize_debug_type,
         };
 
         fn round_trip(ty: &DebugLocalTypeKind) -> DebugLocalTypeKind {
@@ -1116,6 +1293,45 @@ pub mod ops {
                 size_bits: 64,
             };
             assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn round_trips_global_initializer_relocations() {
+            let relocations = vec![
+                GlobalInitializerRelocation {
+                    source_offset: 0,
+                    width_bytes: 8,
+                    target_address_space: 1,
+                    target_addend: 0,
+                    target_key: "ordinary static with spaces".to_string(),
+                },
+                GlobalInitializerRelocation {
+                    source_offset: 16,
+                    width_bytes: 8,
+                    target_address_space: 4,
+                    target_addend: 24,
+                    target_key: "_ZN4test6TARGET17h0123456789abcdefE".to_string(),
+                },
+            ];
+            let encoded = encode_global_initializer_relocations(&relocations);
+            assert_eq!(
+                decode_global_initializer_relocations(&encoded).expect("decode succeeds"),
+                relocations
+            );
+        }
+
+        #[test]
+        fn rejects_truncated_global_initializer_relocations() {
+            let relocation = GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: 1,
+                target_addend: 0,
+                target_key: "target".to_string(),
+            };
+            let mut encoded = encode_global_initializer_relocations(&[relocation]);
+            encoded.pop();
+            assert!(decode_global_initializer_relocations(&encoded).is_err());
         }
 
         #[test]
