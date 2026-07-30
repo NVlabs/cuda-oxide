@@ -1590,7 +1590,7 @@ fn codegen_build_host_binary(
         unchecked_indexing,
         device_debug,
     );
-    apply_default_sanitizer_line_tables(&mut cmd, ctx);
+    apply_default_sanitizer_line_tables(&mut cmd, ctx, device_debug);
     let fingerprint = sanitize_codegen_fingerprint(
         ctx,
         verbose,
@@ -5297,12 +5297,20 @@ fn apply_common_codegen_env(
 
 /// Give Compute Sanitizer source line attribution without disabling normal
 /// device optimization. An explicit process or project setting remains
-/// authoritative, including an intentional `CUDA_OXIDE_DEBUG=off`.
-fn apply_default_sanitizer_line_tables(cmd: &mut Command, ctx: &Context) {
+/// authoritative, including an intentional `CUDA_OXIDE_DEBUG=off`. So does an
+/// explicit `--lineinfo` / `--device-debug` flag: `apply_common_codegen_env`
+/// has already exported its level onto `cmd`, and the default must not
+/// overwrite it.
+fn apply_default_sanitizer_line_tables(
+    cmd: &mut Command,
+    ctx: &Context,
+    device_debug: DeviceDebug,
+) {
     apply_default_sanitizer_line_tables_with_env(
         cmd,
         ctx,
         std::env::var_os("CUDA_OXIDE_DEBUG").is_some(),
+        device_debug,
     );
 }
 
@@ -5311,13 +5319,19 @@ fn apply_default_sanitizer_line_tables(cmd: &mut Command, ctx: &Context) {
 ///
 /// `env_debug_set` is presence-only, matching the `var_os` check it replaces.
 /// Injected so a unit test can assert the defaulting without an exported
-/// `CUDA_OXIDE_DEBUG` suppressing it.
+/// `CUDA_OXIDE_DEBUG` suppressing it. `device_debug` carries the CLI flag:
+/// any level other than [`DeviceDebug::Off`] is an explicit request that
+/// outranks the line-tables default.
 fn apply_default_sanitizer_line_tables_with_env(
     cmd: &mut Command,
     ctx: &Context,
     env_debug_set: bool,
+    device_debug: DeviceDebug,
 ) {
-    if !env_debug_set && project_config_env(ctx, "CUDA_OXIDE_DEBUG").is_none() {
+    if device_debug == DeviceDebug::Off
+        && !env_debug_set
+        && project_config_env(ctx, "CUDA_OXIDE_DEBUG").is_none()
+    {
         cmd.env("CUDA_OXIDE_DEBUG", "line-tables");
     }
 }
@@ -5355,7 +5369,7 @@ fn apply_interop_device_codegen_options_with_env(
         DeviceDebug::Off,
     );
     if options.sanitizer_line_tables {
-        apply_default_sanitizer_line_tables_with_env(cmd, ctx, env_debug_set);
+        apply_default_sanitizer_line_tables_with_env(cmd, ctx, env_debug_set, DeviceDebug::Off);
     }
 }
 
@@ -7121,6 +7135,24 @@ path = "src/other.rs"
         assert_eq!(
             command_env(&cmd, CODEGEN_FINGERPRINT_ENV).as_deref(),
             Some(fingerprint.as_str())
+        );
+    }
+
+    #[test]
+    fn sanitize_device_debug_flag_overrides_the_line_tables_default() {
+        let ctx = test_context(OxideConfig::default());
+        let mut cmd = Command::new("cargo");
+
+        // Mirror codegen_build_host_binary's ordering: the flag's level lands
+        // on `cmd` first, then the sanitizer default runs. `env_debug_set` is
+        // injected as false, so with no ambient CUDA_OXIDE_DEBUG the explicit
+        // flag alone must suppress the line-tables default.
+        apply_common_codegen_env(&mut cmd, &ctx, false, false, false, DeviceDebug::Full);
+        apply_default_sanitizer_line_tables_with_env(&mut cmd, &ctx, false, DeviceDebug::Full);
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_DEBUG").as_deref(),
+            Some("full")
         );
     }
 
