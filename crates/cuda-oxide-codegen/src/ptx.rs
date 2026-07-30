@@ -501,6 +501,27 @@ fn generate_ptx_impl(
     if !opts.no_fma {
         llc_cmd.arg("-fp-contract=fast");
     }
+    // Match nvcc's precision defaults when libdevice is in the module.
+    // libdevice selects between correctly-rounded and approximate
+    // implementations by reading these through `__nvvm_reflect`, and LLVM
+    // resolves an unset reflect variable to 0, which is the approximate
+    // branch. nvcc defaults `-prec-sqrt=true` and `-prec-div=true`, so 0
+    // diverges from it silently and in the direction of lower accuracy.
+    // `__CUDA_FTZ` is left unset deliberately: nvcc defaults `-ftz=false`,
+    // which 0 already matches.
+    //
+    // Not every libdevice build branches division on `__CUDA_PREC_DIV`; the
+    // toolkit on this machine defines no such reflect name, so here the
+    // argument matches no `__nvvm_reflect` call and has no effect. It stays
+    // because `NVVMReflectPass` silently drops a name absent from the
+    // module, emitting neither a warning nor a failure, and any libdevice
+    // build that does branch on `__CUDA_PREC_DIV` needs the same
+    // nvcc-matching value.
+    if linked.is_some() {
+        llc_cmd
+            .arg("--nvvm-reflect-add=__CUDA_PREC_SQRT=1")
+            .arg("--nvvm-reflect-add=__CUDA_PREC_DIV=1");
+    }
     let result = llc_cmd.arg(llc_input).arg("-o").arg(module.output).output();
 
     match result {
@@ -956,6 +977,81 @@ mod tests {
             ptx.lines().count()
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Regression test for libdevice reflect defaults: `libdevice.10.bc`
+    /// selects between a correctly-rounded and an approximate implementation
+    /// by reading `__CUDA_PREC_SQRT` through `__nvvm_reflect`. LLVM resolves an
+    /// unset reflect variable to 0 and so picks the approximate branch, while
+    /// nvcc defaults `-prec-sqrt=true`. Without the reflect arguments on `llc`,
+    /// a `sqrt` kernel silently compiles to `sqrt.approx.f32`.
+    #[test]
+    fn linked_libdevice_honours_nvcc_precision_defaults() {
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            ..BackendOptions::default()
+        };
+        let Some(toolchain) = LlvmToolchain::resolve(&opts) else {
+            return;
+        };
+        if toolchain.opt.is_none() || toolchain.llvm_link.is_none() {
+            return;
+        }
+        let Ok(libdevice) = libnvvm_sys::find_libdevice() else {
+            return;
+        };
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_libdevice_prec_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ll_path = root.join("kernel.ll");
+        let ptx_path = root.join("kernel.ptx");
+        std::fs::write(
+            &ll_path,
+            "target datalayout = \"e-i64:64-i128:128-v16:16-v32:32-n16:32:64\"\n\
+             target triple = \"nvptx64-nvidia-cuda\"\n\
+             \n\
+             declare float @__nv_sqrtf(float)\n\
+             \n\
+             define ptx_kernel void @kernel(ptr %out, float %x) {\n\
+               %s = call float @__nv_sqrtf(float %x)\n\
+               store float %s, ptr %out\n\
+               ret void\n\
+             }\n",
+        )
+        .unwrap();
+
+        generate_ptx_with_toolchain(
+            PtxModule {
+                llvm_ir: &ll_path,
+                output: &ptx_path,
+                public_symbols: &["kernel".to_string()],
+            },
+            DebugKind::Off,
+            &opts,
+            &toolchain,
+            &GeneratedModuleRequirements::default(),
+            Some(&libdevice),
+        )
+        .unwrap();
+
+        let ptx = std::fs::read_to_string(&ptx_path).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            ptx.contains("sqrt.rn.f32"),
+            "libdevice sqrt must resolve to the correctly-rounded instruction, \
+             matching nvcc's -prec-sqrt=true default:\n{ptx}"
+        );
+        assert!(
+            !ptx.contains("sqrt.approx"),
+            "no approximate sqrt may survive:\n{ptx}"
+        );
     }
 
     #[test]
