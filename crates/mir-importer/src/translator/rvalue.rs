@@ -1995,6 +1995,7 @@ pub fn translate_operand(
                             elem_ty,
                             len,
                             is_mutable,
+                            0,
                             block_ptr,
                             prev_op,
                             loc.clone(),
@@ -2011,6 +2012,42 @@ pub fn translate_operand(
                             pointee_ty,
                             static_ty
                         ))
+                    );
+                }
+
+                if static_target.byte_offset != 0
+                    && let Some((elem_ty, remaining_len)) = interior_array_to_slice_unsize_info(
+                        &static_ty,
+                        &pointee_ty,
+                        static_target.byte_offset,
+                        loc.clone(),
+                    )?
+                {
+                    let len = slice_len_from_constant(constant, loc.clone())?;
+
+                    if len > remaining_len {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "constant slice over device static {} stores length {}, \
+                                 which exceeds the selected array region's remaining length {}",
+                                static_target.static_def.name(),
+                                len,
+                                remaining_len,
+                            ))
+                        );
+                    }
+
+                    return translate_static_array_as_slice(
+                        ctx,
+                        &static_target.static_def,
+                        elem_ty,
+                        len,
+                        is_mutable,
+                        static_target.byte_offset,
+                        block_ptr,
+                        prev_op,
+                        loc.clone(),
                     );
                 }
 
@@ -8741,6 +8778,91 @@ fn array_to_slice_unsize_info(
     }
 }
 
+/// Detect an interior array→slice unsize within a device static.
+///
+/// The walk is intentionally limited to arrays. At each nesting level, the
+/// byte addend selects one array element; when that array's element type
+/// matches the slice element type, the remaining element count is returned.
+/// This supports both an offset into a flat `[T; N]` and a slice over an array
+/// nested inside outer arrays, while keeping structs, tuples, enums, and other
+/// DST reinterpretations outside this lowering path.
+fn interior_array_to_slice_unsize_info(
+    static_ty: &rustc_public::ty::Ty,
+    pointee_ty: &rustc_public::ty::Ty,
+    byte_offset: u64,
+    loc: Location,
+) -> TranslationResult<Option<(rustc_public::ty::Ty, u64)>> {
+    use rustc_public::ty::{RigidTy, Ty, TyKind};
+
+    let TyKind::RigidTy(RigidTy::Slice(slice_elem)) = pointee_ty.kind() else {
+        return Ok(None);
+    };
+
+    fn find_region(
+        array_ty: Ty,
+        slice_elem: Ty,
+        byte_offset: u64,
+        loc: &Location,
+    ) -> TranslationResult<Option<u64>> {
+        let TyKind::RigidTy(RigidTy::Array(array_elem, len_const)) = array_ty.kind() else {
+            return Ok(None);
+        };
+
+        let len = len_const.eval_target_usize().map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to evaluate array length for interior static slice unsize: {error:?}"
+                ))
+            )
+        })?;
+        let elem_size = rust_type_layout_size(array_elem, loc.clone())? as u64;
+        let array_size = elem_size.checked_mul(len).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Array byte size overflowed while resolving an interior static slice: \
+                 {len} elements x {elem_size} bytes"
+            )))
+        })?;
+
+        if byte_offset > array_size {
+            return Ok(None);
+        }
+
+        if array_elem == slice_elem {
+            // A non-zero byte addend cannot distinguish positions between
+            // zero-sized elements. Keep that case outside this path rather
+            // than manufacturing an arbitrary element index.
+            if elem_size == 0 || !byte_offset.is_multiple_of(elem_size) {
+                return Ok(None);
+            }
+
+            let start = byte_offset / elem_size;
+            if start > len {
+                return Ok(None);
+            }
+            return Ok(Some(len - start));
+        }
+
+        // Descend only through the concrete outer element containing the
+        // addend. An offset one-past this array has no child array region to
+        // inspect, even though it may be valid for an empty slice at this
+        // array's own element type (handled by the matching arm above).
+        if elem_size == 0 || byte_offset >= array_size {
+            return Ok(None);
+        }
+
+        let element_index = byte_offset / elem_size;
+        if element_index >= len {
+            return Ok(None);
+        }
+
+        find_region(array_elem, slice_elem, byte_offset % elem_size, loc)
+    }
+
+    Ok(find_region(*static_ty, slice_elem, byte_offset, &loc)?
+        .map(|remaining_len| (slice_elem, remaining_len)))
+}
+
 /// Read the slice length from a fat-pointer constant's metadata word.
 ///
 /// A `&[T]` / `*const [T]` constant is a two-word image: the data word (which
@@ -8790,14 +8912,19 @@ fn slice_len_from_constant(constant: &mir::ConstOperand, loc: Location) -> Trans
     Ok(len)
 }
 
-/// Materialize `&STATIC_ARRAY` (or `*const STATIC_ARRAY`) as a fat `&[T]` /
-/// `*const [T]` by pairing the thin global pointer with the array length.
+/// Materialize a region of a device static as a fat `&[T]` / `*const [T]`.
+///
+/// A zero addend preserves the established whole-array path. A non-zero
+/// addend reuses the byte-addressed static-pointer lowering to produce the
+/// interior `*T` data pointer before pairing it with the length stored in the
+/// constant's metadata word.
 fn translate_static_array_as_slice(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
     elem_ty: rustc_public::ty::Ty,
     len: u64,
     is_mutable: bool,
+    byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -8805,36 +8932,54 @@ fn translate_static_array_as_slice(
     use dialect_mir::ops::MirConstructSliceOp;
     use dialect_mir::types::MirSliceType;
 
-    let static_ty = static_def.ty();
-    let array_mir_ty = types::translate_type(ctx, &static_ty)?;
     let elem_mir_ty = types::translate_type(ctx, &elem_ty)?;
 
-    // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
-    let thin_array_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
+    let (data_ptr, prev_after_data) = if byte_offset == 0 {
+        let static_ty = static_def.ty();
+        let array_mir_ty = types::translate_type(ctx, &static_ty)?;
 
-    let (array_ptr, prev_after_array) = translate_static_global_pointer(
-        ctx,
-        static_def,
-        array_mir_ty,
-        thin_array_ptr_ty,
-        is_mutable,
-        0,
-        block_ptr,
-        prev_op,
-        loc.clone(),
-    )?;
+        // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
+        let thin_array_ptr_ty: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
 
-    // Fat-pointer data slot is a generic `*T` / `*mut T`.
-    let (data_ptr, prev_after_data) = coerce_slice_data_pointee(
-        ctx,
-        array_ptr,
-        elem_mir_ty,
-        is_mutable,
-        block_ptr,
-        prev_after_array,
-        loc.clone(),
-    );
+        let (array_ptr, prev_after_array) = translate_static_global_pointer(
+            ctx,
+            static_def,
+            array_mir_ty,
+            thin_array_ptr_ty,
+            is_mutable,
+            0,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?;
+
+        // Fat-pointer data slot is a generic `*T` / `*mut T`.
+        coerce_slice_data_pointee(
+            ctx,
+            array_ptr,
+            elem_mir_ty,
+            is_mutable,
+            block_ptr,
+            prev_after_array,
+            loc.clone(),
+        )
+    } else {
+        let data_ptr_ty: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(ctx, elem_mir_ty, is_mutable).into();
+
+        translate_static_global_pointer(
+            ctx,
+            static_def,
+            elem_mir_ty,
+            data_ptr_ty,
+            is_mutable,
+            byte_offset,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?
+    };
 
     let usize_ty = types::get_usize_type(ctx);
     let len_attr = pliron::builtin::attributes::IntegerAttr::new(

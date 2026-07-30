@@ -92,6 +92,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -126,6 +136,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -157,6 +177,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -196,6 +226,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -231,6 +271,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -251,6 +301,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -303,6 +363,16 @@ enum Commands {
         /// Settable also via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel.
         /// Settable also via CUDA_OXIDE_UNCHECKED_INDEXING=1.
         #[arg(long)]
@@ -486,6 +556,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             app_args,
         } => {
             let ctx = commands::resolve_context();
@@ -507,6 +579,7 @@ fn main() {
                 bin.as_deref(),
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 materialize_cubin,
                 &app_args,
             );
@@ -520,6 +593,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             sanitizer_args,
         } => {
             let ctx = commands::resolve_context();
@@ -539,6 +614,7 @@ fn main() {
                 bin.as_deref(),
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 materialize_cubin,
             );
         }
@@ -550,6 +626,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             cargo_target_dir,
             device_codegen_crate,
             device_cfgs,
@@ -581,6 +659,7 @@ fn main() {
                     features.as_deref(),
                     no_fmad,
                     unchecked_indexing,
+                    commands::DeviceDebug::from_flags(lineinfo, device_debug),
                     materialize_cubin,
                 );
             } else {
@@ -611,6 +690,7 @@ fn main() {
                         no_fmad,
                         unchecked_indexing,
                         materialize_cubin,
+                        device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
                     },
                     &cargo_args,
                 );
@@ -624,6 +704,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             cargo_args,
         } => {
             let ctx = commands::resolve_context();
@@ -648,6 +730,7 @@ fn main() {
                     no_fmad,
                     unchecked_indexing,
                     materialize_cubin,
+                    device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 },
                 &cargo_args,
             );
@@ -660,6 +743,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "emit-ltoir");
@@ -672,6 +757,7 @@ fn main() {
                 verbose,
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
             );
         }
         Commands::Pipeline {
@@ -680,6 +766,8 @@ fn main() {
             arch,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "pipeline");
@@ -697,6 +785,7 @@ fn main() {
                 arch.as_deref(),
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 materialize_cubin,
             );
         }
@@ -707,6 +796,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "inspect");
@@ -718,6 +809,7 @@ fn main() {
                 verbose,
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
             );
         }
         Commands::Debug {
@@ -980,6 +1072,8 @@ mod tests {
             cargo_args,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             ..
         } = test_cli.command
         else {
@@ -988,6 +1082,8 @@ mod tests {
         assert!(cargo_args.is_empty());
         assert!(!no_fmad);
         assert!(!unchecked_indexing);
+        assert!(!lineinfo, "--lineinfo must default off");
+        assert!(!device_debug, "--device-debug must default off");
 
         let build_args = strings(&["cargo-oxide", "build", "--"]);
         assert!(has_passthrough_separator(&build_args));
@@ -1013,6 +1109,8 @@ mod tests {
         let Commands::Test {
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             cargo_args,
             ..
         } = cli.command
@@ -1021,6 +1119,8 @@ mod tests {
         };
         assert!(no_fmad);
         assert!(unchecked_indexing);
+        assert!(!lineinfo, "--lineinfo must default off");
+        assert!(!device_debug, "--device-debug must default off");
         assert_eq!(cargo_args, strings(&["-p", "gpu-app"]));
     }
 
@@ -1214,6 +1314,8 @@ mod tests {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } = cli.command
         else {
             panic!("expected inspect command");
@@ -1225,5 +1327,51 @@ mod tests {
         assert!(verbose);
         assert!(no_fmad);
         assert!(unchecked_indexing);
+        assert!(!lineinfo, "--lineinfo must default off");
+        assert!(!device_debug, "--device-debug must default off");
+    }
+
+    #[test]
+    fn parser_accepts_device_debug_flags() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "build", "vecadd", "--lineinfo"])
+            .expect("--lineinfo should parse");
+        let Commands::Build {
+            lineinfo,
+            device_debug,
+            ..
+        } = cli.command
+        else {
+            panic!("expected build command");
+        };
+        assert!(lineinfo);
+        assert!(!device_debug);
+
+        // #552 gave `test` the codegen flags, so the debug policy belongs there too.
+        let cli = Cli::try_parse_from(["cargo-oxide", "test", "--device-debug"])
+            .expect("--device-debug should parse on test");
+        let Commands::Test {
+            lineinfo,
+            device_debug,
+            ..
+        } = cli.command
+        else {
+            panic!("expected test command");
+        };
+        assert!(!lineinfo);
+        assert!(device_debug);
+    }
+
+    #[test]
+    fn device_debug_flags_resolve_in_nvcc_order() {
+        use commands::DeviceDebug;
+        // Absent flags stay Off so an ambient CUDA_OXIDE_DEBUG survives.
+        assert_eq!(DeviceDebug::from_flags(false, false), DeviceDebug::Off);
+        assert_eq!(
+            DeviceDebug::from_flags(true, false),
+            DeviceDebug::LineTables
+        );
+        assert_eq!(DeviceDebug::from_flags(false, true), DeviceDebug::Full);
+        // Full debug already carries line tables, so it wins over --lineinfo.
+        assert_eq!(DeviceDebug::from_flags(true, true), DeviceDebug::Full);
     }
 }
