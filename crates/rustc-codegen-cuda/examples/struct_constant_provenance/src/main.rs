@@ -9,7 +9,7 @@
 //! the struct constant is consumed by GPU code.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{cuda_module, kernel, DisjointSlice};
+use cuda_device::{DisjointSlice, cuda_module, kernel};
 
 static FIRST: [u8; 16] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
