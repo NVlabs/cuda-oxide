@@ -348,6 +348,14 @@ pub fn module_uses_libdevice(ctx: &Context, module_op_ptr: Ptr<Operation>) -> bo
     op_uses_libdevice(ctx, module_op_ptr)
 }
 
+/// Whether `name` is a CUDA libdevice entry point.
+///
+/// The unresolved-symbol filter and the libdevice detector both read this, so
+/// the `__nv_` spelling has one definition in the crate.
+pub(crate) fn is_libdevice_symbol(name: &str) -> bool {
+    name.starts_with("__nv_")
+}
+
 /// Return unresolved non-intrinsic LLVM function declarations.
 ///
 /// Standalone PTX has no link step. LLVM intrinsics are resolved by `llc`, but
@@ -392,14 +400,14 @@ fn collect_unresolved_external_symbols(
 /// Recursively scan for declared or called CUDA libdevice functions.
 fn op_uses_libdevice(ctx: &Context, op_ptr: Ptr<Operation>) -> bool {
     if let Some(func) = Operation::get_op::<llvm_export::ops::FuncOp>(op_ptr, ctx)
-        && func.get_symbol_name(ctx).starts_with("__nv_")
+        && is_libdevice_symbol(&func.get_symbol_name(ctx))
     {
         return true;
     }
 
     if let Some(call) = Operation::get_op::<llvm_export::ops::CallOp>(op_ptr, ctx)
         && let CallOpCallable::Direct(callee) = call.callee(ctx)
-        && callee.to_string().starts_with("__nv_")
+        && is_libdevice_symbol(&callee.to_string())
     {
         return true;
     }

@@ -69,12 +69,7 @@ impl PipelineTrace {
 #[derive(Clone, Copy, Debug)]
 enum OutputPolicy {
     SelfContainedPtx {
-        /// Not yet consulted: the unresolved-symbol check does not read this
-        /// field yet, so it is write-only until a later change threads it in.
-        #[expect(
-            dead_code,
-            reason = "not yet consulted; write-only until the libdevice filter reads it"
-        )]
+        /// Whether `__nv_*` symbols may be left for the IR-level libdevice link.
         allow_libdevice: bool,
     },
     ExternalLinkAllowed {
@@ -372,8 +367,8 @@ pub fn compile_translated_module(
         request.trace.emit("LLVM dialect verification successful ✓");
     }
 
-    if matches!(request.output_policy, OutputPolicy::SelfContainedPtx { .. }) {
-        let symbols = unresolved_external_symbols(ctx, module);
+    if let OutputPolicy::SelfContainedPtx { allow_libdevice } = request.output_policy {
+        let symbols = unlinkable_symbols(unresolved_external_symbols(ctx, module), allow_libdevice);
         if !symbols.is_empty() {
             return Err(PipelineError::UnsupportedLinking { symbols });
         }
@@ -605,6 +600,19 @@ fn should_emit_nvvm_ir(
             uses_strict_libdevice && !can_ir_link_libdevice
         }
     }
+}
+
+/// Narrow collected unresolved symbols to those the artifact cannot resolve.
+///
+/// Under `allow_libdevice`, `__nv_*` entry points are dropped: the IR-level
+/// `llvm-link` step further down resolves them against `libdevice.10.bc`.
+/// Every other unresolved symbol still fails the compilation, so
+/// `UnsupportedLinking` keeps its meaning for device externs.
+fn unlinkable_symbols(mut symbols: Vec<String>, allow_libdevice: bool) -> Vec<String> {
+    if allow_libdevice {
+        symbols.retain(|symbol| !crate::export::is_libdevice_symbol(symbol));
+    }
+    symbols
 }
 
 fn as_lowered_verification(error: PipelineError) -> PipelineError {
@@ -982,5 +990,49 @@ mod tests {
             PipelineError::LoweredVerification { message, operation }
                 if message == "invalid lowered op" && operation.as_deref() == Some("llvm.bad")
         ));
+    }
+
+    #[test]
+    fn self_contained_linking_rejects_every_unresolved_symbol() {
+        let symbols = vec![
+            "__nv_sqrtf".to_string(),
+            "vprintf".to_string(),
+            "my_device_extern".to_string(),
+        ];
+        assert_eq!(
+            unlinkable_symbols(symbols.clone(), false),
+            symbols,
+            "without the libdevice opt-in nothing is filtered"
+        );
+    }
+
+    #[test]
+    fn libdevice_linking_drops_only_libdevice_symbols() {
+        let symbols = vec![
+            "__nv_erff".to_string(),
+            "__nv_sqrtf".to_string(),
+            "my_device_extern".to_string(),
+            "vprintf".to_string(),
+        ];
+        assert_eq!(
+            unlinkable_symbols(symbols, true),
+            vec!["my_device_extern".to_string(), "vprintf".to_string()],
+            "device externs still fail the compilation"
+        );
+    }
+
+    #[test]
+    fn libdevice_linking_accepts_a_purely_libdevice_module() {
+        let symbols = vec!["__nv_sqrtf".to_string(), "__nv_expf".to_string()];
+        assert!(unlinkable_symbols(symbols, true).is_empty());
+    }
+
+    #[test]
+    fn libdevice_symbol_predicate_matches_the_nv_prefix_only() {
+        assert!(crate::export::is_libdevice_symbol("__nv_sqrtf"));
+        assert!(crate::export::is_libdevice_symbol("__nv_"));
+        assert!(!crate::export::is_libdevice_symbol("__nvvm_thing"));
+        assert!(!crate::export::is_libdevice_symbol("nv_sqrtf"));
+        assert!(!crate::export::is_libdevice_symbol("my___nv_sqrtf"));
     }
 }
