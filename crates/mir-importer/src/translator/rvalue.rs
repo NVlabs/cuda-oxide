@@ -6163,6 +6163,14 @@ fn translate_struct_constant_from_bytes(
     })?;
     let shape = layout.shape();
 
+    // A zero-sized struct span holds no bytes and cannot carry relocations,
+    // and not every type that lands here as a MirStructType is an ADT:
+    // function items and non-capturing closures have no ADT metadata to
+    // consult. Synthesize such values from the dialect type alone.
+    if shape.size.bytes() == 0 {
+        return translate_zero_sized_constant_value(ctx, const_ty_ptr, block_ptr, prev_op, loc);
+    }
+
     let field_offsets: Vec<usize> = match &shape.fields {
         rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
             offsets.iter().map(|offset| offset.bytes()).collect()
@@ -8536,6 +8544,25 @@ fn translate_struct_constant_from_alloc(
             })?;
         struct_ty.field_types().to_vec()
     };
+
+    // A zero-sized struct span holds no bytes and cannot carry relocations,
+    // and not every type that lands here as a MirStructType is an ADT:
+    // function items and non-capturing closures have no ADT metadata to
+    // consult. Synthesize such values from the dialect type alone.
+    let struct_size = rust_ty
+        .layout()
+        .map_err(|e| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to query layout for struct constant: {:?}",
+                e
+            )))
+        })?
+        .shape()
+        .size
+        .bytes();
+    if struct_size == 0 {
+        return translate_zero_sized_constant_value(ctx, const_ty_ptr, block_ptr, prev_op, loc);
+    }
 
     let field_offsets = super::layout::aggregate_field_offsets(rust_ty, "Struct", &loc)?;
     if field_offsets.len() != field_types.len() {
