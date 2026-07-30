@@ -252,6 +252,14 @@ pub const SECTOR_BYTES: usize = 32;
 ///
 /// [`swizzle::conflict_degree`]: crate::swizzle::conflict_degree
 ///
+/// # Base alignment
+///
+/// Line indices are computed from byte offset 0, so element offset 0 is assumed
+/// to sit at the start of a 128-byte cache line. That holds for allocation
+/// bases -- device allocations are at least 256-byte aligned -- but not for an
+/// arbitrary sub-slice base, which can start mid-line and straddle one more
+/// line than reported.
+///
 /// # Interpretation
 ///
 /// Compare against [`minimum_lines`]. Equality means the pattern is as coalesced
