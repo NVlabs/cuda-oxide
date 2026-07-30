@@ -6082,6 +6082,31 @@ fn translate_tuple_static_pointer_field(
     )
 }
 
+/// Byte image for a tuple constant, or `None` when a sized tuple has no
+/// backing allocation.
+///
+/// Undefined bytes in an allocation are padding; they are zeroed
+/// deterministically while the provenance map stays available separately for
+/// pointer-field reconstruction. `ConstantKind::ZeroSized`-style constants
+/// (e.g. `((), ())`) carry no allocation at all; a zero-byte layout is
+/// reproduced exactly by an empty image.
+fn tuple_constant_byte_image(
+    allocation: Option<&rustc_public::ty::Allocation>,
+    layout_size: usize,
+) -> Option<Vec<u8>> {
+    match allocation {
+        Some(allocation) => Some(
+            allocation
+                .bytes
+                .iter()
+                .map(|byte| byte.unwrap_or(0))
+                .collect(),
+        ),
+        None if layout_size == 0 => Some(Vec::new()),
+        None => None,
+    }
+}
+
 /// Translate a non-empty tuple constant from its own allocation image.
 ///
 /// Unlike `constant_bytes`, this must not follow the first provenance entry:
@@ -6096,23 +6121,31 @@ fn translate_tuple_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let allocation = constant_allocation(constant).ok_or_else(|| {
+    let layout_size = rust_ty
+        .layout()
+        .map_err(|error| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to query layout for tuple constant: {error:?}"
+                ))
+            )
+        })?
+        .shape()
+        .size
+        .bytes();
+
+    let allocation = constant_allocation(constant);
+    let bytes = tuple_constant_byte_image(allocation, layout_size).ok_or_else(|| {
         input_error!(
             loc.clone(),
             TranslationErr::unsupported(format!(
-                "Tuple constant must be backed by an allocation, found {:?}",
+                "Tuple constant of {layout_size} byte(s) must be backed by an allocation, \
+                 found {:?}",
                 constant.const_.kind()
             ))
         )
     })?;
-
-    // Undefined bytes are padding. Zero them deterministically while keeping
-    // the provenance map separately for pointer-field reconstruction.
-    let bytes = allocation
-        .bytes
-        .iter()
-        .map(|byte| byte.unwrap_or(0))
-        .collect::<Vec<_>>();
 
     translate_tuple_constant_from_bytes(
         ctx,
@@ -6122,7 +6155,7 @@ fn translate_tuple_constant(
         block_ptr,
         prev_op,
         loc,
-        Some(allocation),
+        allocation,
     )
 }
 
@@ -9138,6 +9171,39 @@ mod enum_niche_decode_tests {
             decode_niche_variant_index(0, u8::MAX.into(), u8::MAX.into(), 3, 4, 1),
             4,
             "u8 carrier value 0 is one step after niche_start 255"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tuple_constant_byte_image_tests {
+    use super::tuple_constant_byte_image;
+    use rustc_public::mir::Mutability;
+    use rustc_public::ty::{Allocation, ProvenanceMap};
+
+    #[test]
+    fn zst_tuple_constant_without_allocation_is_an_empty_image() {
+        // `ConstantKind::ZeroSized`-style tuple constants such as `((), ())`
+        // carry no allocation; a zero-byte layout translates as empty bytes.
+        assert_eq!(tuple_constant_byte_image(None, 0), Some(Vec::new()));
+    }
+
+    #[test]
+    fn sized_tuple_constant_without_allocation_is_rejected() {
+        assert_eq!(tuple_constant_byte_image(None, 16), None);
+    }
+
+    #[test]
+    fn allocation_padding_bytes_are_zeroed_deterministically() {
+        let allocation = Allocation {
+            bytes: vec![Some(0xAB), None, None, Some(0xCD)],
+            provenance: ProvenanceMap { ptrs: Vec::new() },
+            align: 4,
+            mutability: Mutability::Not,
+        };
+        assert_eq!(
+            tuple_constant_byte_image(Some(&allocation), 4),
+            Some(vec![0xAB, 0, 0, 0xCD])
         );
     }
 }
