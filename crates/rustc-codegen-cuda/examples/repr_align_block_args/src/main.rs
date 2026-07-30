@@ -85,10 +85,10 @@ mod kernels {
     ) {
         let i = thread::index_1d();
         let i_raw = i.get();
-        if let Some(slot) = out.get_mut(i) {
-            if i_raw < a.len() {
-                *slot = a[i_raw] * 2.0;
-            }
+        if let Some(slot) = out.get_mut(i)
+            && i_raw < a.len()
+        {
+            *slot = a[i_raw] * 2.0;
         }
     }
 
