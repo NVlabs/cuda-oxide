@@ -308,6 +308,36 @@ fn libdevice_linking_resolves_a_frontend_declared_symbol() {
     assert_ptxas_accepts(&ptx, "erf");
 }
 
+#[test]
+fn libdevice_linking_rejects_a_symbol_libdevice_does_not_define() {
+    // `__nv_totally_not_real` is shaped like a libdevice entry point but
+    // libdevice.10.bc defines no such symbol -- the version-skew case where a
+    // frontend targets a newer CUDA toolkit than the installed libdevice.
+    // `llvm-link --only-needed` resolves what it has and stays silent about
+    // the rest, and `opt` and `llc` both exit 0 on what remains, so without a
+    // compile-time check this would produce PTX carrying an unresolved
+    // `.extern .func __nv_totally_not_real` that only fails at `cuModuleLoad`
+    // on the device, with no diagnostic.
+    let mut module = CodegenModule::new("skew_module").unwrap();
+    build_unary_call_kernel(&mut module, "__nv_totally_not_real");
+    let compiler = Compiler::discover().expect("LLVM 21+ llc/opt are installed");
+    let options =
+        CompileOptions::new(Target::parse("sm_120").unwrap()).with_linking(Linking::Libdevice);
+
+    let error = compiler
+        .compile(&mut module, &options)
+        .expect_err("a __nv_* symbol libdevice does not define must not produce PTX");
+    match error {
+        CompileError::UnsupportedLinking { symbols } => assert!(
+            symbols
+                .iter()
+                .any(|symbol| symbol == "__nv_totally_not_real"),
+            "the rejection names the unresolved symbol: {symbols:?}"
+        ),
+        other => panic!("expected UnsupportedLinking, got {other}"),
+    }
+}
+
 /// Return the sole top-level block of `module`, creating it if the module is
 /// still empty. Mirrors `module_block` in `tests/compile_to_ptx.rs`; kept
 /// separate here rather than lifted out of `build_unary_call_kernel`, which
@@ -372,4 +402,62 @@ fn libdevice_linking_still_rejects_a_device_extern() {
         }
         other => panic!("expected UnsupportedLinking, got {other}"),
     }
+}
+
+/// Sentinel env var telling this test it is running inside the child process
+/// spawned by `libdevice_linking_reports_unavailable_when_llvm_link_cannot_run`,
+/// so it should run the check itself instead of spawning another child.
+const LIBDEVICE_UNAVAILABLE_CHILD_ENV: &str = "CUDA_OXIDE_CODEGEN_LIBDEVICE_UNAVAILABLE_CHILD";
+
+#[test]
+fn libdevice_linking_reports_unavailable_when_llvm_link_cannot_run() {
+    // `Toolchain::discover()` reads `CUDA_OXIDE_LLVM_LINK` straight from the
+    // process environment (`llvm_tools::resolve_sibling_tool`), and `cargo
+    // test` runs every test in this binary concurrently by default. Every
+    // other test here calls `Compiler::discover()` expecting a working
+    // `llvm-link`, so setting that variable in this process would race them.
+    // Re-exec this one test, filtered to itself, in a fresh child process
+    // instead: the child gets its own environment block, so the broken value
+    // never reaches this process or any sibling test.
+    if std::env::var_os(LIBDEVICE_UNAVAILABLE_CHILD_ENV).is_some() {
+        let mut module = CodegenModule::new("unavailable_module").unwrap();
+        build_unary_call_kernel(&mut module, dialect_mir::rust_intrinsics::CALLEE_SQRT_F32);
+        let compiler = Compiler::discover().expect("LLVM 21+ llc/opt are installed");
+        let options =
+            CompileOptions::new(Target::parse("sm_120").unwrap()).with_linking(Linking::Libdevice);
+
+        let error = compiler
+            .compile(&mut module, &options)
+            .expect_err("a broken CUDA_OXIDE_LLVM_LINK must not silently produce PTX");
+        match error {
+            CompileError::LibdeviceUnavailable { message } => {
+                assert!(
+                    message.contains("llvm-link"),
+                    "message names llvm-link: {message}"
+                );
+            }
+            other => panic!("expected LibdeviceUnavailable, got {other}"),
+        }
+        return;
+    }
+
+    let exe = std::env::current_exe().expect("the running test binary has a path");
+    let output = std::process::Command::new(exe)
+        .arg("--exact")
+        .arg("libdevice_linking_reports_unavailable_when_llvm_link_cannot_run")
+        .arg("--nocapture")
+        .env(LIBDEVICE_UNAVAILABLE_CHILD_ENV, "1")
+        .env(
+            "CUDA_OXIDE_LLVM_LINK",
+            "/nonexistent/cuda-oxide-test/llvm-link",
+        )
+        .output()
+        .expect("failed to re-exec this test in a child process");
+
+    assert!(
+        output.status.success(),
+        "child process check failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

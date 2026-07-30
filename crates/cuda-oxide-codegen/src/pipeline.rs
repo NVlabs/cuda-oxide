@@ -12,7 +12,8 @@
 use crate::error::PipelineError;
 use crate::export::{
     DeviceExternDecl, export_llvm_ir, module_uses_libdevice, render_llvm_ir,
-    resolve_nvvm_target_with_generated, unresolved_external_symbols, validate_nvvm_debug_support,
+    resolve_nvvm_target_with_generated, unresolved_external_symbols,
+    unresolved_libdevice_ptx_declarations, validate_nvvm_debug_support,
 };
 use crate::generated::{
     GeneratedMarkerPolicy, collect_generated_intrinsic_requirements_for_backend,
@@ -456,6 +457,30 @@ pub fn compile_translated_module(
             ptx_libdevice,
         )?,
     };
+    // Self-contained PTX promises a single artifact the CUDA driver can load
+    // with no further step, so an unresolved `__nv_*` symbol here is a
+    // compile-time failure: `llvm-link --only-needed` resolves whatever it
+    // finds in libdevice.10.bc and stays silent about the rest, and `opt` and
+    // `llc` both exit 0 on what remains, so the alternative is PTX that fails
+    // only at `cuModuleLoad` on the device, with no diagnostic. Under
+    // `ExternalLinkAllowed` (the rustc frontend) an unresolved `__nv_*` stays
+    // legitimate: that consumer owns a later libNVVM/nvJitLink step and
+    // resolves it there, so this check must not run for that policy.
+    if matches!(request.output_policy, OutputPolicy::SelfContainedPtx { .. }) {
+        let ptx_text = std::fs::read_to_string(request.files.ptx).map_err(|error| {
+            PipelineError::PtxGeneration(format!(
+                "failed to read generated PTX to check for unresolved libdevice symbols ({}): {error}",
+                request.files.ptx.display()
+            ))
+        })?;
+        let unresolved = unresolved_libdevice_ptx_declarations(&ptx_text);
+        if !unresolved.is_empty() {
+            return Err(PipelineError::UnsupportedLinking {
+                symbols: unresolved,
+            });
+        }
+    }
+
     if request.trace.verbose {
         request.trace.emit(format!(
             "✓ PTX written to {} (target: {})",
