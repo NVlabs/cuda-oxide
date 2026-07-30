@@ -270,7 +270,6 @@ impl MirPtrType {
         Self::get(ctx, pointee, is_mutable, address_space::TMEM)
     }
 
-
     pub fn is_mutable(&self) -> bool {
         self.is_mutable
     }

@@ -54,9 +54,19 @@ mod kernels {
         let i = thread::index_1d();
         if let Some(slot) = out.get_mut(i) {
             let s = if params[0] > 0.0 {
-                Al16 { a: params[0], b: params[1], c: 1.0, d: 2.0 }
+                Al16 {
+                    a: params[0],
+                    b: params[1],
+                    c: 1.0,
+                    d: 2.0,
+                }
             } else {
-                Al16 { a: params[1], b: params[0], c: 3.0, d: 4.0 }
+                Al16 {
+                    a: params[1],
+                    b: params[0],
+                    c: 3.0,
+                    d: 4.0,
+                }
             };
             *slot = consume(s) + s.b;
         }
@@ -67,7 +77,12 @@ mod kernels {
     /// these entry args were converted only via the entry BrOp trick;
     /// under PR #182 the new up-front phase is the only converter.
     #[kernel]
-    pub fn unused_params(a: &[f32], _dead_slice: &[f32], _dead_n: u32, mut out: DisjointSlice<f32>) {
+    pub fn unused_params(
+        a: &[f32],
+        _dead_slice: &[f32],
+        _dead_n: u32,
+        mut out: DisjointSlice<f32>,
+    ) {
         let i = thread::index_1d();
         let i_raw = i.get();
         if let Some(slot) = out.get_mut(i) {

@@ -539,6 +539,7 @@ dependencies = [
 [[package]]
 name = "pliron"
 version = "0.16.0"
+source = "git+https://github.com/pliron-org/pliron?rev=0d3f25df6d0e76b6c6f23d6e17172142b50c715c#0d3f25df6d0e76b6c6f23d6e17172142b50c715c"
 dependencies = [
  "awint",
  "combine",
@@ -563,6 +564,7 @@ dependencies = [
 [[package]]
 name = "pliron-derive"
 version = "0.16.0"
+source = "git+https://github.com/pliron-org/pliron?rev=0d3f25df6d0e76b6c6f23d6e17172142b50c715c#0d3f25df6d0e76b6c6f23d6e17172142b50c715c"
 dependencies = [
  "combine",
  "convert_case",
@@ -575,6 +577,7 @@ dependencies = [
 [[package]]
 name = "pliron-llvm"
 version = "0.16.0"
+source = "git+https://github.com/pliron-org/pliron?rev=0d3f25df6d0e76b6c6f23d6e17172142b50c715c#0d3f25df6d0e76b6c6f23d6e17172142b50c715c"
 dependencies = [
  "bitflags",
  "log",
