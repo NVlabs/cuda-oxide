@@ -68,8 +68,18 @@ impl PipelineTrace {
 
 #[derive(Clone, Copy, Debug)]
 enum OutputPolicy {
-    SelfContainedPtx,
-    ExternalLinkAllowed { request_nvvm_ir: bool },
+    SelfContainedPtx {
+        /// Not yet consulted: the unresolved-symbol check does not read this
+        /// field yet, so it is write-only until a later change threads it in.
+        #[expect(
+            dead_code,
+            reason = "not yet consulted; write-only until the libdevice filter reads it"
+        )]
+        allow_libdevice: bool,
+    },
+    ExternalLinkAllowed {
+        request_nvvm_ir: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -118,11 +128,12 @@ impl<'a> ModulePipelineRequest<'a> {
         backend: &'a BackendOptions,
         debug_kind: DebugKind,
         toolchain: &'a LlvmToolchain,
+        allow_libdevice: bool,
         files: OutputFiles<'a>,
     ) -> Self {
         Self {
             device_externs: &[],
-            output_policy: OutputPolicy::SelfContainedPtx,
+            output_policy: OutputPolicy::SelfContainedPtx { allow_libdevice },
             backend,
             debug_kind,
             toolchain: ToolchainPolicy::Explicit(toolchain),
@@ -361,7 +372,7 @@ pub fn compile_translated_module(
         request.trace.emit("LLVM dialect verification successful ✓");
     }
 
-    if matches!(request.output_policy, OutputPolicy::SelfContainedPtx) {
+    if matches!(request.output_policy, OutputPolicy::SelfContainedPtx { .. }) {
         let symbols = unresolved_external_symbols(ctx, module);
         if !symbols.is_empty() {
             return Err(PipelineError::UnsupportedLinking { symbols });
@@ -584,7 +595,7 @@ fn should_emit_nvvm_ir(
     can_ir_link_libdevice: bool,
 ) -> bool {
     match policy {
-        OutputPolicy::SelfContainedPtx => false,
+        OutputPolicy::SelfContainedPtx { .. } => false,
         OutputPolicy::ExternalLinkAllowed { request_nvvm_ir } => {
             if request_nvvm_ir {
                 return true;
@@ -673,16 +684,22 @@ mod tests {
 
     #[test]
     fn standalone_never_silently_switches_to_a_linkable_artifact() {
-        assert!(!should_emit_nvvm_ir(
-            OutputPolicy::SelfContainedPtx,
-            false,
-            false
-        ));
-        assert!(!should_emit_nvvm_ir(
-            OutputPolicy::SelfContainedPtx,
-            true,
-            false
-        ));
+        // Opting into libdevice must not open the NVVM IR route: the standalone
+        // surface promises one artifact kind out, whatever the linking policy.
+        for allow_libdevice in [false, true] {
+            let policy = OutputPolicy::SelfContainedPtx { allow_libdevice };
+            for uses_strict_libdevice in [false, true] {
+                for can_ir_link_libdevice in [false, true] {
+                    assert!(
+                        !should_emit_nvvm_ir(policy, uses_strict_libdevice, can_ir_link_libdevice),
+                        "self-contained PTX emitted NVVM IR for \
+                         allow_libdevice={allow_libdevice}, \
+                         uses_strict_libdevice={uses_strict_libdevice}, \
+                         can_ir_link_libdevice={can_ir_link_libdevice}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -938,8 +955,14 @@ mod tests {
         assert!(nvvm.emit_nvvm_ir);
         assert_eq!(nvvm.intrinsic_backend, mir_lower::IntrinsicBackend::LibNvvm);
 
-        let standalone =
-            select_pre_lowering_backend(&ctx, ordinary, OutputPolicy::SelfContainedPtx, false);
+        let standalone = select_pre_lowering_backend(
+            &ctx,
+            ordinary,
+            OutputPolicy::SelfContainedPtx {
+                allow_libdevice: false,
+            },
+            false,
+        );
         assert!(!standalone.emit_nvvm_ir);
         assert_eq!(
             standalone.intrinsic_backend,

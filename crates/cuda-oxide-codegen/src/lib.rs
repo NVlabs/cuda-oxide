@@ -93,7 +93,7 @@ mod verify;
 pub mod experimental {
     pub use crate::api::{
         CodegenModule, Compilation, CompilationStage, CompileError, CompileOptions, Compiler,
-        DebugInfo, Diagnostic, DiagnosticLevel, Optimization, Target, Toolchain,
+        DebugInfo, Diagnostic, DiagnosticLevel, Linking, Optimization, Target, Toolchain,
     };
 }
 
