@@ -272,3 +272,104 @@ fn libdevice_linking_resolves_a_rust_intrinsic_kernel() {
 
     assert_ptxas_accepts(&ptx, "sqrt");
 }
+
+#[test]
+fn libdevice_linking_resolves_a_frontend_declared_symbol() {
+    // `__nv_erff` has no Rust intrinsic and so no placeholder callee. A
+    // frontend reaches it by naming the symbol, which is the route the
+    // `__nv_` prefix filter admits.
+    let mut module = CodegenModule::new("erf_module").unwrap();
+    build_unary_call_kernel(&mut module, "__nv_erff");
+    let compiler = Compiler::discover().expect("LLVM 21+ llc/opt are installed");
+    let options =
+        CompileOptions::new(Target::parse("sm_120").unwrap()).with_linking(Linking::Libdevice);
+
+    let ptx = compiler
+        .compile(&mut module, &options)
+        .expect("libdevice linking resolves a frontend-declared __nv_ symbol")
+        .into_ptx();
+    let text = String::from_utf8(ptx.clone()).expect("PTX is utf-8");
+
+    assert!(
+        text.contains(".visible .entry"),
+        "kernel entry present:\n{text}"
+    );
+    assert!(
+        !text.contains(".extern .func __nv_"),
+        "the declared symbol was resolved, not left extern:\n{text}"
+    );
+    // erff is a polynomial evaluation in libdevice, so the linked body
+    // arrives as real arithmetic rather than a single instruction.
+    assert!(
+        text.contains("fma.rn.f32") || text.contains("mul.f32"),
+        "the linked erff body is present:\n{text}"
+    );
+
+    assert_ptxas_accepts(&ptx, "erf");
+}
+
+/// Return the sole top-level block of `module`, creating it if the module is
+/// still empty. Mirrors `module_block` in `tests/compile_to_ptx.rs`; kept
+/// separate here rather than lifted out of `build_unary_call_kernel`, which
+/// stays as Task 6 left it.
+fn module_block(
+    ctx: &mut Context,
+    module: &pliron::builtin::ops::ModuleOp,
+) -> pliron::context::Ptr<BasicBlock> {
+    let module_region = module.get_operation().deref(ctx).get_region(0);
+    let existing = {
+        let region = module_region.deref(ctx);
+        region.iter(ctx).next()
+    };
+    existing.unwrap_or_else(|| {
+        let block = BasicBlock::new(ctx, None, vec![]);
+        block.insert_at_back(module_region, ctx);
+        block
+    })
+}
+
+/// Insert a body-less LLVM-dialect function declaration named `name` into
+/// `module`. Mirrors `add_llvm_declaration` in `tests/compile_to_ptx.rs`.
+///
+/// This is the only way to place a genuinely unresolved external symbol into
+/// a standalone-API module: MIR lowering self-declares a callee only when it
+/// resolves to a `__nv_*` name, so a `mir.call` to any other bare symbol has
+/// no matching declaration and fails LLVM-dialect verification before the
+/// unresolved-symbol scan that `UnsupportedLinking` comes from ever runs.
+/// Declaring the symbol directly, with no call site at all, is what
+/// `standalone_v1_rejects_libdevice_and_other_externs` already relies on to
+/// reach that scan for `user_device_external`.
+fn add_llvm_declaration(module: &mut CodegenModule, name: &str) {
+    module.edit(|ctx, module| {
+        use llvm_export::{ops::FuncOp, types::FuncType};
+
+        let block = module_block(ctx, module);
+        let i32_type = IntegerType::get(ctx, 32, Signedness::Signless);
+        let function_type = FuncType::get(ctx, i32_type.into(), vec![i32_type.into()], false);
+        let function = FuncOp::new(ctx, name.try_into().unwrap(), function_type);
+        function.get_operation().insert_at_back(block, ctx);
+    });
+}
+
+#[test]
+fn libdevice_linking_still_rejects_a_device_extern() {
+    // The opt-in narrows the rejection to symbols that are not libdevice. A
+    // module carrying both kinds must lose only the libdevice one, or
+    // `UnsupportedLinking` would stop meaning anything for device externs.
+    let mut module = CodegenModule::new("extern_module").unwrap();
+    add_llvm_declaration(&mut module, "__nv_erff");
+    add_llvm_declaration(&mut module, "my_device_extern");
+    let compiler = Compiler::discover().expect("LLVM 21+ llc/opt are installed");
+    let options =
+        CompileOptions::new(Target::parse("sm_120").unwrap()).with_linking(Linking::Libdevice);
+
+    let error = compiler
+        .compile(&mut module, &options)
+        .expect_err("a non-libdevice extern is still unresolvable");
+    match error {
+        CompileError::UnsupportedLinking { symbols } => {
+            assert_eq!(symbols, ["my_device_extern"]);
+        }
+        other => panic!("expected UnsupportedLinking, got {other}"),
+    }
+}
