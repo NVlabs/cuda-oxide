@@ -64,10 +64,6 @@ impl FinalizationOptions {
         self.debug
     }
 
-    pub(crate) fn nvvm_verify_options(&self) -> Vec<String> {
-        vec![format!("-arch={}", self.target.compute())]
-    }
-
     pub(crate) fn nvvm_compile_options(&self) -> Vec<String> {
         let mut options = vec![
             format!("-arch={}", self.target.compute()),
