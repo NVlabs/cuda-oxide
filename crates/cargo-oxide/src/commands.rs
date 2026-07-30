@@ -3248,6 +3248,9 @@ pub fn codegen_show_pipeline(
     if unchecked_indexing {
         cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
     }
+    if let Some(level) = device_debug.env_value() {
+        cmd.env("CUDA_OXIDE_DEBUG", level);
+    }
 
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
     apply_ld_library_path(&mut cmd, ctx);
