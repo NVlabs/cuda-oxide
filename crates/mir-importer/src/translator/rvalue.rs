@@ -6183,10 +6183,7 @@ fn translate_struct_constant(
                 let allocation = struct_allocation.expect(
                     "relocation offsets can only be returned for a retained struct allocation",
                 );
-                let static_target = static_target_from_allocation_relocation(
-                    allocation,
-                    byte_offset,
-                )?
+                let static_target = static_target_from_allocation_at(allocation, byte_offset)?
                     .ok_or_else(|| {
                         input_error_noloc!(TranslationErr::unsupported(format!(
                         "Struct constant pointer field {} targets an anonymous allocation; only Rust static targets are currently supported",
@@ -8733,40 +8730,6 @@ fn reject_promoted_struct_relocations(
 struct StaticPointerTarget {
     static_def: rustc_public::mir::mono::StaticDef,
     byte_offset: u64,
-}
-
-fn static_target_from_allocation_relocation(
-    allocation: &rustc_public::ty::Allocation,
-    provenance_offset: usize,
-) -> TranslationResult<Option<StaticPointerTarget>> {
-    use rustc_public::mir::alloc::GlobalAlloc;
-
-    let Some(&(_, provenance)) = allocation
-        .provenance
-        .ptrs
-        .iter()
-        .find(|entry| entry.0 == provenance_offset)
-    else {
-        return Ok(None);
-    };
-
-    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
-    let byte_offset = allocation
-        .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
-        .map_err(|error| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "Failed to read constant static-pointer addend at byte offset {}: {:?}",
-                provenance_offset, error
-            )))
-        })? as u64;
-
-    match GlobalAlloc::from(provenance.0) {
-        GlobalAlloc::Static(static_def) => Ok(Some(StaticPointerTarget {
-            static_def,
-            byte_offset,
-        })),
-        _ => Ok(None),
-    }
 }
 
 fn static_target_from_constant(
