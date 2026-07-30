@@ -41,12 +41,13 @@ and promoted-by-reference) also read every field at its rustc layout offset,
 so padded, reordered, `#[repr(C)]`, and nested shapes decode correctly, and a
 struct's stored size is its padded size, which fixes the element stride for
 arrays of padded structs inside constants. Arrays whose elements are structs
-or initialized unions are not yet materialized as constants. Direct tuple
-value constants preserve pointer provenance for thin references targeting
-device statics, including non-zero byte addends. Pointer-bearing arrays and
-structs, promoted-memory tuple targets, fat-pointer tuple fields, nested
-pointer fields, and nested relocation-bearing pointees remain unsupported
-and fail with an explicit diagnostic.
+or initialized unions are not yet materialized as constants. Tuple array
+constants and direct tuple value constants preserve pointer provenance for
+thin references targeting device statics, including non-zero byte addends,
+and struct constants materialize thin pointer fields that relocate to
+device statics. Pointer-bearing enum constants, promoted-memory targets,
+fat-pointer fields, and device-global initializers remain unsupported and
+fail with an explicit diagnostic.
 
 ## Compiler: Closures
 
