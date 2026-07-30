@@ -353,7 +353,7 @@ pub const fn wasted_lines(
     elem_size: usize,
 ) -> usize {
     let touched = lines_touched(offsets, elem_size);
-    let floor = minimum_lines(crate::swizzle::WARP_LANES * elem_size);
+    let floor = minimum_lines(crate::swizzle::WARP_LANES.saturating_mul(elem_size));
     touched.saturating_sub(floor)
 }
 
