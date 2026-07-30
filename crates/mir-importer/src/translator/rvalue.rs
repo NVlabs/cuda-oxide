@@ -5502,19 +5502,7 @@ fn translate_struct_constant(
     // fields use the allocation's provenance side table to resolve relocations;
     // the bytes at a relocated field contain only the target addend, not an
     // address. Promoted references to structs retain the existing byte-only path
-    // for now because their backing allocation is owned by the resolution branch.
-    let reject_struct_relocations = |relocations: usize| -> TranslationResult<()> {
-        if relocations != 0 {
-            return input_err!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "Promoted struct constant contains {relocations} pointer relocation(s); \
-                     cuda-oxide cannot yet preserve nested struct pointer provenance"
-                ))
-            );
-        }
-        Ok(())
-    };
+    // for now (see `reject_promoted_struct_relocations`).
     let (bytes, struct_allocation) = match constant.const_.kind() {
         ConstantKind::Allocated(alloc) => {
             if by_ref_pointee.is_some() {
@@ -5553,7 +5541,7 @@ fn translate_struct_constant(
                 let alloc_id = prov.0;
                 match GlobalAlloc::from(alloc_id) {
                     GlobalAlloc::Memory(target_alloc) => {
-                        reject_struct_relocations(target_alloc.provenance.ptrs.len())?;
+                        reject_promoted_struct_relocations(&target_alloc, loc.clone())?;
                         (
                             target_alloc.raw_bytes().ok().unwrap_or_else(|| {
                                 target_alloc
@@ -5572,7 +5560,7 @@ fn translate_struct_constant(
                                 e
                             )))
                         })?;
-                        reject_struct_relocations(target_alloc.provenance.ptrs.len())?;
+                        reject_promoted_struct_relocations(&target_alloc, loc.clone())?;
                         (
                             target_alloc.raw_bytes().ok().unwrap_or_else(|| {
                                 target_alloc
@@ -8160,6 +8148,30 @@ fn reject_relocations_in_non_pointer_struct_field(
     )
 }
 
+/// Reject a promoted (by-ref) struct constant whose backing allocation still
+/// carries pointer relocations.
+///
+/// Promoted references to structs retain the byte-only decode path: their
+/// backing allocation is owned by the by-ref resolution branch, so pointer
+/// fields cannot consume relocation entries there yet. Fail closed before any
+/// relocation placeholder bytes can be decoded as field values.
+fn reject_promoted_struct_relocations(
+    allocation: &rustc_public::ty::Allocation,
+    loc: Location,
+) -> TranslationResult<()> {
+    let relocations = allocation.provenance.ptrs.len();
+    if relocations != 0 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Promoted struct constant contains {relocations} pointer relocation(s); \
+                 cuda-oxide cannot yet preserve nested struct pointer provenance"
+            ))
+        );
+    }
+    Ok(())
+}
+
 /// Resolve a constant pointer/reference to the Rust static it points at, if any.
 ///
 /// The source allocation stores the pointer's byte addend at the relocation
@@ -9246,6 +9258,47 @@ mod tests {
         assert!(
             Operation::get_op::<MirCastOp>(cast_op, &ctx).is_some(),
             "normalization must insert mir.cast"
+        );
+    }
+
+    #[test]
+    fn promoted_struct_relocations_still_fail_closed() {
+        use rustc_public::mir::Mutability;
+        use rustc_public::mir::alloc::AllocId;
+        use rustc_public::ty::{Allocation, Prov, ProvenanceMap};
+
+        // A relocation-free promoted struct keeps translating through the
+        // byte-only decode path.
+        let clean = Allocation {
+            bytes: vec![Some(0); 16],
+            provenance: ProvenanceMap { ptrs: Vec::new() },
+            align: 8,
+            mutability: Mutability::Not,
+        };
+        assert!(
+            reject_promoted_struct_relocations(&clean, Location::Unknown).is_ok(),
+            "relocation-free promoted struct constants must keep translating"
+        );
+
+        // A promoted struct whose backing allocation carries a pointer
+        // relocation must fail closed: the by-ref branch decodes raw bytes
+        // only, and a relocation's placeholder bytes are a target addend,
+        // not an address.
+        let relocated = Allocation {
+            bytes: vec![Some(0); 16],
+            provenance: ProvenanceMap {
+                ptrs: vec![(0, Prov(AllocId::to_val(0)))],
+            },
+            align: 8,
+            mutability: Mutability::Not,
+        };
+        let error = reject_promoted_struct_relocations(&relocated, Location::Unknown)
+            .expect_err("promoted struct constants with relocations must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("Promoted struct constant contains 1 pointer relocation(s)"),
+            "rejection must name the promoted-struct relocation gap: {error}"
         );
     }
 }
