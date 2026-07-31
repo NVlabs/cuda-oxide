@@ -122,8 +122,12 @@ stores the values back to the Rust accumulator. This prevents an early memory
 access to pending WGMMA accumulator registers.
 
 The first implementation is intentionally fail-closed. It rejects partial
-waits, branches, loops, multiple live accumulator objects, intervening work,
-and the F16 and TF32 public compatibility entry points.
+waits, branches, sequences spanning a loop boundary, multiple live
+accumulator objects, intervening work, and the F16 and TF32 public
+compatibility entry points. A complete fence-to-wait sequence inside a loop
+body fuses, but each iteration pays the accumulator load/store round-trip
+and a full wait, so hoist the sequence out of hot loops where the K-loop
+can accumulate in shared memory descriptors instead.
 
 :::{tip}
 WGMMA is often paired with a **multi-stage pipeline**: while the tensor

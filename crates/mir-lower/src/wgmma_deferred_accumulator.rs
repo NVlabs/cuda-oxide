@@ -21,7 +21,9 @@
 //!
 //! Compiler-generated integer constants, storage markers, and unconditional
 //! gotos may separate those operations. All other operations, branches, joins,
-//! loops, partial waits, and accumulator changes are rejected.
+//! partial waits, and accumulator changes are rejected. A sequence that
+//! crosses a loop back-edge is rejected through the nested-fence or
+//! control-flow-join checks; a complete sequence inside a loop body fuses.
 
 use dialect_mir::{
     ops::{MirConstantOp, MirGotoOp, MirStorageDeadOp, MirStorageLiveOp},

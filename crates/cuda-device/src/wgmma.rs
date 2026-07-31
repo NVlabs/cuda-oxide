@@ -73,8 +73,11 @@
 //!   `wgmma_wait_group::<0>()`.
 //! - No other operation may occur between the fence and the wait, except
 //!   compiler-generated constants, storage markers, and unconditional gotos.
-//! - Partial waits, branches, loops, multiple live accumulators, and F16/TF32
-//!   MMA variants are rejected at compile time.
+//! - Partial waits, multiple live accumulators, F16/TF32 MMA variants, and
+//!   sequences whose fence-to-wait chain crosses a branch, join, or loop
+//!   back-edge are rejected at compile time. A complete sequence inside a
+//!   loop body fuses, but each iteration pays the accumulator memory
+//!   round-trip and a full wait.
 //!
 //! # Hardware Support
 //!

@@ -75,5 +75,7 @@ It rejects:
   - multiple accumulator objects;
   - multiple commit operations;
   - branches and control-flow joins;
-  - loops;
+  - sequences that span a loop boundary (a complete fence-to-wait
+    sequence inside a loop body fuses, paying the accumulator memory
+    round-trip each iteration);
   - incomplete fence/MMA/commit/wait sequences.
