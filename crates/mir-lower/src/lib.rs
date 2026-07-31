@@ -130,6 +130,7 @@ pub mod helpers;
 pub mod lowering;
 pub mod scalarize_block_args;
 pub mod type_conversion_interface;
+mod wgmma_deferred_accumulator;
 
 use rustc_hash::FxHashMap;
 
@@ -354,6 +355,10 @@ pub fn lower_mir_to_llvm_with_options(
     options: LoweringOptions,
 ) -> Result<()> {
     context::set_lowering_options(ctx, options);
+    // WGMMA pointer-form MMA operations are only sound when their complete
+    // fence/MMA/commit/wait<0> region can be fused into one deferred group.
+    // Run this while MIR control flow and unsigned constants are still intact.
+    wgmma_deferred_accumulator::fuse_deferred_accumulators(ctx, module_op)?;
     // Dynamic shared-memory operations may live in device helpers. Compute
     // every kernel-to-helper requirement while the complete MIR call graph is
     // still available; function conversion removes that graph incrementally.

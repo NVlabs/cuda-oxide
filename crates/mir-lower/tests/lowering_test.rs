@@ -7855,6 +7855,116 @@ fn test_mma_m16n8k16_f32_bf16_lowers_to_inline_asm() -> Result<(), anyhow::Error
     Ok(())
 }
 
+fn build_wgmma_pointer_test_kernel(
+    ctx: &mut Context,
+    accumulator_count: usize,
+    trailing_arg_types: Vec<pliron::r#type::TypeHandle>,
+) -> (
+    pliron::context::Ptr<Operation>,
+    pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    Vec<pliron::value::Value>,
+    pliron::value::Value,
+    pliron::value::Value,
+    Vec<pliron::value::Value>,
+) {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::r#type::TypeHandle;
+
+    let f32_ty = FP32Type::get(ctx);
+    let accumulator_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, f32_ty.into(), true).into();
+    let u64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Unsigned).into();
+
+    let trailing_count = trailing_arg_types.len();
+    let mut argument_types = vec![accumulator_ptr_ty; accumulator_count];
+    argument_types.push(u64_ty);
+    argument_types.push(u64_ty);
+    argument_types.extend(trailing_arg_types);
+
+    let (module_ptr, entry) = build_test_kernel(ctx, argument_types);
+
+    let accumulators = (0..accumulator_count)
+        .map(|index| entry.deref(ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let desc_a = entry.deref(ctx).get_argument(accumulator_count);
+    let desc_b = entry.deref(ctx).get_argument(accumulator_count + 1);
+    let trailing_arguments = (0..trailing_count)
+        .map(|index| entry.deref(ctx).get_argument(accumulator_count + 2 + index))
+        .collect::<Vec<_>>();
+
+    (
+        module_ptr,
+        entry,
+        accumulators,
+        desc_a,
+        desc_b,
+        trailing_arguments,
+    )
+}
+
+fn append_pointer_wgmma_mma(
+    ctx: &mut Context,
+    block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    accumulator: pliron::value::Value,
+    desc_a: pliron::value::Value,
+    desc_b: pliron::value::Value,
+) {
+    Operation::new(
+        ctx,
+        nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![accumulator, desc_a, desc_b],
+        vec![],
+        0,
+    )
+    .insert_at_back(block, ctx);
+}
+
+fn append_wgmma_wait_group_constant(
+    ctx: &mut Context,
+    block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    pending_groups: i64,
+) {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let constant_attr = IntegerAttr::new(
+        u64_ty,
+        APInt::from_i64(pending_groups, NonZeroUsize::new(64).unwrap()),
+    );
+    let constant = Operation::new(
+        ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(constant).set_attr_value(ctx, constant_attr);
+    constant.insert_at_back(block, ctx);
+
+    let value = constant.deref(ctx).get_result(0);
+    nvvm::WgmmaWaitGroupSyncAlignedOp::build(ctx, value).insert_at_back(block, ctx);
+}
+
+fn assert_wgmma_lowering_rejected(
+    ctx: &mut Context,
+    module_ptr: pliron::context::Ptr<Operation>,
+    expected_diagnostic: &str,
+) {
+    let error = mir_lower::lower_mir_to_llvm(ctx, module_ptr)
+        .expect_err("invalid deferred WGMMA sequence must fail closed")
+        .to_string();
+
+    assert!(
+        error.contains(expected_diagnostic),
+        "expected diagnostic containing `{expected_diagnostic}`, got:\n{error}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // mma.sync m16n8k16 f16 intrinsic lowering test
 // ---------------------------------------------------------------------------
@@ -8420,5 +8530,412 @@ fn test_mma_m16n8k32_s32_s8_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
     }
 
     assert_eq!(found, 1, "expected one mma.sync inline-asm operation");
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_group_lowers_to_one_register_lifetime_scope() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, f32_ty.into(), true);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![accumulator_ptr_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    let accumulator = entry.deref(&ctx).get_argument(0);
+    let desc_a = entry.deref(&ctx).get_argument(1);
+    let desc_b = entry.deref(&ctx).get_argument(2);
+
+    nvvm::WgmmaMmaGroupM64N64K16F32Bf16Op::build(&mut ctx, accumulator, vec![desc_a, desc_b])
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| {
+                    template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("WGMMA template");
+    assert_eq!(template.matches("ld.f32 %acc").count(), 32);
+    assert_eq!(template.matches("st.f32 [$0").count(), 32);
+    assert_eq!(template.matches("wgmma.mma_async").count(), 1);
+    let wait = template.find("wgmma.wait_group.sync.aligned 0").unwrap();
+    let first_store = template.find("st.f32 [$0").unwrap();
+    assert!(
+        wait < first_store,
+        "accumulator stores must follow wait_group<0>"
+    );
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some("l,l,l,~{memory}")
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_sequence_is_fused_before_lowering() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, f32_ty.into(), true);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![accumulator_ptr_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    let accumulator = entry.deref(&ctx).get_argument(0);
+    let desc_a = entry.deref(&ctx).get_argument(1);
+    let desc_b = entry.deref(&ctx).get_argument(2);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    Operation::new(
+        &mut ctx,
+        nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![accumulator, desc_a, desc_b],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+
+    let zero_attr = IntegerAttr::new(u64_ty, APInt::from_i64(0, NonZeroUsize::new(64).unwrap()));
+    let zero = Operation::new(
+        &mut ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(zero).set_attr_value(&ctx, zero_attr);
+    zero.insert_at_back(entry, &ctx);
+    let zero_value = zero.deref(&ctx).get_result(0);
+    nvvm::WgmmaWaitGroupSyncAlignedOp::build(&mut ctx, zero_value).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let templates = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter_map(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+        })
+        .filter(|template| template.contains("wgmma.mma_async"))
+        .collect::<Vec<_>>();
+    assert_eq!(templates.len(), 1);
+    assert!(templates[0].contains("wgmma.fence.sync.aligned"));
+    assert!(templates[0].contains("wgmma.commit_group.sync.aligned"));
+    assert!(templates[0].contains("wgmma.wait_group.sync.aligned 0"));
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_without_fence_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA MMA reached lowering without deferred accumulator fusion",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_without_commit_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA wait_group requires a preceding commit_group",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_wait_group_one_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 1);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA deferred accumulator lowering requires wait_group<0>",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_two_commits_are_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA deferred accumulator region supports exactly one commit_group",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_multiple_accumulators_are_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 2, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[1], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA deferred accumulator region uses more than one accumulator",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_mma_after_commit_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA MMA cannot appear after commit_group in a deferred accumulator region",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_branch_is_rejected() -> Result<(), anyhow::Error> {
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::op_interfaces::OperandSegmentInterface;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let bool_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let (module_ptr, entry, accumulators, desc_a, desc_b, trailing) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![bool_ty.into()]);
+    let condition = trailing[0];
+
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let function = module_block.deref(&ctx).iter(&ctx).next().unwrap();
+    let function_region = function.deref(&ctx).get_region(0);
+
+    let then_block = BasicBlock::new(&mut ctx, None, vec![]);
+    then_block.insert_at_back(function_region, &ctx);
+    let else_block = BasicBlock::new(&mut ctx, None, vec![]);
+    else_block.insert_at_back(function_region, &ctx);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+
+    let (flat_operands, segment_sizes) =
+        mir::MirCondBranchOp::compute_segment_sizes(vec![vec![condition], vec![], vec![]]);
+    let branch = Operation::new(
+        &mut ctx,
+        mir::MirCondBranchOp::get_concrete_op_info(),
+        vec![],
+        flat_operands,
+        vec![then_block, else_block],
+        0,
+    );
+    Operation::get_op::<mir::MirCondBranchOp>(branch, &ctx)
+        .expect("MirCondBranchOp")
+        .set_operand_segment_sizes(&ctx, segment_sizes);
+    branch.insert_at_back(entry, &ctx);
+
+    append_return(&mut ctx, then_block);
+    append_return(&mut ctx, else_block);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "unsupported operation inside WGMMA deferred accumulator region",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_join_is_rejected() -> Result<(), anyhow::Error> {
+    use pliron::basic_block::BasicBlock;
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let function = module_block.deref(&ctx).iter(&ctx).next().unwrap();
+    let function_region = function.deref(&ctx).get_region(0);
+
+    let second_predecessor = BasicBlock::new(&mut ctx, None, vec![]);
+    second_predecessor.insert_at_back(function_region, &ctx);
+    let join = BasicBlock::new(&mut ctx, None, vec![]);
+    join.insert_at_back(function_region, &ctx);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![join],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![join],
+        0,
+    )
+    .insert_at_back(second_predecessor, &ctx);
+
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(join, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, join, 0);
+    append_return(&mut ctx, join);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA deferred accumulator region cannot cross a control-flow join",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_intervening_operation_is_rejected() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    Operation::new(
+        &mut ctx,
+        nvvm::ReadPtxSregTidXOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "unsupported operation inside WGMMA deferred accumulator region",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deferred_wgmma_nested_fence_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "nested WGMMA fences are not supported in one deferred accumulator region",
+    );
     Ok(())
 }
