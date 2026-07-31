@@ -192,7 +192,7 @@ impl Verify for WgmmaMmaGroupM64N64K16F32Bf16Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
         let operand_count = op.get_num_operands();
-        if operand_count < 3 || operand_count % 2 == 0 || op.get_num_results() != 0 {
+        if operand_count < 3 || operand_count.is_multiple_of(2) || op.get_num_results() != 0 {
             return verify_err!(
                 op.loc(),
                 "nvvm.wgmma_mma_group_m64n64k16_f32_bf16 requires one accumulator, one or more descriptor pairs, and no results"

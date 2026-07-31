@@ -19,7 +19,7 @@
 use cuda_device::wgmma::{
     wgmma_commit_group, wgmma_fence, wgmma_mma_m64n64k16_f32_bf16, wgmma_wait_group,
 };
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 
 /// # Safety
 ///
