@@ -20,8 +20,9 @@
 //!   `drop_in_place` calls.
 //!
 //! Two kernels cover the shapes from the issue: a `for` loop over a
-//! plain `[u32; 4]` and one over an array of Copy structs. Both sums are
-//! verified on the host.
+//! plain `[u32; 4]` and one over an array of Copy structs. A third kernel
+//! covers the reachable-but-dead uninhabited-enum paths retained by
+//! `array::from_fn` and `array::map`. All results are verified on the host.
 //!
 //! Run: cargo oxide run array_for_loop
 
@@ -74,6 +75,19 @@ mod kernels {
             *out_elem = acc;
         }
     }
+
+    /// `array::from_fn` and `array::map` retain impossible residual-enum
+    /// branches in MIR even though these infallible helpers cannot take them.
+    #[kernel]
+    pub fn map_generated_array(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let t = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let generated: [u32; 4] = core::array::from_fn(|index| t + index as u32);
+            let mapped = generated.map(|value| value * 3 + 1);
+            *out_elem = mapped.into_iter().sum();
+        }
+    }
 }
 
 fn main() {
@@ -110,6 +124,13 @@ fn main() {
         .expect("launch sum_point_array");
     let got_pts = d_pts.to_host_vec(&stream).unwrap();
 
+    let mut d_mapped = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: the 32-thread 1D block matches the kernel's indexing model and
+    // the 32-element output allocation.
+    unsafe { module.map_generated_array(stream.as_ref(), cfg, &mut d_mapped) }
+        .expect("launch map_generated_array");
+    let got_mapped = d_mapped.to_host_vec(&stream).unwrap();
+
     let mut failures = 0usize;
     for tid in 0..N {
         let t = tid as u32;
@@ -117,6 +138,8 @@ fn main() {
         let want_u32 = 4 * t + 6;
         // t*1 + (t+1)*2 + (t+2)*3 + (t+3)*4
         let want_pts = t + (t + 1) * 2 + (t + 2) * 3 + (t + 3) * 4;
+        // sum([t, t+1, t+2, t+3].map(|value| value * 3 + 1))
+        let want_mapped = 12 * t + 22;
         if got_u32[tid] != want_u32 {
             println!(
                 "FAIL tid={tid}: sum_u32_array={} expected={want_u32}",
@@ -131,10 +154,17 @@ fn main() {
             );
             failures += 1;
         }
+        if got_mapped[tid] != want_mapped {
+            println!(
+                "FAIL tid={tid}: map_generated_array={} expected={want_mapped}",
+                got_mapped[tid]
+            );
+            failures += 1;
+        }
     }
 
     if failures == 0 {
-        println!("array_for_loop: PASS ({N} threads, both array for-loops summed correctly)");
+        println!("array_for_loop: PASS ({N} threads, array loops and infallible helpers agree)");
     } else {
         println!("array_for_loop: FAIL ({failures} mismatches)");
         std::process::exit(1);

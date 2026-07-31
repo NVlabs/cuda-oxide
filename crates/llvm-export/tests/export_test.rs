@@ -17,7 +17,7 @@ use llvm_export::{
         DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourcePosition, DebugSourceScope,
         DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
         GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
-        ReturnOp, SelectOp, StoreOp, encode_global_initializer_relocations,
+        ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
     types::{ArrayType, FuncType, HalfType, PointerType, StructType, VoidType},
 };
@@ -484,6 +484,74 @@ fn exporter_deduplicates_identical_values_on_duplicate_conditional_edges() {
         .find(|line| line.contains(" = phi i32 "))
         .expect("destination block must contain a PHI");
     assert_eq!(phi.matches("%entry").count(), 1, "{phi}");
+}
+
+#[test]
+fn phi_can_reference_undef_from_a_later_block() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "later_undef_phi".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let func_ty = FuncType::get(
+        &ctx,
+        i32_ty.into(),
+        vec![i1_ty.into(), i32_ty.into()],
+        false,
+    );
+    let func = FuncOp::new(&mut ctx, "choose_undef".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let condition = entry.deref(&ctx).get_argument(0);
+    let fallback = entry.deref(&ctx).get_argument(1);
+    let region = func.get_operation().deref(&ctx).get_region(0);
+
+    // The join precedes both predecessors in print order, so its PHI depends
+    // on the exporter's whole-function value-name pre-pass.
+    let join = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    join.insert_at_back(region, &ctx);
+    let undef_block = BasicBlock::new(&mut ctx, None, vec![]);
+    undef_block.insert_at_back(region, &ctx);
+    let value_block = BasicBlock::new(&mut ctx, None, vec![]);
+    value_block.insert_at_back(region, &ctx);
+
+    CondBrOp::new(
+        &mut ctx,
+        condition,
+        undef_block,
+        vec![],
+        value_block,
+        vec![],
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    let undef = UndefOp::new(&mut ctx, i32_ty.into());
+    let undef_value = undef.get_operation().deref(&ctx).get_result(0);
+    undef.get_operation().insert_at_back(undef_block, &ctx);
+    BrOp::new(&mut ctx, join, vec![undef_value])
+        .get_operation()
+        .insert_at_back(undef_block, &ctx);
+    BrOp::new(&mut ctx, join, vec![fallback])
+        .get_operation()
+        .insert_at_back(value_block, &ctx);
+
+    let result = join.deref(&ctx).get_argument(0);
+    ReturnOp::new(&mut ctx, Some(result))
+        .get_operation()
+        .insert_at_back(join, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect("later-block undef must be available while exporting an earlier PHI");
+    assert!(
+        ir.lines()
+            .any(|line| line.contains(" = phi i32 ") && line.contains("[ undef,")),
+        "{ir}"
+    );
 }
 
 #[test]

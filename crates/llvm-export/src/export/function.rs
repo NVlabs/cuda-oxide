@@ -734,9 +734,12 @@ impl<'a> ModuleExportState<'a> {
                     let op_obj = Operation::get_op_dyn(op, self.ctx);
                     let op_dyn = op_obj.as_ref();
 
-                    // Skip ops that don't produce named results (UndefOp is handled specially)
-                    if op_dyn.downcast_ref::<ops::UndefOp>().is_some() {
-                        // UndefOp result will be named "undef"
+                    // PHIs can reference an undef defined in a block that is
+                    // printed later. Register its literal spelling during the
+                    // pre-pass just like constants.
+                    if let Some(undef_op) = op_dyn.downcast_ref::<ops::UndefOp>() {
+                        let result = undef_op.get_operation().deref(self.ctx).get_result(0);
+                        value_names.insert(result, "undef".to_string());
                         continue;
                     }
 
