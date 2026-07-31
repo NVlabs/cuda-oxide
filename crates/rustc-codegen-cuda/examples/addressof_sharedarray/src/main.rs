@@ -13,6 +13,15 @@
 //! addressof's block, the GEP referenced a `%vN` no instruction defined and
 //! libNVVM rejected the IR.
 //!
+//! The same kernel verifies that exposing the address of the first static
+//! shared allocation does not turn its valid shared-space offset zero into a
+//! null Rust address. Named-space pointers must become CUDA generic pointers
+//! before pointer-to-integer conversion.
+//!
+//! It also constructs and matches a direct enum payload containing that shared
+//! pointer. The enum's physical storage must stay 64-bit even when modern NVVM
+//! uses a 32-bit representation for semantic shared-space pointers.
+//!
 //! This example launches the kernel through `cuda_host::ltoir::load_kernel_module`,
 //! which compiles the cuda-oxide-emitted NVVM IR via libNVVM and links the
 //! cubin via nvJitLink. A dangling SSA reference in the `.ll` would fail at
@@ -28,9 +37,29 @@ use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, SharedArray, device, kernel, thread};
 use cuda_host::{cuda_module, ltoir};
 
+enum SharedPointerPayload {
+    Empty,
+    Pointer(*mut SharedArray<f32, 1>),
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    #[inline(never)]
+    #[device]
+    fn shared_pointer_enum_address(use_pointer: bool, pointer: *mut SharedArray<f32, 1>) -> usize {
+        let payload = if use_pointer {
+            SharedPointerPayload::Pointer(pointer)
+        } else {
+            SharedPointerPayload::Empty
+        };
+
+        match payload {
+            SharedPointerPayload::Empty => 0,
+            SharedPointerPayload::Pointer(extracted) => extracted.addr(),
+        }
+    }
 
     #[kernel]
     pub fn sharedarray_late_use(seed: f32, mut out: DisjointSlice<f32>) {
@@ -43,6 +72,27 @@ mod kernels {
                 // Issue #54 repro shape: load addressof[0], multiply, store.
                 OUTPUT_NORM[0] = OUTPUT_NORM[0] * weight;
                 *out.get_unchecked_mut(0) = OUTPUT_NORM[0];
+
+                // The first static shared allocation has local shared offset
+                // zero, but its CUDA generic address must not be null.
+                let raw = &raw mut OUTPUT_NORM;
+                let raw_address = raw.addr();
+                *out.get_unchecked_mut(1) = if raw.is_null() || raw_address == 0 {
+                    0.0
+                } else {
+                    1.0
+                };
+
+                // A direct enum payload keeps the pointer's shared-space
+                // semantics while using target-stable generic physical
+                // storage. The runtime condition keeps construction,
+                // discriminant inspection, and extraction observable.
+                let enum_address = shared_pointer_enum_address(seed != 0.0, raw);
+                *out.get_unchecked_mut(2) = if enum_address == raw_address {
+                    1.0
+                } else {
+                    0.0
+                };
             }
         }
     }
@@ -66,21 +116,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = kernels::from_module(raw_module).expect("typed module init failed");
 
     let cfg = LaunchConfig::for_num_elems(1);
-    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 1)?;
+    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 3)?;
     let seed: f32 = 7.0;
 
-    // SAFETY: one thread is launched, matching the kernel's single-element
-    // output access and fixed shared-memory use.
+    // SAFETY: one thread is launched, matching the kernel's three-element output
+    // access and fixed shared-memory use.
     unsafe { module.sharedarray_late_use(stream.as_ref(), cfg, seed, &mut out) }?;
 
-    let result = out.to_host_vec(&stream)?[0];
+    let result = out.to_host_vec(&stream)?;
     let expected: f32 = 21.0; // seed * repro_weight() == 7.0 * 3.0
 
-    if (result - expected).abs() < f32::EPSILON {
-        println!("PASS addressof_sharedarray: seed={seed}, result={result}");
-        Ok(())
-    } else {
-        eprintln!("FAIL addressof_sharedarray: got {result}, expected {expected}");
+    if (result[0] - expected).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: got {}, expected {expected}",
+            result[0]
+        );
         std::process::exit(1);
     }
+    if (result[1] - 1.0).abs() >= f32::EPSILON {
+        eprintln!("FAIL addressof_sharedarray: shared offset zero exposed as null");
+        std::process::exit(1);
+    }
+    if (result[2] - 1.0).abs() >= f32::EPSILON {
+        eprintln!("FAIL addressof_sharedarray: shared pointer enum did not round-trip");
+        std::process::exit(1);
+    }
+    println!(
+        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, shared pointer enum round-tripped",
+        result[0]
+    );
+    Ok(())
 }

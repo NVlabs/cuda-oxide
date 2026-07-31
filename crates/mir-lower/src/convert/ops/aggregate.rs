@@ -895,6 +895,45 @@ fn canonicalize_bool_value_bytes(
     Ok(current)
 }
 
+/// Adapt a semantic enum payload pointer to or from its physical storage
+/// address space.
+///
+/// Direct shared-pointer payloads use a generic pointer slot so their enum
+/// representation remains 64-bit under both legacy PTX and modern NVVM. All
+/// other type mismatches remain errors; rebuilding nested pointer-bearing
+/// aggregates is deliberately outside this narrow boundary conversion.
+fn coerce_enum_payload_pointer(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    value: Value,
+    target_ty: TypeHandle,
+) -> Result<Value> {
+    let source_ty = value.get_type(ctx);
+    if source_ty == target_ty {
+        return Ok(value);
+    }
+
+    let source_address_space = source_ty
+        .deref(ctx)
+        .downcast_ref::<llvm_types::PointerType>()
+        .map(|pointer| pointer.address_space());
+    let target_address_space = target_ty
+        .deref(ctx)
+        .downcast_ref::<llvm_types::PointerType>()
+        .map(|pointer| pointer.address_space());
+    if source_address_space.is_none() || target_address_space.is_none() {
+        return pliron::input_err_noloc!(
+            "enum payload storage type mismatch: {} cannot be adapted to {}",
+            source_ty.deref(ctx).disp(ctx),
+            target_ty.deref(ctx).disp(ctx)
+        );
+    }
+
+    let cast = llvm::AddrSpaceCastOp::new(ctx, value, target_ty);
+    rewriter.insert_operation(ctx, cast.get_operation());
+    Ok(cast.get_operation().deref(ctx).get_result(0))
+}
+
 /// Convert `mir.construct_enum` (e.g. `E::A(x)`) to LLVM operations.
 ///
 /// Builds the enum value slot by slot, taking every index from
@@ -988,7 +1027,28 @@ pub(crate) fn convert_construct_enum(
         };
         match slot {
             Some(slot) => {
-                let insert_op = llvm::InsertValueOp::new(ctx, current_struct, operand, vec![*slot]);
+                let storage_ty = {
+                    let storage_type = llvm_struct_ty.deref(ctx);
+                    let storage_struct = storage_type
+                        .downcast_ref::<llvm_types::StructType>()
+                        .ok_or_else(|| {
+                            pliron::input_error_noloc!(
+                                "MirConstructEnumOp physical storage is not an LLVM struct"
+                            )
+                        })?;
+                    let storage_slot = *slot as usize;
+                    if storage_slot >= storage_struct.num_fields() {
+                        return pliron::input_err_noloc!(
+                            "MirConstructEnumOp physical field slot {} is out of range",
+                            slot
+                        );
+                    }
+                    storage_struct.field_type(storage_slot)
+                };
+                let stored_operand =
+                    coerce_enum_payload_pointer(ctx, rewriter, operand, storage_ty)?;
+                let insert_op =
+                    llvm::InsertValueOp::new(ctx, current_struct, stored_operand, vec![*slot]);
                 rewriter.insert_operation(ctx, insert_op.get_operation());
                 current_struct = insert_op.get_operation().deref(ctx).get_result(0);
                 last_op = insert_op.get_operation();
@@ -1343,7 +1403,14 @@ pub(crate) fn convert_enum_payload(
         Some(slot) => {
             let extract_op = llvm::ExtractValueOp::new(ctx, enum_val, vec![slot])?;
             rewriter.insert_operation(ctx, extract_op.get_operation());
-            rewriter.replace_operation(ctx, op, extract_op.get_operation());
+            let extracted = extract_op.get_operation().deref(ctx).get_result(0);
+            let semantic_value = coerce_enum_payload_pointer(
+                ctx,
+                rewriter,
+                extracted,
+                slot_map.field_llvm_types[flat],
+            )?;
+            rewriter.replace_operation_with_values(ctx, op, vec![semantic_value]);
         }
         None if is_zero_sized_type(ctx, slot_map.field_llvm_types[flat]) => {
             let undef_op = llvm::UndefOp::new(ctx, slot_map.field_llvm_types[flat]);
@@ -2405,6 +2472,95 @@ mod tests {
             error.to_string().contains("target-mode dependent"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn shared_pointer_niche_payload_round_trips_through_generic_storage() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, true).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OptionShared".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![shared], vec![0], vec![8]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                carrier_address_space: llvm_types::address_space::GENERIC,
+                niche_start: 0,
+                niche_variant_start: 0,
+                niche_variant_end: 0,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![shared], vec![shared]);
+        let pointer = block.deref(&ctx).get_argument(0);
+        let construct = Operation::new(
+            &mut ctx,
+            MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![pointer],
+            vec![],
+            0,
+        );
+        MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(1));
+        construct.insert_at_back(block, &ctx);
+        let option = construct.deref(&ctx).get_result(0);
+
+        let discriminant = Operation::new(
+            &mut ctx,
+            mir::MirGetDiscriminantOp::get_concrete_op_info(),
+            vec![logical],
+            vec![option],
+            vec![],
+            0,
+        );
+        discriminant.insert_at_back(block, &ctx);
+
+        let payload = Operation::new(
+            &mut ctx,
+            MirEnumPayloadOp::get_concrete_op_info(),
+            vec![shared],
+            vec![option],
+            vec![],
+            0,
+        );
+        let payload_op = MirEnumPayloadOp::new(payload);
+        payload_op.set_attr_payload_variant_index(&ctx, VariantIndexAttr(1));
+        payload_op.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+        payload.insert_at_back(block, &ctx);
+        let result = payload.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            2,
+            "construction must genericize the pointer and extraction must restore shared space"
+        );
+        assert_eq!(
+            count_ops::<llvm::PtrToIntOp>(&ctx, &body),
+            1,
+            "niche discrimination must inspect the generic pointer carrier"
+        );
+        assert_eq!(count_ops::<MirConstructEnumOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<MirEnumPayloadOp>(&ctx, &body), 0);
     }
 
     #[test]

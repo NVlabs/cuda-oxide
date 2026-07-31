@@ -1154,8 +1154,9 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64
     if ty_ref.is::<llvm_types::PointerType>() {
         // Lowering runs before the exporter chooses the minimal, legacy, or
         // modern NVPTX data layout. The first two use 64-bit pointers in all
-        // address spaces; modern NVVM alone uses p3:32. Enum storage rejects
-        // shared pointers below because no one target-agnostic size is sound.
+        // address spaces; modern NVVM alone uses p3:32. Callers that expose
+        // physical shared-pointer width must either genericize a direct
+        // pointer first or reject the target-dependent representation.
         return Some((8, 8));
     }
     if let Some(arr_ty) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
@@ -1458,18 +1459,36 @@ pub(crate) fn build_enum_slot_map(
             continue;
         }
         let llvm_ty = field_llvm_types[flat];
-        if llvm_type_contains_pointer_in_address_space(
-            ctx,
-            llvm_ty,
-            llvm_types::address_space::SHARED,
-        ) {
+        let is_direct_shared_pointer = llvm_ty
+            .deref(ctx)
+            .downcast_ref::<llvm_types::PointerType>()
+            .is_some_and(|pointer| pointer.address_space() == llvm_types::address_space::SHARED);
+        if !is_direct_shared_pointer
+            && llvm_type_contains_pointer_in_address_space(
+                ctx,
+                llvm_ty,
+                llvm_types::address_space::SHARED,
+            )
+        {
             return Err(anyhow::anyhow!(
-                "enum slot map: `{}` field {} contains a shared-memory pointer whose size is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM); refusing target-agnostic enum lowering",
+                "enum slot map: `{}` field {} contains a nested shared-memory pointer whose size is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM); refusing target-agnostic enum lowering",
                 name,
                 flat
             ));
         }
-        let (size, align) = llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
+        // A raw shared pointer is 32-bit in modern NVVM but Rust's logical
+        // pointer layout is 64-bit. Store it in the enum as a CUDA generic
+        // pointer, whose representation includes the memory-space identity
+        // and is 64-bit in every supported target mode. Enum construction
+        // and payload extraction insert the address-space casts at the value
+        // boundary. Nested aggregates still fail closed above because their
+        // pointer leaves cannot be retagged without rebuilding the aggregate.
+        let physical_ty: TypeHandle = if is_direct_shared_pointer {
+            llvm_types::PointerType::get_generic(ctx).into()
+        } else {
+            llvm_ty
+        };
+        let (size, align) = llvm_type_size_align(ctx, physical_ty).ok_or_else(|| {
             anyhow::anyhow!(
                 "enum slot map: `{}` field {} has unsupported LLVM size/alignment",
                 name,
@@ -1577,9 +1596,9 @@ pub(crate) fn build_enum_slot_map(
                 )
             })?
         } else {
-            llvm_ty
+            physical_ty
         };
-        let field_gets_slot = storage_ty == llvm_ty;
+        let field_gets_slot = storage_ty == llvm_ty || is_direct_shared_pointer;
 
         // Another variant already placed the same storage type at the same
         // position? Then both fields can simply use that claim: variants
@@ -3206,7 +3225,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_nonoverlapping_shared_pointer_payload() {
+    fn enum_slot_map_genericizes_nonoverlapping_shared_pointer_payload() {
         let mut ctx = make_ctx();
         let discr = mir_uint(&mut ctx, 32);
         let u32_ty = mir_uint(&mut ctx, 32);
@@ -3232,10 +3251,81 @@ mod tests {
             },
         )
         .into();
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a direct shared-pointer payload should use generic physical storage");
+        let field_slot = map.field_slots[0].expect("shared pointer field should own a slot");
+        let stored_ty = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .map(|struct_ty| struct_ty.field_type(field_slot as usize))
+            .expect("field slot must exist");
+        assert_eq!(
+            stored_ty
+                .deref(&ctx)
+                .downcast_ref::<llvm_types::PointerType>()
+                .expect("shared pointer storage must remain a pointer")
+                .address_space(),
+            llvm_types::address_space::GENERIC,
+            "enum storage must use a target-stable generic pointer"
+        );
+        assert_eq!(
+            map.field_llvm_types[0]
+                .deref(&ctx)
+                .downcast_ref::<llvm_types::PointerType>()
+                .expect("semantic field must remain a pointer")
+                .address_space(),
+            llvm_types::address_space::SHARED,
+            "payload operations must retain the semantic shared address space"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_still_rejects_nested_shared_pointer_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "SharedPointerWrapper".into(),
+            vec!["pointer".into()],
+            vec![shared],
+            vec![0],
+            vec![0],
+            8,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "NestedSharedPointerPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Ptr".into(), vec![wrapper], vec![8], vec![8]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
         let error = build_enum_slot_map(&mut ctx, enum_ty)
             .err()
-            .expect("shared pointer enum payload must reject");
-        assert!(error.to_string().contains("target-mode dependent"));
+            .expect("nested shared-pointer payloads remain target-mode dependent");
+        assert!(
+            error.to_string().contains("nested shared-memory pointer"),
+            "{error}"
+        );
     }
 
     #[test]

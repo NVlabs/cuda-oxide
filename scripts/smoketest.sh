@@ -363,8 +363,8 @@ verdict_error() {
             fi
             ;;
         error_enum_shared_pointer_layout)
-            if ! grep -Fq 'contains a shared-memory pointer whose size is target-mode dependent' "${log}"; then
-                echo "FAIL (missing target-dependent shared-pointer layout diagnostic)"
+            if ! grep -Fq 'contains a nested shared-memory pointer whose size is target-mode dependent' "${log}"; then
+                echo "FAIL (missing nested shared-pointer layout diagnostic)"
                 return 1
             fi
             ;;
