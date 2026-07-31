@@ -66,6 +66,14 @@ pub(super) struct GlobalSymbolInfo {
     pub(super) address_space: u32,
 }
 
+#[derive(Clone)]
+pub(super) struct GlobalSourceInfo {
+    pub(super) symbol: String,
+    pub(super) value_type: TypeHandle,
+    pub(super) address_space: u32,
+    pub(super) initializer_size: Option<u64>,
+}
+
 pub(super) struct ModuleExportState<'a> {
     pub(super) ctx: &'a pliron::context::Context,
     /// Track if any convergent operations were used (for emitting attributes section)
@@ -99,6 +107,11 @@ pub(super) struct ModuleExportState<'a> {
     /// Global value types/address spaces, indexed before any function body is
     /// emitted so `addressof` is independent of top-level textual order.
     pub(super) global_symbols: FxHashMap<String, GlobalSymbolInfo>,
+    /// Device globals indexed by their stable rustc source key.
+    ///
+    /// Relocation metadata refers to this key because ordinary globals receive
+    /// generated LLVM symbol names during MIR lowering.
+    pub(super) global_sources: FxHashMap<String, GlobalSourceInfo>,
     /// Next `!N` metadata ID in this module.
     ///
     /// LLVM has one flat numbered metadata namespace per module. Today this is
@@ -171,6 +184,7 @@ impl<'a> ModuleExportState<'a> {
             function_definitions: HashSet::new(),
             device_externs: FxHashMap::default(),
             global_symbols: FxHashMap::default(),
+            global_sources: FxHashMap::default(),
             next_metadata_id: 0,
             debug_kind,
             nvvm_ir_dialect,

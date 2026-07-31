@@ -348,6 +348,67 @@ pub fn module_uses_libdevice(ctx: &Context, module_op_ptr: Ptr<Operation>) -> bo
     op_uses_libdevice(ctx, module_op_ptr)
 }
 
+/// Whether `name` is a CUDA libdevice entry point.
+///
+/// The unresolved-symbol filter and the libdevice detector both read this, so
+/// the `__nv_` spelling has one definition in the crate.
+pub(crate) fn is_libdevice_symbol(name: &str) -> bool {
+    name.starts_with("__nv_")
+}
+
+/// Whether `c` can appear in a PTX identifier (`followsym`).
+fn is_ptx_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Names of `.extern .func` declarations in `ptx` that name a CUDA libdevice
+/// (`__nv_*`) symbol.
+///
+/// `llc` prints an unresolved callee as `.extern .func __nv_foo(` when it
+/// returns void, or `.extern .func  (.param .b32 func_retval0) __nv_foo(`
+/// when it returns a value, the same two shapes the `.visible .func` scan in
+/// `ptx.rs`'s tests already parses for exported and unreferenced libdevice
+/// symbols.
+///
+/// `llvm-link --only-needed` resolves whatever `__nv_*` symbols it finds in
+/// `libdevice.10.bc` and stays silent about the rest, so a `__nv_*` symbol
+/// libdevice does not define survives as an unresolved declaration all the
+/// way through `opt` and `llc`, both of which exit 0, into PTX that `ptxas`
+/// also accepts. The failure then surfaces only at `cuModuleLoad` on the
+/// device, with no diagnostic. This scan is what catches it at compile time
+/// for the self-contained output policy, where no later link step exists to
+/// resolve it.
+pub(crate) fn unresolved_libdevice_ptx_declarations(ptx: &str) -> Vec<String> {
+    let mut declared: Vec<String> = Vec::new();
+    for line in ptx.lines() {
+        let Some(rest) = line.trim_start().strip_prefix(".extern") else {
+            continue;
+        };
+        let Some(idx) = rest.find(".func") else {
+            continue;
+        };
+        let mut rest = rest[idx + ".func".len()..].trim_start();
+        // Skip the `(.param .b32 func_retval0)` clause of a value-returning
+        // declaration, matching `exported_nv_functions` in `ptx.rs`.
+        if let Some(after_open) = rest.strip_prefix('(') {
+            let Some(close) = after_open.find(')') else {
+                continue;
+            };
+            rest = after_open[close + 1..].trim_start();
+        }
+        let name: String = rest
+            .chars()
+            .take_while(|c| is_ptx_identifier_char(*c))
+            .collect();
+        if is_libdevice_symbol(&name) {
+            declared.push(name);
+        }
+    }
+    declared.sort();
+    declared.dedup();
+    declared
+}
+
 /// Return unresolved non-intrinsic LLVM function declarations.
 ///
 /// Standalone PTX has no link step. LLVM intrinsics are resolved by `llc`, but
@@ -392,14 +453,14 @@ fn collect_unresolved_external_symbols(
 /// Recursively scan for declared or called CUDA libdevice functions.
 fn op_uses_libdevice(ctx: &Context, op_ptr: Ptr<Operation>) -> bool {
     if let Some(func) = Operation::get_op::<llvm_export::ops::FuncOp>(op_ptr, ctx)
-        && func.get_symbol_name(ctx).starts_with("__nv_")
+        && is_libdevice_symbol(&func.get_symbol_name(ctx))
     {
         return true;
     }
 
     if let Some(call) = Operation::get_op::<llvm_export::ops::CallOp>(op_ptr, ctx)
         && let CallOpCallable::Direct(callee) = call.callee(ctx)
-        && callee.to_string().starts_with("__nv_")
+        && is_libdevice_symbol(&callee.to_string())
     {
         return true;
     }
@@ -769,5 +830,30 @@ mod tests {
             module_uses_libdevice(&ctx, module_ptr),
             "direct call to a `__nv_*` symbol must be detected"
         );
+    }
+
+    #[test]
+    fn unresolved_libdevice_ptx_declarations_finds_void_and_value_returning_externs() {
+        let ptx = "\
+.visible .entry kernel(
+.extern .func __nv_void_helper(
+.extern .func  (.param .b32 func_retval0) __nv_totally_not_real(
+.extern .func vprintf(
+.func  (.param .b32 func_retval0) __nv_internal_only(
+";
+        assert_eq!(
+            unresolved_libdevice_ptx_declarations(ptx),
+            ["__nv_totally_not_real", "__nv_void_helper"]
+        );
+    }
+
+    #[test]
+    fn unresolved_libdevice_ptx_declarations_ignores_a_fully_linked_module() {
+        let ptx = "\
+.visible .entry kernel(
+.visible .func __nv_helper(
+\tcall.uni __nv_helper, (param0);
+";
+        assert!(unresolved_libdevice_ptx_declarations(ptx).is_empty());
     }
 }

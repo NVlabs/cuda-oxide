@@ -1,7 +1,8 @@
 # device_global
 
-Tests ordinary Rust `static mut` values in CUDA global memory and non-zero
-immutable Rust static tables.
+Tests ordinary Rust `static mut` values in CUDA global memory, non-zero
+immutable Rust static tables, and thin pointers stored inside device-global
+initializers.
 
 Run with:
 
@@ -31,10 +32,39 @@ The address arithmetic stays in the static's physical address space and a
 single address-space cast restores the generic Rust pointer type at the
 borrow boundary.
 
-The one-past-the-end kernel forms a constant pointer whose byte addend
-equals the allocation size. Const eval permits forming (not dereferencing)
-such a pointer, so the translator materializes it; the kernel checks its
-distance from the base equals the 32-byte allocation.
+The static-initializer relocation kernel covers pointer values that are part
+of another static's evaluated allocation:
+
+```rust
+static TARGET_A: u32 = 0x1234_5678;
+static TARGET_B: u32 = 0xcafe_babe;
+static REFERENCE: &u32 = &TARGET_A;
+static REFERENCES: [&u32; 2] = [&TARGET_A, &TARGET_B];
+static INTERIOR_REFERENCE: &f32 = &STATIC_WEIGHTS[2][1];
+```
+
+rustc stores each pointer as literal addend bytes plus a separate provenance
+entry naming the target allocation. cuda-oxide keeps both components through
+MIR lowering. The LLVM global uses byte-array fields for literal spans and an
+integer-width relocation slot for every pointer. The exporter reconstructs
+each slot with `getelementptr`, `addrspacecast`, and `ptrtoint` constant
+expressions, so the device linker sees an actual relocation rather than a null
+placeholder.
+
+The relocation coverage includes:
+
+- a direct static-to-static reference;
+- multiple pointer fields in one initializer;
+- two fields sharing one target;
+- a second independently materialized target;
+- an interior pointer with a non-zero byte addend;
+- targets reachable only through another static initializer;
+- modern opaque-pointer NVVM IR and legacy LLVM 7 typed-pointer NVVM IR.
+
+The one-past-the-end kernel forms a constant pointer whose byte addend equals
+the allocation size. Const eval permits forming, but not dereferencing, such a
+pointer, so the translator materializes it; the kernel checks its distance from
+the base equals the 32-byte allocation.
 
 The edge-case kernel checks two byte-level details:
 
@@ -56,13 +86,19 @@ launches, proving it is global device storage and not per-block shared memory.
 
 Non-zero immutable static initializers are emitted as the exact evaluated byte
 image in LLVM/PTX, so device code can read compile-time data without losing
-padding, field offsets, or floating-point payload bits.
+padding, field offsets, or floating-point payload bits. Pointer-width slots are
+excluded from the literal byte image and emitted as provenance-preserving LLVM
+constant expressions.
 
-Before emitting those bytes, cuda-oxide also proves that its typed field loads
-use the same offsets and size as rustc. Layouts that are not modeled exactly
-fail at compile time instead of producing a wrong value. This currently
-includes packed structs, non-empty tuples, niche-encoded enums, unions, and
-constant pointers into a static whose pointee is unsized (a slice or another
-DST needing fat-pointer metadata). Initializers that contain pointer
-relocations remain unsupported for the same reason: replacing a relocation
-with literal zero bytes would silently turn the pointer into null.
+Before emitting an initializer, cuda-oxide proves that its typed field loads
+use the same offsets and size as rustc. Relocation records are also checked for
+pointer width, alignment, bounds, overlap, target identity, target address
+space, and addend bounds. Unsupported layouts fail at compile time instead of
+producing a wrong value.
+
+The supported relocation scope is intentionally narrow: thin pointers from one
+device static to another device static in global or constant memory, including
+zero and non-zero byte addends. Anonymous promoted allocations, functions,
+vtables, trait-object metadata, slices and other fat pointers, unsized pointees,
+packed or unaligned pointer slots, and relocation targets outside device static
+storage remain fail-closed.

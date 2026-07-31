@@ -7793,43 +7793,191 @@ fn static_target_from_allocation_at(
     }
 }
 
-/// The byte image and ABI alignment of a global initializer.
+/// One pointer-width relocation inside an evaluated Rust static initializer.
 ///
-/// LLVM globals with explicit data are emitted as byte arrays. Keeping the
-/// evaluated allocation as bytes avoids reconstructing Rust layout in the
-/// exporter, which could otherwise change floating-point NaN payloads or put
-/// fields at the wrong offsets.
+/// The source and target offsets are byte offsets. `target_key` is the same
+/// stable rustc identity stored on the target `MirGlobalAllocOp`.
+struct GlobalInitializerRelocation {
+    source_offset: u64,
+    width_bytes: u32,
+    target_address_space: u32,
+    target_addend: u64,
+    target_key: String,
+    target_static: rustc_public::mir::mono::StaticDef,
+}
+
+/// The byte image, ABI alignment, and pointer relocations of a global initializer.
+///
+/// Literal bytes remain byte-exact. Pointer slots are carried separately so
+/// lowering can replace their placeholder addend bytes with LLVM relocation
+/// expressions without changing padding, NaN payloads, or field offsets.
 struct GlobalInitializerData {
     bytes: Vec<u8>,
     alignment: u64,
+    relocations: Vec<GlobalInitializerRelocation>,
+}
+
+fn static_global_key(static_def: &rustc_public::mir::mono::StaticDef) -> String {
+    let static_ty = static_def.ty();
+    if is_constant_wrapper_type(&static_ty) {
+        rustc_public::mir::mono::Instance::from(*static_def)
+            .mangled_name()
+            .to_string()
+    } else {
+        static_def.name()
+    }
+}
+
+fn static_global_address_space(static_def: &rustc_public::mir::mono::StaticDef) -> u32 {
+    if is_constant_wrapper_type(&static_def.ty()) {
+        4
+    } else {
+        1
+    }
+}
+
+/// Encode initializer relocations using the versioned, length-prefixed format
+/// consumed by `mir-lower` and `llvm-export`.
+fn encode_global_initializer_relocations(relocations: &[GlobalInitializerRelocation]) -> String {
+    fn put_u64(out: &mut String, value: u64) {
+        out.push_str(&value.to_string());
+        out.push(' ');
+    }
+
+    fn put_str(out: &mut String, value: &str) {
+        put_u64(out, value.len() as u64);
+        out.push_str(value);
+        out.push(' ');
+    }
+
+    let mut encoded = String::from("v1 ");
+    put_u64(&mut encoded, relocations.len() as u64);
+    for relocation in relocations {
+        put_u64(&mut encoded, relocation.source_offset);
+        put_u64(&mut encoded, u64::from(relocation.width_bytes));
+        put_u64(&mut encoded, u64::from(relocation.target_address_space));
+        put_u64(&mut encoded, relocation.target_addend);
+        put_str(&mut encoded, &relocation.target_key);
+    }
+    encoded
 }
 
 /// Copy one evaluated allocation into a byte-exact global initializer.
 ///
-/// Undefined bytes are Rust padding. They do not carry a Rust value, so make
-/// them deterministic zeros in the object image. Pointer provenance is
-/// different: it represents a relocation, not literal zero bytes. Until the
-/// exporter can emit relocations, accepting it would silently turn a valid
-/// pointer into null, so reject it here.
+/// Undefined bytes are Rust padding and become deterministic zeros. Each
+/// provenance entry is preserved as a static-to-static pointer relocation.
+/// Anonymous memory, functions, vtables, packed pointer slots, and malformed
+/// source ranges remain diagnosed rather than being flattened to integer bytes.
 fn allocation_initializer_data(
     alloc: &rustc_public::ty::Allocation,
     description: &str,
     loc: Location,
 ) -> TranslationResult<GlobalInitializerData> {
-    if !alloc.provenance.ptrs.is_empty() {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let width_bytes = u32::try_from(pointer_width).map_err(|_| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "{description} uses a target pointer width that does not fit u32"
+        )))
+    })?;
+
+    if !alloc.provenance.ptrs.is_empty() && pointer_width != 8 {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "{} contains {} pointer relocation(s); cuda-oxide cannot yet emit pointer provenance in device global initializers",
-                description,
-                alloc.provenance.ptrs.len()
+                "{description} contains pointer relocations, but cuda-oxide currently supports only 8-byte NVPTX pointers"
             ))
         );
+    }
+    if !alloc.provenance.ptrs.is_empty() && alloc.align < pointer_width as u64 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "{description} has ABI alignment {}, but its pointer relocations require {pointer_width}-byte alignment",
+                alloc.align
+            ))
+        );
+    }
+
+    let mut entries: Vec<_> = alloc.provenance.ptrs.to_vec();
+    entries.sort_by_key(|(source_offset, _)| *source_offset);
+
+    let mut relocations = Vec::with_capacity(entries.len());
+    let mut previous_end = 0usize;
+
+    for (index, (source_offset, provenance)) in entries.into_iter().enumerate() {
+        if source_offset % pointer_width != 0 {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "{description} pointer relocation {index} starts at unaligned byte offset {source_offset}; {pointer_width}-byte pointer slots must be naturally aligned"
+                ))
+            );
+        }
+        if source_offset < previous_end {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "{description} pointer relocation {index} overlaps the previous relocation"
+                ))
+            );
+        }
+
+        let end = source_offset.checked_add(pointer_width).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "{description} pointer relocation {index} source range overflows"
+            )))
+        })?;
+        if end > alloc.bytes.len() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "{description} pointer relocation {index} occupies bytes {source_offset}..{end}, but the allocation is only {} bytes",
+                    alloc.bytes.len()
+                ))
+            );
+        }
+
+        let target_addend = alloc
+            .read_partial_uint(source_offset..end)
+            .map_err(|error| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Failed to read {description} pointer relocation {index} addend: {error:?}"
+                )))
+            })? as u64;
+
+        let target_static = match GlobalAlloc::from(provenance.0) {
+            GlobalAlloc::Static(static_def) => static_def,
+            other => {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "{description} pointer relocation {index} targets unsupported allocation {other:?}; only Rust statics in CUDA global or constant memory are supported"
+                    ))
+                );
+            }
+        };
+
+        relocations.push(GlobalInitializerRelocation {
+            source_offset: u64::try_from(source_offset).map_err(|_| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "{description} pointer relocation {index} source offset does not fit u64"
+                )))
+            })?,
+            width_bytes,
+            target_address_space: static_global_address_space(&target_static),
+            target_addend,
+            target_key: static_global_key(&target_static),
+            target_static,
+        });
+        previous_end = end;
     }
 
     Ok(GlobalInitializerData {
         bytes: alloc.bytes.iter().map(|byte| byte.unwrap_or(0)).collect(),
         alignment: alloc.align,
+        relocations,
     })
 }
 
@@ -7856,6 +8004,15 @@ fn promoted_array_initializer(
                 &format!("promoted {kind_name} initializer"),
                 loc.clone(),
             )?;
+            if !data.relocations.is_empty() {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "promoted {kind_name} initializer contains {} pointer relocation(s); promoted array provenance is not part of device-global static relocation support",
+                        data.relocations.len()
+                    ))
+                );
+            }
             if data.bytes.len() != expected_size {
                 return input_err!(
                     loc,
@@ -7910,6 +8067,15 @@ fn promoted_array_initializer(
             &format!("promoted {kind_name} backing allocation"),
             loc.clone(),
         )?;
+        if !data.relocations.is_empty() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "promoted {kind_name} backing allocation contains {} pointer relocation(s); promoted array provenance is not part of device-global static relocation support",
+                    data.relocations.len()
+                ))
+            );
+        }
         let end = target_offset.checked_add(expected_size).ok_or_else(|| {
             input_error_noloc!(TranslationErr::unsupported(format!(
                 "promoted {kind_name} initializer offset overflows its allocation"
@@ -7950,7 +8116,7 @@ fn promoted_array_initializer(
     }
 }
 
-/// Return rustc's evaluated static initializer bytes and alignment.
+/// Return rustc's evaluated static initializer bytes, alignment, and relocations.
 fn static_initializer_data(
     static_def: &rustc_public::mir::mono::StaticDef,
     loc: Location,
@@ -9208,39 +9374,38 @@ fn translate_array_constant_from_alloc(
     Ok((op.deref(ctx).get_result(0), Some(op)))
 }
 
-fn translate_static_global_pointer(
+#[derive(Clone, Copy)]
+struct MaterializedStaticGlobal {
+    base_ptr: Value,
+    global_op: Ptr<Operation>,
+    allocation_size: u64,
+}
+
+struct StaticGlobalMaterializationState {
+    globals: std::collections::HashMap<String, MaterializedStaticGlobal>,
+    last_op: Option<Ptr<Operation>>,
+}
+
+/// Materialize one device static and every static reachable from its initializer.
+///
+/// The current global is registered before traversing its relocations. That
+/// makes self-references and mutually recursive static graphs finite while the
+/// lowering pass still performs module-wide deduplication by `global_key`.
+fn ensure_static_global_alloc(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
-    result_pointee_ty: TypeHandle,
-    result_ptr_ty: TypeHandle,
     is_mutable: bool,
-    byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
     loc: Location,
-) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let initializer = static_initializer_data(static_def, loc.clone())?;
-
-    // Rust const evaluation permits forming a pointer one past the end of
-    // an allocation (offset == allocation size); only offsets strictly
-    // beyond the allocation are impossible for rustc to have produced.
-    // Forming the pointer is what is translated here, so the check must
-    // not add a pointee-size term: that would reject legal one-past-the-
-    // end constants that are never dereferenced.
-    let allocation_size = initializer.bytes.len() as u64;
-    if byte_offset > allocation_size {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "constant pointer to device static {} has byte offset {}, \
-                 but the static allocation is only {} bytes",
-                static_def.name(),
-                byte_offset,
-                allocation_size
-            ))
-        );
+    state: &mut StaticGlobalMaterializationState,
+) -> TranslationResult<MaterializedStaticGlobal> {
+    let global_key = static_global_key(static_def);
+    if let Some(existing) = state.globals.get(&global_key) {
+        return Ok(*existing);
     }
 
+    let initializer = static_initializer_data(static_def, loc.clone())?;
+    let allocation_size = initializer.bytes.len() as u64;
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let static_ty = static_def.ty();
 
@@ -9255,15 +9420,6 @@ fn translate_static_global_pointer(
     }
 
     let is_constant = is_constant_wrapper_type(&static_ty);
-
-    let global_key: String = if is_constant {
-        rustc_public::mir::mono::Instance::from(*static_def)
-            .mangled_name()
-            .to_string()
-    } else {
-        static_def.name()
-    };
-
     let global_ty = types::translate_type(ctx, &static_ty)?;
     let global_ptr_ty: TypeHandle = if is_constant {
         dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
@@ -9283,23 +9439,104 @@ fn translate_static_global_pointer(
 
     let global_alloc = MirGlobalAllocOp::new(global_op);
 
-    use pliron::builtin::attributes::{IntegerAttr, StringAttr, TypeAttr};
+    use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
     global_alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
-    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
+    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key.clone()));
     set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
+    if !initializer.relocations.is_empty() {
+        let encoded = encode_global_initializer_relocations(&initializer.relocations);
+        set_global_initializer_relocations_attr(ctx, global_alloc.get_operation(), &encoded);
+    }
 
     if initializer.alignment > 0 {
         global_alloc.set_alignment_value(ctx, initializer.alignment);
     }
 
-    if let Some(prev) = prev_op {
-        global_alloc.get_operation().insert_after(ctx, prev);
-    } else {
-        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
+    match state.last_op {
+        Some(previous) => global_alloc.get_operation().insert_after(ctx, previous),
+        None => global_alloc.get_operation().insert_at_front(block_ptr, ctx),
+    }
+    state.last_op = Some(global_alloc.get_operation());
+
+    let materialized = MaterializedStaticGlobal {
+        base_ptr: global_alloc.get_operation().deref(ctx).get_result(0),
+        global_op: global_alloc.get_operation(),
+        allocation_size,
+    };
+    state.globals.insert(global_key, materialized);
+
+    for relocation in &initializer.relocations {
+        let target = ensure_static_global_alloc(
+            ctx,
+            &relocation.target_static,
+            false,
+            block_ptr,
+            loc.clone(),
+            state,
+        )?;
+        if relocation.target_addend > target.allocation_size {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "device static {} relocation at byte {} points {} bytes into {}, but the target allocation is only {} bytes",
+                    static_def.name(),
+                    relocation.source_offset,
+                    relocation.target_addend,
+                    relocation.target_static.name(),
+                    target.allocation_size
+                ))
+            );
+        }
     }
 
-    let base_ptr = global_alloc.get_operation().deref(ctx).get_result(0);
+    Ok(materialized)
+}
+
+fn translate_static_global_pointer(
+    ctx: &mut Context,
+    static_def: &rustc_public::mir::mono::StaticDef,
+    result_pointee_ty: TypeHandle,
+    result_ptr_ty: TypeHandle,
+    is_mutable: bool,
+    byte_offset: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let mut state = StaticGlobalMaterializationState {
+        globals: std::collections::HashMap::new(),
+        last_op: prev_op,
+    };
+    let materialized = ensure_static_global_alloc(
+        ctx,
+        static_def,
+        is_mutable,
+        block_ptr,
+        loc.clone(),
+        &mut state,
+    )?;
+
+    // Rust const evaluation permits forming a pointer one past the end of
+    // an allocation (offset == allocation size); only offsets strictly
+    // beyond the allocation are impossible for rustc to have produced.
+    // Forming the pointer is what is translated here, so the check must
+    // not add a pointee-size term.
+    if byte_offset > materialized.allocation_size {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "constant pointer to device static {} has byte offset {}, \
+                 but the static allocation is only {} bytes",
+                static_def.name(),
+                byte_offset,
+                materialized.allocation_size
+            ))
+        );
+    }
+
+    let base_ptr = materialized.base_ptr;
+    let insert_after = state.last_op.unwrap_or(materialized.global_op);
 
     // Preserve the existing direct path. It avoids generating unnecessary
     // casts and pointer arithmetic for ordinary references to whole statics.
@@ -9307,13 +9544,8 @@ fn translate_static_global_pointer(
     // type: slot stores and mem2reg are type-strict, so the physical
     // address-space pointer must not leak into the function body.
     if byte_offset == 0 {
-        let (result, last_op) = retype_static_pointer_result(
-            ctx,
-            base_ptr,
-            result_ptr_ty,
-            global_alloc.get_operation(),
-            loc,
-        );
+        let (result, last_op) =
+            retype_static_pointer_result(ctx, base_ptr, result_ptr_ty, insert_after, loc);
         return Ok((result, Some(last_op)));
     }
 
@@ -9353,15 +9585,13 @@ fn translate_static_global_pointer(
 
     let to_byte_cast = MirCastOp::new(to_byte_op);
     to_byte_cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
-    to_byte_cast
-        .get_operation()
-        .insert_after(ctx, global_alloc.get_operation());
+    to_byte_cast.get_operation().insert_after(ctx, insert_after);
 
     let byte_ptr = to_byte_cast.get_operation().deref(ctx).get_result(0);
 
     // 2. Materialize the rustc byte addend as usize.
     let offset_ty = types::get_usize_type(ctx);
-    let offset_attr = IntegerAttr::new(
+    let offset_attr = pliron::builtin::attributes::IntegerAttr::new(
         offset_ty,
         APInt::from_u64(
             byte_offset,
@@ -9463,9 +9693,9 @@ fn retype_static_pointer_result(
 /// Return the first union stored inline in `ty`.
 ///
 /// Pointer pointees are deliberately not followed: their bytes are not part of
-/// the containing allocation (and non-null pointer provenance is rejected by a
-/// separate check). Arrays, tuples, structs, and enum payloads are inline and
-/// must be searched recursively.
+/// the containing allocation, and initializer relocations are collected through
+/// rustc provenance separately. Arrays, tuples, structs, and enum payloads are
+/// inline and must be searched recursively.
 fn stored_type_union_name(
     ty: rustc_public::ty::Ty,
     visited: &mut Vec<rustc_public::ty::Ty>,
@@ -9515,6 +9745,21 @@ fn set_global_initializer_hex_attr(ctx: &mut Context, op: Ptr<Operation>, initia
     op.deref_mut(ctx)
         .attributes
         .set(key, StringAttr::new(initializer_hex.to_string()));
+}
+
+fn set_global_initializer_relocations_attr(
+    ctx: &mut Context,
+    op: Ptr<Operation>,
+    relocations: &str,
+) {
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::identifier::Identifier;
+
+    let key = Identifier::try_new("global_initializer_relocations".to_string())
+        .expect("valid identifier");
+    op.deref_mut(ctx)
+        .attributes
+        .set(key, StringAttr::new(relocations.to_string()));
 }
 
 /// Check if a type is a pointer/reference to a static allocation.

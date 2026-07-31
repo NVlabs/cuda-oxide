@@ -58,7 +58,7 @@ use llvm_export::attributes::IntegerOverflowFlagsAttr;
 use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
-use llvm_export::types::{ArrayType, FuncType, VoidType};
+use llvm_export::types::{ArrayType, FuncType, StructType, VoidType};
 use pliron::attribute::AttrObj;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -657,7 +657,14 @@ pub fn convert_global_alloc_dc(
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let (global_key, mir_global_type, alignment, addr_space, initializer_hex) = {
+    let (
+        global_key,
+        mir_global_type,
+        alignment,
+        addr_space,
+        initializer_hex,
+        initializer_relocations,
+    ) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
@@ -686,6 +693,10 @@ pub fn convert_global_alloc_dc(
             .attributes
             .get::<StringAttr>(&"global_initializer_hex".try_into().unwrap())
             .map(|attr| String::from((*attr).clone()));
+        let initializer_relocations = op_ref
+            .attributes
+            .get::<StringAttr>(&"global_initializer_relocations".try_into().unwrap())
+            .map(|attr| String::from((*attr).clone()));
 
         // Read the address space the op's result already carries — set by
         // mir-importer based on the static's type (`ConstantMemory<T>` → 4,
@@ -713,6 +724,7 @@ pub fn convert_global_alloc_dc(
             alignment,
             addr_space,
             initializer_hex,
+            initializer_relocations,
         )
     };
 
@@ -729,6 +741,7 @@ pub fn convert_global_alloc_dc(
                 alignment,
                 addr_space,
                 initializer_hex: initializer_hex.as_deref(),
+                initializer_relocations: initializer_relocations.as_deref(),
             },
         )?
     };
@@ -746,6 +759,7 @@ struct DeviceGlobalSpec<'a> {
     alignment: u64,
     addr_space: u32,
     initializer_hex: Option<&'a str>,
+    initializer_relocations: Option<&'a str>,
 }
 
 fn create_device_global(
@@ -755,9 +769,10 @@ fn create_device_global(
     spec: DeviceGlobalSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     // An explicit initializer is already the evaluated Rust allocation image.
-    // Keep it as `[N x i8]` all the way through LLVM instead of rebuilding a
-    // typed constant. Typed reconstruction can lose NaN payload bits and needs
-    // a second, easily-divergent implementation of Rust struct padding.
+    // Pointer-free data stays `[N x i8]`. Initializers with relocations use a
+    // segmented LLVM struct whose literal spans remain byte arrays and whose
+    // pointer slots become pointer-width integers. This preserves both exact
+    // bytes and linker-visible pointer provenance.
     let semantic_llvm_type = convert_type(ctx, spec.mir_type).map_err(anyhow_to_pliron)?;
     let (llvm_global_type, alignment) = if let Some(initializer_hex) = spec.initializer_hex {
         let byte_count = initializer_hex_byte_count(initializer_hex).map_err(anyhow_to_pliron)?;
@@ -768,12 +783,21 @@ fn create_device_global(
         }
         validate_initialized_global_layout(ctx, spec.mir_type, byte_count, spec.alignment)
             .map_err(anyhow_to_pliron)?;
-        let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
-        (
-            ArrayType::get(ctx, i8_ty.into(), byte_count).into(),
-            spec.alignment,
-        )
+
+        let storage_type = if let Some(encoded) = spec.initializer_relocations {
+            relocated_initializer_storage_type(ctx, byte_count, spec.alignment, encoded)
+                .map_err(anyhow_to_pliron)?
+        } else {
+            let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+            ArrayType::get(ctx, i8_ty.into(), byte_count).into()
+        };
+        (storage_type, spec.alignment)
     } else {
+        if spec.initializer_relocations.is_some() {
+            return Err(anyhow_to_pliron(anyhow::anyhow!(
+                "device global carries relocation metadata without initializer bytes"
+            )));
+        }
         (semantic_llvm_type, spec.alignment)
     };
 
@@ -801,8 +825,12 @@ fn create_device_global(
         llvm::GlobalOp::new(ctx, name.clone(), llvm_global_type)
     };
     global_op.set_address_space(ctx, spec.addr_space);
+    global_op.set_source_global_key(ctx, spec.key);
     if let Some(initializer_hex) = spec.initializer_hex {
         global_op.set_initializer_hex(ctx, initializer_hex);
+    }
+    if let Some(initializer_relocations) = spec.initializer_relocations {
+        global_op.set_initializer_relocations(ctx, initializer_relocations);
     }
 
     let parent_block = op
@@ -821,6 +849,97 @@ fn create_device_global(
     device_globals.insert(spec.key.to_string(), name.clone());
 
     Ok(name)
+}
+
+fn relocated_initializer_storage_type(
+    ctx: &mut Context,
+    byte_count: u64,
+    allocation_alignment: u64,
+    encoded: &str,
+) -> std::result::Result<TypeHandle, anyhow::Error> {
+    let mut relocations =
+        llvm::decode_global_initializer_relocations(encoded).map_err(anyhow::Error::msg)?;
+    if relocations.is_empty() {
+        anyhow::bail!("device global relocation metadata contains no relocations");
+    }
+    relocations.sort_by_key(|relocation| relocation.source_offset);
+
+    let mut cursor = 0u64;
+    let mut fields = Vec::with_capacity(relocations.len() * 2 + 1);
+    let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+
+    for (index, relocation) in relocations.iter().enumerate() {
+        if relocation.width_bytes != 8 {
+            anyhow::bail!(
+                "device global relocation {index} uses unsupported {}-byte pointer storage; CUDA global/constant pointers require 8 bytes",
+                relocation.width_bytes
+            );
+        }
+        if !matches!(relocation.target_address_space, 1 | 4) {
+            anyhow::bail!(
+                "device global relocation {index} targets unsupported CUDA address space {}",
+                relocation.target_address_space
+            );
+        }
+        if relocation.target_key.is_empty() {
+            anyhow::bail!("device global relocation {index} has an empty target key");
+        }
+
+        let width = u64::from(relocation.width_bytes);
+        if relocation.source_offset % width != 0 {
+            anyhow::bail!(
+                "device global relocation {index} starts at unaligned byte offset {} for a {}-byte pointer",
+                relocation.source_offset,
+                relocation.width_bytes
+            );
+        }
+        if allocation_alignment < width {
+            anyhow::bail!(
+                "device global relocation {index} requires {}-byte alignment but the Rust allocation alignment is {}",
+                relocation.width_bytes,
+                allocation_alignment
+            );
+        }
+        if relocation.source_offset < cursor {
+            anyhow::bail!(
+                "device global relocation {index} overlaps the previous relocation or literal span"
+            );
+        }
+        let end = relocation
+            .source_offset
+            .checked_add(width)
+            .ok_or_else(|| anyhow::anyhow!("device global relocation {index} offset overflows"))?;
+        if end > byte_count {
+            anyhow::bail!(
+                "device global relocation {index} occupies bytes {}..{} but the initializer is only {} bytes",
+                relocation.source_offset,
+                end,
+                byte_count
+            );
+        }
+
+        if relocation.source_offset > cursor {
+            fields
+                .push(ArrayType::get(ctx, i8_ty.into(), relocation.source_offset - cursor).into());
+        }
+        fields.push(IntegerType::get(ctx, relocation.width_bytes * 8, Signedness::Signless).into());
+        cursor = end;
+    }
+
+    if cursor < byte_count {
+        fields.push(ArrayType::get(ctx, i8_ty.into(), byte_count - cursor).into());
+    }
+
+    let storage: TypeHandle = StructType::get_unnamed(ctx, fields).into();
+    let lowered_size = get_type_size(ctx, storage);
+    if lowered_size != byte_count {
+        anyhow::bail!(
+            "relocated device global storage lowers to {} bytes, but rustc evaluated {} bytes",
+            lowered_size,
+            byte_count
+        );
+    }
+    Ok(storage)
 }
 
 fn initializer_hex_byte_count(hex: &str) -> std::result::Result<u64, anyhow::Error> {
@@ -1015,7 +1134,7 @@ mod tests {
     use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
     use llvm_export::op_interfaces::PointerTypeResult;
     use llvm_export::ops as llvm;
-    use llvm_export::types::{PointerType, address_space as llvm_addr};
+    use llvm_export::types::{PointerType, StructType, address_space as llvm_addr};
     use pliron::basic_block::BasicBlock;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
     use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -2100,5 +2219,118 @@ mod tests {
         assert_eq!(elem.width(), 8);
         assert_eq!(global.get_alignment(&ctx), Some(4));
         assert_eq!(global.initializer_hex(&ctx).as_deref(), Some("3412c07f"));
+    }
+
+    #[test]
+    fn relocated_global_lowers_to_segmented_storage() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let word_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let mir_global_ty: TypeHandle = MirArrayType::get(&mut ctx, word_ty, 3).into();
+        let result_ty = MirPtrType::get_global(&mut ctx, mir_global_ty, false);
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirGlobalAllocOp::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let alloc = mir::MirGlobalAllocOp::new(op);
+        alloc.set_attr_global_type(&ctx, TypeAttr::new(mir_global_ty));
+        alloc.set_attr_global_key(&ctx, StringAttr::new("reference_table".to_string()));
+        alloc.set_alignment_value(&mut ctx, 8);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_hex".try_into().unwrap(),
+            StringAttr::new("000000000000000000000000000000000000000000000000".to_string()),
+        );
+        let encoded =
+            llvm::encode_global_initializer_relocations(&[llvm::GlobalInitializerRelocation {
+                source_offset: 8,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 4,
+                target_key: "target_static".to_string(),
+            }]);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_relocations".try_into().unwrap(),
+            StringAttr::new(encoded.clone()),
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let global = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .find_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .expect("expected lowered device global");
+        let global_ty = global.get_type(&ctx);
+        let global_ty_ref = global_ty.deref(&ctx);
+        let storage = global_ty_ref
+            .downcast_ref::<StructType>()
+            .expect("relocated initializer must use segmented struct storage");
+        assert_eq!(storage.num_fields(), 3);
+        assert_eq!(
+            global.source_global_key(&ctx).as_deref(),
+            Some("reference_table")
+        );
+        assert_eq!(
+            global.initializer_relocations(&ctx).as_deref(),
+            Some(encoded.as_str())
+        );
+    }
+
+    #[test]
+    fn relocated_global_rejects_overlapping_slots() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let word_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let mir_global_ty: TypeHandle = MirArrayType::get(&mut ctx, word_ty, 2).into();
+        let result_ty = MirPtrType::get_global(&mut ctx, mir_global_ty, false);
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirGlobalAllocOp::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let alloc = mir::MirGlobalAllocOp::new(op);
+        alloc.set_attr_global_type(&ctx, TypeAttr::new(mir_global_ty));
+        alloc.set_attr_global_key(&ctx, StringAttr::new("overlap".to_string()));
+        alloc.set_alignment_value(&mut ctx, 8);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_hex".try_into().unwrap(),
+            StringAttr::new("00000000000000000000000000000000".to_string()),
+        );
+        let encoded = llvm::encode_global_initializer_relocations(&[
+            llvm::GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "a".to_string(),
+            },
+            llvm::GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "b".to_string(),
+            },
+        ]);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_relocations".try_into().unwrap(),
+            StringAttr::new(encoded),
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("overlapping relocations must fail closed");
+        assert!(error.to_string().contains("overlaps"), "{error}");
     }
 }
