@@ -8,11 +8,12 @@ use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
 use crate::target::{
-    detect_module_requirements_in_llvm_file, merge_generated_module_requirements,
-    merge_generated_module_requirements_for_target, required_ptx_feature,
-    resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
-    validate_target_for_llvm_major,
+    ModuleRequirements, detect_module_requirements_in_llvm_file,
+    merge_generated_module_requirements, merge_generated_module_requirements_for_target,
+    required_ptx_feature, resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
+    validate_target_features, validate_target_for_llvm_major,
 };
+use libnvvm_sys::CudaArch;
 use llvm_export::export::DebugKind;
 use std::path::{Path, PathBuf};
 
@@ -406,8 +407,6 @@ fn generate_ptx_impl(
 
     validate_target_for_llvm_major(&target, toolchain.llc_major)
         .map_err(PipelineError::PtxGeneration)?;
-    validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
-        .map_err(PipelineError::PtxGeneration)?;
 
     // Link libdevice at the IR level when the kernel uses `__nv_*` calls.
     // This resolves (and later inlines) CUDA math functions without forcing
@@ -425,9 +424,11 @@ fn generate_ptx_impl(
     };
     let post_link_input: &Path = linked.as_deref().unwrap_or(module.llvm_ir);
 
-    // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
-    // intentionally reads the original (pre-opt) IR so the target is determined
-    // by what the source actually needs, not what opt elides.
+    // Run the LLVM middle-end (opt -O2) before llc. Source requirements are
+    // detected above so target selection cannot lose a source-level contract
+    // merely because optimization elides it. Requirements are detected again
+    // from the exact llc input below because linking and optimization can also
+    // introduce backend intrinsics (notably llvm.stacksave/stackrestore).
     //
     // Full-debug is a `-G`-style build: it keeps every local in memory and
     // describes it with `llvm.dbg.declare`. Running `opt -O2` would promote
@@ -458,6 +459,28 @@ fn generate_ptx_impl(
         optimized
     };
     let llc_input: &Path = optimized.as_deref().unwrap_or(post_link_input);
+    let llc_requirements = detect_module_requirements_in_llvm_file(llc_input)?;
+    let requirements = merge_module_requirements(requirements, llc_requirements);
+    let requirements =
+        merge_generated_module_requirements_for_target(requirements, generated, &target)
+            .map_err(PipelineError::PtxGeneration)?;
+    let parsed_target =
+        target
+            .parse::<CudaArch>()
+            .map_err(|error| PipelineError::TargetSelection {
+                target: target.clone(),
+                reason: format!(
+                    "{error} (while validating requirements from the final LLVM input)"
+                ),
+            })?;
+    validate_target_features(&parsed_target, requirements.features).map_err(|reason| {
+        PipelineError::TargetSelection {
+            target: target.clone(),
+            reason: format!("{reason} (requirements from the final LLVM input)"),
+        }
+    })?;
+    validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
+        .map_err(PipelineError::PtxGeneration)?;
 
     let llc_desc = if toolchain.llc_from_env {
         format!("llc_override ({})", toolchain.llc_path)
@@ -527,6 +550,16 @@ fn generate_ptx_impl(
             String::from_utf8_lossy(&output.stderr).trim()
         ))),
         Err(e) => Err(PipelineError::PtxGeneration(format!("{llc_desc}: {e}"))),
+    }
+}
+
+fn merge_module_requirements(
+    source: ModuleRequirements,
+    llc_input: ModuleRequirements,
+) -> ModuleRequirements {
+    ModuleRequirements {
+        features: source.features | llc_input.features,
+        ptx_isa: source.ptx_isa.max(llc_input.ptx_isa),
     }
 }
 
@@ -665,6 +698,31 @@ mod tests {
     #[test]
     fn modules_without_public_roots_keep_the_existing_optimization_pipeline() {
         assert_eq!(optimization_args(&[]).unwrap(), ["-O2"]);
+    }
+
+    #[test]
+    fn final_llc_input_requirements_are_unioned_with_source_requirements() {
+        use crate::target::{DetectedFeatures, PtxIsaRequirement};
+
+        let source = ModuleRequirements {
+            features: DetectedFeatures::Sm80,
+            ptx_isa: PtxIsaRequirement::Ptx70,
+        };
+        let llc_input = ModuleRequirements {
+            features: DetectedFeatures::DynamicStack,
+            ptx_isa: PtxIsaRequirement::Ptx73,
+        };
+
+        let merged = merge_module_requirements(source, llc_input);
+        assert_eq!(
+            merged.features,
+            DetectedFeatures::Sm80 | DetectedFeatures::DynamicStack
+        );
+        assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
+        assert_eq!(
+            required_ptx_feature("sm_80", merged.ptx_isa),
+            Some("+ptx73")
+        );
     }
 
     #[test]
