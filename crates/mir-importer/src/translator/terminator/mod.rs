@@ -2670,6 +2670,21 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
+        "core::intrinsics::arith_offset" | "std::intrinsics::arith_offset" => {
+            Ok(Some(intrinsics::memory::emit_arith_offset(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
         "core::intrinsics::ptr_offset_from" | "std::intrinsics::ptr_offset_from" => {
             Ok(Some(intrinsics::memory::emit_ptr_offset_from(
                 ctx,

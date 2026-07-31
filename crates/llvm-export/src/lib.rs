@@ -271,6 +271,10 @@ pub mod ops {
     /// and emitted as `align N` during export.
     const OP_ALIGNMENT_KEY: &str = "cuda_oxide_op_alignment";
 
+    /// Op-attribute key controlling whether a GEP is emitted with LLVM's
+    /// `inbounds` promise. Absence denotes an in-bounds GEP.
+    const GEP_INBOUNDS_KEY: &str = "cuda_oxide_gep_inbounds";
+
     /// Op-attribute key controlling whether an inline asm op is emitted with
     /// LLVM's `sideeffect` marker. Absent means true, matching the conservative
     /// default for user-authored inline PTX.
@@ -293,6 +297,24 @@ pub mod ops {
             .get::<BoolAttr>(&key)
             .map(|attr| bool::from((*attr).clone()))
             .unwrap_or(false)
+    }
+
+    /// Stamp the source pointer arithmetic contract onto an LLVM GEP.
+    pub fn set_gep_inbounds(ctx: &mut Context, op: Ptr<Operation>, inbounds: bool) {
+        let key = Identifier::try_new(GEP_INBOUNDS_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx)
+            .attributes
+            .set(key, BoolAttr::new(inbounds));
+    }
+
+    /// Return whether an LLVM GEP carries the `inbounds` promise.
+    pub fn gep_inbounds(ctx: &Context, op: Ptr<Operation>) -> bool {
+        let key = Identifier::try_new(GEP_INBOUNDS_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<BoolAttr>(&key)
+            .map(|attr| bool::from(attr.clone()))
+            .unwrap_or(true)
     }
 
     /// Debug type metadata for a local variable described by `llvm.dbg.declare`.

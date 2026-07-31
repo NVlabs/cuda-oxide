@@ -305,6 +305,46 @@ fn legacy_gep_rejects_a_result_address_space_different_from_its_base() {
 }
 
 #[test]
+fn gep_inbounds_marker_controls_exported_pointer_semantics() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "gep_semantics".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let pointer = PointerType::get(&ctx, 0);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.into(), vec![pointer.into()], false);
+    let func = FuncOp::new(&mut ctx, "offsets".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let base = entry.deref(&ctx).get_argument(0);
+
+    let ordinary = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(1)], i32_ty.into());
+    ordinary.get_operation().insert_at_back(entry, &ctx);
+
+    let wrapping = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(2)], i32_ty.into());
+    llvm_export::ops::set_gep_inbounds(&mut ctx, wrapping.get_operation(), false);
+    wrapping.get_operation().insert_at_back(entry, &ctx);
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("GEP export succeeds");
+    let gep_lines: Vec<_> = ir
+        .lines()
+        .filter(|line| line.contains("getelementptr"))
+        .collect();
+    assert_eq!(gep_lines.len(), 2, "{ir}");
+    assert!(gep_lines[0].contains("getelementptr inbounds"), "{ir}");
+    assert!(
+        gep_lines[1].contains("getelementptr i32")
+            && !gep_lines[1].contains("getelementptr inbounds"),
+        "{ir}"
+    );
+}
+
+#[test]
 fn legacy_pointer_select_keeps_one_canonical_type() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "legacy_pointer_select".try_into().unwrap());

@@ -305,6 +305,15 @@ fn test_mir_ptr_offset_verify() {
     );
     let offset_op = MirPtrOffsetOp::new(op);
     assert!(offset_op.verify(&ctx).is_ok(), "Valid MirPtrOffsetOp");
+    assert!(
+        offset_op.is_inbounds(&ctx),
+        "ordinary pointer offsets default to inbounds"
+    );
+    offset_op.set_inbounds(&mut ctx, false);
+    assert!(
+        !offset_op.is_inbounds(&ctx),
+        "wrapping pointer offsets retain their explicit semantics"
+    );
 
     let block2 = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), usize_ty.into()]);
     let i32_val = block2.deref(&ctx).get_argument(0);

@@ -503,6 +503,8 @@ pub(crate) fn convert_ptr_offset(
         vec![llvm_export::ops::GepIndex::Value(offset)],
         elem_ty,
     );
+    let inbounds = dialect_mir::ops::MirPtrOffsetOp::new(op).is_inbounds(ctx);
+    llvm::set_gep_inbounds(ctx, llvm_gep.get_operation(), inbounds);
     rewriter.insert_operation(ctx, llvm_gep.get_operation());
     rewriter.replace_operation(ctx, op, llvm_gep.get_operation());
 
@@ -1576,6 +1578,43 @@ mod tests {
             .downcast_ref::<IntegerType>()
             .expect("gep src_elem_type should be IntegerType");
         assert_eq!(int_ty.width(), 32, "gep elem type must be i32 (pointee)");
+        assert!(
+            llvm::gep_inbounds(&ctx, gep.get_operation()),
+            "ordinary pointer offsets retain the in-bounds contract"
+        );
+    }
+
+    #[test]
+    fn convert_wrapping_ptr_offset_lowers_to_non_inbounds_gep() {
+        let mut ctx = make_ctx();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into(), i64_ty], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+        let off_val = block.deref(&ctx).get_argument(1);
+
+        let off_op = Operation::new(
+            &mut ctx,
+            mir::MirPtrOffsetOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![ptr_val, off_val],
+            vec![],
+            0,
+        );
+        mir::MirPtrOffsetOp::new(off_op).set_inbounds(&mut ctx, false);
+        off_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let gep = find_first::<llvm::GetElementPtrOp>(&ctx, &body).expect("expected one llvm.gep");
+        assert!(
+            !llvm::gep_inbounds(&ctx, gep.get_operation()),
+            "wrapping pointer offsets must not promise in-bounds arithmetic"
+        );
     }
 
     // =========================================================================

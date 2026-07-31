@@ -199,6 +199,98 @@ pub fn emit_volatile_store(
     }
 }
 
+/// Emits `core::intrinsics::arith_offset::<T>(ptr, count) -> *const T`.
+///
+/// This intrinsic backs the safe wrapping raw-pointer offset methods. The
+/// explicit non-inbounds marker preserves wrapping semantics through LLVM
+/// lowering while retaining the source pointer's pointee type and address
+/// space.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_arith_offset(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::MirPtrOffsetOp;
+    use dialect_mir::types::MirPtrType;
+
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "arith_offset expects 2 arguments (ptr, count), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (ptr, op_after_ptr) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let ptr_type = ptr.get_type(ctx);
+    if ptr_type.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "arith_offset: expected pointer operand, got {:?}",
+                ptr_type.deref(ctx)
+            ))
+        );
+    }
+
+    let (count, op_after_count) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        op_after_ptr,
+        loc.clone(),
+    )?;
+    let offset = Operation::new(
+        ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![ptr_type],
+        vec![ptr, count],
+        vec![],
+        0,
+    );
+    offset.deref_mut(ctx).set_loc(loc.clone());
+    MirPtrOffsetOp::new(offset).set_inbounds(ctx, false);
+    if let Some(prev) = op_after_count {
+        offset.insert_after(ctx, prev);
+    } else {
+        offset.insert_at_front(block_ptr, ctx);
+    }
+
+    let result = offset.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        offset,
+        value_map,
+        block_map,
+        loc,
+        "arith_offset call without target block",
+    )
+}
+
 #[derive(Clone, Copy)]
 enum PtrOffsetFromResult {
     Signed,
