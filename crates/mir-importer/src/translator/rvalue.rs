@@ -5119,13 +5119,10 @@ fn translate_array_value_constant(
         array_ty.element_type()
     };
 
-    // Keep bare array value constants on the same element contract as the
-    // byte lowering this path replaced: primitive scalars, tuples with
-    // supported fields, or nested arrays of those. Bare arrays whose
-    // elements are structs or enums are still not materialized as constants
-    // (arrays of structs nested inside struct constants remain supported,
-    // as before); admitting them here would silently widen that documented
-    // boundary.
+    // Bare array values support primitive scalars, enums, tuples with supported
+    // fields, or nested arrays of those. Struct elements remain outside this
+    // entry point; arrays nested inside struct constants have their own
+    // layout-aware aggregate path.
     validate_array_value_element_type(ctx, element_ty, &loc)?;
 
     let rust_array_ty = constant.const_.ty();
@@ -9239,14 +9236,11 @@ fn translate_struct_constant_from_alloc(
 /// Element kinds admitted by a bare array value constant
 /// (`translate_array_value_constant`).
 ///
-/// The alloc-based path replaced a byte-only lowering that supported
-/// primitive scalar, tuple, and nested-array elements at this entry, and the
-/// supported-features appendix documents that arrays of structs are not
-/// materialized as constants. Nested arrays are walked recursively, exactly
-/// like the old byte lowering did, so an unsupported leaf cannot hide behind
-/// nesting. Arrays that sit inside a struct or tuple constant are dispatched
-/// through [`translate_constant_value_from_alloc`] instead and keep their
-/// wider, pre-existing element support.
+/// Primitive scalars, enums, tuples, and nested arrays are supported at this
+/// entry point. Arrays of structs are not materialized here. Nested arrays are
+/// walked recursively so an unsupported leaf cannot hide behind nesting.
+/// Arrays inside struct or tuple constants are dispatched through
+/// [`translate_constant_value_from_alloc`] and are not governed by this gate.
 fn validate_array_value_element_type(
     ctx: &Context,
     element_ty: TypeHandle,
@@ -9259,6 +9253,7 @@ fn validate_array_value_element_type(
             || elem_obj.is::<FP32Type>()
             || elem_obj.is::<FP64Type>()
             || elem_obj.is::<dialect_mir::types::MirTupleType>()
+            || elem_obj.is::<dialect_mir::types::MirEnumType>()
         {
             return Ok(());
         }
@@ -9267,8 +9262,8 @@ fn validate_array_value_element_type(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported: {:?}. Supported array \
-                     constants are primitive scalars, tuples with supported fields, or \
-                     nested arrays of those.",
+                     constants are primitive scalars, enums, tuples with supported fields, \
+                     or nested arrays of those.",
                     elem_obj
                 ))
             );
@@ -10025,7 +10020,9 @@ mod aggregate_relocation_tests {
         provenance_starts_in_range, relocation_offsets_overlapping_range,
         validate_array_value_element_type,
     };
-    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
+    use dialect_mir::types::{
+        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
+    };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
     use pliron::location::Location;
@@ -10170,7 +10167,7 @@ mod aggregate_relocation_tests {
     }
 
     #[test]
-    fn bare_array_elements_stay_on_the_documented_contract() {
+    fn bare_array_elements_follow_the_documented_contract() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -10185,11 +10182,35 @@ mod aggregate_relocation_tests {
             validate_array_value_element_type(&ctx, tuple_ty, &Location::Unknown).is_ok(),
             "tuple elements remain supported"
         );
-
         let nested_array_ty: TypeHandle = MirArrayType::get(&mut ctx, u32_ty, 4).into();
         assert!(
             validate_array_value_element_type(&ctx, nested_array_ty, &Location::Unknown).is_ok(),
             "nested array elements remain supported"
+        );
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Side".into(),
+            u8_ty,
+            vec![2, 5],
+            vec![
+                EnumVariant::unit("Low".into()),
+                EnumVariant::unit("High".into()),
+            ],
+            0,
+            1,
+            1,
+        )
+        .into();
+        assert!(
+            validate_array_value_element_type(&ctx, enum_ty, &Location::Unknown).is_ok(),
+            "bare enum-array elements are supported"
+        );
+        let nested_enum_array: TypeHandle = MirArrayType::get(&mut ctx, enum_ty, 2).into();
+        assert!(
+            validate_array_value_element_type(&ctx, nested_enum_array, &Location::Unknown).is_ok(),
+            "nesting preserves supported enum leaves"
         );
 
         let struct_ty: TypeHandle = MirStructType::get(
