@@ -148,7 +148,7 @@ const TCGEN05_MMA_KINDS: [Tcgen05MmaKind; 4] = [
 const TCGEN05_MMA_DIALECT_OP_TYPE: &str = "Tcgen05MmaOp";
 const TCGEN05_MMA_DIALECT_OP_NAME: &str = "nvvm.tcgen05_mma";
 const REGISTER_MMA_F8F6F4_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
-const SPARSE_MMA_F8F6F4_F16_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
+const SPARSE_MMA_F8F6F4_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -9794,8 +9794,9 @@ fn validate_selected_target_predicates(
                     && policy.sparse_mma.as_ref().is_some_and(|mma| {
                         policy.targets
                             == match mma.accumulator {
-                                SparseMmaAccumulator::F16 => SPARSE_MMA_F8F6F4_F16_TARGETS,
-                                SparseMmaAccumulator::F32 => "sm_120a",
+                                SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32 => {
+                                    SPARSE_MMA_F8F6F4_TARGETS
+                                }
                                 SparseMmaAccumulator::S32 => return false,
                             }
                     })
@@ -19012,7 +19013,7 @@ fn is_dense_f8f6f4_register_mma_policy(policy: &OverlayIntrinsic) -> bool {
 
 fn is_sparse_f8f6f4_f16_policy(policy: &OverlayIntrinsic) -> bool {
     policy.family == "sparse_mma"
-        && policy.targets == SPARSE_MMA_F8F6F4_F16_TARGETS
+        && policy.targets == SPARSE_MMA_F8F6F4_TARGETS
         && policy.sparse_mma.as_ref().is_some_and(|mma| {
             mma.shape == SparseMmaShape::M16n8k64
                 && mma.accumulator == SparseMmaAccumulator::F16
@@ -20381,8 +20382,7 @@ fn sparse_mma_minimum_ptx(mma: &SparseMma) -> &'static str {
 
 fn sparse_mma_hardware(mma: &SparseMma) -> (&'static str, Option<&'static str>) {
     match mma.accumulator {
-        SparseMmaAccumulator::F16 => (SPARSE_MMA_F8F6F4_F16_TARGETS, None),
-        SparseMmaAccumulator::F32 => ("sm_120a", None),
+        SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32 => (SPARSE_MMA_F8F6F4_TARGETS, None),
         SparseMmaAccumulator::S32 => ("all", Some("sm_80")),
     }
 }
@@ -29745,7 +29745,7 @@ scope = "system"
         );
         assert_eq!(first.minimum_ptx, "8.7");
         assert_eq!(first.minimum_sm, None);
-        assert_eq!(first.targets, SPARSE_MMA_F8F6F4_F16_TARGETS);
+        assert_eq!(first.targets, SPARSE_MMA_F8F6F4_TARGETS);
         assert!(first.convergent && !first.pure);
         assert!(first.backend_lowerings.iter().all(|route| {
             route.mechanism == BackendLoweringMechanism::InlinePtx
@@ -33601,7 +33601,9 @@ scope = "system"
             assert_eq!(record.llvm_results, ["f32", "f32", "f32", "f32"]);
             assert_eq!(record.minimum_ptx, "8.7");
             assert_eq!(record.minimum_sm, None);
-            assert_eq!(record.targets, "sm_120a");
+            // Same contract as the F16 accumulator: both float forms are gated
+            // on `hasMMABlockScale()`, so neither is narrower than the other.
+            assert_eq!(record.targets, SPARSE_MMA_F8F6F4_TARGETS);
             assert_eq!(record.backend_lowerings.len(), 2);
             assert!(record.backend_lowerings.iter().all(|lowering| {
                 lowering.mechanism == BackendLoweringMechanism::InlinePtx
@@ -33659,7 +33661,7 @@ scope = "system"
             assert_eq!(record.llvm_results, ["v2f16", "v2f16"]);
             assert_eq!(record.minimum_ptx, "8.7");
             assert_eq!(record.minimum_sm, None);
-            assert_eq!(record.targets, SPARSE_MMA_F8F6F4_F16_TARGETS);
+            assert_eq!(record.targets, SPARSE_MMA_F8F6F4_TARGETS);
             assert!(record.convergent && !record.pure);
             assert!(record.backend_lowerings.iter().all(|lowering| {
                 lowering.mechanism == BackendLoweringMechanism::InlinePtx

@@ -158151,11 +158151,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -158182,6 +158194,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -158236,6 +158260,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -158466,11 +158502,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -158497,6 +158545,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -158551,6 +158611,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -158781,11 +158853,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -158812,6 +158896,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -158866,6 +158962,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -159096,11 +159204,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -159127,6 +159247,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -159181,6 +159313,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -159411,11 +159555,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -159442,6 +159598,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -159496,6 +159664,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -159726,11 +159906,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -159757,6 +159949,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -159811,6 +160015,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160041,11 +160257,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -160072,6 +160300,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160126,6 +160366,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160356,11 +160608,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -160387,6 +160651,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160441,6 +160717,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160671,11 +160959,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -160702,6 +161002,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160756,6 +161068,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -160986,11 +161310,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -161017,6 +161353,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -161071,6 +161419,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -161301,11 +161661,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -161332,6 +161704,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -161386,6 +161770,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -161616,11 +162012,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -161647,6 +162055,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -161701,6 +162121,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -161931,11 +162363,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -161962,6 +162406,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162016,6 +162472,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162246,11 +162714,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -162277,6 +162757,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162331,6 +162823,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162561,11 +163065,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -162592,6 +163108,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162646,6 +163174,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162876,11 +163416,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -162907,6 +163459,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -162961,6 +163525,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -163191,11 +163767,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -163222,6 +163810,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -163276,6 +163876,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -163506,11 +164118,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -163537,6 +164161,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -163591,6 +164227,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -163821,11 +164469,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -163852,6 +164512,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -163906,6 +164578,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -164136,11 +164820,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -164167,6 +164863,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -164221,6 +164929,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -164451,11 +165171,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -164482,6 +165214,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -164536,6 +165280,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -164766,11 +165522,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -164797,6 +165565,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -164851,6 +165631,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -165081,11 +165873,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -165112,6 +165916,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -165166,6 +165982,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -165396,11 +166224,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -165427,6 +166267,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -165481,6 +166333,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -165711,11 +166575,23 @@
             {
               "kind": "exact_architecture",
               "sm": 120
+            },
+            {
+              "kind": "family_target",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            },
+            {
+              "kind": "family_target",
+              "sm": 121
             }
           ]
         },
         "ptx_result": "[f32; 4]",
-        "targets": "sm_120a",
+        "targets": "sm_120a|sm_120f|sm_121a|sm_121f",
         "ptx_isa_version": "9.3",
         "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
         "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
@@ -165742,6 +166618,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }
@@ -165796,6 +166684,18 @@
                 {
                   "kind": "exact_architecture",
                   "sm": 120
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                },
+                {
+                  "kind": "family_target",
+                  "sm": 121
                 }
               ]
             }

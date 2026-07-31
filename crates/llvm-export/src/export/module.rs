@@ -23,6 +23,7 @@ use pliron::{
 
 use crate::{
     ops,
+    ops::GlobalOpExt,
     types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
 };
 
@@ -31,7 +32,7 @@ use super::{
     config::{DebugKind, ExportBackendConfig, NvvmIrDialect},
     externs::{DeviceExternDecl, DeviceExternType},
     metadata::{emit_nvvm_annotations, emit_nvvmir_version, needs_nvvm_annotations},
-    state::{GlobalSymbolInfo, ModuleExportState},
+    state::{GlobalSourceInfo, GlobalSymbolInfo, ModuleExportState},
 };
 
 fn validate_export_config(config: &dyn ExportBackendConfig) -> Result<(), String> {
@@ -56,13 +57,40 @@ fn index_module_symbols(
     };
     for operation in block.deref(state.ctx).iter(state.ctx) {
         if let Some(global) = Operation::get_op::<ops::GlobalOp>(operation, state.ctx) {
+            let symbol = global.get_symbol_name(state.ctx).to_string();
+            let value_type = global.get_type(state.ctx);
+            let address_space = global.address_space(state.ctx);
             state.global_symbols.insert(
-                global.get_symbol_name(state.ctx).to_string(),
+                symbol.clone(),
                 GlobalSymbolInfo {
-                    value_type: global.get_type(state.ctx),
-                    address_space: global.address_space(state.ctx),
+                    value_type,
+                    address_space,
                 },
             );
+
+            if let Some(source_key) = global.source_global_key(state.ctx) {
+                let initializer_size = global
+                    .initializer_hex(state.ctx)
+                    .and_then(|hex| u64::try_from(hex.len() / 2).ok());
+                let source_info = GlobalSourceInfo {
+                    symbol: symbol.clone(),
+                    value_type,
+                    address_space,
+                    initializer_size,
+                };
+                if let Some(existing) = state.global_sources.get(&source_key)
+                    && (existing.symbol != source_info.symbol
+                        || existing.value_type != source_info.value_type
+                        || existing.address_space != source_info.address_space
+                        || existing.initializer_size != source_info.initializer_size)
+                {
+                    return Err(format!(
+                        "multiple LLVM globals map to rustc global key `{source_key}`: `@{}` and `@{symbol}`",
+                        existing.symbol
+                    ));
+                }
+                state.global_sources.insert(source_key, source_info);
+            }
         } else if let Some(func) = Operation::get_op::<ops::FuncOp>(operation, state.ctx) {
             let raw_name = func.get_symbol_name(state.ctx);
             let exported_name = if raw_name.starts_with("llvm_") {

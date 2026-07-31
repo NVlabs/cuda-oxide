@@ -47,9 +47,15 @@ mod verify;
 /// lowering pipeline. Kernel entries are top-level
 /// [`dialect_mir::ops::MirFuncOp`] values whose symbols are marked through
 /// [`CodegenModule::mark_kernel_entry`](experimental::CodegenModule::mark_kernel_entry).
-/// The v1 PTX output must be self-contained: libdevice calls and other
-/// unresolved functions return
+/// The v1 PTX output is self-contained. By default any libdevice call or
+/// other unresolved function returns
 /// [`CompileError::UnsupportedLinking`](experimental::CompileError::UnsupportedLinking).
+/// [`Linking::Libdevice`](experimental::Linking::Libdevice) opts into
+/// resolving `__nv_*` calls against `libdevice.10.bc` at the LLVM IR level,
+/// which keeps the output a single self-contained PTX artifact. Unresolved
+/// symbols that are not libdevice stay rejected under that option, and a
+/// toolchain that cannot perform the link returns
+/// [`CompileError::LibdeviceUnavailable`](experimental::CompileError::LibdeviceUnavailable).
 ///
 /// # Minimal flow
 ///
@@ -93,7 +99,7 @@ mod verify;
 pub mod experimental {
     pub use crate::api::{
         CodegenModule, Compilation, CompilationStage, CompileError, CompileOptions, Compiler,
-        DebugInfo, Diagnostic, DiagnosticLevel, Optimization, Target, Toolchain,
+        DebugInfo, Diagnostic, DiagnosticLevel, Linking, Optimization, Target, Toolchain,
     };
 }
 
