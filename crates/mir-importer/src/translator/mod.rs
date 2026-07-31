@@ -64,6 +64,38 @@ use pliron::operation::Operation;
 use rustc_public::mir;
 use rustc_public::mir::mono;
 
+/// Public `SharedArray` methods whose compiler expansion returns a generic
+/// pointer to the underlying shared allocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SharedArrayPointerMethod {
+    /// `SharedArray::as_ptr(&self)`.
+    BorrowedConst,
+    /// `SharedArray::as_mut_ptr(&mut self)`.
+    BorrowedMut,
+    /// `SharedArray::as_raw_mut_ptr(*mut Self)`.
+    RawMut,
+}
+
+/// Recognize exactly the three public `SharedArray` pointer conversions.
+///
+/// Intrinsic dispatch and destination address-space classification both use
+/// this helper so adding a method cannot update one compiler path without the
+/// other.
+pub(crate) fn shared_array_pointer_method(path: &str) -> Option<SharedArrayPointerMethod> {
+    if !path.starts_with("cuda_device::")
+        || !path.split("::").any(|component| component == "SharedArray")
+    {
+        return None;
+    }
+
+    match path.rsplit("::").next() {
+        Some("as_ptr") => Some(SharedArrayPointerMethod::BorrowedConst),
+        Some("as_mut_ptr") => Some(SharedArrayPointerMethod::BorrowedMut),
+        Some("as_raw_mut_ptr") => Some(SharedArrayPointerMethod::RawMut),
+        _ => None,
+    }
+}
+
 /// Registers all dialects needed for translation.
 ///
 /// Registers `dialect-mir` (our MIR modelling dialect), `dialect-nvvm`
@@ -157,4 +189,42 @@ pub fn translate_function(
     func_op.insert_at_front(module_block, ctx);
 
     Ok(module_op)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SharedArrayPointerMethod, shared_array_pointer_method};
+
+    #[test]
+    fn shared_array_pointer_recognition_is_exact_and_centralized() {
+        for (path, expected) in [
+            (
+                "cuda_device::shared::SharedArray::as_ptr",
+                SharedArrayPointerMethod::BorrowedConst,
+            ),
+            (
+                "cuda_device::shared::SharedArray::as_mut_ptr",
+                SharedArrayPointerMethod::BorrowedMut,
+            ),
+            (
+                "cuda_device::shared::SharedArray::as_raw_mut_ptr",
+                SharedArrayPointerMethod::RawMut,
+            ),
+        ] {
+            assert_eq!(shared_array_pointer_method(path), Some(expected), "{path}");
+        }
+
+        for near_match in [
+            "cuda_device::shared::DynamicSharedArray::as_ptr",
+            "cuda_device::shared::SharedArrayHelper::as_ptr",
+            "cuda_device::shared::SharedArray::as_raw_mut_ptr_extra",
+            "other_crate::SharedArray::as_raw_mut_ptr",
+        ] {
+            assert_eq!(
+                shared_array_pointer_method(near_match),
+                None,
+                "{near_match}"
+            );
+        }
+    }
 }

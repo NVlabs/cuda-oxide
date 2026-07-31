@@ -626,14 +626,15 @@ pub fn emit_shared_array_index(
     )
 }
 
-/// Emits `SharedArray::as_ptr` or `as_mut_ptr` - returns pointer to shared memory.
+/// Emits a public `SharedArray` pointer conversion.
 ///
 /// This converts the shared memory address (addrspace 3) to a generic pointer (addrspace 0)
 /// following LLVM's opaque pointer model where generic pointers can hold any address space.
 ///
 /// # Arguments
 ///
-/// - `args[0]`: `&SharedArray<T, N>` - Reference to the shared memory array
+/// - `args[0]`: `&SharedArray<T, N>`, `&mut SharedArray<T, N>`, or
+///   `*mut SharedArray<T, N>` - pointer to the shared memory array
 ///
 /// # Returns
 ///
@@ -657,7 +658,7 @@ pub fn emit_shared_array_as_ptr(
         return input_err!(
             loc.clone(),
             TranslationErr::unsupported(
-                "SharedArray::as_ptr expects 1 argument (self), got 0".to_string(),
+                "SharedArray pointer conversion expects 1 argument, got 0".to_string(),
             )
         );
     }
@@ -684,7 +685,7 @@ pub fn emit_shared_array_as_ptr(
             return input_err!(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
-                    "SharedArray::as_ptr: expected MirPtrType, got {:?}",
+                    "SharedArray pointer conversion: expected MirPtrType, got {:?}",
                     shared_ptr_obj
                 ))
             );
@@ -725,7 +726,7 @@ pub fn emit_shared_array_as_ptr(
         value_map,
         block_map,
         loc,
-        "SharedArray::as_ptr call without target block",
+        "SharedArray pointer conversion call without target block",
     )
 }
 
