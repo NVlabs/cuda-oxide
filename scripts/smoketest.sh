@@ -394,6 +394,30 @@ verdict_error() {
                 return 1
             fi
             ;;
+        # These three pin an exact diagnostic in their own source or README
+        # ("Expected: the build FAILS with this exact diagnostic (pinned)"),
+        # so an unrelated compile error must not satisfy them either.
+        error_heap_alloc)
+            if ! grep -Fq 'heap allocation is not supported in kernels' "${log}"; then
+                echo "FAIL (missing heap-allocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_missing_device_attr)
+            if ! grep -Fq 'only works inside `#[kernel]` / `#[device]`' "${log}"; then
+                echo "FAIL (missing host-only-stub diagnostic)"
+                return 1
+            fi
+            ;;
+        error_set_discriminant_uninhabited)
+            if ! grep -Fq 'cannot select uninhabited variant' "${log}"; then
+                echo "FAIL (missing uninhabited-variant diagnostic)"
+                return 1
+            fi
+            ;;
+        # `error` stays on the generic check below: unlike the fixtures above it
+        # pins no single message, carrying two kernels to show that a valid one
+        # still compiles while `core::fmt` machinery is refused.
     esac
 
     if grep -qE 'Device codegen failed|Translation failed|Compilation error|Unsupported construct' "${log}"; then
