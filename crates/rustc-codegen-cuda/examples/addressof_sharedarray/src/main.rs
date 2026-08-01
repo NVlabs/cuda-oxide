@@ -16,7 +16,9 @@
 //! The same kernel verifies that exposing the address of the first static
 //! shared allocation does not turn its valid shared-space offset zero into a
 //! null Rust address. Named-space pointers must become CUDA generic pointers
-//! before pointer-to-integer conversion.
+//! before pointer-to-integer conversion, and the exposed integer must cast
+//! back into the shared space through the generic space, so the
+//! expose/recover round trip stores through the recovered pointer.
 //!
 //! It also constructs and matches a direct enum payload containing that shared
 //! pointer. The enum's physical storage must stay 64-bit even when modern NVVM
@@ -93,6 +95,25 @@ mod kernels {
                 } else {
                     0.0
                 };
+
+                // The exposed integer is a generic address, so casting it
+                // back into the shared space must recover the original
+                // pointer (inttoptr to generic, then cvta back to shared).
+                // Write through the recovered pointer and observe the store
+                // through the original allocation.
+                // The recovered pointer must equal the original as a value,
+                // not merely reach the same memory: hardware masks the
+                // shared-window base out of st.shared addresses, so a wrong
+                // pointer value can still store to the right slot.
+                let round_trip = recover_shared_pointer(raw_address);
+                (&mut (*round_trip))[0] = OUTPUT_NORM[0] + 1.0;
+                *out.get_unchecked_mut(3) = if core::ptr::eq(round_trip, raw)
+                    && OUTPUT_NORM[0] == seed * repro_weight() + 1.0
+                {
+                    1.0
+                } else {
+                    0.0
+                };
             }
         }
     }
@@ -101,6 +122,18 @@ mod kernels {
     #[device]
     fn repro_weight() -> f32 {
         3.0
+    }
+
+    /// Recover a shared pointer from its exposed integer address.
+    ///
+    /// `#[inline(never)]` keeps the `inttoptr` in a function that cannot
+    /// see the matching `ptrtoint`, so LLVM's InferAddressSpaces cannot
+    /// fold the pair away and the lowering's own re-entry rule is what
+    /// executes.
+    #[inline(never)]
+    #[device]
+    fn recover_shared_pointer(address: usize) -> *mut SharedArray<f32, 1> {
+        address as *mut SharedArray<f32, 1>
     }
 }
 
@@ -116,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = kernels::from_module(raw_module).expect("typed module init failed");
 
     let cfg = LaunchConfig::for_num_elems(1);
-    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 3)?;
+    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 4)?;
     let seed: f32 = 7.0;
 
     // SAFETY: one thread is launched, matching the kernel's three-element output
@@ -141,8 +174,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("FAIL addressof_sharedarray: shared pointer enum did not round-trip");
         std::process::exit(1);
     }
+    if (result[3] - 1.0).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: integer address did not cast back to the shared pointer"
+        );
+        std::process::exit(1);
+    }
     println!(
-        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, shared pointer enum round-tripped",
+        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, shared pointer enum round-tripped, integer address cast back to the shared pointer",
         result[0]
     );
     Ok(())
