@@ -152,6 +152,31 @@ third-party files must keep their upstream license and copyright notices.
 - Dialect changes should include appropriate tests in the crate's `tests/`
   directory.
 
+#### Running the driver-linked crates without a GPU
+
+Most crates test on a machine with no GPU and no NVIDIA driver. `cuda-core`,
+`cuda-host`, and `cuda-async` link the CUDA driver, so their test binaries need
+`libcuda.so.1` at load time even when no test calls the driver:
+
+```text
+error while loading shared libraries: libcuda.so.1: cannot open shared object file
+```
+
+The toolkit ships only the link-time stub `libcuda.so`, with no `libcuda.so.1`
+alias, while the linker stamps that SONAME into the binary. Point the loader at a
+directory that supplies the name:
+
+```bash
+mkdir -p /tmp/libcuda-stub
+ln -sf "$CUDA_TOOLKIT_PATH/lib64/stubs/libcuda.so" /tmp/libcuda-stub/libcuda.so.1
+export LD_LIBRARY_PATH="/tmp/libcuda-stub:$LD_LIBRARY_PATH"
+```
+
+The stub only satisfies the loader; tests that need a real driver are already
+`#[ignore]`d, so the suites run unchanged. `.github/workflows/unit-tests.yml`
+does the same thing for CI and remains the source of truth for how those jobs
+are configured.
+
 ### Dependencies
 
 - New dependencies must use permissive licenses (MIT, Apache-2.0, BSD, ISC,
