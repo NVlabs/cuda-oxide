@@ -227,18 +227,20 @@ fn assert_ptxas_accepts(ptx: &[u8], label: &str) {
 /// Extra guidance for a `LibdeviceUnavailable` a caller did not expect.
 ///
 /// `Toolchain::discover()` honours `CUDA_OXIDE_LLVM_LINK` straight from the
-/// environment, so an exported override pointing at a missing binary -- or at
-/// one whose LLVM major differs from the selected `llc`'s -- turns every
-/// libdevice test in this file into `LibdeviceUnavailable`. The error names
-/// neither the variable nor the override, so the tests do, the same way
-/// `assert_ptxas_accepts` points at `CUDA_TOOLKIT_PATH`. Empty for every other
-/// error, where the variable is irrelevant.
+/// environment, so an exported override pointing at a missing or unrunnable
+/// binary turns every libdevice test in this file into
+/// `LibdeviceUnavailable`. (A runnable override is trusted as-is; an LLVM
+/// major mismatch surfaces later as a link error, not as this variant.) The
+/// error names neither the variable nor the override, so the tests do, the
+/// same way `assert_ptxas_accepts` points at `CUDA_TOOLKIT_PATH`. Empty for
+/// every other error, where the variable is irrelevant.
 fn libdevice_unavailable_hint(error: &CompileError) -> &'static str {
     match error {
         CompileError::LibdeviceUnavailable { .. } => {
-            "\nThis needs an `llvm-link` whose LLVM major matches the selected \
-             `llc`. `Toolchain::discover()` honours CUDA_OXIDE_LLVM_LINK, so an \
-             exported override pointing at a missing or mismatched binary \
+            "\nThis needs a runnable `llvm-link` (auto-discovery only accepts \
+             one sharing the selected `llc`'s LLVM major). \
+             `Toolchain::discover()` honours CUDA_OXIDE_LLVM_LINK, so an \
+             exported override pointing at a missing or unrunnable binary \
              produces exactly this error: unset it, or point it at the \
              `llvm-link` beside your `llc`."
         }
