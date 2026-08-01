@@ -487,6 +487,11 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
 /// `ptr` must be a generic pointer to shared memory (for example one
 /// derived from a `SharedArray` static). Converting a pointer that does not
 /// point into shared memory yields an unspecified offset.
+//
+// The importer intercepts calls by the exact rendered def-path
+// `cuda_device::shared::cvta_generic_to_shared`. A `pub use` at the crate
+// root would change rustc's visible path for this item and silently break
+// interception, so import it through this module.
 #[inline(never)]
 pub unsafe fn cvta_generic_to_shared(ptr: *const u8) -> u64 {
     let _ = ptr;
