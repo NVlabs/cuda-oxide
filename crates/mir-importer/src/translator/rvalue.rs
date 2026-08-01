@@ -5306,8 +5306,10 @@ fn build_array_op_from_bytes(
                 loc,
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported by byte lowering: {:?}. \
-                     Supported array constants are primitive scalars, tuples with supported \
-                     fields, or nested arrays of those.",
+                     Byte lowering handles primitive scalars, tuples with supported fields, \
+                     or nested arrays of those. Enum elements decode from a constant \
+                     allocation instead, so an enum array that reaches byte lowering (e.g. \
+                     one with a zero-sized element) cannot be materialized here.",
                     elem_obj
                 ))
             );
