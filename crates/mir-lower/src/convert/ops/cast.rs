@@ -23,7 +23,7 @@
 //! | PtrToPtr / FnPtrToPtr          | `emit_pointer_cast` (see below)                        |
 //! | PointerCoercionUnsize          | `emit_unsize_cast` → `emit_pointer_cast` (see below)   |
 //! | PointerCoercion* (other)       | `emit_pointer_cast` (see below)                        |
-//! | PointerExposeAddress           | `ptrtoint`                                             |
+//! | PointerExposeAddress           | genericize named-space pointers, then `ptrtoint`       |
 //! | PointerWithExposedProvenance   | `inttoptr`                                             |
 //!
 //! ## `emit_unsize_cast` handles array→slice unsizing:
@@ -36,8 +36,8 @@
 //! | Source → Dest                                  | LLVM Operation                              |
 //! |------------------------------------------------|---------------------------------------------|
 //! | struct → ptr (fat→thin)                        | `extractvalue` field 0                      |
-//! | ptr → struct (thin→fat)                        | `insertvalue` into undef                    |
-//! | ptr → integer                                  | `ptrtoint`                                  |
+//! | ptr → struct (thin→fat, no niche)              | `insertvalue` into undef                    |
+//! | ptr → integer                                  | genericize named-space pointers, `ptrtoint` |
 //! | integer → ptr                                  | `inttoptr`                                  |
 //! | struct → struct (transmute)                    | `alloca` + `store` + `load`                 |
 //! | ptr → ptr (diff addrspace)                     | `addrspacecast`                             |
@@ -61,7 +61,7 @@ use dialect_mir::ops::MirCastOp;
 use dialect_mir::types::{MirArrayType, MirPtrType};
 use llvm_export::op_interfaces::{CastOpInterface, CastOpWithNNegInterface};
 use llvm_export::ops as llvm;
-use llvm_export::types::FuncType;
+use llvm_export::types::{FuncType, PointerType, PointerTypeExt};
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::type_interfaces::FloatTypeInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -156,11 +156,11 @@ pub fn convert(
         | MirCastKindAttr::Subtype => emit_pointer_cast(ctx, rewriter, op, val, val_ty, llvm_ty)?,
 
         MirCastKindAttr::PointerExposeAddress => {
-            llvm::PtrToIntOp::new(ctx, val, llvm_ty).get_operation()
+            emit_ptr_to_int(ctx, rewriter, val, val_ty, llvm_ty)
         }
 
         MirCastKindAttr::PointerWithExposedProvenance => {
-            llvm::IntToPtrOp::new(ctx, val, llvm_ty).get_operation()
+            emit_int_to_ptr(ctx, rewriter, val, llvm_ty)
         }
     };
 
@@ -477,9 +477,9 @@ fn emit_pointer_cast(
         let undef_val = undef.get_operation().deref(ctx).get_result(0);
         Ok(llvm::InsertValueOp::new(ctx, undef_val, val, vec![0]).get_operation())
     } else if src_is_ptr && llvm_ty.deref(ctx).is::<IntegerType>() {
-        Ok(llvm::PtrToIntOp::new(ctx, val, llvm_ty).get_operation())
+        Ok(emit_ptr_to_int(ctx, rewriter, val, val_ty, llvm_ty))
     } else if src_is_int && dst_is_ptr {
-        Ok(llvm::IntToPtrOp::new(ctx, val, llvm_ty).get_operation())
+        Ok(emit_int_to_ptr(ctx, rewriter, val, llvm_ty))
     } else if src_is_struct && dst_is_struct {
         emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
     } else if let (Some(s), Some(d)) = (src_as, dst_as) {
@@ -516,6 +516,28 @@ fn emit_transmute(
     val_ty: pliron::r#type::TypeHandle,
     llvm_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
+    let src_ptr_as = val_ty
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .map(PointerType::address_space);
+    let dst_ptr_as = llvm_ty
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .map(PointerType::address_space);
+    let src_is_int = val_ty.deref(ctx).is::<IntegerType>();
+    let dst_is_int = llvm_ty.deref(ctx).is::<IntegerType>();
+
+    // `ptr::addr()` is implemented in the sysroot as a pointer-to-usize
+    // transmute. For a named CUDA address space, Rust's logical address is
+    // the generic CUDA address rather than the local offset in that space:
+    // static shared memory can validly have offset zero without being null.
+    // Genericize before ptrtoint so the memory-space identity participates in
+    // the integer value. This also gives modern NVVM's 32-bit shared pointer
+    // the 64-bit Rust `usize` representation expected by the MIR.
+    if src_ptr_as.is_some() && dst_is_int {
+        return Ok(emit_ptr_to_int(ctx, rewriter, val, val_ty, llvm_ty));
+    }
+
     // Lowering runs before the exporter chooses its target data layout.
     // Shared pointers are 64-bit in PTX/legacy mode but 32-bit in modern
     // NVVM (`p3:32`). A transmute observes the physical pointer bytes, so the
@@ -592,17 +614,6 @@ fn emit_transmute(
         return emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty);
     }
 
-    let src_ptr_as = val_ty
-        .deref(ctx)
-        .downcast_ref::<llvm_export::types::PointerType>()
-        .map(|ty| ty.address_space());
-    let dst_ptr_as = llvm_ty
-        .deref(ctx)
-        .downcast_ref::<llvm_export::types::PointerType>()
-        .map(|ty| ty.address_space());
-    let src_is_int = val_ty.deref(ctx).is::<IntegerType>();
-    let dst_is_int = llvm_ty.deref(ctx).is::<IntegerType>();
-
     match (src_ptr_as, dst_ptr_as) {
         (Some(source), Some(destination)) if source != destination => {
             Ok(llvm::AddrSpaceCastOp::new(ctx, val, llvm_ty).get_operation())
@@ -611,9 +622,7 @@ fn emit_transmute(
         (Some(_), None) if dst_is_int => {
             Ok(llvm::PtrToIntOp::new(ctx, val, llvm_ty).get_operation())
         }
-        (None, Some(_)) if src_is_int => {
-            Ok(llvm::IntToPtrOp::new(ctx, val, llvm_ty).get_operation())
-        }
+        (None, Some(_)) if src_is_int => Ok(emit_int_to_ptr(ctx, rewriter, val, llvm_ty)),
         (Some(_), None) => {
             let integer_ty: pliron::r#type::TypeHandle =
                 IntegerType::get(ctx, src_bits, Signedness::Signless).into();
@@ -628,7 +637,7 @@ fn emit_transmute(
             let bitcast = llvm::BitcastOp::new(ctx, val, integer_ty);
             rewriter.insert_operation(ctx, bitcast.get_operation());
             let integer = bitcast.get_operation().deref(ctx).get_result(0);
-            Ok(llvm::IntToPtrOp::new(ctx, integer, llvm_ty).get_operation())
+            Ok(emit_int_to_ptr(ctx, rewriter, integer, llvm_ty))
         }
         (None, None) => Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation()),
     }
@@ -647,6 +656,76 @@ fn scalar_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u32
     }
     drop(ty_ref);
     llvm_type_size_align(ctx, ty).and_then(|(bytes, _)| u32::try_from(bytes.checked_mul(8)?).ok())
+}
+
+/// Expose a pointer's CUDA generic address as an integer.
+///
+/// Named CUDA address spaces use offsets local to that space. In particular,
+/// a valid static shared-memory allocation may have shared offset zero. Rust
+/// raw-pointer APIs treat that allocation as non-null, so exposing the named
+/// offset directly would make `ptr::is_null` and `ptr::as_mut` misclassify it.
+/// Convert through the generic address space first, where CUDA encodes the
+/// memory-space identity as part of the pointer value.
+///
+/// This is the Rust pointer-address boundary. Target intrinsics that explicitly
+/// consume native shared offsets (for example, inline-PTX `ldmatrix`) keep
+/// their direct address-space-specific conversion.
+fn emit_ptr_to_int(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    val: pliron::value::Value,
+    val_ty: pliron::r#type::TypeHandle,
+    int_ty: pliron::r#type::TypeHandle,
+) -> Ptr<Operation> {
+    let Some(address_space) = val_ty
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .map(PointerType::address_space)
+    else {
+        return llvm::PtrToIntOp::new(ctx, val, int_ty).get_operation();
+    };
+
+    let val = if address_space == 0 {
+        val
+    } else {
+        let generic_ptr_ty = PointerType::get_generic(ctx);
+        let cast = llvm::AddrSpaceCastOp::new(ctx, val, generic_ptr_ty.into());
+        rewriter.insert_operation(ctx, cast.get_operation());
+        cast.get_operation().deref(ctx).get_result(0)
+    };
+
+    llvm::PtrToIntOp::new(ctx, val, int_ty).get_operation()
+}
+
+/// Materialize an integer as a pointer, entering named address spaces
+/// through the CUDA generic space.
+///
+/// The inverse boundary of [`emit_ptr_to_int`]: an exposed pointer address
+/// is the CUDA generic address, so an integer cast back into a named
+/// address space must `inttoptr` to generic first and then `addrspacecast`
+/// into that space. A bare `inttoptr` into a named space would reinterpret
+/// the generic address as a space-local offset and break the
+/// expose/with-exposed-provenance round trip.
+fn emit_int_to_ptr(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    val: pliron::value::Value,
+    ptr_ty: pliron::r#type::TypeHandle,
+) -> Ptr<Operation> {
+    let address_space = ptr_ty
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .map(PointerType::address_space);
+    match address_space {
+        None | Some(0) => llvm::IntToPtrOp::new(ctx, val, ptr_ty).get_operation(),
+        Some(_) => {
+            let generic_ptr_ty = PointerType::get_generic(ctx);
+            let to_generic = llvm::IntToPtrOp::new(ctx, val, generic_ptr_ty.into());
+            rewriter.insert_operation(ctx, to_generic.get_operation());
+            let generic = to_generic.get_operation().deref(ctx).get_result(0);
+            llvm::AddrSpaceCastOp::new(ctx, generic, ptr_ty).get_operation()
+        }
+    }
 }
 
 fn const_i64(
@@ -1144,45 +1223,64 @@ mod tests {
     }
 
     #[test]
-    fn transmute_involving_shared_pointer_rejects_target_dependent_width() {
-        for wrap_pointer in [false, true] {
-            for pointer_is_source in [false, true] {
-                let mut ctx = make_ctx();
-                let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
-                let shared_pointer: TypeHandle =
-                    MirPtrType::get(&mut ctx, pointee, false, 3).into();
-                let pointer_shape = if wrap_pointer {
-                    MirStructType::get_with_full_layout(
-                        &mut ctx,
-                        "SharedPointerWrapper".into(),
-                        vec!["pointer".into()],
-                        vec![shared_pointer],
-                        vec![0],
-                        vec![0],
-                        8,
-                        8,
-                    )
-                    .into()
-                } else {
-                    shared_pointer
-                };
-                let bits = int_ty(&mut ctx, 64, Signedness::Unsigned);
-                let (source, destination) = if pointer_is_source {
-                    (pointer_shape, bits)
-                } else {
-                    (bits, pointer_shape)
-                };
-                let module =
-                    build_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+    fn unsupported_shared_pointer_transmutes_reject_target_dependent_width() {
+        for (wrap_pointer, pointer_is_source) in [(false, false), (true, false), (true, true)] {
+            let mut ctx = make_ctx();
+            let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+            let shared_pointer: TypeHandle = MirPtrType::get(&mut ctx, pointee, false, 3).into();
+            let pointer_shape = if wrap_pointer {
+                MirStructType::get_with_full_layout(
+                    &mut ctx,
+                    "SharedPointerWrapper".into(),
+                    vec!["pointer".into()],
+                    vec![shared_pointer],
+                    vec![0],
+                    vec![0],
+                    8,
+                    8,
+                )
+                .into()
+            } else {
+                shared_pointer
+            };
+            let bits = int_ty(&mut ctx, 64, Signedness::Unsigned);
+            let (source, destination) = if pointer_is_source {
+                (pointer_shape, bits)
+            } else {
+                (bits, pointer_shape)
+            };
+            let module =
+                build_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
 
-                let error = crate::lower_mir_to_llvm(&mut ctx, module)
-                    .expect_err("shared-pointer transmute must fail before target mode is known");
-                assert!(
-                    error.to_string().contains("target-mode dependent"),
-                    "unexpected diagnostic: {error}"
-                );
-            }
+            let error = crate::lower_mir_to_llvm(&mut ctx, module)
+                .expect_err("shared-pointer transmute must fail before target mode is known");
+            assert!(
+                error.to_string().contains("target-mode dependent"),
+                "unexpected diagnostic: {error}"
+            );
         }
+    }
+
+    #[test]
+    fn shared_pointer_to_integer_transmute_genericizes_before_ptr_to_int() {
+        let mut ctx = make_ctx();
+        let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+        let shared_pointer: TypeHandle = MirPtrType::get(&mut ctx, pointee, false, 3).into();
+        let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
+
+        let module = lower_single_cast(
+            &mut ctx,
+            shared_pointer,
+            usize_ty,
+            MirCastKindAttr::Transmute,
+        );
+
+        assert_cast_lowered_to::<llvm::PtrToIntOp>(&ctx, module, "llvm.ptrtoint");
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &kernel_blocks(&ctx, module)),
+            1,
+            "shared pointers must become generic before ptr::addr() observes them"
+        );
     }
 
     #[test]
@@ -1261,6 +1359,41 @@ mod tests {
         );
 
         assert_cast_lowered_to::<llvm::PtrToIntOp>(&ctx, module_ptr, "llvm.ptrtoint");
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &kernel_blocks(&ctx, module_ptr)),
+            0,
+            "generic pointers need no address-space conversion"
+        );
+    }
+
+    #[test]
+    fn named_space_pointer_expose_address_genericizes_before_ptr_to_int() {
+        for address_space in [
+            llvm_export::types::address_space::GLOBAL,
+            llvm_export::types::address_space::SHARED,
+            llvm_export::types::address_space::CONSTANT,
+            llvm_export::types::address_space::LOCAL,
+        ] {
+            let mut ctx = make_ctx();
+            let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
+            let ptr_ty: TypeHandle =
+                MirPtrType::get(&mut ctx, pointee_ty, false, address_space).into();
+            let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
+
+            let module_ptr = lower_single_cast(
+                &mut ctx,
+                ptr_ty,
+                usize_ty,
+                MirCastKindAttr::PointerExposeAddress,
+            );
+
+            assert_cast_lowered_to::<llvm::PtrToIntOp>(&ctx, module_ptr, "llvm.ptrtoint");
+            assert_eq!(
+                count_ops::<llvm::AddrSpaceCastOp>(&ctx, &kernel_blocks(&ctx, module_ptr)),
+                1,
+                "address space {address_space} must become generic before exposing its address"
+            );
+        }
     }
 
     #[test]
@@ -1339,6 +1472,58 @@ mod tests {
         );
 
         assert_cast_lowered_to::<llvm::IntToPtrOp>(&ctx, module_ptr, "llvm.inttoptr");
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &kernel_blocks(&ctx, module_ptr)),
+            0,
+            "generic pointers need no address-space conversion"
+        );
+    }
+
+    #[test]
+    fn named_space_pointer_with_exposed_provenance_enters_through_generic() {
+        for address_space in [
+            llvm_export::types::address_space::GLOBAL,
+            llvm_export::types::address_space::SHARED,
+            llvm_export::types::address_space::CONSTANT,
+            llvm_export::types::address_space::LOCAL,
+        ] {
+            let mut ctx = make_ctx();
+            let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
+            let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
+            let ptr_ty: TypeHandle =
+                MirPtrType::get(&mut ctx, pointee_ty, false, address_space).into();
+
+            let module_ptr = lower_single_cast(
+                &mut ctx,
+                usize_ty,
+                ptr_ty,
+                MirCastKindAttr::PointerWithExposedProvenance,
+            );
+
+            // The exposed integer is a generic address, so re-entry must be
+            // inttoptr-to-generic followed by addrspacecast into the space,
+            // mirroring the PointerExposeAddress direction.
+            assert_cast_lowered_to::<llvm::AddrSpaceCastOp>(&ctx, module_ptr, "llvm.addrspacecast");
+            assert_eq!(
+                count_ops::<llvm::IntToPtrOp>(&ctx, &kernel_blocks(&ctx, module_ptr)),
+                1,
+                "address space {address_space} must re-enter through a generic inttoptr"
+            );
+            let casts = find_all::<llvm::AddrSpaceCastOp>(&ctx, &kernel_blocks(&ctx, module_ptr));
+            let [cast] = casts.as_slice() else {
+                panic!("expected exactly one llvm.addrspacecast");
+            };
+            let result_ty = cast
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx);
+            assert_eq!(
+                pointer_addrspace(&ctx, result_ty),
+                address_space,
+                "the addrspacecast must land in the destination space"
+            );
+        }
     }
 
     #[test]

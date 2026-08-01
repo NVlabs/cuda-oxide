@@ -7,6 +7,7 @@
 //!
 //! Covered shapes:
 //! - bare `[T; N]` constants indexed by a runtime value,
+//! - bare arrays of direct-tag enum constants,
 //! - nested `[[T; M]; N]` constants,
 //! - arrays of padded tuple constants containing no-payload enums,
 //! - nested tuples with zero-sized fields,
@@ -37,6 +38,15 @@ const TUPLE_TABLE: [(bool, Side); 6] = [
     (false, Side::LowZ),
     (true, Side::HighZ),
 ];
+const BARE_ENUM_TABLE: [Side; 6] = [
+    Side::LowX,
+    Side::HighZ,
+    Side::HighY,
+    Side::HighX,
+    Side::LowZ,
+    Side::LowY,
+];
+const EXPECTED_BARE_ENUM: [u32; 6] = [1, 6, 4, 2, 5, 3];
 const NESTED_TUPLE_TABLE: [((u8, ()), u32); 2] = [((3, ()), 17), ((5, ()), 29)];
 const ALL_ZST_TUPLE_TABLE: [(((), ()), u32); 2] = [(((), ()), 59), (((), ()), 61)];
 
@@ -100,6 +110,11 @@ mod kernels {
     }
 
     #[inline(never)]
+    fn bare_enum_array_value(i: usize) -> u32 {
+        BARE_ENUM_TABLE[i % BARE_ENUM_TABLE.len()] as u32
+    }
+
+    #[inline(never)]
     fn nested_tuple_array_value(i: usize) -> u32 {
         let ((tag, ()), value) = NESTED_TUPLE_TABLE[i & 1];
         tag as u32 + value
@@ -143,7 +158,11 @@ mod kernels {
     }
 
     #[kernel]
-    pub fn check_array_constants(mut out_f32: DisjointSlice<f32>, mut out_u32: DisjointSlice<u32>) {
+    pub fn check_array_constants(
+        mut out_f32: DisjointSlice<f32>,
+        mut out_u32: DisjointSlice<u32>,
+        mut out_enum: DisjointSlice<u32>,
+    ) {
         let tid = thread::index_1d();
         let i = tid.get();
 
@@ -181,6 +200,11 @@ mod kernels {
                 .wrapping_add(reordered)
                 .wrapping_mul(257)
                 .wrapping_add(overaligned_zst);
+        }
+
+        let tid_enum = thread::index_1d();
+        if let Some(slot) = out_enum.get_mut(tid_enum) {
+            *slot = bare_enum_array_value(i);
         }
     }
 }
@@ -249,6 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     const N: usize = 24;
     let mut out_f32 = DeviceBuffer::<f32>::zeroed(&stream, N)?;
     let mut out_u32 = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+    let mut out_enum = DeviceBuffer::<u32>::zeroed(&stream, N)?;
 
     // SAFETY: this is a 1D launch and the kernel bounds-checks each output
     // access against the corresponding slice length.
@@ -258,11 +283,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             LaunchConfig::for_num_elems(N as u32),
             &mut out_f32,
             &mut out_u32,
+            &mut out_enum,
         )
     }?;
 
     let got_f32 = out_f32.to_host_vec(&stream)?;
     let got_u32 = out_u32.to_host_vec(&stream)?;
+    let got_enum = out_enum.to_host_vec(&stream)?;
 
     let mut failures = 0usize;
     for i in 0..N {
@@ -283,11 +310,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             failures += 1;
         }
+
+        let want_enum = EXPECTED_BARE_ENUM[i % EXPECTED_BARE_ENUM.len()];
+        if got_enum[i] != want_enum {
+            println!(
+                "FAIL bare enum array tid={i}: got={} expected={want_enum}",
+                got_enum[i]
+            );
+            failures += 1;
+        }
     }
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, pointer-to-array, and tuple-array static-pointer constants)"
+            "array_constants: PASS ({N} threads; primitive, enum, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, pointer-to-array, and tuple-array static-pointer constants)"
         );
         Ok(())
     } else {

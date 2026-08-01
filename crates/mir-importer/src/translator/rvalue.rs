@@ -1098,6 +1098,26 @@ pub fn translate_rvalue(
                             // (e.g., enum Foo { A = 0, B = 2, C = 6 } has indices 0,1,2 but discriminants 0,2,6)
                             let variant_index_val: usize = variant_idx.to_index();
 
+                            // A value inhabiting this variant cannot exist,
+                            // so this construction sits on a dynamically dead
+                            // path rustc keeps in MIR (e.g. building
+                            // `ControlFlow::Break(NeverShortCircuitResidual)`
+                            // inside `array::try_from_fn`).
+                            // `mir.construct_enum` refuses uninhabited
+                            // variants by verification, so keep the dead path
+                            // representable with a typed undef instead.
+                            let variant_is_uninhabited = adt_ty
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirEnumType>()
+                                .and_then(|enum_ty| enum_ty.variant_is_inhabited(variant_index_val))
+                                .is_some_and(|inhabited| !inhabited);
+                            if variant_is_uninhabited {
+                                let undef = MirUndefOp::new(ctx, adt_ty).get_operation();
+                                undef.deref_mut(ctx).set_loc(loc);
+                                let result = undef.deref(ctx).get_result(0);
+                                return Ok((Some(undef), result, current_prev_op));
+                            }
+
                             // Cast field values to expected types (address space normalization)
                             // This handles cases where field values have specific address spaces
                             // (e.g., addrspace:3 for shared memory) but the enum type expects
@@ -1551,10 +1571,14 @@ pub fn translate_rvalue(
                 translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
 
             let enum_ty = enum_val.get_type(ctx);
-            let native_tag_ty = {
+            let (native_tag_ty, enum_is_uninhabited) = {
                 let enum_ty_obj = enum_ty.deref(ctx);
                 if let Some(enum_type) = enum_ty_obj.downcast_ref::<MirEnumType>() {
-                    enum_type.discriminant_type()
+                    let uninhabited = !enum_type
+                        .variant_inhabited
+                        .iter()
+                        .any(|inhabited| *inhabited != 0);
+                    (enum_type.discriminant_type(), uninhabited)
                 } else {
                     return input_err!(
                         loc,
@@ -1565,6 +1589,28 @@ pub fn translate_rvalue(
                     );
                 }
             };
+
+            // No value of an uninhabited enum can exist, so this read sits
+            // on a dynamically dead path rustc keeps in MIR (e.g. matching
+            // the residual `ControlFlow<Infallible, NeverShortCircuitResidual>`
+            // inside `array::try_from_fn`). `mir.get_discriminant` refuses
+            // uninhabited enums by verification, so keep the dead path
+            // representable with a typed undef of the declared discriminant
+            // type instead.
+            if enum_is_uninhabited {
+                let declared_discr_ty = place
+                    .ty(body.locals())
+                    .ok()
+                    .and_then(|place_ty| place_ty.kind().discriminant_ty());
+                let undef_ty = match declared_discr_ty {
+                    Some(ty) => super::types::translate_type(ctx, &ty)?,
+                    None => native_tag_ty,
+                };
+                let undef = MirUndefOp::new(ctx, undef_ty).get_operation();
+                undef.deref_mut(ctx).set_loc(loc);
+                let result = undef.deref(ctx).get_result(0);
+                return Ok((Some(undef), result, prev_op_after));
+            }
 
             let get_disc_op = Operation::new(
                 ctx,
@@ -3762,6 +3808,48 @@ fn apply_enum_field_projection(
 
     let field_type = types::translate_type(ctx, field_ty)?;
 
+    // Get the variant index
+    // NOTE: variant_idx IS the index (0, 1, 2, ...), NOT the discriminant!
+    // We just need to validate it's an ADT type, then use the index directly.
+    let variant_idx_val: usize = match enum_rust_ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_adt_def, _)) => {
+            variant_idx.to_index()
+        }
+        _ => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Downcast on non-ADT type: {:?}",
+                    enum_rust_ty
+                ))
+            );
+        }
+    };
+
+    // A value inhabiting this variant cannot exist, so the read sits on a
+    // dynamically dead path that rustc nevertheless keeps in MIR (e.g. the
+    // `ControlFlow::Break(NeverShortCircuitResidual)` arm inside
+    // `array::try_from_fn`). `mir.enum_payload` refuses uninhabited
+    // variants by verification, so keep the dead path representable with a
+    // typed undef instead — the same treatment `[T; 0]` extraction gets.
+    let variant_is_uninhabited = {
+        let enum_ty = enum_value.get_type(ctx);
+        enum_ty
+            .deref(ctx)
+            .downcast_ref::<dialect_mir::types::MirEnumType>()
+            .and_then(|enum_ty| enum_ty.variant_is_inhabited(variant_idx_val))
+            .is_some_and(|inhabited| !inhabited)
+    };
+    if variant_is_uninhabited {
+        let undef = MirUndefOp::new(ctx, field_type).get_operation();
+        undef.deref_mut(ctx).set_loc(loc);
+        match prev_op {
+            Some(prev) => undef.insert_after(ctx, prev),
+            None => undef.insert_at_front(block_ptr, ctx),
+        }
+        return Ok((undef.deref(ctx).get_result(0), Some(undef)));
+    }
+
     let op = Operation::new(
         ctx,
         MirEnumPayloadOp::get_concrete_op_info(),
@@ -3773,24 +3861,6 @@ fn apply_enum_field_projection(
     op.deref_mut(ctx).set_loc(loc.clone());
 
     let payload_op = MirEnumPayloadOp::new(op);
-
-    // Get the variant index
-    // NOTE: variant_idx IS the index (0, 1, 2, ...), NOT the discriminant!
-    // We just need to validate it's an ADT type, then use the index directly.
-    let variant_idx_val: usize = match enum_rust_ty.kind() {
-        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_adt_def, _)) => {
-            variant_idx.to_index()
-        }
-        _ => {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "Downcast on non-ADT type: {:?}",
-                    enum_rust_ty
-                ))
-            );
-        }
-    };
 
     payload_op.set_attr_payload_variant_index(
         ctx,
@@ -5119,13 +5189,10 @@ fn translate_array_value_constant(
         array_ty.element_type()
     };
 
-    // Keep bare array value constants on the same element contract as the
-    // byte lowering this path replaced: primitive scalars, tuples with
-    // supported fields, or nested arrays of those. Bare arrays whose
-    // elements are structs or enums are still not materialized as constants
-    // (arrays of structs nested inside struct constants remain supported,
-    // as before); admitting them here would silently widen that documented
-    // boundary.
+    // Bare array values support primitive scalars, enums, tuples with supported
+    // fields, or nested arrays of those. Struct elements remain outside this
+    // entry point; arrays nested inside struct constants have their own
+    // layout-aware aggregate path.
     validate_array_value_element_type(ctx, element_ty, &loc)?;
 
     let rust_array_ty = constant.const_.ty();
@@ -5309,8 +5376,10 @@ fn build_array_op_from_bytes(
                 loc,
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported by byte lowering: {:?}. \
-                     Supported array constants are primitive scalars, tuples with supported \
-                     fields, or nested arrays of those.",
+                     Byte lowering handles primitive scalars, tuples with supported fields, \
+                     or nested arrays of those. Enum elements decode from a constant \
+                     allocation instead, so an enum array that reaches byte lowering (e.g. \
+                     one with a zero-sized element) cannot be materialized here.",
                     elem_obj
                 ))
             );
@@ -9239,14 +9308,11 @@ fn translate_struct_constant_from_alloc(
 /// Element kinds admitted by a bare array value constant
 /// (`translate_array_value_constant`).
 ///
-/// The alloc-based path replaced a byte-only lowering that supported
-/// primitive scalar, tuple, and nested-array elements at this entry, and the
-/// supported-features appendix documents that arrays of structs are not
-/// materialized as constants. Nested arrays are walked recursively, exactly
-/// like the old byte lowering did, so an unsupported leaf cannot hide behind
-/// nesting. Arrays that sit inside a struct or tuple constant are dispatched
-/// through [`translate_constant_value_from_alloc`] instead and keep their
-/// wider, pre-existing element support.
+/// Primitive scalars, enums, tuples, and nested arrays are supported at this
+/// entry point. Arrays of structs are not materialized here. Nested arrays are
+/// walked recursively so an unsupported leaf cannot hide behind nesting.
+/// Arrays inside struct or tuple constants are dispatched through
+/// [`translate_constant_value_from_alloc`] and are not governed by this gate.
 fn validate_array_value_element_type(
     ctx: &Context,
     element_ty: TypeHandle,
@@ -9259,6 +9325,7 @@ fn validate_array_value_element_type(
             || elem_obj.is::<FP32Type>()
             || elem_obj.is::<FP64Type>()
             || elem_obj.is::<dialect_mir::types::MirTupleType>()
+            || elem_obj.is::<dialect_mir::types::MirEnumType>()
         {
             return Ok(());
         }
@@ -9267,8 +9334,8 @@ fn validate_array_value_element_type(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported: {:?}. Supported array \
-                     constants are primitive scalars, tuples with supported fields, or \
-                     nested arrays of those.",
+                     constants are primitive scalars, enums, tuples with supported fields, \
+                     or nested arrays of those.",
                     elem_obj
                 ))
             );
@@ -10025,7 +10092,9 @@ mod aggregate_relocation_tests {
         provenance_starts_in_range, relocation_offsets_overlapping_range,
         validate_array_value_element_type,
     };
-    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
+    use dialect_mir::types::{
+        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
+    };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
     use pliron::location::Location;
@@ -10170,7 +10239,7 @@ mod aggregate_relocation_tests {
     }
 
     #[test]
-    fn bare_array_elements_stay_on_the_documented_contract() {
+    fn bare_array_elements_follow_the_documented_contract() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -10185,11 +10254,35 @@ mod aggregate_relocation_tests {
             validate_array_value_element_type(&ctx, tuple_ty, &Location::Unknown).is_ok(),
             "tuple elements remain supported"
         );
-
         let nested_array_ty: TypeHandle = MirArrayType::get(&mut ctx, u32_ty, 4).into();
         assert!(
             validate_array_value_element_type(&ctx, nested_array_ty, &Location::Unknown).is_ok(),
             "nested array elements remain supported"
+        );
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Side".into(),
+            u8_ty,
+            vec![2, 5],
+            vec![
+                EnumVariant::unit("Low".into()),
+                EnumVariant::unit("High".into()),
+            ],
+            0,
+            1,
+            1,
+        )
+        .into();
+        assert!(
+            validate_array_value_element_type(&ctx, enum_ty, &Location::Unknown).is_ok(),
+            "bare enum-array elements are supported"
+        );
+        let nested_enum_array: TypeHandle = MirArrayType::get(&mut ctx, enum_ty, 2).into();
+        assert!(
+            validate_array_value_element_type(&ctx, nested_enum_array, &Location::Unknown).is_ok(),
+            "nesting preserves supported enum leaves"
         );
 
         let struct_ty: TypeHandle = MirStructType::get(

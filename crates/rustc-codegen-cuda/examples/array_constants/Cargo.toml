@@ -13,6 +13,7 @@ license = "Apache-2.0"
 
 # Regression coverage for MIR import of array constants:
 # - bare `[T; N]` constants indexed by runtime value,
+# - bare arrays of direct-tag enums,
 # - nested `[[T; M]; N]` constants,
 # - existing pointer-to-array constants (`&[T; N]`).
 #

@@ -8,16 +8,16 @@ use dialect_nvvm::ops::{
     ActiveMaskOp, AssertFailOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp,
     Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
     CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
-    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
-    ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr, LdmatrixLayoutAttr,
-    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op,
-    LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp,
-    MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op,
-    MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
-    MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
-    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PackedAtomicAddOp,
-    PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
+    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, CvtaGenericToSharedOffsetOp, Dp2aS32Op,
+    Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr,
+    LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
+    LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp,
+    LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
+    MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
+    MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
+    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op,
+    NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
+    PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
     PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
     PackedAtomicSubnormalAttr, ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp,
     ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
@@ -83,6 +83,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("debug.rs", "AssertFailOp"),
         ("debug.rs", "VprintfOp"),
         ("grid.rs", "GridSyncOp"),
+        ("memory.rs", "CvtaGenericToSharedOffsetOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
@@ -4394,6 +4395,40 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
             0,
         );
         assert!(WgmmaMakeSmemDescOp::new(invalid).verify(&ctx).is_err());
+    }
+
+    let cvta = Operation::new(
+        &mut ctx,
+        CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![pointer],
+        vec![],
+        0,
+    );
+    assert!(CvtaGenericToSharedOffsetOp::new(cvta).verify(&ctx).is_ok());
+    for (operands, results) in [
+        // Operand must be a MIR pointer.
+        (vec![u32_value], vec![u64_ty.into()]),
+        // Operand must point to generic or shared memory.
+        (vec![global_pointer], vec![u64_ty.into()]),
+        // Result must be u64.
+        (vec![pointer], vec![u32_ty.into()]),
+        // Exact arity is required.
+        (vec![], vec![u64_ty.into()]),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
+            results,
+            operands,
+            vec![],
+            0,
+        );
+        assert!(
+            CvtaGenericToSharedOffsetOp::new(invalid)
+                .verify(&ctx)
+                .is_err()
+        );
     }
 
     let mma = Operation::new(

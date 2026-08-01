@@ -874,7 +874,11 @@ impl<'a> ModuleExportState<'a> {
             res_name.clone()
         };
 
-        write!(output, "  {gep_name} = getelementptr inbounds ").unwrap();
+        write!(output, "  {gep_name} = getelementptr").unwrap();
+        if ops::gep_inbounds(self.ctx, op.get_operation()) {
+            write!(output, " inbounds").unwrap();
+        }
+        write!(output, " ").unwrap();
         self.export_type(elem_ty, output)?;
         write!(output, ", ").unwrap();
         if self.legacy_typed_pointers() {

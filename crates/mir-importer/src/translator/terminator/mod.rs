@@ -2670,6 +2670,21 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
+        "core::intrinsics::arith_offset" | "std::intrinsics::arith_offset" => {
+            Ok(Some(intrinsics::memory::emit_arith_offset(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
         "core::intrinsics::ptr_offset_from" | "std::intrinsics::ptr_offset_from" => {
             Ok(Some(intrinsics::memory::emit_ptr_offset_from(
                 ctx,
@@ -3021,9 +3036,10 @@ fn try_dispatch_intrinsic(
             }
         }
 
-        // SharedArray::as_ptr and as_mut_ptr - convert shared memory pointer to generic
-        path if path.contains("SharedArray") && path.contains("as_ptr") => {
-            Ok(Some(intrinsics::memory::emit_shared_array_as_ptr(
+        // Explicit generic-to-shared address conversion for hardware SMEM
+        // descriptors (the CUDA C++ `__cvta_generic_to_shared_offset` analog).
+        "cuda_device::shared::cvta_generic_to_shared_offset" => Ok(Some(
+            intrinsics::memory::emit_cvta_generic_to_shared_offset(
                 ctx,
                 body,
                 args,
@@ -3034,9 +3050,13 @@ fn try_dispatch_intrinsic(
                 value_map,
                 block_map,
                 loc,
-            )?))
-        }
-        path if path.contains("SharedArray") && path.contains("as_mut_ptr") => {
+            )?,
+        )),
+
+        // Public SharedArray pointer conversions all narrow the shared-memory
+        // base to a generic pointer. Recognition is shared with destination
+        // address-space classification in translator::values.
+        path if super::shared_array_pointer_method(path).is_some() => {
             Ok(Some(intrinsics::memory::emit_shared_array_as_ptr(
                 ctx,
                 body,

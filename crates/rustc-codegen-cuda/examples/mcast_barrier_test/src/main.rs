@@ -19,6 +19,7 @@ use cuda_device::barrier::{
     mbarrier_try_wait_parity, nanosleep,
 };
 use cuda_device::cluster;
+use cuda_device::shared::cvta_generic_to_shared_offset;
 use cuda_device::{DisjointSlice, cluster_launch, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -48,8 +49,14 @@ mod kernels {
             }
             thread::sync_threads();
 
-            let rank0_bar0_addr = cluster::map_shared_rank(&raw const MCAST_BAR0, 0) as u64;
-            let rank0_bar1_addr = cluster::map_shared_rank(&raw const MCAST_BAR1, 0) as u64;
+            let rank0_bar0_addr = cvta_generic_to_shared_offset(cluster::map_shared_rank(
+                &raw const MCAST_BAR0,
+                0,
+            ) as *const u8);
+            let rank0_bar1_addr = cvta_generic_to_shared_offset(cluster::map_shared_rank(
+                &raw const MCAST_BAR1,
+                0,
+            ) as *const u8);
 
             let is_rank0 = my_rank == 0;
 

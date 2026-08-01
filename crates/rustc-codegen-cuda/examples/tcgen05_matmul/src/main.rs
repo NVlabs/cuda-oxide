@@ -24,7 +24,7 @@ use cuda_device::barrier::{
     Barrier, fence_proxy_async_shared_cta, mbarrier_arrive_expect_tx, mbarrier_init,
     mbarrier_inval, mbarrier_try_wait, mbarrier_try_wait_parity,
 };
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_commit_shared_cluster,
@@ -135,8 +135,8 @@ mod kernels {
 
             // PHASE 4: Build SMEM descriptors and execute MMA
             if is_thread0 {
-                let smem_a_addr = &raw const SMEM_A as u64;
-                let smem_b_addr = &raw const SMEM_B as u64;
+                let smem_a_addr = cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8);
+                let smem_b_addr = cvta_generic_to_shared_offset(&raw const SMEM_B as *const u8);
 
                 const SBO_BYTES: u32 = 128; // 64 elements × 2 bytes
                 const LBO_BYTES: u32 = 2048; // 16 tiles × 64 elements × 2 bytes
