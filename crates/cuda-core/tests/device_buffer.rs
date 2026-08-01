@@ -179,17 +179,14 @@ fn device_buffer_async_compat_methods_roundtrip() {
         [0, 0, 0, 0]
     );
 
-    clone
-        .drop_async(&stream)
-        .expect("failed to async free clone");
-    dev.drop_async(&stream)
-        .expect("failed to async free source");
+    // SAFETY: all prior work on these buffers ran on `stream` itself.
+    unsafe { clone.drop_async(&stream) }.expect("failed to async free clone");
+    unsafe { dev.drop_async(&stream) }.expect("failed to async free source");
 
     let empty = unsafe { DeviceBuffer::<u8>::uninitialized_async(&stream, 0) }
         .expect("failed to allocate empty uninitialized device buffer");
-    empty
-        .drop_async(&stream)
-        .expect("failed to async free empty buffer");
+    // SAFETY: the empty buffer has no pending work on any stream.
+    unsafe { empty.drop_async(&stream) }.expect("failed to async free empty buffer");
     stream.synchronize().expect("stream sync failed");
 }
 
@@ -247,7 +244,10 @@ fn async_allocation_drop_async_orders_free_after_allocation_stream() {
     dev.zero_async(&allocation_stream)
         .expect("failed to enqueue allocation-stream work");
 
-    dev.drop_async(&free_stream)
+    // SAFETY: the only pending work runs on the allocation stream, which
+    // drop_async orders `free_stream` after; that ordering is what this
+    // test observes.
+    unsafe { dev.drop_async(&free_stream) }
         .expect("drop_async should order free after allocation stream");
     let (started_tx, started_rx) = mpsc::channel();
     let (completion_tx, completion_rx) = mpsc::channel();
@@ -281,7 +281,8 @@ fn sync_allocation_allows_async_drop_after_queued_work() {
     let release_gate = gate_stream(&stream);
     dev.zero_async(&stream)
         .expect("failed to enqueue work before async free");
-    dev.drop_async(&stream)
+    // SAFETY: all prior work on this buffer was enqueued on `stream` itself.
+    unsafe { dev.drop_async(&stream) }
         .expect("synchronous allocation should support stream-ordered free");
 
     let (started_tx, started_rx) = mpsc::channel();
@@ -323,7 +324,8 @@ fn drop_async_bind_error_preserves_ordinary_cleanup() {
     let injected = DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE);
     ctx.record_err::<()>(Err(injected));
     assert_eq!(
-        dev.drop_async(&stream),
+        // SAFETY: no pending work on any stream touches this buffer.
+        unsafe { dev.drop_async(&stream) },
         Err(injected),
         "drop_async must propagate the pre-disarm bind error"
     );

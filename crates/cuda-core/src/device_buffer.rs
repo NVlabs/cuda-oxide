@@ -14,9 +14,10 @@
 //!
 //! Ordinary drop synchronizes the context before freeing an asynchronous
 //! allocation, because safe operations may have submitted work using the
-//! buffer on any stream in that context. [`DeviceBuffer::drop_async`] avoids
-//! that host-side synchronization by freeing on a chosen stream. Its caller
-//! must order every other stream that uses the buffer before that stream.
+//! buffer on any stream in that context. The unsafe
+//! [`DeviceBuffer::drop_async`] avoids that host-side synchronization by
+//! freeing on a chosen stream; its caller takes over the obligation to
+//! order every other stream that uses the buffer before that stream.
 //!
 //! # Quick start
 //!
@@ -124,8 +125,9 @@ unsafe impl DeviceCopy for half::f16 {}
 /// context that keeps the CUDA context alive. Synchronous allocations are
 /// freed with `cuMemFree`. Dropping a stream-ordered allocation synchronizes
 /// its context before enqueueing `cuMemFreeAsync` on its retained allocation
-/// stream. Use [`DeviceBuffer::drop_async`] when the caller can provide
-/// explicit stream ordering and must avoid that context-wide synchronization.
+/// stream. Use the unsafe [`DeviceBuffer::drop_async`] when the caller can
+/// provide explicit stream ordering and must avoid that context-wide
+/// synchronization.
 ///
 /// Device buffers may only transfer plain device-copyable values. Owning host
 /// types such as [`String`] are rejected because copying their bytes to and
@@ -718,8 +720,8 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
     ///
     /// The buffer co-owns `stream` (via the `Arc`) so its implicit `Drop` can
     /// release the stream-ordered allocation after synchronizing the context.
-    /// Call [`Self::drop_async`] to free explicitly on a chosen stream without
-    /// a context-wide synchronization.
+    /// Call the unsafe [`Self::drop_async`] to free explicitly on a chosen
+    /// stream without a context-wide synchronization.
     ///
     /// # Safety
     ///
@@ -833,8 +835,7 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
     ///
     /// For a stream-ordered allocation, this method makes `stream` wait for
     /// work already submitted on the allocation stream before enqueueing the
-    /// free. The caller must also ensure that every other stream using this
-    /// buffer is ordered before `stream`.
+    /// free.
     ///
     /// Returns [`CUDA_ERROR_INVALID_CONTEXT`](cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_CONTEXT)
     /// if `stream` belongs to a different context. Validation and allocation
@@ -842,7 +843,18 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
     /// either step leaves ordinary [`Drop`] responsible for cleanup. Once
     /// disarmed immediately before `cuMemFreeAsync`, an enqueue error leaks
     /// the allocation instead of attempting an unordered fallback free.
-    pub fn drop_async(mut self, stream: &CudaStream) -> Result<(), DriverError> {
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that every stream other than the allocation
+    /// stream that has pending work touching this buffer is ordered before
+    /// `stream` (for example via [`CudaStream::join`]). Only the allocation
+    /// stream is joined automatically; an unordered third stream still
+    /// racing the free is a driver-level use-after-free. This is the same
+    /// deferred-use contract as [`Self::copy_from_host_async_unchecked`]:
+    /// ordinary [`Drop`] is the safe alternative and synchronizes the whole
+    /// context first.
+    pub unsafe fn drop_async(mut self, stream: &CudaStream) -> Result<(), DriverError> {
         if self.ctx.as_ref() != stream.context().as_ref() {
             return Err(DriverError(
                 cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_CONTEXT,
