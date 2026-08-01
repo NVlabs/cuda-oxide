@@ -11,7 +11,7 @@
   },
   "inputs": {
     "imported_sha256": "7fc84823d448f56192e265a6c057ea72155c84df2b6575b0235199d445db6a2f",
-    "overlay_sha256": "caad0ea82e609ab91b2a0f45f5663e1c9e16c68fef2060cc72a9f0f5193ba81d",
+    "overlay_sha256": "87837f01d62059e487761a757d237ae4deeb41ccdd4a45e01bfb47986399d00a",
     "abi_ledger_sha256": "2938c34b242564948346d79db2f2777d545f0604da5ba58ee82202980ce43095",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix.json:806155f5468d672b6bd969b72d9821155cc6a1c4422eb210ca0fc0a78eb295fb",
@@ -171594,8 +171594,8 @@
         ]
       },
       "semantics": {
-        "pure": true,
-        "memory": "none",
+        "pure": false,
+        "memory": "inaccessible_read_write",
         "convergent": true,
         "execution_scope": "warp"
       },

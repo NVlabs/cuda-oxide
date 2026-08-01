@@ -516,8 +516,8 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.dialect.op_name == "nvvm.movmatrix_trans_b16"
                     && record.dialect.operands == ["i32"]
                     && record.dialect.results == ["i32"]
-                    && record.semantics.pure
-                    && record.semantics.memory == "none"
+                    && !record.semantics.pure
+                    && record.semantics.memory == "inaccessible_read_write"
                     && record.semantics.convergent
                     && record.lowering == "generated_movmatrix_inline_ptx"
                     && record.movmatrix.is_some(),
@@ -5234,7 +5234,9 @@ fn render_compat_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "///\n\
              /// Each lane supplies two packed b16 values. The warp collectively transposes the 8x8 tile.\n\
-             /// This register-only operation does not access or order memory.\n\
+             /// No addressable memory is touched, but the result depends on every lane's\n\
+             /// input, so the call is modelled as reading and writing inaccessible state:\n\
+             /// two calls with equal operands are not interchangeable.\n\
              ///\n\
              /// # Safety\n\
              /// All 32 warp lanes must execute the same call, and no lane may have exited.\n",
@@ -20797,8 +20799,8 @@ mod tests {
         record.dialect.op_name = "nvvm.movmatrix_trans_b16".into();
         record.dialect.operands = vec!["i32".into()];
         record.dialect.results = vec!["i32".into()];
-        record.semantics.pure = true;
-        record.semantics.memory = "none".into();
+        record.semantics.pure = false;
+        record.semantics.memory = "inaccessible_read_write".into();
         record.semantics.convergent = true;
         record.semantics.execution_scope = "warp".into();
         record.packed_atomic = None;

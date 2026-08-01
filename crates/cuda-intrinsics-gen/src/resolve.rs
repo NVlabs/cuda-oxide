@@ -24152,8 +24152,8 @@ fn validate_movmatrix_policy(policy: &OverlayIntrinsic, source: &IntrinsicSource
             && policy.dialect_op_name == "nvvm.movmatrix_trans_b16"
             && policy.dialect_operands == ["i32"]
             && policy.dialect_results == ["i32"]
-            && policy.pure
-            && policy.memory == "none"
+            && !policy.pure
+            && policy.memory == "inaccessible_read_write"
             && policy.convergent
             && policy.execution_scope == "warp"
             && policy.minimum_ptx == "7.8"
@@ -26632,8 +26632,8 @@ mod tests {
         record.resolved_llvm_symbol = None;
         record.llvm_arguments.clear();
         record.llvm_results.clear();
-        record.pure = true;
-        record.memory = "none".into();
+        record.pure = false;
+        record.memory = "inaccessible_read_write".into();
         record.convergent = true;
         record.execution_scope = "warp".into();
         record.minimum_ptx = "7.8".into();
@@ -34442,6 +34442,17 @@ scope = "system"
         let mut wrong_participation = valid.clone();
         wrong_participation.convergent = false;
         reject(&wrong_participation, "closed movmatrix recipe");
+
+        // A warp collective is not a function of its own operand, so the
+        // pure/no-memory pair every other collective avoids must stay rejected
+        // here too.
+        let mut wrong_purity = valid.clone();
+        wrong_purity.pure = true;
+        reject(&wrong_purity, "closed movmatrix recipe");
+
+        let mut wrong_memory = valid.clone();
+        wrong_memory.memory = "none".into();
+        reject(&wrong_memory, "closed movmatrix recipe");
 
         let mut wrong_floor = valid.clone();
         wrong_floor.backend_lowerings[0].minimum_ptx = Some("8.0".into());

@@ -21,8 +21,13 @@ dialect_op_type = "MovmatrixTransB16Op"
 dialect_op_name = "nvvm.movmatrix_trans_b16"
 dialect_operands = ["i32"]
 dialect_results = ["i32"]
-pure = true
-memory = "none"
+# A warp collective is not a function of its own operand: the result depends on
+# every lane's input, so two calls with equal operands may differ. Upstream LLVM
+# declares every analogous collective (`shfl`, `vote`, `match`, `redux`,
+# `activemask`) `IntrConvergent, IntrInaccessibleMemOnly` rather than
+# `IntrNoMem`, and this catalog follows that for all of them.
+pure = false
+memory = "inaccessible_read_write"
 convergent = true
 execution_scope = "warp"
 minimum_ptx = "7.8"

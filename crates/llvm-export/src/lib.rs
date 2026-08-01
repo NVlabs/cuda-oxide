@@ -183,10 +183,19 @@ pub mod ops {
         /// synchronize threads or write memory: `bar.sync`, `mma.sync`,
         /// `wgmma`, `tcgen05`, `cp.async`.
         Convergent,
-        /// Convergent, no side effects. Warp-collective operations whose
-        /// result depends on which threads are active but that produce no
-        /// observable effects beyond their register output: `shfl.sync`,
-        /// `vote.sync`, `match.sync`.
+        /// Convergent, no side effects: the asm must not cross divergent
+        /// control flow, but may be merged with an identical call or dropped
+        /// when its result is unused.
+        ///
+        /// Currently unused, and warp collectives are not candidates for it. A
+        /// collective's result depends on every lane's input, not just the
+        /// operands of this call, so two calls with equal operands are not
+        /// interchangeable. Upstream LLVM says the same by declaring `shfl`,
+        /// `vote`, `match`, `redux`, and `activemask`
+        /// `IntrConvergent, IntrInaccessibleMemOnly` rather than `IntrNoMem`;
+        /// those lower through [`AsmKind::Convergent`] here. This variant would
+        /// fit a convergent op that is a true function of its own operands, and
+        /// no such op is currently modelled.
         ConvergentPure,
         /// Side effects, not convergent. Non-collective operations that
         /// modify memory or hardware state: `st.global` via asm, hardware
