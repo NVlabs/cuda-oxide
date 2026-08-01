@@ -60,6 +60,14 @@ ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_pointer_over
 # Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
 NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
 
+# Examples whose verify-code-shape.sh asserts on `#[inline(never)]` marker
+# symbols. Those markers are private, so once the middle end inlines them into
+# their single caller it deletes them, and they survive only in the
+# unoptimized IR. The optimized build still runs and still decides the verdict;
+# these get one extra CUDA_OXIDE_NO_OPT=1 build afterwards purely to produce
+# artifacts the shape check can read.
+NO_OPT_SHAPE_EXAMPLES=(const_bool_dead_branch)
+
 classify() {
     local ex="$1" cat
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
@@ -1332,10 +1340,31 @@ run_cargo() {
         invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
     fi
-    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "array_constants" ]]; then
-        local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
-        if ! "${shape_check}" >>"${log}" 2>&1; then
-            printf 'array_constants failed its exact unoptimized LLVM, optimized LLVM, or PTX shape assertions\n' >>"${log}"
+    # Any example may ship a verify-code-shape.sh; running whichever exist keeps
+    # a new one from being added and then silently never executed. Presence, not
+    # the executable bit, is the trigger -- a script committed without +x would
+    # otherwise be skipped in exactly the silence this is meant to remove -- so
+    # it runs through `bash` rather than being executed directly.
+    local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+    if [[ ${CARGO_EC} -eq 0 && -f "${shape_check}" ]]; then
+        local no_opt_shape
+        for no_opt_shape in "${NO_OPT_SHAPE_EXAMPLES[@]}"; do
+            if [[ "${ex}" == "${no_opt_shape}" ]]; then
+                # Re-emit unoptimized artifacts for the check, reusing this
+                # example's own flags so the rebuild differs from the build
+                # above only in optimization. The optimized build already ran
+                # and already set CARGO_EC.
+                local -a no_opt_args=("${args[@]}")
+                no_opt_args[0]="build"
+                CUDA_OXIDE_NO_OPT=1 invoke_cargo_oxide "${no_opt_args[@]}" >>"${log}" 2>&1 \
+                    || CARGO_EC=$?
+                break
+            fi
+        done
+    fi
+    if [[ ${CARGO_EC} -eq 0 && -f "${shape_check}" ]]; then
+        if ! bash "${shape_check}" >>"${log}" 2>&1; then
+            printf '%s failed its verify-code-shape.sh assertions\n' "${ex}" >>"${log}"
             CARGO_EC=1
         fi
     fi
