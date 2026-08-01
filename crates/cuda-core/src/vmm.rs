@@ -17,7 +17,8 @@
 //! physical allocation or virtual reservation they reference.
 //!
 //! The module also wraps CUDA's multicast objects (`cuMulticast*`, CUDA
-//! 12.1+): [`MulticastObject`] builds an NVLink SHARP (NVLS) team whose
+//! 12.1+): `MulticastObject` (compiled out on pre-12.1 toolkits, see the
+//! build script probe) builds an NVLink SHARP (NVLS) team whose
 //! mapped VA ranges respond to device-side `multimem.*` instructions with
 //! switch-side reduction and broadcast across every bound GPU. See
 //! `tests/vmm_multicast.rs` and the `nvls_all_reduce` example.
@@ -187,6 +188,7 @@ impl Mapping {
     ///
     /// All devices must have been added to the multicast object (via
     /// [`MulticastObject::add_device`]) before mapping it.
+    #[cfg(cuda_has_multicast)]
     pub fn new_multicast(
         va: CUdeviceptr,
         size: usize,
@@ -270,6 +272,7 @@ pub fn align_size(size: usize, granularity: usize) -> usize {
 }
 
 /// Granularity flavor for [`multicast_granularity`].
+#[cfg(cuda_has_multicast)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MulticastGranularity {
     /// Minimum required granularity for multicast sizes and offsets.
@@ -278,6 +281,7 @@ pub enum MulticastGranularity {
     Recommended,
 }
 
+#[cfg(cuda_has_multicast)]
 impl MulticastGranularity {
     fn to_flag(self) -> cuda_bindings::CUmulticastGranularity_flags {
         match self {
@@ -297,6 +301,7 @@ impl MulticastGranularity {
 /// `handleTypes` is left at 0: the object cannot be exported to other
 /// processes. Multi-process teams (exporting the handle over a POSIX file
 /// descriptor or fabric handle) are out of scope for these wrappers.
+#[cfg(cuda_has_multicast)]
 fn multicast_prop(num_devices: u32, size: usize) -> cuda_bindings::CUmulticastObjectProp_st {
     let mut prop: cuda_bindings::CUmulticastObjectProp_st = unsafe { std::mem::zeroed() };
     prop.numDevices = num_devices;
@@ -309,17 +314,31 @@ fn multicast_prop(num_devices: u32, size: usize) -> cuda_bindings::CUmulticastOb
 ///
 /// Multicast requires an NVLink-switch-connected system (e.g. HGX/DGX
 /// H100 or B200) and CUDA 12.1+.
+#[cfg(cuda_has_multicast)]
 pub fn multicast_supported(device: cuda_bindings::CUdevice) -> Result<bool, DriverError> {
     let mut value = MaybeUninit::uninit();
-    unsafe {
+    let status = unsafe {
         cuda_bindings::cuDeviceGetAttribute(
             value.as_mut_ptr(),
             cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED,
             device,
         )
-        .result()?;
-        Ok(value.assume_init() != 0)
+    };
+    // Drivers older than CUDA 12.1 do not know this attribute and answer
+    // CUDA_ERROR_INVALID_VALUE. That means "no multicast on this system",
+    // not a failure, so callers can probe-and-skip uniformly.
+    if status == cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE {
+        return Ok(false);
     }
+    status.result()?;
+    Ok(unsafe { value.assume_init() } != 0)
+}
+
+/// Built against a pre-12.1 CUDA toolkit whose headers lack the multicast
+/// API: no device can be used for multicast through these wrappers.
+#[cfg(not(cuda_has_multicast))]
+pub fn multicast_supported(_device: cuda_bindings::CUdevice) -> Result<bool, DriverError> {
+    Ok(false)
 }
 
 /// Queries the multicast size/offset granularity for a team of
@@ -329,6 +348,7 @@ pub fn multicast_supported(device: cuda_bindings::CUdevice) -> Result<bool, Driv
 /// [`MulticastObject::bind_mem`] must be multiples of the
 /// [`MulticastGranularity::Minimum`] value; use
 /// [`MulticastGranularity::Recommended`] for best performance.
+#[cfg(cuda_has_multicast)]
 pub fn multicast_granularity(
     num_devices: u32,
     size: usize,
@@ -365,12 +385,14 @@ pub fn multicast_granularity(
 ///
 /// Dropping releases the handle via `cuMemRelease` (the documented release
 /// path for multicast objects).
+#[cfg(cuda_has_multicast)]
 pub struct MulticastObject {
     handle: cuda_bindings::CUmemGenericAllocationHandle,
     size: usize,
     num_devices: u32,
 }
 
+#[cfg(cuda_has_multicast)]
 impl MulticastObject {
     /// Creates a multicast object for a team of `num_devices` GPUs binding
     /// up to `size` bytes each.
@@ -451,6 +473,7 @@ impl MulticastObject {
     }
 }
 
+#[cfg(cuda_has_multicast)]
 impl Drop for MulticastObject {
     fn drop(&mut self) {
         unsafe {
@@ -464,6 +487,7 @@ impl Drop for MulticastObject {
 /// Created by [`MulticastObject::bind_mem`]; unbinds via `cuMulticastUnbind`
 /// on drop. Must be dropped before the multicast object and before the
 /// physical allocation it binds.
+#[cfg(cuda_has_multicast)]
 pub struct MulticastBinding {
     mc_handle: cuda_bindings::CUmemGenericAllocationHandle,
     device: cuda_bindings::CUdevice,
@@ -471,6 +495,7 @@ pub struct MulticastBinding {
     size: usize,
 }
 
+#[cfg(cuda_has_multicast)]
 impl MulticastBinding {
     /// Returns the device whose memory is bound.
     pub fn device(&self) -> cuda_bindings::CUdevice {
@@ -478,6 +503,7 @@ impl MulticastBinding {
     }
 }
 
+#[cfg(cuda_has_multicast)]
 impl Drop for MulticastBinding {
     fn drop(&mut self) {
         unsafe {

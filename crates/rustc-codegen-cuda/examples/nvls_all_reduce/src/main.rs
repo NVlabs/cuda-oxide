@@ -20,7 +20,9 @@
 //! raises the module target to sm_90/PTX 8.6 automatically.
 //!
 //! Requires an NVLink-switch system (HGX/DGX H100 or B200, CUDA 12.1+).
-//! Prints `skipping:` and exits cleanly anywhere else.
+//! Prints `skipping:` and exits cleanly anywhere else. Building this
+//! example needs a CUDA 12.1+ toolkit: cuda-core compiles out the
+//! multicast wrappers on older toolkits (see its build script probe).
 
 use cuda_core::error::IntoResult;
 use cuda_core::vmm;
@@ -130,7 +132,7 @@ fn main() {
         let uc_map = vmm::Mapping::new(uc_va.base(), size, &phys, 0).expect("unicast map");
         vmm::set_access(uc_va.base(), size, &[devices[i]]).expect("unicast set_access");
 
-        let mc_va = vmm::VirtualReservation::new(size, 0).expect("multicast VA reserve");
+        let mc_va = vmm::VirtualReservation::new(size, granularity).expect("multicast VA reserve");
         let mc_map =
             vmm::Mapping::new_multicast(mc_va.base(), size, &team, 0).expect("multicast map");
         vmm::set_access(mc_va.base(), size, &[devices[i]]).expect("multicast set_access");

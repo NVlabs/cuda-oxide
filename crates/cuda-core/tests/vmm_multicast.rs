@@ -16,6 +16,9 @@
 //! mapping, so this test only establishes and tears it down.
 //!
 //! Requires an NVLink-switch system (e.g. HGX H100/B200); skips elsewhere.
+//! Compiled out entirely when the CUDA toolkit predates the multicast API
+//! (CUDA 12.1); see cuda-core's build script probe.
+#![cfg(cuda_has_multicast)]
 
 use cuda_core::context::CudaContext;
 use cuda_core::error::IntoResult;
@@ -99,7 +102,7 @@ fn multicast_two_gpu_team_roundtrip() {
             vmm::Mapping::new(uc_va.base(), size, &physes[i], 0).expect("unicast cuMemMap");
         vmm::set_access(uc_va.base(), size, &[devices[i]]).expect("unicast set_access");
 
-        let mc_va = vmm::VirtualReservation::new(size, 0).expect("multicast VA reserve");
+        let mc_va = vmm::VirtualReservation::new(size, granularity).expect("multicast VA reserve");
         let mc_map =
             vmm::Mapping::new_multicast(mc_va.base(), size, &team, 0).expect("multicast cuMemMap");
         vmm::set_access(mc_va.base(), size, &[devices[i]]).expect("multicast set_access");
