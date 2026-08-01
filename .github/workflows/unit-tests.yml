@@ -43,7 +43,12 @@ jobs:
           - package: mir-lower
           - package: mir-transforms
           - package: nvvm-transforms
+          # `default = []`, but every consumer turns the object features on:
+          # rustc-codegen-cuda and cuda-core take `object-write`, cuda-core
+          # also `object-read`. Testing the default set alone skips the eight
+          # ELF emit/extract tests that cover the configuration actually built.
           - package: oxide-artifacts
+            test_args: --all-targets --features object
           - package: reserved-oxide-symbols
           # launch_requires_unsafe trybuild fixture dev-depends on
           # cuda-host/cuda-core, which transitively pull cuda-bindings
