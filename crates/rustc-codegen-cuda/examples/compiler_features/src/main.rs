@@ -17,7 +17,7 @@
 //! Run: cargo oxide run compiler_features
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::shared::cvta_generic_to_shared;
+use cuda_device::shared::cvta_generic_to_shared_offset;
 use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -222,7 +222,7 @@ mod kernels {
 
         let idx = thread::index_1d();
         if let Some(out_elem) = out.get_mut(idx) {
-            let offset = unsafe { cvta_generic_to_shared(&raw const SMEM as *const u8) };
+            let offset = unsafe { cvta_generic_to_shared_offset(&raw const SMEM as *const u8) };
             *out_elem = offset;
         }
     }
@@ -885,7 +885,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // model): `ptr as u64` must yield the same nonzero generic address
     // whether or not an intermediate `*const u8` cast is involved. The raw
     // `.shared` window offset is available only through the explicit
-    // `cvta_generic_to_shared` intrinsic, which hardware SMEM descriptors
+    // `cvta_generic_to_shared_offset` intrinsic, which hardware SMEM descriptors
     // consume.
     println!("Testing: generic-address contract for shared statics");
     let direct = {
@@ -934,7 +934,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         smem_direct_ok = false;
     }
     if shared_offset >= 0x100000 {
-        println!("  ✗ FAILED: cvta_generic_to_shared must yield the raw .shared offset");
+        println!("  ✗ FAILED: cvta_generic_to_shared_offset must yield the raw .shared offset");
         smem_direct_ok = false;
     }
     if shared_offset % 128 != 0 {

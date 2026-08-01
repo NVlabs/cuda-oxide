@@ -1086,14 +1086,14 @@ pub fn emit_dynamic_shared_offset(
     )
 }
 
-/// Emit `cuda_device::shared::cvta_generic_to_shared(ptr) -> u64`.
+/// Emit `cuda_device::shared::cvta_generic_to_shared_offset(ptr) -> u64`.
 ///
 /// Converts a generic-address pointer into its raw `.shared` window offset,
 /// the value hardware SMEM descriptors (WGMMA/tcgen05) encode. Mirrors CUDA
-/// C++'s `__cvta_generic_to_shared`: the Rust-visible pointer stays generic,
+/// C++'s `__cvta_generic_to_shared_offset`: the Rust-visible pointer stays generic,
 /// and this intrinsic is the explicit step into the space-local offset.
 #[allow(clippy::too_many_arguments)]
-pub fn emit_cvta_generic_to_shared(
+pub fn emit_cvta_generic_to_shared_offset(
     ctx: &mut Context,
     body: &mir::Body,
     args: &[mir::Operand],
@@ -1105,14 +1105,14 @@ pub fn emit_cvta_generic_to_shared(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    use dialect_nvvm::ops::CvtaGenericToSharedOp;
+    use dialect_nvvm::ops::CvtaGenericToSharedOffsetOp;
     use pliron::builtin::types::Signedness;
 
     if args.len() != 1 {
         return input_err!(
             loc.clone(),
             TranslationErr::unsupported(format!(
-                "cvta_generic_to_shared expects 1 argument, got {}",
+                "cvta_generic_to_shared_offset expects 1 argument, got {}",
                 args.len()
             ))
         );
@@ -1131,7 +1131,7 @@ pub fn emit_cvta_generic_to_shared(
     let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
     let cvta_op = Operation::new(
         ctx,
-        CvtaGenericToSharedOp::get_concrete_op_info(),
+        CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
         vec![u64_ty.into()],
         vec![ptr_val],
         vec![],
@@ -1156,6 +1156,6 @@ pub fn emit_cvta_generic_to_shared(
         value_map,
         block_map,
         loc,
-        "cvta_generic_to_shared call without target block",
+        "cvta_generic_to_shared_offset call without target block",
     )
 }

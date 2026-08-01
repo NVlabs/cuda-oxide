@@ -8,8 +8,8 @@ use dialect_nvvm::ops::{
     ActiveMaskOp, AssertFailOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp,
     Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
     CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
-    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, CvtaGenericToSharedOp, Dp2aS32Op, Dp2aU32Op,
-    Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr,
+    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, CvtaGenericToSharedOffsetOp, Dp2aS32Op,
+    Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr,
     LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
     LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp,
     LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
@@ -83,7 +83,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("debug.rs", "AssertFailOp"),
         ("debug.rs", "VprintfOp"),
         ("grid.rs", "GridSyncOp"),
-        ("memory.rs", "CvtaGenericToSharedOp"),
+        ("memory.rs", "CvtaGenericToSharedOffsetOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
@@ -4399,13 +4399,13 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
 
     let cvta = Operation::new(
         &mut ctx,
-        CvtaGenericToSharedOp::get_concrete_op_info(),
+        CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
         vec![u64_ty.into()],
         vec![pointer],
         vec![],
         0,
     );
-    assert!(CvtaGenericToSharedOp::new(cvta).verify(&ctx).is_ok());
+    assert!(CvtaGenericToSharedOffsetOp::new(cvta).verify(&ctx).is_ok());
     for (operands, results) in [
         // Operand must be a MIR pointer.
         (vec![u32_value], vec![u64_ty.into()]),
@@ -4418,13 +4418,17 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     ] {
         let invalid = Operation::new(
             &mut ctx,
-            CvtaGenericToSharedOp::get_concrete_op_info(),
+            CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
             results,
             operands,
             vec![],
             0,
         );
-        assert!(CvtaGenericToSharedOp::new(invalid).verify(&ctx).is_err());
+        assert!(
+            CvtaGenericToSharedOffsetOp::new(invalid)
+                .verify(&ctx)
+                .is_err()
+        );
     }
 
     let mma = Operation::new(

@@ -5,7 +5,7 @@
 
 //! Memory address-space conversion intrinsics.
 //!
-//! `nvvm.cvta_generic_to_shared` lowers without inline PTX: an
+//! `nvvm.cvta_generic_to_shared_offset` lowers without inline PTX: an
 //! `addrspacecast` into `addrspace(3)` followed by `ptrtoint`, which `llc`
 //! selects as `cvta.to.shared`. The `ptrtoint` here deliberately reads the
 //! space-local shared offset; it is a hardware-descriptor boundary, not a
@@ -24,8 +24,8 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
-/// Convert `nvvm.cvta_generic_to_shared` to `addrspacecast` + `ptrtoint`.
-pub(crate) fn convert_cvta_generic_to_shared(
+/// Convert `nvvm.cvta_generic_to_shared_offset` to `addrspacecast` + `ptrtoint`.
+pub(crate) fn convert_cvta_generic_to_shared_offset(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
@@ -33,7 +33,7 @@ pub(crate) fn convert_cvta_generic_to_shared(
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     if operands.is_empty() {
-        return pliron::input_err_noloc!("cvta_generic_to_shared requires an operand");
+        return pliron::input_err_noloc!("cvta_generic_to_shared_offset requires an operand");
     }
     let shared_ptr = cast_to_shared_addrspace(ctx, rewriter, operands[0]);
 

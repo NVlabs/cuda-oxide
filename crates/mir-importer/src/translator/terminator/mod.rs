@@ -3037,9 +3037,9 @@ fn try_dispatch_intrinsic(
         }
 
         // Explicit generic-to-shared address conversion for hardware SMEM
-        // descriptors (the CUDA C++ `__cvta_generic_to_shared` analog).
-        "cuda_device::shared::cvta_generic_to_shared" => {
-            Ok(Some(intrinsics::memory::emit_cvta_generic_to_shared(
+        // descriptors (the CUDA C++ `__cvta_generic_to_shared_offset` analog).
+        "cuda_device::shared::cvta_generic_to_shared_offset" => Ok(Some(
+            intrinsics::memory::emit_cvta_generic_to_shared_offset(
                 ctx,
                 body,
                 args,
@@ -3050,8 +3050,8 @@ fn try_dispatch_intrinsic(
                 value_map,
                 block_map,
                 loc,
-            )?))
-        }
+            )?,
+        )),
 
         // Public SharedArray pointer conversions all narrow the shared-memory
         // base to a generic pointer. Recognition is shared with destination

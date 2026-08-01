@@ -8,7 +8,7 @@
 //! CUDA source-level pointers are generic; hardware instruction descriptors
 //! (WGMMA/tcgen05 SMEM descriptors, `ldmatrix`/`stmatrix` operands) consume
 //! raw space-local offsets instead. These operations expose that conversion
-//! as a first-class step, mirroring CUDA C++'s `__cvta_generic_to_shared`.
+//! as a first-class step, mirroring CUDA C++'s `__cvta_generic_to_shared_offset`.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
@@ -35,16 +35,16 @@ use pliron_derive::pliron_op;
 /// `addrspace(3)` followed by `ptrtoint`, which `llc` selects as
 /// `cvta.to.shared`.
 #[pliron_op(
-    name = "nvvm.cvta_generic_to_shared",
+    name = "nvvm.cvta_generic_to_shared_offset",
     format,
     interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
 )]
-pub struct CvtaGenericToSharedOp;
+pub struct CvtaGenericToSharedOffsetOp;
 
-impl CvtaGenericToSharedOp {
+impl CvtaGenericToSharedOffsetOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CvtaGenericToSharedOp { op }
+        CvtaGenericToSharedOffsetOp { op }
     }
 }
 
@@ -56,13 +56,13 @@ fn is_u64(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
         })
 }
 
-impl Verify for CvtaGenericToSharedOp {
+impl Verify for CvtaGenericToSharedOffsetOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
         if op.get_num_operands() != 1 || op.get_num_results() != 1 {
             return verify_err!(
                 op.loc(),
-                "nvvm.cvta_generic_to_shared requires one operand and one result"
+                "nvvm.cvta_generic_to_shared_offset requires one operand and one result"
             );
         }
         let pointer_ty = op.get_operand(0).get_type(ctx);
@@ -70,7 +70,7 @@ impl Verify for CvtaGenericToSharedOp {
         let Some(pointer_ty) = pointer_ty_obj.downcast_ref::<MirPtrType>() else {
             return verify_err!(
                 op.loc(),
-                "nvvm.cvta_generic_to_shared operand must be a MIR pointer"
+                "nvvm.cvta_generic_to_shared_offset operand must be a MIR pointer"
             );
         };
         if !matches!(
@@ -79,11 +79,14 @@ impl Verify for CvtaGenericToSharedOp {
         ) {
             return verify_err!(
                 op.loc(),
-                "nvvm.cvta_generic_to_shared operand must point to generic or shared memory"
+                "nvvm.cvta_generic_to_shared_offset operand must point to generic or shared memory"
             );
         }
         if !is_u64(ctx, op.get_result(0).get_type(ctx)) {
-            return verify_err!(op.loc(), "nvvm.cvta_generic_to_shared result must be u64");
+            return verify_err!(
+                op.loc(),
+                "nvvm.cvta_generic_to_shared_offset result must be u64"
+            );
         }
         Ok(())
     }

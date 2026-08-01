@@ -370,26 +370,26 @@ mod kernels {
                             *mut Barrier,
                         ) = match stage {
                             0 => (
-                                &raw const SMEM_A0 as u64,
-                                &raw const SMEM_B0 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8),
                                 &raw const TMA_BAR0 as *const Barrier,
                                 &raw mut MMA_BAR0 as *mut Barrier,
                             ),
                             1 => (
-                                &raw const SMEM_A1 as u64,
-                                &raw const SMEM_B1 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8),
                                 &raw const TMA_BAR1 as *const Barrier,
                                 &raw mut MMA_BAR1 as *mut Barrier,
                             ),
                             2 => (
-                                &raw const SMEM_A2 as u64,
-                                &raw const SMEM_B2 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A2 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B2 as *const u8),
                                 &raw const TMA_BAR2 as *const Barrier,
                                 &raw mut MMA_BAR2 as *mut Barrier,
                             ),
                             _ => (
-                                &raw const SMEM_A3 as u64,
-                                &raw const SMEM_B3 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A3 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B3 as *const u8),
                                 &raw const TMA_BAR3 as *const Barrier,
                                 &raw mut MMA_BAR3 as *mut Barrier,
                             ),
@@ -467,9 +467,9 @@ mod kernels {
                 let mut tile_parity: u32 = 0;
 
                 let leader_accum_empty0_addr =
-                    cluster::map_shared_rank(&raw const ACCUM_EMPTY0, 0) as u64;
+                    cvta_generic_to_shared_offset(cluster::map_shared_rank(&raw const ACCUM_EMPTY0, 0) as *const u8);
                 let leader_accum_empty1_addr =
-                    cluster::map_shared_rank(&raw const ACCUM_EMPTY1, 0) as u64;
+                    cvta_generic_to_shared_offset(cluster::map_shared_rank(&raw const ACCUM_EMPTY1, 0) as *const u8);
 
                 const TILE_N: usize = 256;
                 let warp_row_base = (warp_id * 32) as usize;
@@ -986,26 +986,26 @@ mod kernels {
                             *mut Barrier,
                         ) = match stage {
                             0 => (
-                                &raw const SMEM_A0 as u64,
-                                &raw const SMEM_B0 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8),
                                 &raw const TMA_BAR0 as *const Barrier,
                                 &raw mut MMA_BAR0 as *mut Barrier,
                             ),
                             1 => (
-                                &raw const SMEM_A1 as u64,
-                                &raw const SMEM_B1 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8),
                                 &raw const TMA_BAR1 as *const Barrier,
                                 &raw mut MMA_BAR1 as *mut Barrier,
                             ),
                             2 => (
-                                &raw const SMEM_A2 as u64,
-                                &raw const SMEM_B2 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A2 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B2 as *const u8),
                                 &raw const TMA_BAR2 as *const Barrier,
                                 &raw mut MMA_BAR2 as *mut Barrier,
                             ),
                             _ => (
-                                &raw const SMEM_A3 as u64,
-                                &raw const SMEM_B3 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A3 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B3 as *const u8),
                                 &raw const TMA_BAR3 as *const Barrier,
                                 &raw mut MMA_BAR3 as *mut Barrier,
                             ),
@@ -1118,9 +1118,9 @@ mod kernels {
                 let mut tile_parity: u32 = 0;
 
                 let leader_accum_empty0_addr =
-                    cluster::map_shared_rank(&raw const ACCUM_EMPTY0, 0) as u64;
+                    cvta_generic_to_shared_offset(cluster::map_shared_rank(&raw const ACCUM_EMPTY0, 0) as *const u8);
                 let leader_accum_empty1_addr =
-                    cluster::map_shared_rank(&raw const ACCUM_EMPTY1, 0) as u64;
+                    cvta_generic_to_shared_offset(cluster::map_shared_rank(&raw const ACCUM_EMPTY1, 0) as *const u8);
 
                 const SCRATCH_BF16_COLS: usize = 128;
                 const SCRATCH_U32_COLS: usize = SCRATCH_BF16_COLS / 2;

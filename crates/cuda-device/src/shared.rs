@@ -497,7 +497,7 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
 
 /// Convert a generic-address pointer into its raw `.shared` window offset.
 ///
-/// The CUDA C++ `__cvta_generic_to_shared` analog (PTX `cvta.to.shared`).
+/// The CUDA C++ `__cvta_generic_to_shared_offset` analog (PTX `cvta.to.shared`).
 /// Rust-visible pointer addresses (`ptr as usize`, `ptr::addr`) are CUDA
 /// generic addresses; hardware SMEM descriptors (WGMMA and tcgen05 matrix
 /// descriptors, whose low bits encode `(start_address >> 4) & 0x3FFF`) are
@@ -506,7 +506,7 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
 ///
 /// ```rust,ignore
 /// static mut SMEM_A: SharedArray<f16, 2048> = SharedArray::UNINIT;
-/// let base = unsafe { cvta_generic_to_shared(&raw const SMEM_A as *const u8) };
+/// let base = unsafe { cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8) };
 /// let desc = build_smem_descriptor(base, LBO_BYTES, SBO_BYTES, SWIZZLE_NONE);
 /// ```
 ///
@@ -517,13 +517,13 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
 /// point into shared memory yields an unspecified offset.
 //
 // The importer intercepts calls by the exact rendered def-path
-// `cuda_device::shared::cvta_generic_to_shared`. A `pub use` at the crate
+// `cuda_device::shared::cvta_generic_to_shared_offset`. A `pub use` at the crate
 // root would change rustc's visible path for this item and silently break
 // interception, so import it through this module.
 #[inline(never)]
-pub unsafe fn cvta_generic_to_shared(ptr: *const u8) -> u64 {
+pub unsafe fn cvta_generic_to_shared_offset(ptr: *const u8) -> u64 {
     let _ = ptr;
-    unreachable!("cvta_generic_to_shared called outside CUDA kernel context")
+    unreachable!("cvta_generic_to_shared_offset called outside CUDA kernel context")
 }
 
 include!("generated/shared_sreg.rs");

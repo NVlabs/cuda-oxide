@@ -864,9 +864,9 @@ pub enum Tcgen05SwizzleMode {
 /// ```rust,ignore
 /// // For 128×16 f16 matrix A in K-major tiled layout. The descriptor's
 /// // address bits encode the raw .shared offset, so derive it with
-/// // cvta_generic_to_shared rather than `ptr as u64` (which is the
+/// // cvta_generic_to_shared_offset rather than `ptr as u64` (which is the
 /// // CUDA generic address).
-/// let smem_a_addr = cvta_generic_to_shared(smem_a_ptr as *const u8);
+/// let smem_a_addr = cvta_generic_to_shared_offset(smem_a_ptr as *const u8);
 /// let desc = Tcgen05SmemDescriptor::for_k_major(
 ///     smem_a_addr,
 ///     128,  // M dimension
@@ -915,7 +915,7 @@ impl Tcgen05SmemDescriptor {
     /// # Example
     ///
     /// ```rust,ignore
-    /// // 128×16 f16 matrix (smem_addr from cvta_generic_to_shared)
+    /// // 128×16 f16 matrix (smem_addr from cvta_generic_to_shared_offset)
     /// let desc = Tcgen05SmemDescriptor::for_k_major(
     ///     smem_addr, 128, 16, 2, Tcgen05SwizzleMode::None
     /// );

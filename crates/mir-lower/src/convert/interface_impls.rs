@@ -36,7 +36,7 @@ use dialect_mir::ops::{
     MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    AssertFailOp, CvtaGenericToSharedOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
+    AssertFailOp, CvtaGenericToSharedOffsetOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
     NvvmAtomicRmwOp, NvvmAtomicStoreOp, ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp,
     VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
 };
@@ -986,14 +986,14 @@ impl MirToLlvmConversion for ReadPtxSregNclusterIdOp {
 // ---- NVVM memory ops -------------------------------------------------------
 
 #[op_interface_impl]
-impl MirToLlvmConversion for CvtaGenericToSharedOp {
+impl MirToLlvmConversion for CvtaGenericToSharedOffsetOp {
     fn convert(
         &self,
         ctx: &mut Context,
         rewriter: &mut DialectConversionRewriter,
         operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::memory::convert_cvta_generic_to_shared(
+        super::intrinsics::memory::convert_cvta_generic_to_shared_offset(
             ctx,
             rewriter,
             self.get_operation(),
