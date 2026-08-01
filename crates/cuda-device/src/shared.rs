@@ -192,6 +192,34 @@ impl<T, const N: usize, const ALIGN: usize> SharedArray<T, N, ALIGN> {
     pub fn as_mut_ptr(&mut self) -> *mut T {
         unreachable!("SharedArray::as_mut_ptr called outside CUDA kernel context")
     }
+
+    /// Returns a mutable raw pointer to the shared memory array without
+    /// creating a Rust reference to the complete allocation.
+    ///
+    /// This is the appropriate entry point when multiple CUDA threads derive
+    /// disjoint raw pointers from one `static mut SharedArray`. Unlike
+    /// [`Self::as_mut_ptr`], the raw receiver does not require each thread to
+    /// create an overlapping `&mut SharedArray`.
+    ///
+    /// # Safety
+    ///
+    /// `shared` must point to a `static mut SharedArray` in the current CUDA
+    /// kernel, normally obtained with `&raw mut`. The returned pointer is valid
+    /// only within that kernel. Callers must keep concurrent accesses disjoint
+    /// and use the CUDA synchronization required before reading data written by
+    /// another thread.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// static mut SCRATCH: SharedArray<f32, 256> = SharedArray::UNINIT;
+    /// let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
+    /// ```
+    #[inline(never)]
+    pub unsafe fn as_raw_mut_ptr(shared: *mut Self) -> *mut T {
+        let _ = shared;
+        unreachable!("SharedArray::as_raw_mut_ptr called outside CUDA kernel context")
+    }
 }
 
 impl<T, const N: usize, const ALIGN: usize> Index<usize> for SharedArray<T, N, ALIGN> {

@@ -224,6 +224,30 @@ fn assert_ptxas_accepts(ptx: &[u8], label: &str) {
     );
 }
 
+/// Extra guidance for a `LibdeviceUnavailable` a caller did not expect.
+///
+/// `Toolchain::discover()` honours `CUDA_OXIDE_LLVM_LINK` straight from the
+/// environment, so an exported override pointing at a missing or unrunnable
+/// binary turns every libdevice test in this file into
+/// `LibdeviceUnavailable`. (A runnable override is trusted as-is; an LLVM
+/// major mismatch surfaces later as a link error, not as this variant.) The
+/// error names neither the variable nor the override, so the tests do, the
+/// same way `assert_ptxas_accepts` points at `CUDA_TOOLKIT_PATH`. Empty for
+/// every other error, where the variable is irrelevant.
+fn libdevice_unavailable_hint(error: &CompileError) -> &'static str {
+    match error {
+        CompileError::LibdeviceUnavailable { .. } => {
+            "\nThis needs a runnable `llvm-link` (auto-discovery only accepts \
+             one sharing the selected `llc`'s LLVM major). \
+             `Toolchain::discover()` honours CUDA_OXIDE_LLVM_LINK, so an \
+             exported override pointing at a missing or unrunnable binary \
+             produces exactly this error: unset it, or point it at the \
+             `llvm-link` beside your `llc`."
+        }
+        _ => "",
+    }
+}
+
 #[test]
 fn self_contained_linking_still_rejects_a_libdevice_kernel() {
     let mut module = CodegenModule::new("sqrt_module").unwrap();
@@ -253,7 +277,12 @@ fn libdevice_linking_resolves_a_rust_intrinsic_kernel() {
 
     let ptx = compiler
         .compile(&mut module, &options)
-        .expect("libdevice linking resolves __nv_sqrtf")
+        .unwrap_or_else(|error| {
+            panic!(
+                "libdevice linking resolves __nv_sqrtf: {error}{}",
+                libdevice_unavailable_hint(&error)
+            )
+        })
         .into_ptx();
     let text = String::from_utf8(ptx.clone()).expect("PTX is utf-8");
 
@@ -286,7 +315,12 @@ fn libdevice_linking_resolves_a_frontend_declared_symbol() {
 
     let ptx = compiler
         .compile(&mut module, &options)
-        .expect("libdevice linking resolves a frontend-declared __nv_ symbol")
+        .unwrap_or_else(|error| {
+            panic!(
+                "libdevice linking resolves a frontend-declared __nv_ symbol: {error}{}",
+                libdevice_unavailable_hint(&error)
+            )
+        })
         .into_ptx();
     let text = String::from_utf8(ptx.clone()).expect("PTX is utf-8");
 
@@ -334,7 +368,10 @@ fn libdevice_linking_rejects_a_symbol_libdevice_does_not_define() {
                 .any(|symbol| symbol == "__nv_totally_not_real"),
             "the rejection names the unresolved symbol: {symbols:?}"
         ),
-        other => panic!("expected UnsupportedLinking, got {other}"),
+        other => panic!(
+            "expected UnsupportedLinking, got {other}{}",
+            libdevice_unavailable_hint(&other)
+        ),
     }
 }
 
@@ -399,7 +436,10 @@ fn libdevice_linking_still_rejects_a_device_extern() {
         CompileError::UnsupportedLinking { symbols } => {
             assert_eq!(symbols, ["my_device_extern"]);
         }
-        other => panic!("expected UnsupportedLinking, got {other}"),
+        other => panic!(
+            "expected UnsupportedLinking, got {other}{}",
+            libdevice_unavailable_hint(&other)
+        ),
     }
 }
 
@@ -407,6 +447,15 @@ fn libdevice_linking_still_rejects_a_device_extern() {
 /// spawned by `libdevice_linking_reports_unavailable_when_llvm_link_cannot_run`,
 /// so it should run the check itself instead of spawning another child.
 const LIBDEVICE_UNAVAILABLE_CHILD_ENV: &str = "CUDA_OXIDE_CODEGEN_LIBDEVICE_UNAVAILABLE_CHILD";
+
+/// Printed by the child once the check has actually run.
+///
+/// libtest exits 0 when a filter matches nothing ("running 0 tests"), so the
+/// child's exit status alone does not distinguish "the check passed" from "the
+/// check never ran". Renaming this test, or letting the `--exact` argument drift
+/// out of sync with its name, would otherwise leave a green test that verifies
+/// nothing. The parent asserts on this sentinel instead.
+const LIBDEVICE_UNAVAILABLE_CHECK_RAN: &str = "libdevice-unavailable-check-ran";
 
 #[test]
 fn libdevice_linking_reports_unavailable_when_llvm_link_cannot_run() {
@@ -437,6 +486,7 @@ fn libdevice_linking_reports_unavailable_when_llvm_link_cannot_run() {
             }
             other => panic!("expected LibdeviceUnavailable, got {other}"),
         }
+        println!("{LIBDEVICE_UNAVAILABLE_CHECK_RAN}");
         return;
     }
 
@@ -453,10 +503,18 @@ fn libdevice_linking_reports_unavailable_when_llvm_link_cannot_run() {
         .output()
         .expect("failed to re-exec this test in a child process");
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "child process check failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
+        "child process check failed:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Exit status alone is not enough: a filter that matches nothing also exits
+    // 0, which would make this test green while checking nothing.
+    assert!(
+        stdout.contains(LIBDEVICE_UNAVAILABLE_CHECK_RAN),
+        "the child exited 0 but never ran the check -- the `--exact` filter above \
+         no longer matches this test's name:\nstdout:\n{stdout}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

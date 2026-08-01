@@ -24,6 +24,10 @@
 //! pointer. The enum's physical storage must stay 64-bit even when modern NVVM
 //! uses a 32-bit representation for semantic shared-space pointers.
 //!
+//! Finally the kernel validates `SharedArray::as_raw_mut_ptr`: 32 threads
+//! derive pointers from one raw shared-array address, write disjoint elements,
+//! synchronize, and let thread 0 verify the complete allocation.
+//!
 //! This example launches the kernel through `cuda_host::ltoir::load_kernel_module`,
 //! which compiles the cuda-oxide-emitted NVVM IR via libNVVM and links the
 //! cubin via nvJitLink. A dangling SSA reference in the `.ll` would fail at
@@ -48,6 +52,8 @@ enum SharedPointerPayload {
 mod kernels {
     use super::*;
 
+    const THREADS: usize = 32;
+
     #[inline(never)]
     #[device]
     fn shared_pointer_enum_address(use_pointer: bool, pointer: *mut SharedArray<f32, 1>) -> usize {
@@ -66,6 +72,7 @@ mod kernels {
     #[kernel]
     pub fn sharedarray_late_use(seed: f32, mut out: DisjointSlice<f32>) {
         static mut OUTPUT_NORM: SharedArray<f32, 1> = SharedArray::UNINIT;
+        static mut SCRATCH: SharedArray<u32, THREADS> = SharedArray::UNINIT;
 
         if thread::index_1d().get() == 0 {
             unsafe {
@@ -116,6 +123,24 @@ mod kernels {
                 };
             }
         }
+
+        // Every thread starts from the raw address of one shared allocation,
+        // then writes only its own element. No thread constructs an
+        // `&mut SharedArray` spanning elements owned by other threads.
+        let lane = thread::threadIdx_x() as usize;
+        let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
+        if lane < THREADS {
+            unsafe { scratch.add(lane).write((lane + 1) as u32) };
+        }
+        thread::sync_threads();
+
+        if lane == 0 {
+            let mut sum = 0_u32;
+            for index in 0..THREADS {
+                sum += unsafe { scratch.add(index).read() };
+            }
+            unsafe { *out.get_unchecked_mut(4) = sum as f32 };
+        }
     }
 
     #[inline(never)]
@@ -148,12 +173,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_module = ltoir::load_kernel_module(&ctx, "addressof_sharedarray")?;
     let module = kernels::from_module(raw_module).expect("typed module init failed");
 
-    let cfg = LaunchConfig::for_num_elems(1);
-    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 4)?;
+    let cfg = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (32, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 5)?;
     let seed: f32 = 7.0;
 
-    // SAFETY: one thread is launched, matching the kernel's three-element output
-    // access and fixed shared-memory use.
+    // SAFETY: one 32-thread block writes 32 distinct shared elements, then
+    // thread 0 reads them after a block-wide barrier. Only thread 0 writes the
+    // five output elements.
     unsafe { module.sharedarray_late_use(stream.as_ref(), cfg, seed, &mut out) }?;
 
     let result = out.to_host_vec(&stream)?;
@@ -183,6 +213,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, shared pointer enum round-tripped, integer address cast back to the shared pointer",
         result[0]
+    );
+
+    let raw_expected = (1_u32..=32).sum::<u32>() as f32;
+    if (result[4] - raw_expected).abs() > f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray raw receiver: got {}, expected {raw_expected}",
+            result[4]
+        );
+        std::process::exit(1);
+    }
+    println!(
+        "PASS addressof_sharedarray raw receiver: result={}",
+        result[4]
     );
     Ok(())
 }

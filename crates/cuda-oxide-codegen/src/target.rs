@@ -606,6 +606,91 @@ fn contains_cluster_ptx80_features(contents: &str) -> bool {
     })
 }
 
+/// Detect a direct LLVM intrinsic call, including its opaque-pointer overload.
+///
+/// Opaque-pointer LLVM IR spells the dynamic-stack intrinsics as
+/// `llvm.stacksave.p0` and `llvm.stackrestore.p0`, while typed-pointer IR can
+/// use the unsuffixed names. Keep the boundary strict so similarly named user
+/// functions do not raise the module's target requirements. Only call
+/// instructions count: declarations, comments, and quoted metadata or string
+/// contents do not reach the backend.
+fn contains_llvm_pointer_intrinsic_call(contents: &str, intrinsic: &str) -> bool {
+    contents.lines().any(|line| {
+        if !line.contains(intrinsic) {
+            return false;
+        }
+        let code = llvm_code_without_comments_or_strings(line);
+        code.match_indices(intrinsic).any(|(start, _)| {
+            if !contains_llvm_keyword(&code[..start], "call") {
+                return false;
+            }
+
+            let suffix = &code[start + intrinsic.len()..];
+            if suffix.starts_with('(') {
+                return true;
+            }
+            let Some(overload) = suffix.strip_prefix(".p") else {
+                return false;
+            };
+            let digits = overload.bytes().take_while(u8::is_ascii_digit).count();
+            digits != 0 && overload[digits..].starts_with('(')
+        })
+    })
+}
+
+fn llvm_code_without_comments_or_strings(line: &str) -> String {
+    let mut code = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    let mut in_string = false;
+
+    while let Some(character) = chars.next() {
+        if in_string {
+            match character {
+                '\\' => {
+                    code.push(' ');
+                    if chars.next().is_some() {
+                        code.push(' ');
+                    }
+                }
+                '"' => {
+                    code.push(' ');
+                    in_string = false;
+                }
+                _ => code.push(' '),
+            }
+        } else {
+            match character {
+                ';' => break,
+                '"' => {
+                    code.push(' ');
+                    in_string = true;
+                }
+                _ => code.push(character),
+            }
+        }
+    }
+
+    code
+}
+
+fn contains_llvm_keyword(contents: &str, keyword: &str) -> bool {
+    contents.match_indices(keyword).any(|(start, _)| {
+        let before = contents[..start].bytes().next_back();
+        let after = contents[start + keyword.len()..].bytes().next();
+        before.is_none_or(|byte| !is_llvm_identifier_byte(byte))
+            && after.is_none_or(|byte| !is_llvm_identifier_byte(byte))
+    })
+}
+
+fn is_llvm_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'$' | b'.' | b'_')
+}
+
+fn contains_dynamic_stack_features(contents: &str) -> bool {
+    contains_llvm_pointer_intrinsic_call(contents, "@llvm.stacksave")
+        || contains_llvm_pointer_intrinsic_call(contents, "@llvm.stackrestore")
+}
+
 /// GPU feature requirements detected in one LLVM module.
 ///
 /// This is a set rather than a single "strongest" feature: architecture
@@ -654,8 +739,10 @@ impl DetectedFeatures {
     pub(crate) const ReduxF32: Self = Self(1 << 15);
     /// FP8 / f16-accumulator multimem forms on supported Blackwell families.
     pub(crate) const MultimemFp8: Self = Self(1 << 16);
+    /// Dynamic stack save/restore, supported by LLVM NVPTX on sm_52+.
+    pub(crate) const DynamicStack: Self = Self(1 << 18);
 
-    const ALL: [Self; 18] = [
+    const ALL: [Self; 19] = [
         Self::Blackwell,
         Self::TmaCtaGroup,
         Self::BlackwellAccelerated,
@@ -673,6 +760,7 @@ impl DetectedFeatures {
         Self::Movmatrix,
         Self::Ldmatrix,
         Self::Sm100,
+        Self::DynamicStack,
         Self::Basic,
     ];
 
@@ -713,6 +801,7 @@ impl DetectedFeatures {
             Self::BlackwellAccelerated => "BlackwellAccelerated",
             Self::ReduxF32 => "ReduxF32",
             Self::MultimemFp8 => "MultimemFp8",
+            Self::DynamicStack => "DynamicStack",
             Self::Basic => "Basic",
             _ => "Unknown",
         }
@@ -752,6 +841,7 @@ pub enum PtxIsaRequirement {
     Ptx65,
     Ptx70,
     Ptx71,
+    Ptx73,
     Ptx78,
     Ptx80,
     Ptx86,
@@ -857,7 +947,8 @@ fn ptx_isa_requirement_for_floor(
         63..=65 => Ok(PtxIsaRequirement::Ptx65),
         66..=70 => Ok(PtxIsaRequirement::Ptx70),
         71 => Ok(PtxIsaRequirement::Ptx71),
-        72..=78 => Ok(PtxIsaRequirement::Ptx78),
+        72..=73 => Ok(PtxIsaRequirement::Ptx73),
+        74..=78 => Ok(PtxIsaRequirement::Ptx78),
         79..=80 => Ok(PtxIsaRequirement::Ptx80),
         81..=86 => Ok(PtxIsaRequirement::Ptx86),
         87 => Ok(PtxIsaRequirement::Ptx87),
@@ -973,6 +1064,10 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
             contains_tma_sm100_features(contents) || contains_clc_features(contents),
             DetectedFeatures::Sm100,
         ),
+        (
+            contains_dynamic_stack_features(contents),
+            DetectedFeatures::DynamicStack,
+        ),
     ] {
         if present {
             features.insert(feature);
@@ -1012,6 +1107,9 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
     }
     if contains_b1_and_mma_features(contents) {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
+    }
+    if contains_dynamic_stack_features(contents) {
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx73);
     }
     if contains_movmatrix_features(contents)
         || contains_stmatrix_features(contents)
@@ -1495,6 +1593,7 @@ fn arch_satisfies_feature(
         DetectedFeatures::Sm75 | DetectedFeatures::Movmatrix | DetectedFeatures::Ldmatrix => {
             capability >= 75
         }
+        DetectedFeatures::DynamicStack => capability >= 52,
         // Basic kernels are supported on the project's Volta+ floor. The
         // cross-compilation default remains sm_80, but a detected sm_70/sm_75
         // GPU is a valid and more useful target for `cargo oxide run`.
@@ -1665,6 +1764,7 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
         PtxIsaRequirement::Ptx65 => 65,
         PtxIsaRequirement::Ptx70 => 70,
         PtxIsaRequirement::Ptx71 => 71,
+        PtxIsaRequirement::Ptx73 => 73,
         PtxIsaRequirement::Ptx78 => 78,
         PtxIsaRequirement::Ptx80 => 80,
         PtxIsaRequirement::Ptx86 => 86,
@@ -1681,6 +1781,7 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
         PtxIsaRequirement::Ptx65 => Some("+ptx65"),
         PtxIsaRequirement::Ptx70 => Some("+ptx70"),
         PtxIsaRequirement::Ptx71 => Some("+ptx71"),
+        PtxIsaRequirement::Ptx73 => Some("+ptx73"),
         PtxIsaRequirement::Ptx78 => Some("+ptx78"),
         PtxIsaRequirement::Ptx80 => Some("+ptx80"),
         PtxIsaRequirement::Ptx86 => Some("+ptx86"),
@@ -2056,6 +2157,126 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn dynamic_stack_calls_require_ptx73_and_sm52() {
+        for llvm in [
+            "%saved = call ptr @llvm.stacksave.p0()\n",
+            "%saved = tail call ptr addrspace(12) @llvm.stacksave.p12()\n",
+            "call void @llvm.stackrestore.p3(ptr addrspace(3) %saved)\n",
+            "%saved = call i8* @llvm.stacksave()\n",
+            "call void @llvm.stackrestore(i8* %saved)\n",
+        ] {
+            let requirements = detect_module_requirements_in_llvm_text(llvm);
+            assert!(
+                requirements
+                    .features
+                    .contains(DetectedFeatures::DynamicStack),
+                "{llvm}"
+            );
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx73, "{llvm}");
+        }
+
+        for near_match in [
+            "%saved = call ptr @llvm.stacksavex.p0()\n",
+            "%saved = call ptr @llvm.stacksave_extra.p0()\n",
+            "%saved = call ptr @llvm.stacksave.p()\n",
+            "%saved = call ptr @llvm.stacksave.p0x()\n",
+            "%saved = call ptr @llvm.stacksave.p0.extra()\n",
+            "call void @llvm.stackrestorex.p0(ptr %saved)\n",
+            "call void @llvm.stackrestore.p0_extra(ptr %saved)\n",
+            "%saved = call ptr @llvm.stacksave.p0\n",
+        ] {
+            let requirements = detect_module_requirements_in_llvm_text(near_match);
+            assert_eq!(
+                requirements.features,
+                DetectedFeatures::Basic,
+                "{near_match}"
+            );
+            assert_eq!(
+                requirements.ptx_isa,
+                PtxIsaRequirement::Default,
+                "{near_match}"
+            );
+        }
+
+        assert!(!arch_satisfies_feature(
+            50,
+            None,
+            DetectedFeatures::DynamicStack
+        ));
+        assert!(arch_satisfies_feature(
+            52,
+            None,
+            DetectedFeatures::DynamicStack
+        ));
+        for target in ["sm_70", "sm_86"] {
+            let parsed = target.parse::<CudaArch>().unwrap();
+            assert!(
+                validate_target_features(&parsed, DetectedFeatures::DynamicStack).is_ok(),
+                "{target}"
+            );
+        }
+        let sm_50 = "sm_50".parse::<CudaArch>().unwrap();
+        let error = validate_target_features(&sm_50, DetectedFeatures::DynamicStack).unwrap_err();
+        assert!(error.contains("DynamicStack"), "{error}");
+    }
+
+    #[test]
+    fn dynamic_stack_mentions_without_calls_do_not_raise_requirements() {
+        let non_calls = [
+            "declare ptr @llvm.stacksave.p0()\n",
+            "declare void @llvm.stackrestore.p0(ptr)\n",
+            "; %saved = call ptr @llvm.stacksave.p0()\n",
+            "!0 = !{!\"call ptr @llvm.stacksave.p0()\"}\n",
+            "@message = private constant [39 x i8] c\"call ptr @llvm.stacksave.p0()\\00\"\n",
+            "!1 = !{ptr @llvm.stacksave.p0}\n",
+            "declare ptr @llvm.stacksave.p0 ; call ptr @llvm.stacksave.p0()\n",
+        ];
+
+        for llvm in non_calls {
+            let requirements = detect_module_requirements_in_llvm_text(llvm);
+            assert_eq!(requirements.features, DetectedFeatures::Basic, "{llvm}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Default, "{llvm}");
+        }
+
+        let call_after_quoted_semicolon = concat!(
+            "@message = private constant [2 x i8] c\";\\00\"\n",
+            "%saved = call ptr @llvm.stacksave.p0() ; ignored comment\n",
+        );
+        assert!(
+            detect_module_requirements_in_llvm_text(call_after_quoted_semicolon)
+                .features
+                .contains(DetectedFeatures::DynamicStack)
+        );
+    }
+
+    #[test]
+    fn ptx73_feature_is_requested_only_when_the_target_default_is_older() {
+        assert_eq!(
+            ptx_isa_requirement_for_floor(72, "test", "test").unwrap(),
+            PtxIsaRequirement::Ptx73
+        );
+        assert_eq!(
+            ptx_isa_requirement_for_floor(73, "test", "test").unwrap(),
+            PtxIsaRequirement::Ptx73
+        );
+        assert_eq!(
+            ptx_isa_requirement_for_floor(74, "test", "test").unwrap(),
+            PtxIsaRequirement::Ptx78
+        );
+        for target in ["sm_70", "sm_80", "sm_86"] {
+            assert_eq!(
+                required_ptx_feature(target, PtxIsaRequirement::Ptx73),
+                Some("+ptx73"),
+                "{target}"
+            );
+        }
+        assert_eq!(
+            required_ptx_feature("sm_87", PtxIsaRequirement::Ptx73),
+            None
+        );
     }
 
     #[test]

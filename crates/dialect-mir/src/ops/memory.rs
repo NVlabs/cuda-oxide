@@ -9,13 +9,14 @@
 
 use pliron::{
     builtin::{
-        attributes::IntegerAttr,
+        attributes::{BoolAttr, IntegerAttr},
         op_interfaces::{NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface},
         types::IntegerType,
     },
     common_traits::Verify,
     context::{Context, Ptr},
     derive::op_interface_impl,
+    identifier::Identifier,
     irbuild::{inserter::Inserter, rewriter::Rewriter},
     location::Located,
     op::Op,
@@ -732,10 +733,38 @@ impl Verify for MirRefOp {
 )]
 pub struct MirPtrOffsetOp;
 
+const PTR_OFFSET_INBOUNDS_KEY: &str = "mir_ptr_offset_inbounds";
+
 impl MirPtrOffsetOp {
     /// Create a new MirPtrOffsetOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
         MirPtrOffsetOp { op }
+    }
+
+    /// Set whether this offset carries Rust's in-bounds pointer-arithmetic
+    /// promise. Wrapping offsets must set this to false.
+    pub fn set_inbounds(&self, ctx: &mut Context, inbounds: bool) {
+        let key = Identifier::try_new(PTR_OFFSET_INBOUNDS_KEY.to_string())
+            .expect("valid ptr-offset attribute key");
+        self.get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(key, BoolAttr::new(inbounds));
+    }
+
+    /// Return whether this offset may lower to LLVM `getelementptr inbounds`.
+    ///
+    /// Pointer offsets without an explicit attribute carry Rust's ordinary
+    /// in-bounds contract, so absence defaults to true.
+    pub fn is_inbounds(&self, ctx: &Context) -> bool {
+        let key = Identifier::try_new(PTR_OFFSET_INBOUNDS_KEY.to_string())
+            .expect("valid ptr-offset attribute key");
+        self.get_operation()
+            .deref(ctx)
+            .attributes
+            .get::<BoolAttr>(&key)
+            .map(|attr| bool::from(attr.clone()))
+            .unwrap_or(true)
     }
 }
 

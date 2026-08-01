@@ -31,6 +31,7 @@
 //! ```
 
 use libloading::{Library, Symbol};
+use std::borrow::Cow;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::fs::File;
 #[cfg(target_os = "linux")]
@@ -125,6 +126,16 @@ pub enum NvJitLinkError {
         "the loaded libnvJitLink does not export nvJitLinkGetLinkedPtxSize/nvJitLinkGetLinkedPtx"
     )]
     PtxOutputUnavailable,
+
+    /// PTX is text and nvJitLink can stop parsing at a NUL byte despite the
+    /// explicit byte count. Only one optional trailing terminator is valid.
+    #[error("PTX input {name:?} contains an interior NUL byte at offset {offset}")]
+    InteriorNulPtx {
+        /// Diagnostic input name supplied by the caller.
+        name: String,
+        /// Byte offset of the first non-trailing NUL.
+        offset: usize,
+    },
 
     /// An nvJitLink call returned a non-`Success` `nvJitLinkResult`. `log`
     /// carries the nvJitLink error log when one was produced by the call.
@@ -371,11 +382,25 @@ impl<'a> Linker<'a> {
     /// `name` is recorded by nvJitLink for use in diagnostic messages and
     /// info-log output. It does not need to correspond to a file on disk.
     ///
+    /// Some nvJitLink versions inspect PTX as a C string even though
+    /// `nvJitLinkAddData` receives an explicit byte count. PTX input is
+    /// therefore copied into NUL-terminated FFI backing when its source bytes
+    /// do not already end in NUL. An interior NUL is rejected because
+    /// nvJitLink can silently ignore the suffix. Other input kinds are passed
+    /// through byte-for-byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NvJitLinkError::InteriorNulPtx`] when PTX contains a NUL
+    /// anywhere other than its final byte, or [`NvJitLinkError::Call`] when
+    /// nvJitLink rejects the input.
+    ///
     /// # Panics
     ///
     /// Panics if `name` contains an interior NUL byte.
     pub fn add(&mut self, kind: InputType, data: &[u8], name: &str) -> Result<(), NvJitLinkError> {
         let cname = CString::new(name).expect("input name has interior NUL");
+        let data = normalize_input(kind, data, name)?;
         let r = unsafe {
             (self.nvj.add_data)(
                 self.handle,
@@ -493,6 +518,30 @@ impl Drop for Linker<'_> {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn normalize_input<'data>(
+    kind: InputType,
+    data: &'data [u8],
+    name: &str,
+) -> Result<Cow<'data, [u8]>, NvJitLinkError> {
+    if kind == InputType::Ptx
+        && let Some(offset) = data.iter().position(|byte| *byte == 0)
+        && offset + 1 != data.len()
+    {
+        return Err(NvJitLinkError::InteriorNulPtx {
+            name: name.to_string(),
+            offset,
+        });
+    }
+    if kind != InputType::Ptx || data.last() == Some(&0) {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    let mut terminated = Vec::with_capacity(data.len() + 1);
+    terminated.extend_from_slice(data);
+    terminated.push(0);
+    Ok(Cow::Owned(terminated))
+}
 
 fn check(
     _nvj: &LibNvJitLink,
@@ -803,6 +852,67 @@ mod tests {
     }
 
     #[test]
+    fn ptx_input_has_exactly_one_terminal_nul_in_ffi_backing() {
+        let poisoned_storage = b".version 7.1\nX";
+        let ptx = &poisoned_storage[..poisoned_storage.len() - 1];
+
+        let prepared = normalize_input(InputType::Ptx, ptx, "kernel.ptx").unwrap();
+
+        assert!(matches!(&prepared, Cow::Owned(_)));
+        assert_eq!(&prepared[..ptx.len()], ptx);
+        assert_eq!(prepared.last(), Some(&0));
+        assert_eq!(prepared.len(), ptx.len() + 1);
+
+        let empty = normalize_input(InputType::Ptx, b"", "empty.ptx").unwrap();
+        assert!(matches!(&empty, Cow::Owned(_)));
+        assert_eq!(empty.as_ref(), b"\0");
+
+        let already_terminated = normalize_input(InputType::Ptx, b"ptx\0", "kernel.ptx").unwrap();
+        assert!(matches!(&already_terminated, Cow::Borrowed(_)));
+        assert_eq!(already_terminated.as_ref(), b"ptx\0");
+    }
+
+    #[test]
+    fn ptx_input_rejects_every_non_trailing_nul() {
+        for (ptx, expected_offset) in [
+            (&b"ptx\0ignored"[..], 3),
+            (&b"ptx\0\0"[..], 3),
+            (&b"\0ptx"[..], 0),
+        ] {
+            let error = normalize_input(InputType::Ptx, ptx, "kernel.ptx").unwrap_err();
+            assert!(matches!(
+                error,
+                NvJitLinkError::InteriorNulPtx {
+                    ref name,
+                    offset
+                } if name == "kernel.ptx" && offset == expected_offset
+            ));
+        }
+    }
+
+    #[test]
+    fn non_ptx_input_is_borrowed_and_byte_exact() {
+        for kind in [
+            InputType::Cubin,
+            InputType::Ltoir,
+            InputType::Fatbin,
+            InputType::Object,
+            InputType::Library,
+            InputType::Index,
+        ] {
+            let binary = b"binary\0payload";
+            let prepared = normalize_input(kind, binary, "binary").unwrap();
+            assert!(matches!(&prepared, Cow::Borrowed(_)));
+            assert_eq!(prepared.as_ref(), binary);
+        }
+
+        let auto_detected = b".version 7.1\0trailing";
+        let prepared = normalize_input(InputType::Any, auto_detected, "auto").unwrap();
+        assert!(matches!(&prepared, Cow::Borrowed(_)));
+        assert_eq!(prepared.as_ref(), auto_detected);
+    }
+
+    #[test]
     fn cuda_roots_prefers_project_toolkit_env_var() {
         let roots = cuda_roots_from_env(|var| match var {
             "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
@@ -829,5 +939,30 @@ mod tests {
         let library = LibNvJitLink::load().expect("load nvJitLink");
         assert!(library.get_linked_ptx_size.is_some());
         assert!(library.get_linked_ptx.is_some());
+    }
+
+    #[test]
+    #[ignore = "requires an installed CUDA Toolkit with nvJitLink"]
+    fn installed_toolkit_links_non_nul_terminated_ptx_with_poisoned_adjacent_byte() {
+        const PTX: &[u8] = b"\
+.version 7.1
+.target sm_86
+.address_size 64
+.visible .entry smoke() {
+    ret;
+}
+";
+        let mut poisoned_storage = Vec::with_capacity(PTX.len() + 1);
+        poisoned_storage.extend_from_slice(PTX);
+        poisoned_storage.push(b'X');
+        let logical_ptx = &poisoned_storage[..PTX.len()];
+
+        let library = LibNvJitLink::load().expect("load nvJitLink");
+        let mut linker = Linker::new(&library, &["-arch=sm_86"]).expect("create linker");
+        linker
+            .add(InputType::Ptx, logical_ptx, "non-nul.ptx")
+            .expect("add non-NUL-terminated PTX");
+        let cubin = linker.finish().expect("link PTX");
+        assert!(cubin.starts_with(b"\x7fELF"));
     }
 }
