@@ -467,4 +467,30 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
     }
 }
 
+/// Convert a generic-address pointer into its raw `.shared` window offset.
+///
+/// The CUDA C++ `__cvta_generic_to_shared` analog (PTX `cvta.to.shared`).
+/// Rust-visible pointer addresses (`ptr as usize`, `ptr::addr`) are CUDA
+/// generic addresses; hardware SMEM descriptors (WGMMA and tcgen05 matrix
+/// descriptors, whose low bits encode `(start_address >> 4) & 0x3FFF`) are
+/// defined on the space-local shared offset instead. Use this to derive
+/// descriptor base addresses; do not pass a raw `ptr as u64` there.
+///
+/// ```rust,ignore
+/// static mut SMEM_A: SharedArray<f16, 2048> = SharedArray::UNINIT;
+/// let base = unsafe { cvta_generic_to_shared(&raw const SMEM_A as *const u8) };
+/// let desc = build_smem_descriptor(base, LBO_BYTES, SBO_BYTES, SWIZZLE_NONE);
+/// ```
+///
+/// # Safety
+///
+/// `ptr` must be a generic pointer to shared memory (for example one
+/// derived from a `SharedArray` static). Converting a pointer that does not
+/// point into shared memory yields an unspecified offset.
+#[inline(never)]
+pub unsafe fn cvta_generic_to_shared(ptr: *const u8) -> u64 {
+    let _ = ptr;
+    unreachable!("cvta_generic_to_shared called outside CUDA kernel context")
+}
+
 include!("generated/shared_sreg.rs");

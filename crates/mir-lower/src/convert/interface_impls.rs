@@ -36,9 +36,9 @@ use dialect_mir::ops::{
     MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    AssertFailOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp,
-    NvvmAtomicStoreOp, ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp, VprintfOp,
-    WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
+    AssertFailOp, CvtaGenericToSharedOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
+    NvvmAtomicRmwOp, NvvmAtomicStoreOp, ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp,
+    VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -975,6 +975,25 @@ impl MirToLlvmConversion for ReadPtxSregNclusterIdOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::cluster::convert_num_clusters(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+// ---- NVVM memory ops -------------------------------------------------------
+
+#[op_interface_impl]
+impl MirToLlvmConversion for CvtaGenericToSharedOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::memory::convert_cvta_generic_to_shared(
             ctx,
             rewriter,
             self.get_operation(),

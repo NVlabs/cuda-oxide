@@ -992,3 +992,77 @@ pub fn emit_dynamic_shared_offset(
         "DynamicSharedArray::offset call without target block",
     )
 }
+
+/// Emit `cuda_device::shared::cvta_generic_to_shared(ptr) -> u64`.
+///
+/// Converts a generic-address pointer into its raw `.shared` window offset,
+/// the value hardware SMEM descriptors (WGMMA/tcgen05) encode. Mirrors CUDA
+/// C++'s `__cvta_generic_to_shared`: the Rust-visible pointer stays generic,
+/// and this intrinsic is the explicit step into the space-local offset.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_cvta_generic_to_shared(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_nvvm::ops::CvtaGenericToSharedOp;
+    use pliron::builtin::types::Signedness;
+
+    if args.len() != 1 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "cvta_generic_to_shared expects 1 argument, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (ptr_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let cvta_op = Operation::new(
+        ctx,
+        CvtaGenericToSharedOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![ptr_val],
+        vec![],
+        0,
+    );
+    cvta_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        cvta_op.insert_after(ctx, prev);
+    } else {
+        cvta_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = cvta_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        cvta_op,
+        value_map,
+        block_map,
+        loc,
+        "cvta_generic_to_shared call without target block",
+    )
+}

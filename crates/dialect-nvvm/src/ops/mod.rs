@@ -25,6 +25,7 @@ mod cluster;
 mod debug;
 mod generated;
 mod grid;
+mod memory;
 mod wgmma;
 
 use pliron::context::Context;
@@ -36,6 +37,7 @@ pub use cluster::*;
 pub use debug::*;
 pub use generated::*;
 pub use grid::*;
+pub use memory::*;
 pub use wgmma::*;
 
 /// Register all NVVM dialect operations with the context.

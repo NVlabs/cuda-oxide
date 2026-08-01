@@ -50,7 +50,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_alloc_cg2,
@@ -421,8 +421,8 @@ mod kernels {
                 //   j=2: K-groups 4,5 (K=32..47)  — base offset =  8192
                 //   j=3: K-groups 6,7 (K=48..63)  — base offset = 12288
                 if is_thread0 {
-                    let smem_a_base = &raw const SMEM_A as u64;
-                    let smem_b_base = &raw const SMEM_B as u64;
+                    let smem_a_base = cvta_generic_to_shared(&raw const SMEM_A as *const u8);
+                    let smem_b_base = cvta_generic_to_shared(&raw const SMEM_B as *const u8);
 
                     let mut j: u32 = 0;
                     while j < 4 {
@@ -693,8 +693,8 @@ mod kernels {
                 //   j=2: byte offset 64 (K=32..47)
                 //   j=3: byte offset 96 (K=48..63)
                 if is_thread0 {
-                    let smem_a_base = &raw const SMEM_A as u64;
-                    let smem_b_base = &raw const SMEM_B as u64;
+                    let smem_a_base = cvta_generic_to_shared(&raw const SMEM_A as *const u8);
+                    let smem_b_base = cvta_generic_to_shared(&raw const SMEM_B as *const u8);
 
                     let mut j: u32 = 0;
                     while j < 4 {
