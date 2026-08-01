@@ -59,7 +59,7 @@ SMEM descriptors, and the result accumulates into per-thread registers.
 4. **Barrier wait** ensures the MMA has completed before reading the
    accumulator.
 
-### Supported shapes
+### Hardware-supported shapes
 
 WGMMA always has M=64 (rows), with N and K depending on the element type:
 
@@ -80,7 +80,7 @@ the hardware instructions. A typical usage pattern:
 ```rust
 use cuda_device::wgmma::{
     make_smem_desc, wgmma_fence, wgmma_commit_group, wgmma_wait_group,
-    wgmma_mma_m64n64k16_f32_f16,
+    wgmma_mma_m64n64k16_f32_bf16,
 };
 
 // After TMA has loaded A and B tiles into shared memory...
@@ -95,13 +95,39 @@ let mut acc = [[0.0f32; 8]; 4];
 // Fence + issue WGMMA — all 128 threads in the warpgroup participate
 unsafe {
     wgmma_fence();
-    wgmma_mma_m64n64k16_f32_f16(&mut acc, a_desc, b_desc);
+    wgmma_mma_m64n64k16_f32_bf16(&mut acc, a_desc, b_desc);
     wgmma_commit_group();
     wgmma_wait_group::<0>(); // wait for all outstanding groups
 }
 
 // Accumulator in `acc` is now valid — store, transform, or pass to next stage
 ```
+
+### Current cuda-oxide WGMMA lowering
+
+The initial compiler implementation supports only
+`m64n64k16.f32.bf16.bf16`. It recognizes a statically linear sequence:
+
+```text
+wgmma_fence
+one or more BF16 MMA calls using the same accumulator
+wgmma_commit_group
+wgmma_wait_group::<0>
+```
+
+The lowering fuses the sequence into one convergent inline-PTX block. That
+block loads the 32 per-thread accumulator values, keeps them in PTX registers
+through every MMA and the commit, waits for zero pending groups, and only then
+stores the values back to the Rust accumulator. This prevents an early memory
+access to pending WGMMA accumulator registers.
+
+The first implementation is intentionally fail-closed. It rejects partial
+waits, branches, sequences spanning a loop boundary, multiple live
+accumulator objects, intervening work, and the F16 and TF32 public
+compatibility entry points. A complete fence-to-wait sequence inside a loop
+body fuses, but each iteration pays the accumulator load/store round-trip
+and a full wait, so hoist the sequence out of hot loops where the K-loop
+can accumulate in shared memory descriptors instead.
 
 :::{tip}
 WGMMA is often paired with a **multi-stage pipeline**: while the tensor

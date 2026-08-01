@@ -269,7 +269,7 @@ entry:
 
     #[test]
     #[ignore = "requires discoverable CUDA Toolkit libNVVM, nvJitLink, and libdevice"]
-    fn live_pipeline_emits_valid_cubin_and_ptx_for_both_fma_policies() {
+    fn live_pipeline_accepts_toolkit_cubins_and_emits_ptx_for_both_fma_policies() {
         let finalizer = Finalizer::discover().unwrap();
         assert!(finalizer.provenance_digest().is_some());
         let target: CudaArch = "sm_86".parse().unwrap();

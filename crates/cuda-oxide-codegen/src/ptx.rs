@@ -8,11 +8,12 @@ use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
 use crate::target::{
-    detect_module_requirements_in_llvm_file, merge_generated_module_requirements,
-    merge_generated_module_requirements_for_target, required_ptx_feature,
-    resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
-    validate_target_for_llvm_major,
+    ModuleRequirements, detect_module_requirements_in_llvm_file,
+    merge_generated_module_requirements, merge_generated_module_requirements_for_target,
+    required_ptx_feature, resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
+    validate_target_features, validate_target_for_llvm_major,
 };
+use libnvvm_sys::CudaArch;
 use llvm_export::export::DebugKind;
 use std::path::{Path, PathBuf};
 
@@ -406,8 +407,6 @@ fn generate_ptx_impl(
 
     validate_target_for_llvm_major(&target, toolchain.llc_major)
         .map_err(PipelineError::PtxGeneration)?;
-    validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
-        .map_err(PipelineError::PtxGeneration)?;
 
     // Link libdevice at the IR level when the kernel uses `__nv_*` calls.
     // This resolves (and later inlines) CUDA math functions without forcing
@@ -425,9 +424,11 @@ fn generate_ptx_impl(
     };
     let post_link_input: &Path = linked.as_deref().unwrap_or(module.llvm_ir);
 
-    // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
-    // intentionally reads the original (pre-opt) IR so the target is determined
-    // by what the source actually needs, not what opt elides.
+    // Run the LLVM middle-end (opt -O2) before llc. Source requirements are
+    // detected above so target selection cannot lose a source-level contract
+    // merely because optimization elides it. Requirements are detected again
+    // from the exact llc input below because linking and optimization can also
+    // introduce backend intrinsics (notably llvm.stacksave/stackrestore).
     //
     // Full-debug is a `-G`-style build: it keeps every local in memory and
     // describes it with `llvm.dbg.declare`. Running `opt -O2` would promote
@@ -458,6 +459,28 @@ fn generate_ptx_impl(
         optimized
     };
     let llc_input: &Path = optimized.as_deref().unwrap_or(post_link_input);
+    let llc_requirements = detect_module_requirements_in_llvm_file(llc_input)?;
+    let requirements = merge_module_requirements(requirements, llc_requirements);
+    let requirements =
+        merge_generated_module_requirements_for_target(requirements, generated, &target)
+            .map_err(PipelineError::PtxGeneration)?;
+    let parsed_target =
+        target
+            .parse::<CudaArch>()
+            .map_err(|error| PipelineError::TargetSelection {
+                target: target.clone(),
+                reason: format!(
+                    "{error} (while validating requirements from the final LLVM input)"
+                ),
+            })?;
+    validate_target_features(&parsed_target, requirements.features).map_err(|reason| {
+        PipelineError::TargetSelection {
+            target: target.clone(),
+            reason: format!("{reason} (requirements from the final LLVM input)"),
+        }
+    })?;
+    validate_ptx_isa_for_llvm_major(requirements.ptx_isa, toolchain.llc_major)
+        .map_err(PipelineError::PtxGeneration)?;
 
     let llc_desc = if toolchain.llc_from_env {
         format!("llc_override ({})", toolchain.llc_path)
@@ -501,6 +524,27 @@ fn generate_ptx_impl(
     if !opts.no_fma {
         llc_cmd.arg("-fp-contract=fast");
     }
+    // Match nvcc's precision defaults when libdevice is in the module.
+    // libdevice selects between correctly-rounded and approximate
+    // implementations by reading these through `__nvvm_reflect`, and LLVM
+    // resolves an unset reflect variable to 0, which is the approximate
+    // branch. nvcc defaults `-prec-sqrt=true` and `-prec-div=true`, so 0
+    // diverges from it silently and in the direction of lower accuracy.
+    // `__CUDA_FTZ` is left unset deliberately: nvcc defaults `-ftz=false`,
+    // which 0 already matches.
+    //
+    // Not every libdevice build branches division on `__CUDA_PREC_DIV`;
+    // current libdevice builds define no such reflect name, so here the
+    // argument matches no `__nvvm_reflect` call and has no effect. It stays
+    // because `NVVMReflectPass` silently drops a name absent from the
+    // module, emitting neither a warning nor a failure, and any libdevice
+    // build that does branch on `__CUDA_PREC_DIV` needs the same
+    // nvcc-matching value.
+    if linked.is_some() {
+        llc_cmd
+            .arg("--nvvm-reflect-add=__CUDA_PREC_SQRT=1")
+            .arg("--nvvm-reflect-add=__CUDA_PREC_DIV=1");
+    }
     let result = llc_cmd.arg(llc_input).arg("-o").arg(module.output).output();
 
     match result {
@@ -527,6 +571,16 @@ fn generate_ptx_impl(
             String::from_utf8_lossy(&output.stderr).trim()
         ))),
         Err(e) => Err(PipelineError::PtxGeneration(format!("{llc_desc}: {e}"))),
+    }
+}
+
+fn merge_module_requirements(
+    source: ModuleRequirements,
+    llc_input: ModuleRequirements,
+) -> ModuleRequirements {
+    ModuleRequirements {
+        features: source.features | llc_input.features,
+        ptx_isa: source.ptx_isa.max(llc_input.ptx_isa),
     }
 }
 
@@ -665,6 +719,31 @@ mod tests {
     #[test]
     fn modules_without_public_roots_keep_the_existing_optimization_pipeline() {
         assert_eq!(optimization_args(&[]).unwrap(), ["-O2"]);
+    }
+
+    #[test]
+    fn final_llc_input_requirements_are_unioned_with_source_requirements() {
+        use crate::target::{DetectedFeatures, PtxIsaRequirement};
+
+        let source = ModuleRequirements {
+            features: DetectedFeatures::Sm80,
+            ptx_isa: PtxIsaRequirement::Ptx70,
+        };
+        let llc_input = ModuleRequirements {
+            features: DetectedFeatures::DynamicStack,
+            ptx_isa: PtxIsaRequirement::Ptx73,
+        };
+
+        let merged = merge_module_requirements(source, llc_input);
+        assert_eq!(
+            merged.features,
+            DetectedFeatures::Sm80 | DetectedFeatures::DynamicStack
+        );
+        assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
+        assert_eq!(
+            required_ptx_feature("sm_80", merged.ptx_isa),
+            Some("+ptx73")
+        );
     }
 
     #[test]
@@ -956,6 +1035,81 @@ mod tests {
             ptx.lines().count()
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Regression test for libdevice reflect defaults: `libdevice.10.bc`
+    /// selects between a correctly-rounded and an approximate implementation
+    /// by reading `__CUDA_PREC_SQRT` through `__nvvm_reflect`. LLVM resolves an
+    /// unset reflect variable to 0 and so picks the approximate branch, while
+    /// nvcc defaults `-prec-sqrt=true`. Without the reflect arguments on `llc`,
+    /// a `sqrt` kernel silently compiles to `sqrt.approx.f32`.
+    #[test]
+    fn linked_libdevice_honors_nvcc_precision_defaults() {
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            ..BackendOptions::default()
+        };
+        let Some(toolchain) = LlvmToolchain::resolve(&opts) else {
+            return;
+        };
+        if toolchain.opt.is_none() || toolchain.llvm_link.is_none() {
+            return;
+        }
+        let Ok(libdevice) = libnvvm_sys::find_libdevice() else {
+            return;
+        };
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_libdevice_prec_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ll_path = root.join("kernel.ll");
+        let ptx_path = root.join("kernel.ptx");
+        std::fs::write(
+            &ll_path,
+            "target datalayout = \"e-i64:64-i128:128-v16:16-v32:32-n16:32:64\"\n\
+             target triple = \"nvptx64-nvidia-cuda\"\n\
+             \n\
+             declare float @__nv_sqrtf(float)\n\
+             \n\
+             define ptx_kernel void @kernel(ptr %out, float %x) {\n\
+               %s = call float @__nv_sqrtf(float %x)\n\
+               store float %s, ptr %out\n\
+               ret void\n\
+             }\n",
+        )
+        .unwrap();
+
+        generate_ptx_with_toolchain(
+            PtxModule {
+                llvm_ir: &ll_path,
+                output: &ptx_path,
+                public_symbols: &["kernel".to_string()],
+            },
+            DebugKind::Off,
+            &opts,
+            &toolchain,
+            &GeneratedModuleRequirements::default(),
+            Some(&libdevice),
+        )
+        .unwrap();
+
+        let ptx = std::fs::read_to_string(&ptx_path).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            ptx.contains("sqrt.rn.f32"),
+            "libdevice sqrt must resolve to the correctly-rounded instruction, \
+             matching nvcc's -prec-sqrt=true default:\n{ptx}"
+        );
+        assert!(
+            !ptx.contains("sqrt.approx"),
+            "no approximate sqrt may survive:\n{ptx}"
+        );
     }
 
     #[test]

@@ -8,33 +8,11 @@
 //! WGMMA provides tensor core operations that operate at the warpgroup level
 //! (4 warps = 128 threads) for high-throughput matrix multiplication.
 //!
-//! # WGMMA Workflow
-//!
-//! ```text
-//! 1. wgmma.fence       │ Ensure shared memory is visible
-//! 2. wgmma.mma         │ Issue matrix multiply (may issue multiple)
-//! 3. wgmma.commit      │ Commit pending operations to group
-//! 4. wgmma.wait        │ Wait for group completion
-//! ```
-//!
-//! # Matrix Dimensions
-//!
-//! The `m64n64k16` variant computes:
-//! - D = A × B + C where A is 64×16, B is 16×64, D/C is 64×64
-//! - Each thread holds 32 f32 accumulator elements
-//!
-//! # Shared Memory Descriptors
-//!
-//! WGMMA uses 64-bit descriptors that encode:
-//! - Base address (in shared memory address space)
-//! - Stride information
-//! - Swizzle mode for bank conflict avoidance
-//!
-//! # Requirements
-//!
-//! - **PTX ISA**: 8.0+
-//! - **Architecture**: `sm_90a` (Hopper)
-//! - **Execution**: Warpgroup-synchronous (128 threads must execute together)
+//! The public importer first creates a pointer-form MMA operation. Before LLVM
+//! lowering, `mir-lower` recognizes a complete straight-line
+//! fence/MMA/commit/wait sequence and replaces it with a deferred group
+//! operation. The deferred group keeps all 32 per-thread accumulator values in
+//! one inline-PTX scope until `wait_group<0>` completes.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
@@ -43,13 +21,13 @@ use pliron::{
         types::{IntegerType, Signedness},
     },
     common_traits::Verify,
-    context::Context,
-    context::Ptr,
+    context::{Context, Ptr},
     location::Located,
     op::Op,
     operation::Operation,
     result::Error,
     r#type::Typed,
+    value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
@@ -59,19 +37,6 @@ use pliron_derive::pliron_op;
 // =============================================================================
 
 /// Create a shared memory descriptor for WGMMA.
-///
-/// Converts a generic pointer into the fixed-layout descriptor used by the
-/// current WGMMA lowering. It converts with `cvta.to.shared.u64`, shifts the
-/// address right by 4, masks it with `0x3fff`, and ORs
-/// `0xC000000800080000`.
-///
-/// # Operands
-///
-/// - `ptr` (ptr): generic pointer to shared memory
-///
-/// # Results
-///
-/// - `desc` (u64): 64-bit WGMMA descriptor
 #[pliron_op(
     name = "nvvm.wgmma_make_smem_desc",
     format,
@@ -92,6 +57,16 @@ fn is_u64(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
         .is_some_and(|integer| {
             integer.width() == 64 && integer.signedness() == Signedness::Unsigned
         })
+}
+
+fn is_supported_wgmma_accumulator(ctx: &Context, value: Value) -> bool {
+    let value_type = value.get_type(ctx);
+    let value_type_ref = value_type.deref(ctx);
+    let Some(pointer_type) = value_type_ref.downcast_ref::<MirPtrType>() else {
+        return false;
+    };
+
+    pointer_type.is_mutable() && pointer_type.address_space() == address_space::GENERIC
 }
 
 impl Verify for WgmmaMakeSmemDescOp {
@@ -131,24 +106,11 @@ impl Verify for WgmmaMakeSmemDescOp {
 // Matrix Multiply-Accumulate Operations
 // =============================================================================
 
-/// WGMMA Matrix Multiply-Accumulate: m64n64k16 with f32 accumulator and bf16 inputs.
+/// Pointer-form BF16 WGMMA operation emitted by `mir-importer`.
 ///
-/// Performs warpgroup-level matrix multiplication: D = A × B + D
-/// - A: 64×16 (bf16)
-/// - B: 16×64 (bf16)
-/// - D: 64×64 (f32, 32 elements per thread, updated in-place)
-///
-/// PTX: `wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16`
-///
-/// # Operands
-///
-/// - `acc_ptr` (ptr): pointer to accumulator array (32 f32 values, read-modify-write)
-/// - `desc_a` (u64): SMEM descriptor for matrix A
-/// - `desc_b` (u64): SMEM descriptor for matrix B
-///
-/// # Results
-///
-/// - None (accumulator is updated in-place via pointer)
+/// This operation is not legal at final lowering. It must be consumed by the
+/// deferred-accumulator fusion pass together with its fence, commit, and
+/// `wait_group<0>` operations.
 #[pliron_op(
     name = "nvvm.wgmma_mma_m64n64k16_f32_bf16",
     format,
@@ -172,15 +134,10 @@ impl Verify for WgmmaMmaM64N64K16F32Bf16Op {
                 "nvvm.wgmma_mma_m64n64k16_f32_bf16 requires three operands and no results"
             );
         }
-        let accumulator_ty = op.get_operand(0).get_type(ctx);
-        if accumulator_ty
-            .deref(ctx)
-            .downcast_ref::<MirPtrType>()
-            .is_none()
-        {
+        if !is_supported_wgmma_accumulator(ctx, op.get_operand(0)) {
             return verify_err!(
                 op.loc(),
-                "nvvm.wgmma_mma_m64n64k16_f32_bf16 accumulator must be a MIR pointer"
+                "nvvm.wgmma_mma_m64n64k16_f32_bf16 accumulator must be a mutable generic MIR pointer"
             );
         }
         if !is_u64(ctx, op.get_operand(1).get_type(ctx))
@@ -195,8 +152,73 @@ impl Verify for WgmmaMmaM64N64K16F32Bf16Op {
     }
 }
 
+/// Deferred BF16 WGMMA group with one accumulator and one or more descriptor pairs.
+///
+/// Operand layout:
+///
+/// ```text
+/// [acc_ptr, desc_a_0, desc_b_0, ..., desc_a_n, desc_b_n]
+/// ```
+///
+/// The operation represents a complete sequence containing an implicit fence,
+/// all MMA instructions, one commit, and `wait_group<0>`. It has no results
+/// because the accumulator is written back through `acc_ptr` after the wait.
+#[pliron_op(name = "nvvm.wgmma_mma_group_m64n64k16_f32_bf16", format)]
+pub struct WgmmaMmaGroupM64N64K16F32Bf16Op;
+
+impl WgmmaMmaGroupM64N64K16F32Bf16Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    /// Build a deferred group from one accumulator and descriptor pairs.
+    pub fn build(ctx: &mut Context, accumulator: Value, descriptors: Vec<Value>) -> Ptr<Operation> {
+        let mut operands = Vec::with_capacity(1 + descriptors.len());
+        operands.push(accumulator);
+        operands.extend(descriptors);
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for WgmmaMmaGroupM64N64K16F32Bf16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let operand_count = op.get_num_operands();
+        if operand_count < 3 || operand_count.is_multiple_of(2) || op.get_num_results() != 0 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_m64n64k16_f32_bf16 requires one accumulator, one or more descriptor pairs, and no results"
+            );
+        }
+        if !is_supported_wgmma_accumulator(ctx, op.get_operand(0)) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_m64n64k16_f32_bf16 accumulator must be a mutable generic MIR pointer"
+            );
+        }
+        for descriptor_index in 1..operand_count {
+            if !is_u64(ctx, op.get_operand(descriptor_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_m64n64k16_f32_bf16 descriptors must be u64"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Register WGMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     WgmmaMakeSmemDescOp::register(ctx);
     WgmmaMmaM64N64K16F32Bf16Op::register(ctx);
+    WgmmaMmaGroupM64N64K16F32Bf16Op::register(ctx);
 }

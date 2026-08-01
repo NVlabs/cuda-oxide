@@ -50,7 +50,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_alloc_cg2,
@@ -421,8 +421,8 @@ mod kernels {
                 //   j=2: K-groups 4,5 (K=32..47)  — base offset =  8192
                 //   j=3: K-groups 6,7 (K=48..63)  — base offset = 12288
                 if is_thread0 {
-                    let smem_a_base = &raw const SMEM_A as u64;
-                    let smem_b_base = &raw const SMEM_B as u64;
+                    let smem_a_base = cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8);
+                    let smem_b_base = cvta_generic_to_shared_offset(&raw const SMEM_B as *const u8);
 
                     let mut j: u32 = 0;
                     while j < 4 {
@@ -693,8 +693,8 @@ mod kernels {
                 //   j=2: byte offset 64 (K=32..47)
                 //   j=3: byte offset 96 (K=48..63)
                 if is_thread0 {
-                    let smem_a_base = &raw const SMEM_A as u64;
-                    let smem_b_base = &raw const SMEM_B as u64;
+                    let smem_a_base = cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8);
+                    let smem_b_base = cvta_generic_to_shared_offset(&raw const SMEM_B as *const u8);
 
                     let mut j: u32 = 0;
                     while j < 4 {
@@ -950,14 +950,14 @@ mod kernels {
                 // Step 2: Issue MMA on current buffer (async → tensor core)
                 if is_thread0 {
                     let smem_a_base = if buf == 0 {
-                        &raw const SMEM_A0 as u64
+                        cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8)
                     } else {
-                        &raw const SMEM_A1 as u64
+                        cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8)
                     };
                     let smem_b_base = if buf == 0 {
-                        &raw const SMEM_B0 as u64
+                        cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8)
                     } else {
-                        &raw const SMEM_B1 as u64
+                        cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8)
                     };
 
                     let mut j: u32 = 0;
@@ -1327,14 +1327,14 @@ mod kernels {
                     // Issue 4 MMAs on this buffer
                     if is_lane0 {
                         let smem_a_base = if stage == 0 {
-                            &raw const SMEM_A0 as u64
+                            cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8)
                         } else {
-                            &raw const SMEM_A1 as u64
+                            cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8)
                         };
                         let smem_b_base = if stage == 0 {
-                            &raw const SMEM_B0 as u64
+                            cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8)
                         } else {
-                            &raw const SMEM_B1 as u64
+                            cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8)
                         };
 
                         let mut j: u32 = 0;
@@ -1758,14 +1758,14 @@ mod kernels {
 
                         if is_lane0 {
                             let smem_a_base = if stage == 0 {
-                                &raw const SMEM_A0 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8)
                             } else {
-                                &raw const SMEM_A1 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8)
                             };
                             let smem_b_base = if stage == 0 {
-                                &raw const SMEM_B0 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8)
                             } else {
-                                &raw const SMEM_B1 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8)
                             };
 
                             let mut j: u32 = 0;
@@ -2356,14 +2356,14 @@ mod kernels {
 
                         if is_lane0 {
                             let smem_a_base = if stage == 0 {
-                                &raw const SMEM_A0 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8)
                             } else {
-                                &raw const SMEM_A1 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8)
                             };
                             let smem_b_base = if stage == 0 {
-                                &raw const SMEM_B0 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8)
                             } else {
-                                &raw const SMEM_B1 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8)
                             };
 
                             let mut j: u32 = 0;
@@ -2678,9 +2678,18 @@ mod kernels {
 
             // map_shared_rank translates a local SMEM pointer to the address in rank 0's
             // shared memory, for use with mbarrier_arrive_cluster (cross-CTA barrier arrive).
-            let rank0_mcast_bar0_addr = cluster::map_shared_rank(&raw const MCAST_BAR0, 0) as u64;
-            let rank0_mcast_bar1_addr = cluster::map_shared_rank(&raw const MCAST_BAR1, 0) as u64;
-            let rank0_clc_ready_addr = cluster::map_shared_rank(&raw const CLC_READY, 0) as u64;
+            let rank0_mcast_bar0_addr = cvta_generic_to_shared_offset(cluster::map_shared_rank(
+                &raw const MCAST_BAR0,
+                0,
+            ) as *const u8);
+            let rank0_mcast_bar1_addr = cvta_generic_to_shared_offset(cluster::map_shared_rank(
+                &raw const MCAST_BAR1,
+                0,
+            ) as *const u8);
+            let rank0_clc_ready_addr = cvta_generic_to_shared_offset(cluster::map_shared_rank(
+                &raw const CLC_READY,
+                0,
+            ) as *const u8);
 
             // Pre-arrive MMA_BARs so TMA can proceed on the first K-iteration
             if tid == 0 {
@@ -3029,14 +3038,14 @@ mod kernels {
 
                         if is_lane0 {
                             let smem_a_base = if stage == 0 {
-                                &raw const SMEM_A0 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8)
                             } else {
-                                &raw const SMEM_A1 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8)
                             };
                             let smem_b_base = if stage == 0 {
-                                &raw const SMEM_B0 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8)
                             } else {
-                                &raw const SMEM_B1 as u64
+                                cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8)
                             };
 
                             let mut j: u32 = 0;
@@ -3700,26 +3709,26 @@ mod kernels {
                             *mut Barrier,
                         ) = match stage {
                             0 => (
-                                &raw const SMEM_A0 as u64,
-                                &raw const SMEM_B0 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A0 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B0 as *const u8),
                                 &raw const TMA_BAR0 as *const Barrier,
                                 &raw mut MMA_BAR0 as *mut Barrier,
                             ),
                             1 => (
-                                &raw const SMEM_A1 as u64,
-                                &raw const SMEM_B1 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A1 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B1 as *const u8),
                                 &raw const TMA_BAR1 as *const Barrier,
                                 &raw mut MMA_BAR1 as *mut Barrier,
                             ),
                             2 => (
-                                &raw const SMEM_A2 as u64,
-                                &raw const SMEM_B2 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A2 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B2 as *const u8),
                                 &raw const TMA_BAR2 as *const Barrier,
                                 &raw mut MMA_BAR2 as *mut Barrier,
                             ),
                             _ => (
-                                &raw const SMEM_A3 as u64,
-                                &raw const SMEM_B3 as u64,
+                                cvta_generic_to_shared_offset(&raw const SMEM_A3 as *const u8),
+                                cvta_generic_to_shared_offset(&raw const SMEM_B3 as *const u8),
                                 &raw const TMA_BAR3 as *const Barrier,
                                 &raw mut MMA_BAR3 as *mut Barrier,
                             ),
@@ -3796,10 +3805,12 @@ mod kernels {
                 let mut epi_tile_iter: u32 = 0;
                 let mut tile_parity: u32 = 0;
 
-                let leader_accum_empty0_addr =
-                    cluster::map_shared_rank(&raw const ACCUM_EMPTY0, 0) as u64;
-                let leader_accum_empty1_addr =
-                    cluster::map_shared_rank(&raw const ACCUM_EMPTY1, 0) as u64;
+                let leader_accum_empty0_addr = cvta_generic_to_shared_offset(
+                    cluster::map_shared_rank(&raw const ACCUM_EMPTY0, 0) as *const u8,
+                );
+                let leader_accum_empty1_addr = cvta_generic_to_shared_offset(
+                    cluster::map_shared_rank(&raw const ACCUM_EMPTY1, 0) as *const u8,
+                );
 
                 const TILE_N: usize = 128;
                 let warp_row_base = (warp_id * 32) as usize;

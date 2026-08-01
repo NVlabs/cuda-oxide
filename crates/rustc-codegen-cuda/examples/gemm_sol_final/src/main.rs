@@ -31,7 +31,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc_cg2, tcgen05_commit_multicast_cg2,

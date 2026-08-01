@@ -8,16 +8,16 @@ use dialect_nvvm::ops::{
     ActiveMaskOp, AssertFailOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp,
     Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
     CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
-    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
-    ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr, LdmatrixLayoutAttr,
-    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op,
-    LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp,
-    MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op,
-    MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
-    MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
-    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PackedAtomicAddOp,
-    PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
+    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, CvtaGenericToSharedOffsetOp, Dp2aS32Op,
+    Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr,
+    LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
+    LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp,
+    LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
+    MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
+    MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
+    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op,
+    NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
+    PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
     PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
     PackedAtomicSubnormalAttr, ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp,
     ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
@@ -36,7 +36,8 @@ use dialect_nvvm::ops::{
     SparseMmaShapeAttr, StmatrixM8n8X4Op, Tcgen05AllocOp, Tcgen05CommitMulticastCg2Op,
     Tcgen05Ld16x32bx2X1RawOp, Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op, ThreadfenceBlockOp,
     ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
-    VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
+    VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -82,8 +83,10 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("debug.rs", "AssertFailOp"),
         ("debug.rs", "VprintfOp"),
         ("grid.rs", "GridSyncOp"),
+        ("memory.rs", "CvtaGenericToSharedOffsetOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
     ];
     expected.sort_unstable();
     found.sort_unstable();
@@ -4296,21 +4299,27 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
     let pointer_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let accumulator_pointer_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), true);
     let global_pointer_ty = MirPtrType::get_global(&mut ctx, u8_ty.into(), false);
+    let mutable_global_pointer_ty = MirPtrType::get_global(&mut ctx, u8_ty.into(), true);
     let block = BasicBlock::new(
         &mut ctx,
         None,
         vec![
             pointer_ty.into(),
+            accumulator_pointer_ty.into(),
             global_pointer_ty.into(),
+            mutable_global_pointer_ty.into(),
             u32_ty.into(),
             u64_ty.into(),
         ],
     );
     let pointer = block.deref(&ctx).get_argument(0);
-    let global_pointer = block.deref(&ctx).get_argument(1);
-    let u32_value = block.deref(&ctx).get_argument(2);
-    let u64_value = block.deref(&ctx).get_argument(3);
+    let accumulator_pointer = block.deref(&ctx).get_argument(1);
+    let global_pointer = block.deref(&ctx).get_argument(2);
+    let mutable_global_pointer = block.deref(&ctx).get_argument(3);
+    let u32_value = block.deref(&ctx).get_argument(4);
+    let u64_value = block.deref(&ctx).get_argument(5);
 
     let vprintf = VprintfOp::build(&mut ctx, pointer, pointer);
     assert!(VprintfOp::new(vprintf).verify(&ctx).is_ok());
@@ -4388,20 +4397,65 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
         assert!(WgmmaMakeSmemDescOp::new(invalid).verify(&ctx).is_err());
     }
 
+    let cvta = Operation::new(
+        &mut ctx,
+        CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![pointer],
+        vec![],
+        0,
+    );
+    assert!(CvtaGenericToSharedOffsetOp::new(cvta).verify(&ctx).is_ok());
+    for (operands, results) in [
+        // Operand must be a MIR pointer.
+        (vec![u32_value], vec![u64_ty.into()]),
+        // Operand must point to generic or shared memory.
+        (vec![global_pointer], vec![u64_ty.into()]),
+        // Result must be u64.
+        (vec![pointer], vec![u32_ty.into()]),
+        // Exact arity is required.
+        (vec![], vec![u64_ty.into()]),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
+            results,
+            operands,
+            vec![],
+            0,
+        );
+        assert!(
+            CvtaGenericToSharedOffsetOp::new(invalid)
+                .verify(&ctx)
+                .is_err()
+        );
+    }
+
     let mma = Operation::new(
         &mut ctx,
         WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
         vec![],
-        vec![pointer, u64_value, u64_value],
+        vec![accumulator_pointer, u64_value, u64_value],
         vec![],
         0,
     );
     assert!(WgmmaMmaM64N64K16F32Bf16Op::new(mma).verify(&ctx).is_ok());
     for (operands, results) in [
+        // Accumulator must be mutable.
+        (vec![pointer, u64_value, u64_value], vec![]),
+        // Accumulator must use generic address space.
+        (vec![mutable_global_pointer, u64_value, u64_value], vec![]),
+        // Accumulator must be a MIR pointer.
         (vec![u32_value, u64_value, u64_value], vec![]),
-        (vec![pointer, u32_value, u64_value], vec![]),
-        (vec![pointer, u64_value], vec![]),
-        (vec![pointer, u64_value, u64_value], vec![u32_ty.into()]),
+        // Descriptors must be u64.
+        (vec![accumulator_pointer, u32_value, u64_value], vec![]),
+        // Exact arity is required.
+        (vec![accumulator_pointer, u64_value], vec![]),
+        // No results are permitted.
+        (
+            vec![accumulator_pointer, u64_value, u64_value],
+            vec![u32_ty.into()],
+        ),
     ] {
         let invalid = Operation::new(
             &mut ctx,
@@ -4413,6 +4467,53 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
         );
         assert!(
             WgmmaMmaM64N64K16F32Bf16Op::new(invalid)
+                .verify(&ctx)
+                .is_err()
+        );
+    }
+
+    let group = WgmmaMmaGroupM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        accumulator_pointer,
+        vec![u64_value, u64_value, u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupM64N64K16F32Bf16Op::new(group)
+            .verify(&ctx)
+            .is_ok()
+    );
+    for (operands, results) in [
+        // Missing descriptor.
+        (vec![accumulator_pointer, u64_value], vec![]),
+        // Incomplete descriptor pair.
+        (
+            vec![accumulator_pointer, u64_value, u64_value, u64_value],
+            vec![],
+        ),
+        // Accumulator must be mutable.
+        (vec![pointer, u64_value, u64_value], vec![]),
+        // Accumulator must use generic address space.
+        (vec![mutable_global_pointer, u64_value, u64_value], vec![]),
+        // Accumulator must be a MIR pointer.
+        (vec![u32_value, u64_value, u64_value], vec![]),
+        // Descriptors must be u64.
+        (vec![accumulator_pointer, u64_value, u32_value], vec![]),
+        // No results are permitted.
+        (
+            vec![accumulator_pointer, u64_value, u64_value],
+            vec![u32_ty.into()],
+        ),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            WgmmaMmaGroupM64N64K16F32Bf16Op::get_concrete_op_info(),
+            results,
+            operands,
+            vec![],
+            0,
+        );
+        assert!(
+            WgmmaMmaGroupM64N64K16F32Bf16Op::new(invalid)
                 .verify(&ctx)
                 .is_err()
         );

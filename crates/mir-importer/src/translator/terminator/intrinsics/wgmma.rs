@@ -22,14 +22,12 @@ use pliron::operation::Operation;
 use rustc_public::mir;
 
 const CUSTOM_DESCRIPTOR_UNSUPPORTED: &str = "custom WGMMA descriptor encoding is not yet supported";
-const MMA_UNSUPPORTED: &str = "WGMMA MMA is not yet supported: lowering must preserve delayed \
-32-register accumulator state across commit_group and wait_group";
+const MMA_UNSUPPORTED: &str = "this WGMMA MMA variant is not yet supported; only m64n64k16.f32.bf16.bf16 has deferred accumulator lowering";
 
 fn unsupported_diagnostic(path: &str) -> Option<&'static str> {
     match path {
         "cuda_device::wgmma::make_smem_desc_custom" => Some(CUSTOM_DESCRIPTOR_UNSUPPORTED),
-        "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16"
-        | "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16"
+        "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16"
         | "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_tf32" => Some(MMA_UNSUPPORTED),
         _ => None,
     }
@@ -44,11 +42,6 @@ pub(crate) fn reject_unsupported(path: &str, loc: Location) -> TranslationResult
 }
 
 /// Emit make_smem_desc: Create SMEM descriptor for WGMMA.
-///
-/// Args:
-/// - `args[0]`: *const u8 (pointer to shared memory)
-///
-/// Returns: u64 (64-bit descriptor)
 pub fn emit_wgmma_make_smem_desc(
     ctx: &mut Context,
     body: &mir::Body,
@@ -71,7 +64,6 @@ pub fn emit_wgmma_make_smem_desc(
         );
     }
 
-    // Translate the pointer argument
     let (ptr_val, last_op) = rvalue::translate_operand(
         ctx,
         body,
@@ -82,14 +74,12 @@ pub fn emit_wgmma_make_smem_desc(
         loc.clone(),
     )?;
 
-    // Create the make_smem_desc operation (returns u64)
-    // Use Unsigned signedness to match Rust's u64 type
     let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
     let desc_op = Operation::new(
         ctx,
         WgmmaMakeSmemDescOp::get_concrete_op_info(),
-        vec![u64_ty.into()], // Result: u64
-        vec![ptr_val],       // Operand: ptr
+        vec![u64_ty.into()],
+        vec![ptr_val],
         vec![],
         0,
     );
@@ -101,7 +91,6 @@ pub fn emit_wgmma_make_smem_desc(
         desc_op.insert_at_front(block_ptr, ctx);
     }
 
-    // Map the result
     let result_value = desc_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
@@ -117,19 +106,10 @@ pub fn emit_wgmma_make_smem_desc(
     )
 }
 
-/// Emit wgmma_mma_m64n64k16_f32_bf16: WGMMA matrix multiply-accumulate.
+/// Emit BF16 m64n64k16 WGMMA pointer form.
 ///
-/// Performs D = A × B + D where:
-/// - A: 64×16 (from SMEM descriptor)
-/// - B: 16×64 (from SMEM descriptor)
-/// - D: 64×64 accumulator (32 f32 values per thread, passed by pointer)
-///
-/// Args:
-/// - `args[0]`: &mut [[f32; 8]; 4] (accumulator pointer, read-modify-write)
-/// - `args[1]`: u64 (desc_a - SMEM descriptor for A)
-/// - `args[2]`: u64 (desc_b - SMEM descriptor for B)
-///
-/// Returns: void (accumulator updated in-place)
+/// `mir-lower` later fuses this operation with the surrounding fence, commit,
+/// and `wait_group<0>` so the accumulator remains in registers until the wait.
 pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
     ctx: &mut Context,
     body: &mir::Body,
@@ -151,11 +131,8 @@ pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
         );
     }
 
-    // Translate arguments
     let mut last_op = prev_op;
-
-    // arg[0]: acc_ptr (pointer to accumulator array)
-    let (acc_ptr, last_op_after) = rvalue::translate_operand(
+    let (acc_ptr, next) = rvalue::translate_operand(
         ctx,
         body,
         &args[0],
@@ -164,10 +141,8 @@ pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
         last_op,
         loc.clone(),
     )?;
-    last_op = last_op_after;
-
-    // arg[1]: desc_a (u64 descriptor)
-    let (desc_a, last_op_after) = rvalue::translate_operand(
+    last_op = next;
+    let (desc_a, next) = rvalue::translate_operand(
         ctx,
         body,
         &args[1],
@@ -176,10 +151,8 @@ pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
         last_op,
         loc.clone(),
     )?;
-    last_op = last_op_after;
-
-    // arg[2]: desc_b (u64 descriptor)
-    let (desc_b, last_op_after) = rvalue::translate_operand(
+    last_op = next;
+    let (desc_b, next) = rvalue::translate_operand(
         ctx,
         body,
         &args[2],
@@ -188,14 +161,13 @@ pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
         last_op,
         loc.clone(),
     )?;
-    last_op = last_op_after;
+    last_op = next;
 
-    // Create the WGMMA MMA operation
     let mma_op = Operation::new(
         ctx,
         WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
-        vec![],                        // No results (void)
-        vec![acc_ptr, desc_a, desc_b], // Operands
+        vec![],
+        vec![acc_ptr, desc_a, desc_b],
         vec![],
         0,
     );
@@ -207,13 +179,11 @@ pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
         mma_op.insert_at_front(block_ptr, ctx);
     }
 
-    // Emit goto to target block
     if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, mma_op, block_map, loc);
-        Ok(goto_op)
+        Ok(emit_goto(ctx, *target_idx, mma_op, block_map, loc))
     } else {
         input_err!(
-            loc.clone(),
+            loc,
             TranslationErr::unsupported(
                 "wgmma_mma_m64n64k16_f32_bf16 call without target block".to_string()
             )
@@ -231,8 +201,11 @@ mod tests {
             unsupported_diagnostic("cuda_device::wgmma::make_smem_desc_custom"),
             Some(CUSTOM_DESCRIPTOR_UNSUPPORTED)
         );
+        assert_eq!(
+            unsupported_diagnostic("cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16"),
+            None
+        );
         for path in [
-            "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16",
             "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16",
             "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_tf32",
         ] {

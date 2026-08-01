@@ -6,6 +6,9 @@
 const ELF64_HEADER_LENGTH: usize = 64;
 const ELF64_PROGRAM_HEADER_LENGTH: u16 = 56;
 const ELF64_SECTION_HEADER_LENGTH: u16 = 64;
+const ELF_VERSION_CURRENT: u32 = 1;
+const CUDA_ABI_RUNTIME_JIT_LINK: u8 = 7;
+const CUDA_12_TOOLKIT_VERSIONS: std::ops::RangeInclusive<u32> = 120..=129;
 
 /// Check that bytes are a complete 64-bit little-endian CUDA executable ELF.
 ///
@@ -19,7 +22,7 @@ pub fn is_valid_cubin(bytes: &[u8]) -> bool {
         || bytes[6] != 1
         || read_u16(bytes, 16) != Some(2)
         || read_u16(bytes, 18) != Some(190)
-        || read_u32(bytes, 20) != Some(1)
+        || !has_supported_cuda_elf_version(bytes[8], read_u32(bytes, 20))
         || read_u16(bytes, 52) != Some(ELF64_HEADER_LENGTH as u16)
     {
         return false;
@@ -147,6 +150,21 @@ pub fn is_valid_cubin(bytes: &[u8]) -> bool {
     has_meaningful_contents
 }
 
+fn has_supported_cuda_elf_version(abi_version: u8, file_version: Option<u32>) -> bool {
+    match file_version {
+        // Preserve the generic ELF version accepted before CUDA toolkit
+        // encodings were recognized, regardless of the CUDA ABI revision.
+        Some(ELF_VERSION_CURRENT) => true,
+        // CUDA ABI 7 identifies the runtime-JIT-link format. CUDA 12 producers
+        // encode their toolkit release as major * 10 + minor in e_version;
+        // for example, cuobjdump renders 128 (0x80) as toolkit 12.8.
+        Some(version) if abi_version == CUDA_ABI_RUNTIME_JIT_LINK => {
+            CUDA_12_TOOLKIT_VERSIONS.contains(&version)
+        }
+        _ => false,
+    }
+}
+
 fn table_bounds(
     offset: u64,
     entry_size: u16,
@@ -252,5 +270,36 @@ mod tests {
         assert!(is_valid_cubin(&program_only_cubin(4)));
         assert!(!is_valid_cubin(&program_only_cubin(3)));
         assert!(!is_valid_cubin(b"\x7fELF"));
+    }
+
+    #[test]
+    fn accepts_cuda_12_runtime_jit_link_versions_without_weakening_other_abis() {
+        let mut cubin = minimal_cubin();
+        let cases: &[(u8, u32, bool)] = &[
+            (0, 1, true),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 1, true),
+            (8, 1, true),
+            (u8::MAX, 1, true),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 120, true),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 128, true),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 129, true),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 0, false),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 2, false),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 119, false),
+            (CUDA_ABI_RUNTIME_JIT_LINK, 130, false),
+            (CUDA_ABI_RUNTIME_JIT_LINK, u32::MAX, false),
+            (6, 128, false),
+            (8, 128, false),
+            (u8::MAX, 128, false),
+        ];
+        for &(abi_version, file_version, expected) in cases {
+            cubin[8] = abi_version;
+            cubin[20..24].copy_from_slice(&file_version.to_le_bytes());
+            assert_eq!(
+                is_valid_cubin(&cubin),
+                expected,
+                "ABI version {abi_version}, file version {file_version}"
+            );
+        }
     }
 }

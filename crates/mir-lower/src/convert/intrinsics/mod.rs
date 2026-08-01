@@ -82,6 +82,7 @@ pub mod dotprod;
 pub mod extended_minmax;
 pub mod ldmatrix;
 pub mod mbarrier;
+pub mod memory;
 pub mod packed;
 pub mod prmt;
 pub mod scalar_arithmetic;

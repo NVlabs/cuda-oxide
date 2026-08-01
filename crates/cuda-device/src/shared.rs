@@ -192,6 +192,34 @@ impl<T, const N: usize, const ALIGN: usize> SharedArray<T, N, ALIGN> {
     pub fn as_mut_ptr(&mut self) -> *mut T {
         unreachable!("SharedArray::as_mut_ptr called outside CUDA kernel context")
     }
+
+    /// Returns a mutable raw pointer to the shared memory array without
+    /// creating a Rust reference to the complete allocation.
+    ///
+    /// This is the appropriate entry point when multiple CUDA threads derive
+    /// disjoint raw pointers from one `static mut SharedArray`. Unlike
+    /// [`Self::as_mut_ptr`], the raw receiver does not require each thread to
+    /// create an overlapping `&mut SharedArray`.
+    ///
+    /// # Safety
+    ///
+    /// `shared` must point to a `static mut SharedArray` in the current CUDA
+    /// kernel, normally obtained with `&raw mut`. The returned pointer is valid
+    /// only within that kernel. Callers must keep concurrent accesses disjoint
+    /// and use the CUDA synchronization required before reading data written by
+    /// another thread.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// static mut SCRATCH: SharedArray<f32, 256> = SharedArray::UNINIT;
+    /// let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
+    /// ```
+    #[inline(never)]
+    pub unsafe fn as_raw_mut_ptr(shared: *mut Self) -> *mut T {
+        let _ = shared;
+        unreachable!("SharedArray::as_raw_mut_ptr called outside CUDA kernel context")
+    }
 }
 
 impl<T, const N: usize, const ALIGN: usize> Index<usize> for SharedArray<T, N, ALIGN> {
@@ -465,6 +493,37 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
         let _ = byte_offset;
         unreachable!("DynamicSharedArray::offset called outside CUDA kernel context")
     }
+}
+
+/// Convert a generic-address pointer into its raw `.shared` window offset.
+///
+/// The CUDA C++ `__cvta_generic_to_shared_offset` analog (PTX `cvta.to.shared`).
+/// Rust-visible pointer addresses (`ptr as usize`, `ptr::addr`) are CUDA
+/// generic addresses; hardware SMEM descriptors (WGMMA and tcgen05 matrix
+/// descriptors, whose low bits encode `(start_address >> 4) & 0x3FFF`) are
+/// defined on the space-local shared offset instead. Use this to derive
+/// descriptor base addresses; do not pass a raw `ptr as u64` there.
+///
+/// ```rust,ignore
+/// static mut SMEM_A: SharedArray<f16, 2048> = SharedArray::UNINIT;
+/// let base = unsafe { cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8) };
+/// let desc = build_smem_descriptor(base, LBO_BYTES, SBO_BYTES, SWIZZLE_NONE);
+/// ```
+///
+/// # Safety
+///
+/// `ptr` must be a generic pointer to shared memory (for example one
+/// derived from a `SharedArray` static). Converting a pointer that does not
+/// point into shared memory yields an unspecified offset.
+//
+// The importer intercepts calls by the exact rendered def-path
+// `cuda_device::shared::cvta_generic_to_shared_offset`. A `pub use` at the crate
+// root would change rustc's visible path for this item and silently break
+// interception, so import it through this module.
+#[inline(never)]
+pub unsafe fn cvta_generic_to_shared_offset(ptr: *const u8) -> u64 {
+    let _ = ptr;
+    unreachable!("cvta_generic_to_shared_offset called outside CUDA kernel context")
 }
 
 include!("generated/shared_sreg.rs");

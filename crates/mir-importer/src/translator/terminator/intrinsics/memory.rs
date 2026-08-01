@@ -199,6 +199,98 @@ pub fn emit_volatile_store(
     }
 }
 
+/// Emits `core::intrinsics::arith_offset::<T>(ptr, count) -> *const T`.
+///
+/// This intrinsic backs the safe wrapping raw-pointer offset methods. The
+/// explicit non-inbounds marker preserves wrapping semantics through LLVM
+/// lowering while retaining the source pointer's pointee type and address
+/// space.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_arith_offset(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::MirPtrOffsetOp;
+    use dialect_mir::types::MirPtrType;
+
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "arith_offset expects 2 arguments (ptr, count), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (ptr, op_after_ptr) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let ptr_type = ptr.get_type(ctx);
+    if ptr_type.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "arith_offset: expected pointer operand, got {:?}",
+                ptr_type.deref(ctx)
+            ))
+        );
+    }
+
+    let (count, op_after_count) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        op_after_ptr,
+        loc.clone(),
+    )?;
+    let offset = Operation::new(
+        ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![ptr_type],
+        vec![ptr, count],
+        vec![],
+        0,
+    );
+    offset.deref_mut(ctx).set_loc(loc.clone());
+    MirPtrOffsetOp::new(offset).set_inbounds(ctx, false);
+    if let Some(prev) = op_after_count {
+        offset.insert_after(ctx, prev);
+    } else {
+        offset.insert_at_front(block_ptr, ctx);
+    }
+
+    let result = offset.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        offset,
+        value_map,
+        block_map,
+        loc,
+        "arith_offset call without target block",
+    )
+}
+
 #[derive(Clone, Copy)]
 enum PtrOffsetFromResult {
     Signed,
@@ -626,14 +718,15 @@ pub fn emit_shared_array_index(
     )
 }
 
-/// Emits `SharedArray::as_ptr` or `as_mut_ptr` - returns pointer to shared memory.
+/// Emits a public `SharedArray` pointer conversion.
 ///
 /// This converts the shared memory address (addrspace 3) to a generic pointer (addrspace 0)
 /// following LLVM's opaque pointer model where generic pointers can hold any address space.
 ///
 /// # Arguments
 ///
-/// - `args[0]`: `&SharedArray<T, N>` - Reference to the shared memory array
+/// - `args[0]`: `&SharedArray<T, N>`, `&mut SharedArray<T, N>`, or
+///   `*mut SharedArray<T, N>` - pointer to the shared memory array
 ///
 /// # Returns
 ///
@@ -657,7 +750,7 @@ pub fn emit_shared_array_as_ptr(
         return input_err!(
             loc.clone(),
             TranslationErr::unsupported(
-                "SharedArray::as_ptr expects 1 argument (self), got 0".to_string(),
+                "SharedArray pointer conversion expects 1 argument, got 0".to_string(),
             )
         );
     }
@@ -684,7 +777,7 @@ pub fn emit_shared_array_as_ptr(
             return input_err!(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
-                    "SharedArray::as_ptr: expected MirPtrType, got {:?}",
+                    "SharedArray pointer conversion: expected MirPtrType, got {:?}",
                     shared_ptr_obj
                 ))
             );
@@ -725,7 +818,7 @@ pub fn emit_shared_array_as_ptr(
         value_map,
         block_map,
         loc,
-        "SharedArray::as_ptr call without target block",
+        "SharedArray pointer conversion call without target block",
     )
 }
 
@@ -990,5 +1083,79 @@ pub fn emit_dynamic_shared_offset(
         block_map,
         loc,
         "DynamicSharedArray::offset call without target block",
+    )
+}
+
+/// Emit `cuda_device::shared::cvta_generic_to_shared_offset(ptr) -> u64`.
+///
+/// Converts a generic-address pointer into its raw `.shared` window offset,
+/// the value hardware SMEM descriptors (WGMMA/tcgen05) encode. Mirrors CUDA
+/// C++'s `__cvta_generic_to_shared_offset`: the Rust-visible pointer stays generic,
+/// and this intrinsic is the explicit step into the space-local offset.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_cvta_generic_to_shared_offset(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_nvvm::ops::CvtaGenericToSharedOffsetOp;
+    use pliron::builtin::types::Signedness;
+
+    if args.len() != 1 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "cvta_generic_to_shared_offset expects 1 argument, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (ptr_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let cvta_op = Operation::new(
+        ctx,
+        CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![ptr_val],
+        vec![],
+        0,
+    );
+    cvta_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        cvta_op.insert_after(ctx, prev);
+    } else {
+        cvta_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = cvta_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        cvta_op,
+        value_map,
+        block_map,
+        loc,
+        "cvta_generic_to_shared_offset call without target block",
     )
 }

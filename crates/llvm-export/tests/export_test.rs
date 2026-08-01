@@ -16,9 +16,10 @@ use llvm_export::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
         DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourcePosition, DebugSourceScope,
         DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
-        GetElementPtrOp, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
+        GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
+        ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
-    types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
+    types::{ArrayType, FuncType, HalfType, PointerType, StructType, VoidType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -305,6 +306,46 @@ fn legacy_gep_rejects_a_result_address_space_different_from_its_base() {
 }
 
 #[test]
+fn gep_inbounds_marker_controls_exported_pointer_semantics() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "gep_semantics".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let pointer = PointerType::get(&ctx, 0);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.into(), vec![pointer.into()], false);
+    let func = FuncOp::new(&mut ctx, "offsets".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let base = entry.deref(&ctx).get_argument(0);
+
+    let ordinary = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(1)], i32_ty.into());
+    ordinary.get_operation().insert_at_back(entry, &ctx);
+
+    let wrapping = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(2)], i32_ty.into());
+    llvm_export::ops::set_gep_inbounds(&mut ctx, wrapping.get_operation(), false);
+    wrapping.get_operation().insert_at_back(entry, &ctx);
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("GEP export succeeds");
+    let gep_lines: Vec<_> = ir
+        .lines()
+        .filter(|line| line.contains("getelementptr"))
+        .collect();
+    assert_eq!(gep_lines.len(), 2, "{ir}");
+    assert!(gep_lines[0].contains("getelementptr inbounds"), "{ir}");
+    assert!(
+        gep_lines[1].contains("getelementptr i32")
+            && !gep_lines[1].contains("getelementptr inbounds"),
+        "{ir}"
+    );
+}
+
+#[test]
 fn legacy_pointer_select_keeps_one_canonical_type() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "legacy_pointer_select".try_into().unwrap());
@@ -483,6 +524,74 @@ fn exporter_deduplicates_identical_values_on_duplicate_conditional_edges() {
         .find(|line| line.contains(" = phi i32 "))
         .expect("destination block must contain a PHI");
     assert_eq!(phi.matches("%entry").count(), 1, "{phi}");
+}
+
+#[test]
+fn phi_can_reference_undef_from_a_later_block() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "later_undef_phi".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let func_ty = FuncType::get(
+        &ctx,
+        i32_ty.into(),
+        vec![i1_ty.into(), i32_ty.into()],
+        false,
+    );
+    let func = FuncOp::new(&mut ctx, "choose_undef".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let condition = entry.deref(&ctx).get_argument(0);
+    let fallback = entry.deref(&ctx).get_argument(1);
+    let region = func.get_operation().deref(&ctx).get_region(0);
+
+    // The join precedes both predecessors in print order, so its PHI depends
+    // on the exporter's whole-function value-name pre-pass.
+    let join = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    join.insert_at_back(region, &ctx);
+    let undef_block = BasicBlock::new(&mut ctx, None, vec![]);
+    undef_block.insert_at_back(region, &ctx);
+    let value_block = BasicBlock::new(&mut ctx, None, vec![]);
+    value_block.insert_at_back(region, &ctx);
+
+    CondBrOp::new(
+        &mut ctx,
+        condition,
+        undef_block,
+        vec![],
+        value_block,
+        vec![],
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    let undef = UndefOp::new(&mut ctx, i32_ty.into());
+    let undef_value = undef.get_operation().deref(&ctx).get_result(0);
+    undef.get_operation().insert_at_back(undef_block, &ctx);
+    BrOp::new(&mut ctx, join, vec![undef_value])
+        .get_operation()
+        .insert_at_back(undef_block, &ctx);
+    BrOp::new(&mut ctx, join, vec![fallback])
+        .get_operation()
+        .insert_at_back(value_block, &ctx);
+
+    let result = join.deref(&ctx).get_argument(0);
+    ReturnOp::new(&mut ctx, Some(result))
+        .get_operation()
+        .insert_at_back(join, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect("later-block undef must be available while exporting an earlier PHI");
+    assert!(
+        ir.lines()
+            .any(|line| line.contains(" = phi i32 ") && line.contains("[ undef,")),
+        "{ir}"
+    );
 }
 
 #[test]
@@ -1553,6 +1662,185 @@ fn initialized_globals_export_exact_bytes() {
             "repr(C) layout bytes changed:\n{ir}"
         );
     }
+}
+
+#[test]
+fn initialized_global_exports_static_pointer_relocation() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "static_relocation".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    // Insert the reference first. Module symbol indexing must make relocation
+    // resolution independent of textual global order.
+    let reference_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into()]);
+    let reference = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "reference".try_into().unwrap(),
+        reference_ty.into(),
+        8,
+    );
+    reference.set_address_space(&mut ctx, 1);
+    reference.set_source_global_key(&mut ctx, "REFERENCE");
+    reference.set_initializer_hex(&mut ctx, "0000000000000000");
+    let encoded = encode_global_initializer_relocations(&[GlobalInitializerRelocation {
+        source_offset: 0,
+        width_bytes: 8,
+        target_address_space: 1,
+        target_addend: 0,
+        target_key: "TARGET".to_string(),
+    }]);
+    reference.set_initializer_relocations(&mut ctx, &encoded);
+    reference.get_operation().insert_at_back(module_block, &ctx);
+
+    let target_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+    let target =
+        GlobalOp::new_with_alignment(&mut ctx, "target".try_into().unwrap(), target_ty.into(), 4);
+    target.set_address_space(&mut ctx, 1);
+    target.set_source_global_key(&mut ctx, "TARGET");
+    target.set_initializer_hex(&mut ctx, "78563412");
+    target.get_operation().insert_at_back(module_block, &ctx);
+
+    let modern = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("modern relocated initializer export succeeds");
+    assert!(
+        modern.contains(
+            "@reference = addrspace(1) global { i64 } { i64 ptrtoint (ptr addrspacecast (ptr addrspace(1) @target to ptr) to i64) }, align 8"
+        ),
+        "{modern}"
+    );
+
+    let legacy = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect("legacy relocated initializer export succeeds");
+    assert!(
+        legacy.contains(
+            "@reference = addrspace(1) global { i64 } { i64 ptrtoint (i8* addrspacecast (i8 addrspace(1)* bitcast ([4 x i8] addrspace(1)* @target to i8 addrspace(1)*) to i8*) to i64) }, align 8"
+        ),
+        "{legacy}"
+    );
+}
+
+#[test]
+fn initialized_global_exports_multiple_relocations_and_addends() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "multiple_static_relocations".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    let target_a_ty = ArrayType::get(&ctx, i8_ty.into(), 16);
+    let target_a = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "target_a".try_into().unwrap(),
+        target_a_ty.into(),
+        8,
+    );
+    target_a.set_address_space(&mut ctx, 1);
+    target_a.set_source_global_key(&mut ctx, "TARGET_A");
+    target_a.set_initializer_hex(&mut ctx, "000102030405060708090a0b0c0d0e0f");
+    target_a.get_operation().insert_at_back(module_block, &ctx);
+
+    let target_b_ty = ArrayType::get(&ctx, i8_ty.into(), 8);
+    let target_b = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "target_b".try_into().unwrap(),
+        target_b_ty.into(),
+        8,
+    );
+    target_b.set_address_space(&mut ctx, 4);
+    target_b.set_source_global_key(&mut ctx, "TARGET_B");
+    target_b.set_initializer_hex(&mut ctx, "1011121314151617");
+    target_b.get_operation().insert_at_back(module_block, &ctx);
+
+    let table_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into(), i64_ty.into()]);
+    let table = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "reference_table".try_into().unwrap(),
+        table_ty.into(),
+        8,
+    );
+    table.set_address_space(&mut ctx, 1);
+    table.set_source_global_key(&mut ctx, "REFERENCE_TABLE");
+    table.set_initializer_hex(&mut ctx, "00000000000000000000000000000000");
+    let encoded = encode_global_initializer_relocations(&[
+        GlobalInitializerRelocation {
+            source_offset: 0,
+            width_bytes: 8,
+            target_address_space: 1,
+            target_addend: 4,
+            target_key: "TARGET_A".to_string(),
+        },
+        GlobalInitializerRelocation {
+            source_offset: 8,
+            width_bytes: 8,
+            target_address_space: 4,
+            target_addend: 0,
+            target_key: "TARGET_B".to_string(),
+        },
+    ]);
+    table.set_initializer_relocations(&mut ctx, &encoded);
+    table.get_operation().insert_at_back(module_block, &ctx);
+
+    for dialect in [NvvmIrDialect::Modern, NvvmIrDialect::LegacyLlvm7] {
+        let ir =
+            export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::new(dialect))
+                .expect("relocated initializer export succeeds");
+        assert!(
+            ir.contains("@reference_table = addrspace(1) global { i64, i64 }"),
+            "{ir}"
+        );
+        assert!(ir.contains("getelementptr (i8"), "{ir}");
+        assert!(ir.contains("@target_a"), "{ir}");
+        assert!(ir.contains("@target_b"), "{ir}");
+        assert!(!ir.contains("inttoptr"), "{ir}");
+    }
+}
+
+#[test]
+fn initialized_global_relocation_rejects_unknown_target_key() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "unknown_relocation_target".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let reference_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into()]);
+    let reference = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "reference".try_into().unwrap(),
+        reference_ty.into(),
+        8,
+    );
+    reference.set_address_space(&mut ctx, 1);
+    reference.set_source_global_key(&mut ctx, "REFERENCE");
+    reference.set_initializer_hex(&mut ctx, "0000000000000000");
+    let encoded = encode_global_initializer_relocations(&[GlobalInitializerRelocation {
+        source_offset: 0,
+        width_bytes: 8,
+        target_address_space: 1,
+        target_addend: 0,
+        target_key: "MISSING".to_string(),
+    }]);
+    reference.set_initializer_relocations(&mut ctx, &encoded);
+    reference.get_operation().insert_at_back(module_block, &ctx);
+
+    let error = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect_err("unknown relocation target must fail");
+    assert!(
+        error.contains("unknown rustc global key `MISSING`"),
+        "{error}"
+    );
 }
 
 #[test]
