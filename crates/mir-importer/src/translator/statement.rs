@@ -670,40 +670,24 @@ pub fn translate_statement(
                         )
                     }
                     (
-                        mir::ProjectionElem::Index(_outer_index_local),
-                        mir::ProjectionElem::Index(_inner_index_local),
+                        mir::ProjectionElem::Index(_) | mir::ProjectionElem::ConstantIndex { .. },
+                        mir::ProjectionElem::Index(_) | mir::ProjectionElem::ConstantIndex { .. },
                     ) => {
-                        // `_local[i][j] = value` for nested arrays. The shared
-                        // walk-and-store path already handles chained runtime
-                        // indexes, so delegate to it instead of re-deriving the
-                        // address here. That keeps this 2-level arm from drifting
-                        // from the (Deref, Index) arm above and the N-projection
-                        // fallback below, which use the same helper. The store
-                        // target of an assignment is always a mutable place, so
-                        // the helper's mutable-address request is correct here.
-                        store_through_place_address(
-                            ctx,
-                            body,
-                            value_map,
-                            place,
-                            result_value,
-                            rvalue_op_opt,
-                            last_inserted,
-                            prev_op,
-                            block_ptr,
-                            loc,
-                        )
-                    }
-                    (
-                        mir::ProjectionElem::ConstantIndex {
-                            from_end: false, ..
-                        },
-                        mir::ProjectionElem::Index(_),
-                    ) => {
-                        // `_local[CONST][j] = value` for nested arrays. The shared
-                        // address walker already handles a forward constant index
-                        // followed by a runtime index, so delegate the complete
-                        // destination place instead of duplicating address logic.
+                        // Nested array element assignment with any mix of
+                        // runtime and constant indexes: `_local[i][j]`,
+                        // `_local[CONST][j]`, `_local[i][CONST]`, or
+                        // `_local[CONST][CONST]` (the last two arise when GVN
+                        // or user code fixes one level). The shared
+                        // walk-and-store path already handles chained indexes
+                        // of either kind, so delegate to it instead of
+                        // re-deriving the address here. That keeps this
+                        // 2-level arm from drifting from the (Deref, Index)
+                        // arm above and the N-projection fallback below,
+                        // which use the same helper. The store target of an
+                        // assignment is always a mutable place, so the
+                        // helper's mutable-address request is correct here.
+                        // `ConstantIndex { from_end: true, .. }` is rejected
+                        // loudly by the walker itself.
                         store_through_place_address(
                             ctx,
                             body,
