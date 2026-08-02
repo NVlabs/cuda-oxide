@@ -226,9 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     if (result[2] - 1.0).abs() >= f32::EPSILON {
-        eprintln!(
-            "FAIL addressof_sharedarray: nested shared pointer enum did not round-trip"
-        );
+        eprintln!("FAIL addressof_sharedarray: nested shared pointer enum did not round-trip");
         std::process::exit(1);
     }
     if (result[3] - 1.0).abs() >= f32::EPSILON {
