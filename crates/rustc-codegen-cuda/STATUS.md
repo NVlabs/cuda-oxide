@@ -15,7 +15,7 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | :------------------------------------ | :------------------ | :---------------------------------- |
 | `error`                               | diagnostics-fixture | `core::fmt` reachable from device   |
 | `error_enum_pointer_overlap`          | support-gap         | Overlaid pointer/integer payload    |
-| `error_enum_shared_pointer_layout`    | support-gap         | Nested AS3 pointer representation   |
+| `error_enum_shared_pointer_layout`    | support-gap         | AS3 pointer arrays/vectors in enums |
 | `error_generated_intrinsic_abi`       | diagnostics-fixture | Unsupported raw intrinsic ABI       |
 | `error_generated_intrinsic_callable`  | diagnostics-fixture | Raw intrinsic passed through `Fn`   |
 | `error_generated_intrinsic_fn_pointer`| diagnostics-fixture | Raw intrinsic made into `fn` pointer|
@@ -40,12 +40,10 @@ a drop is either proven unobservable or its call is emitted.
 The remaining enum storage fixtures deliberately fail closed. Pointer and
 integer payloads cannot share one lowered slot without erasing LLVM pointer
 provenance. Shared-memory pointers are 64 bits in PTX and legacy NVVM output
-but 32 bits in modern NVVM output. A direct enum payload can use a target-stable
-generic pointer slot, but a pointer nested inside an aggregate would require
-recursively rebuilding that aggregate at construction and extraction
-boundaries. Accepting the nested case without that conversion would risk
-generating wrong code, so it remains rejected. (Bools nested in aggregate
-payloads are no longer in this list: enum storage claims each payload's
-byte-faithful twin and construction zero-extends every `i1` leaf into its
-canonical memory byte, so `Option<struct { u32, bool }>` and related layouts
-are supported.)
+but 32 bits in modern NVVM output. Direct fields and pointer leaves nested
+through structs/tuples use target-stable generic physical storage, with
+recursive reconstruction at enum construction and extraction boundaries.
+Arrays and vectors containing shared pointers remain rejected: arrays need an
+explicit expansion bound and code-shape contract, while pointer vectors need
+separate ABI and address-space-cast semantics. (Bool leaves use canonical i8
+physical bytes and are converted recursively at the same boundary.)

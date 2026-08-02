@@ -36,6 +36,7 @@
 //! instead uses rustc's wrapping `niche_start + variant_offset` encoding and
 //! introduces no extra tag.
 
+use crate::convert::enum_payload_storage::{coerce_enum_payload_value, enum_payload_storage_type};
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
     build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
@@ -895,43 +896,18 @@ fn canonicalize_bool_value_bytes(
     Ok(current)
 }
 
-/// Adapt a semantic enum payload pointer to or from its physical storage
-/// address space.
+/// Adapt a semantic enum payload value to or from its physical storage type.
 ///
-/// Direct shared-pointer payloads use a generic pointer slot so their enum
-/// representation remains 64-bit under both legacy PTX and modern NVVM. All
-/// other type mismatches remain errors; rebuilding nested pointer-bearing
-/// aggregates is deliberately outside this narrow boundary conversion.
-fn coerce_enum_payload_pointer(
+/// Shared pointer leaves are converted through CUDA generic space recursively
+/// through struct/tuple payloads. Bool leaves are canonicalized separately on
+/// construction and narrowed recursively on extraction.
+fn coerce_enum_payload_storage(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     value: Value,
     target_ty: TypeHandle,
 ) -> Result<Value> {
-    let source_ty = value.get_type(ctx);
-    if source_ty == target_ty {
-        return Ok(value);
-    }
-
-    let source_address_space = source_ty
-        .deref(ctx)
-        .downcast_ref::<llvm_types::PointerType>()
-        .map(|pointer| pointer.address_space());
-    let target_address_space = target_ty
-        .deref(ctx)
-        .downcast_ref::<llvm_types::PointerType>()
-        .map(|pointer| pointer.address_space());
-    if source_address_space.is_none() || target_address_space.is_none() {
-        return pliron::input_err_noloc!(
-            "enum payload storage type mismatch: {} cannot be adapted to {}",
-            source_ty.deref(ctx).disp(ctx),
-            target_ty.deref(ctx).disp(ctx)
-        );
-    }
-
-    let cast = llvm::AddrSpaceCastOp::new(ctx, value, target_ty);
-    rewriter.insert_operation(ctx, cast.get_operation());
-    Ok(cast.get_operation().deref(ctx).get_result(0))
+    coerce_enum_payload_value(ctx, rewriter, value, target_ty)
 }
 
 /// Convert `mir.construct_enum` (e.g. `E::A(x)`) to LLVM operations.
@@ -1046,7 +1022,7 @@ pub(crate) fn convert_construct_enum(
                     storage_struct.field_type(storage_slot)
                 };
                 let stored_operand =
-                    coerce_enum_payload_pointer(ctx, rewriter, operand, storage_ty)?;
+                    coerce_enum_payload_storage(ctx, rewriter, operand, storage_ty)?;
                 let insert_op =
                     llvm::InsertValueOp::new(ctx, current_struct, stored_operand, vec![*slot]);
                 rewriter.insert_operation(ctx, insert_op.get_operation());
@@ -1080,7 +1056,11 @@ pub(crate) fn convert_construct_enum(
         // bool-bearing payload (scalar i8 byte, or an aggregate with each
         // i1 leaf widened to i8), so canonicalize the stored value to that
         // twin: every physical bool byte becomes an unambiguous 0 or 1.
-        let stored_operand = canonicalize_bool_value_bytes(ctx, rewriter, operand)?;
+        let semantic_ty = slot_map.field_llvm_types[flat];
+        let storage_ty = enum_payload_storage_type(ctx, semantic_ty).map_err(anyhow_to_pliron)?;
+        let canonical_operand = canonicalize_bool_value_bytes(ctx, rewriter, operand)?;
+        let stored_operand =
+            coerce_enum_payload_storage(ctx, rewriter, canonical_operand, storage_ty)?;
         let store_op = llvm::StoreOp::new(ctx, stored_operand, field_ptr);
         rewriter.insert_operation(ctx, store_op.get_operation());
     }
@@ -1404,7 +1384,7 @@ pub(crate) fn convert_enum_payload(
             let extract_op = llvm::ExtractValueOp::new(ctx, enum_val, vec![slot])?;
             rewriter.insert_operation(ctx, extract_op.get_operation());
             let extracted = extract_op.get_operation().deref(ctx).get_result(0);
-            let semantic_value = coerce_enum_payload_pointer(
+            let semantic_value = coerce_enum_payload_storage(
                 ctx,
                 rewriter,
                 extracted,
@@ -1421,9 +1401,14 @@ pub(crate) fn convert_enum_payload(
             let slot_ptr =
                 spill_enum_value(ctx, rewriter, enum_val, slot_map.llvm_struct_ty, abi_align);
             let field_ptr = enum_byte_gep(ctx, rewriter, slot_ptr, slot_map.field_offsets[flat]);
-            let load_op = llvm::LoadOp::new(ctx, field_ptr, slot_map.field_llvm_types[flat]);
+            let semantic_ty = slot_map.field_llvm_types[flat];
+            let storage_ty =
+                enum_payload_storage_type(ctx, semantic_ty).map_err(anyhow_to_pliron)?;
+            let load_op = llvm::LoadOp::new(ctx, field_ptr, storage_ty);
             rewriter.insert_operation(ctx, load_op.get_operation());
-            rewriter.replace_operation(ctx, op, load_op.get_operation());
+            let stored = load_op.get_operation().deref(ctx).get_result(0);
+            let semantic = coerce_enum_payload_storage(ctx, rewriter, stored, semantic_ty)?;
+            rewriter.replace_operation_with_values(ctx, op, vec![semantic]);
         }
     }
 
@@ -2558,6 +2543,97 @@ mod tests {
             count_ops::<llvm::PtrToIntOp>(&ctx, &body),
             1,
             "niche discrimination must inspect the generic pointer carrier"
+        );
+        assert_eq!(count_ops::<MirConstructEnumOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<MirEnumPayloadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn nested_shared_pointer_payload_round_trips_through_recursive_storage() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, true).into();
+        let inner: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "SharedPointerInner".into(),
+            vec!["pointer".into(), "cookie".into()],
+            vec![shared, logical],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "SharedPointerOuter".into(),
+            vec!["inner".into(), "guard".into()],
+            vec![inner, logical],
+            vec![0, 1],
+            vec![0, 16],
+            24,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "NestedSharedPointer".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![outer], vec![8], vec![24]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 32,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![outer], vec![outer]);
+        let wrapper = block.deref(&ctx).get_argument(0);
+        let construct = Operation::new(
+            &mut ctx,
+            MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![wrapper],
+            vec![],
+            0,
+        );
+        MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(1));
+        construct.insert_at_back(block, &ctx);
+        let option = construct.deref(&ctx).get_result(0);
+
+        let payload = Operation::new(
+            &mut ctx,
+            MirEnumPayloadOp::get_concrete_op_info(),
+            vec![outer],
+            vec![option],
+            vec![],
+            0,
+        );
+        let payload_op = MirEnumPayloadOp::new(payload);
+        payload_op.set_attr_payload_variant_index(&ctx, VariantIndexAttr(1));
+        payload_op.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+        payload.insert_at_back(block, &ctx);
+        let result = payload.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            2,
+            "construction and extraction must cast the nested shared pointer leaf"
         );
         assert_eq!(count_ops::<MirConstructEnumOp>(&ctx, &body), 0);
         assert_eq!(count_ops::<MirEnumPayloadOp>(&ctx, &body), 0);

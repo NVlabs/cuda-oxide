@@ -20,9 +20,10 @@
 //! back into the shared space through the generic space, so the
 //! expose/recover round trip stores through the recovered pointer.
 //!
-//! It also constructs and matches a direct enum payload containing that shared
-//! pointer. The enum's physical storage must stay 64-bit even when modern NVVM
-//! uses a 32-bit representation for semantic shared-space pointers.
+//! It also constructs and matches an enum payload containing a shared pointer
+//! nested through two ordinary Rust structs. The enum's physical storage must
+//! recursively replace the semantic shared pointer leaf with a target-stable
+//! generic pointer, then restore address space 3 when extracting the payload.
 //!
 //! Finally the kernel validates `SharedArray::as_raw_mut_ptr`: 32 threads
 //! derive pointers from one raw shared-array address, write disjoint elements,
@@ -43,9 +44,19 @@ use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, SharedArray, device, kernel, thread};
 use cuda_host::{cuda_module, ltoir};
 
+struct SharedPointerInner {
+    pointer: *mut SharedArray<f32, 1>,
+    cookie: usize,
+}
+
+struct SharedPointerOuter {
+    inner: SharedPointerInner,
+    guard: u32,
+}
+
 enum SharedPointerPayload {
     Empty,
-    Pointer(*mut SharedArray<f32, 1>),
+    Pointer(SharedPointerOuter),
 }
 
 #[cuda_module]
@@ -53,19 +64,32 @@ mod kernels {
     use super::*;
 
     const THREADS: usize = 32;
+    const ENUM_COOKIE: usize = 0xC0DE;
+    const ENUM_GUARD: u32 = 0xA55A;
 
     #[inline(never)]
     #[device]
     fn shared_pointer_enum_address(use_pointer: bool, pointer: *mut SharedArray<f32, 1>) -> usize {
         let payload = if use_pointer {
-            SharedPointerPayload::Pointer(pointer)
+            SharedPointerPayload::Pointer(SharedPointerOuter {
+                inner: SharedPointerInner {
+                    pointer,
+                    cookie: ENUM_COOKIE,
+                },
+                guard: ENUM_GUARD,
+            })
         } else {
             SharedPointerPayload::Empty
         };
 
         match payload {
             SharedPointerPayload::Empty => 0,
-            SharedPointerPayload::Pointer(extracted) => extracted.addr(),
+            SharedPointerPayload::Pointer(extracted)
+                if extracted.inner.cookie == ENUM_COOKIE && extracted.guard == ENUM_GUARD =>
+            {
+                extracted.inner.pointer.addr()
+            }
+            SharedPointerPayload::Pointer(_) => 0,
         }
     }
 
@@ -92,9 +116,10 @@ mod kernels {
                     1.0
                 };
 
-                // A direct enum payload keeps the pointer's shared-space
-                // semantics while using target-stable generic physical
-                // storage. The runtime condition keeps construction,
+                // The enum payload nests the shared pointer through two
+                // structs. Lowering recursively rebuilds the payload with a
+                // generic physical pointer, then restores shared space during
+                // extraction. The runtime condition keeps construction,
                 // discriminant inspection, and extraction observable.
                 let enum_address = shared_pointer_enum_address(seed != 0.0, raw);
                 *out.get_unchecked_mut(2) = if enum_address == raw_address {
@@ -201,7 +226,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     if (result[2] - 1.0).abs() >= f32::EPSILON {
-        eprintln!("FAIL addressof_sharedarray: shared pointer enum did not round-trip");
+        eprintln!(
+            "FAIL addressof_sharedarray: nested shared pointer enum did not round-trip"
+        );
         std::process::exit(1);
     }
     if (result[3] - 1.0).abs() >= f32::EPSILON {
@@ -211,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     println!(
-        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, shared pointer enum round-tripped, integer address cast back to the shared pointer",
+        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, nested shared pointer enum round-tripped, integer address cast back to the shared pointer",
         result[0]
     );
 

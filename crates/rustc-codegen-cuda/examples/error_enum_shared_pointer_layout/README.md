@@ -1,16 +1,16 @@
 # `error_enum_shared_pointer_layout`
 
-Negative test for `Option<SharedPointerWrapper>`, where the wrapper contains a
-`&SharedArray<...>`.
+Negative test for `Option<SharedPointerArrayWrapper>`, where the wrapper contains
+an array of two `&SharedArray<...>` values.
 
-Shared-memory pointers use different LLVM storage widths depending on output
-mode: 64 bits in the ordinary PTX and legacy NVVM layouts, but 32 bits in the
-modern NVVM layout. A direct enum pointer field can use generic physical
-storage, but a nested aggregate would have to be rebuilt recursively to replace
-its semantic shared pointer with that target-stable representation.
+Direct shared-pointer enum fields and shared pointers nested through ordinary
+structs/tuples use target-stable CUDA generic physical storage. Arrays remain a
+separate boundary because value conversion would emit one extraction, address-
+space cast, and insertion sequence per element. That expansion needs an explicit
+bound and code-shape contract before it can be accepted safely.
 
-The compiler must reject this nested shape instead of silently leaving half of
-its payload undefined:
+The compiler must reject the array shape instead of retaining target-dependent
+address-space-3 pointer storage:
 
 ```bash
 cargo oxide build error_enum_shared_pointer_layout
@@ -21,5 +21,5 @@ cargo oxide build error_enum_shared_pointer_layout --emit-nvvm-ir --arch sm_100
 Expected diagnostic:
 
 ```text
-contains a nested shared-memory pointer whose size is target-mode dependent
+arrays containing shared-memory pointers are not supported
 ```

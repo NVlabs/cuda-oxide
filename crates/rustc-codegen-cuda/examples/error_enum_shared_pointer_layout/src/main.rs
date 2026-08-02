@@ -3,22 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Negative test: enum storage containing a shared-memory pointer nested in an
-//! aggregate must fail closed until lowering can rebuild that aggregate with a
-//! target-stable physical pointer representation.
+//! Negative test: enum storage containing an array of shared-memory pointers
+//! must fail closed until lowering has a bounded, code-shape-reviewed array
+//! reconstruction strategy.
 
 use cuda_device::{SharedArray, kernel};
 
 static mut SHARED: SharedArray<u32, 1> = SharedArray::UNINIT;
 
-struct SharedPointerWrapper {
-    pointer: &'static SharedArray<u32, 1>,
+struct SharedPointerArrayWrapper {
+    pointers: [&'static SharedArray<u32, 1>; 2],
 }
 
 #[inline(never)]
-fn pointer_bits(value: Option<SharedPointerWrapper>) -> u64 {
+fn pointer_bits(value: Option<SharedPointerArrayWrapper>) -> u64 {
     value.map_or(0, |wrapper| {
-        wrapper.pointer as *const SharedArray<u32, 1> as u64
+        wrapper.pointers[0] as *const SharedArray<u32, 1> as u64
     })
 }
 
@@ -31,7 +31,9 @@ pub unsafe fn shared_pointer_enum(out: *mut u64) {
     let shared_ptr: *const SharedArray<u32, 1> = &raw const SHARED;
     let shared: &'static SharedArray<u32, 1> = unsafe { &*shared_ptr };
     unsafe {
-        *out = pointer_bits(Some(SharedPointerWrapper { pointer: shared }));
+        *out = pointer_bits(Some(SharedPointerArrayWrapper {
+            pointers: [shared, shared],
+        }));
     }
 }
 

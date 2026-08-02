@@ -110,6 +110,7 @@ use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
 use pliron::r#type::{TypeHandle, type_cast};
 
+use super::enum_payload_storage::enum_payload_storage_type;
 use crate::type_conversion_interface::MirTypeConversion;
 
 // =============================================================================
@@ -1454,36 +1455,14 @@ pub(crate) fn build_enum_slot_map(
             continue;
         }
         let llvm_ty = field_llvm_types[flat];
-        let is_direct_shared_pointer = llvm_ty
-            .deref(ctx)
-            .downcast_ref::<llvm_types::PointerType>()
-            .is_some_and(|pointer| pointer.address_space() == llvm_types::address_space::SHARED);
-        if !is_direct_shared_pointer
-            && llvm_type_contains_pointer_in_address_space(
-                ctx,
-                llvm_ty,
-                llvm_types::address_space::SHARED,
-            )
-        {
-            return Err(anyhow::anyhow!(
-                "enum slot map: `{}` field {} contains a nested shared-memory pointer whose size is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM); refusing target-agnostic enum lowering",
-                name,
-                flat
-            ));
-        }
-        // A raw shared pointer is 32-bit in modern NVVM but Rust's logical
-        // pointer layout is 64-bit. Store it in the enum as a CUDA generic
-        // pointer, whose representation includes the memory-space identity
-        // and is 64-bit in every supported target mode. Enum construction
-        // and payload extraction insert the address-space casts at the value
-        // boundary. Nested aggregates still fail closed above because their
-        // pointer leaves cannot be retagged without rebuilding the aggregate.
-        let physical_ty: TypeHandle = if is_direct_shared_pointer {
-            llvm_types::PointerType::get_generic(ctx).into()
-        } else {
-            llvm_ty
-        };
-        let (size, align) = llvm_type_size_align(ctx, physical_ty).ok_or_else(|| {
+        // Enum payload storage uses one target-stable physical view. Shared
+        // pointer leaves become generic pointers recursively through LLVM
+        // structs (MIR structs/tuples), while bool leaves become canonical i8
+        // bytes. Unsupported pointer arrays/vectors fail closed here.
+        let storage_ty = enum_payload_storage_type(ctx, llvm_ty).map_err(|error| {
+            anyhow::anyhow!("enum slot map: `{}` field {}: {error}", name, flat)
+        })?;
+        let (size, align) = llvm_type_size_align(ctx, storage_ty).ok_or_else(|| {
             anyhow::anyhow!(
                 "enum slot map: `{}` field {} has unsupported LLVM size/alignment",
                 name,
@@ -1582,18 +1561,11 @@ pub(crate) fn build_enum_slot_map(
         // construction canonicalizes the value and writes it at its byte
         // offset; extraction re-loads the original type from the canonical
         // bytes, exactly like the scalar-bool path above.
-        let storage_ty = if llvm_type_contains_i1(ctx, llvm_ty) {
-            llvm_byte_faithful_twin(ctx, llvm_ty).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "enum slot map: `{}` field {} contains bool storage in a shape (e.g. an i1 vector) whose memory bytes cannot be canonicalized",
-                    name,
-                    flat
-                )
-            })?
-        } else {
-            physical_ty
-        };
-        let field_gets_slot = storage_ty == llvm_ty || is_direct_shared_pointer;
+        // Bool-bearing aggregates remain slotless so their canonical byte view
+        // continues through the established spill path. Pointer-only nested
+        // aggregates may own a slot because construction/extraction now rebuild
+        // them recursively at the semantic/physical boundary.
+        let field_gets_slot = !llvm_type_contains_i1(ctx, llvm_ty);
 
         // Another variant already placed the same storage type at the same
         // position? Then both fields can simply use that claim: variants
@@ -3276,7 +3248,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_still_rejects_nested_shared_pointer_payload() {
+    fn enum_slot_map_genericizes_nested_shared_pointer_payload() {
         let mut ctx = make_ctx();
         let discr = mir_uint(&mut ctx, 32);
         let u32_ty = mir_uint(&mut ctx, 32);
@@ -3314,11 +3286,77 @@ mod tests {
         )
         .into();
 
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a struct-nested shared pointer should use generic physical storage");
+        let field_slot = map.field_slots[0].expect("nested payload should own a slot");
+        let stored_ty = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .map(|struct_ty| struct_ty.field_type(field_slot as usize))
+            .expect("field slot must exist");
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::GENERIC
+            ),
+            "physical nested payload must contain a generic pointer"
+        );
+        assert!(
+            !llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::SHARED
+            ),
+            "physical nested payload must not retain the target-dependent AS3 pointer"
+        );
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                map.field_llvm_types[0],
+                llvm_types::address_space::SHARED
+            ),
+            "semantic payload type must retain shared address-space semantics"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_shared_pointer_array_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let pointers: TypeHandle = MirArrayType::get(&mut ctx, shared, 2).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "SharedPointerArrayPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Pointers".into(), vec![pointers], vec![8], vec![16]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 24,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
         let error = build_enum_slot_map(&mut ctx, enum_ty)
             .err()
-            .expect("nested shared-pointer payloads remain target-mode dependent");
+            .expect("arrays of shared pointers remain an explicit boundary");
         assert!(
-            error.to_string().contains("nested shared-memory pointer"),
+            error
+                .to_string()
+                .contains("arrays containing shared-memory pointers are not supported"),
             "{error}"
         );
     }
