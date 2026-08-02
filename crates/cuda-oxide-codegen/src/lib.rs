@@ -27,6 +27,7 @@ mod options;
 mod pipeline;
 mod prep;
 mod ptx;
+mod small_local_array_scalarization;
 mod target;
 mod verify;
 

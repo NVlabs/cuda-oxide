@@ -1,0 +1,18 @@
+[package]
+name = "array_iterator_adapters"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Regression example for issue #399.
+#
+# Run with:
+#   CUDA_OXIDE_MIR_OPTS=small-array-iterators \
+#     cargo oxide run array_iterator_adapters
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

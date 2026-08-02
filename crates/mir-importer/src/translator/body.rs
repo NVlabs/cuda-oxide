@@ -1094,6 +1094,15 @@ pub fn translate_body(
         }
     };
 
+    let small_array_iterators_enabled = super::small_array_iterators::enabled();
+    let bounded_unrolls = super::small_array_iterators::detect(body, &reachable, num_args);
+
+    if std::env::var_os("CUDA_OXIDE_VERBOSE").is_some() {
+        eprintln!(
+            "small-array-iterators: enabled={small_array_iterators_enabled}, debug={debug_kind:?}, hints={bounded_unrolls:?}"
+        );
+    }
+
     for arg_idx in 0..num_args {
         // MIR local index for arguments: local 1, 2, 3, ... (0 is return value)
         let local = mir::Local::from(arg_idx + 1);
@@ -1415,6 +1424,7 @@ pub fn translate_body(
             &mut value_map,
             &block_map,
             &rustc_mono_successors[idx],
+            bounded_unrolls.get(&idx).copied(),
             legaliser,
             entry_prev_op,
         )?;

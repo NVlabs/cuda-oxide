@@ -521,6 +521,57 @@ impl Verify for MirUnrollHintOp {
     }
 }
 
+/// A compiler-proven upper bound for a loop whose ordinary trip count remains
+/// runtime-dependent.
+///
+/// The rustc-MIR importer plants this marker in the block containing
+/// `Iterator::next` after proving that the iterator is rooted in a
+/// compiler-owned local `[T; N]` and passes only through the supported
+/// cardinality-preserving or cardinality-reducing adapters.
+///
+/// `max_iterations` is the maximum number of `Some` values the iterator can
+/// return. The bounded unroller emits one additional guard copy so the terminal
+/// `next() -> None` still executes and ordinary iterator state is preserved.
+#[pliron_op(
+    name = "mir.bounded_unroll_hint",
+    format,
+    interfaces = [
+        pliron::builtin::op_interfaces::NOpdsInterface<0>,
+        pliron::builtin::op_interfaces::NResultsInterface<0>,
+    ],
+    attributes = (max_iterations: UnrollAttr)
+)]
+pub struct MirBoundedUnrollHintOp;
+
+impl MirBoundedUnrollHintOp {
+    /// Create a bounded-loop marker.
+    pub fn new(ctx: &mut Context, max_iterations: u32) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
+        let hint = MirBoundedUnrollHintOp { op };
+        hint.set_attr_max_iterations(ctx, UnrollAttr(max_iterations));
+        hint
+    }
+
+    /// Maximum number of successful loop iterations.
+    pub fn max_iterations(&self, ctx: &Context) -> u32 {
+        self.get_attr_max_iterations(ctx)
+            .map(|attribute| attribute.0)
+            .unwrap_or(0)
+    }
+}
+
+impl Verify for MirBoundedUnrollHintOp {
+    fn verify(&self, ctx: &Context) -> pliron::result::Result<()> {
+        if self.max_iterations(ctx) == 0 {
+            return verify_err!(
+                self.get_operation().deref(ctx).loc(),
+                "MirBoundedUnrollHintOp requires a non-zero maximum iteration count"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Register control flow operations into the given context.
 pub fn register(ctx: &mut Context) {
     MirReturnOp::register(ctx);
@@ -529,4 +580,5 @@ pub fn register(ctx: &mut Context) {
     MirAssertOp::register(ctx);
     MirUnreachableOp::register(ctx);
     MirUnrollHintOp::register(ctx);
+    MirBoundedUnrollHintOp::register(ctx);
 }

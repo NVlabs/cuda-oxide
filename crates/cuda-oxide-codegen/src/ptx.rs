@@ -126,71 +126,144 @@ fn optimize_ll(
     let Some(opt) = toolchain.opt.as_ref() else {
         if strict {
             return Err(PipelineError::Optimization(
-            "optimization was requested, but no `opt` matching the selected `llc` is available; \
-             install the matching LLVM tools or explicitly disable optimization"
-                .to_string(),
+                "optimization was requested, but no `opt` matching the selected `llc` is available; \
+                 install the matching LLVM tools or explicitly disable optimization"
+                    .to_string(),
             ));
         }
         return Ok((None, Vec::new()));
     };
 
-    let optimization_args = optimization_args(public_symbols)?;
-
+    let initial_args = optimization_args(public_symbols)?;
     let opt_ll = ll_path.with_extension("opt.ll");
-    match std::process::Command::new(&opt.path)
-        .args(&optimization_args)
-        .arg(ll_path)
-        .arg("-S")
-        .arg("-o")
-        .arg(&opt_ll)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let diagnostics = opts
-                .verbose
-                .then(|| {
-                    format!(
-                        "opt {} via {}: {}",
-                        optimization_args.join(" "),
-                        opt.path,
-                        opt_ll.display()
-                    )
-                })
-                .into_iter()
-                .collect();
-            Ok((Some(opt_ll), diagnostics))
+
+    if !crate::small_local_array_scalarization::enabled() {
+        return match run_opt_stage(&opt.path, &initial_args, ll_path, &opt_ll) {
+            Ok(()) => {
+                let diagnostics = opts
+                    .verbose
+                    .then(|| {
+                        format!(
+                            "opt {} via {}: {}",
+                            initial_args.join(" "),
+                            opt.path,
+                            opt_ll.display()
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                Ok((Some(opt_ll), diagnostics))
+            }
+            Err(message) if strict => Err(PipelineError::Optimization(message)),
+            Err(message) => Ok((
+                None,
+                vec![format!(
+                    "warning: {message}\nwarning: continuing with unoptimized IR"
+                )],
+            )),
+        };
+    }
+
+    // The iterator helpers must be inlined before pointer provenance can tie
+    // `slice::Iter::{next,nth}` back to the kernel-owned fixed array.
+    let pre_scalar_ll = ll_path.with_extension("pre-scalar.ll");
+    if let Err(message) = run_opt_stage(&opt.path, &initial_args, ll_path, &pre_scalar_ll) {
+        if strict {
+            return Err(PipelineError::Optimization(message));
         }
-        Ok(output) => {
+        return Ok((
+            None,
+            vec![format!(
+                "warning: {message}\nwarning: continuing with unoptimized IR"
+            )],
+        ));
+    }
+
+    let scalarized_ll = ll_path.with_extension("scalarized.ll");
+    let replacement_count = match crate::small_local_array_scalarization::scalarize_file(
+        &pre_scalar_ll,
+        &scalarized_ll,
+    ) {
+        Ok(count) => count,
+        Err(error) => {
             let message = format!(
-                "opt ({}) failed with status {}:\n{}",
-                opt.path,
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
+                "small-array scalarization failed for {}: {error}",
+                pre_scalar_ll.display()
             );
             if strict {
-                Err(PipelineError::Optimization(message))
-            } else {
-                Ok((
-                    None,
-                    vec![format!(
-                        "warning: {message}\nwarning: continuing with unoptimized IR"
-                    )],
-                ))
+                return Err(PipelineError::Optimization(message));
             }
+            return Ok((
+                Some(pre_scalar_ll),
+                vec![format!(
+                    "warning: {message}\nwarning: continuing with pre-scalarization optimized IR"
+                )],
+            ));
         }
-        Err(error) => {
-            let message = format!("failed to run opt ({}): {error}", opt.path);
-            if strict {
-                Err(PipelineError::Optimization(message))
-            } else {
-                Ok((
-                    None,
-                    vec![format!(
-                        "warning: {message}; continuing with unoptimized IR"
-                    )],
-                ))
-            }
+    };
+
+    // SROA and ordinary simplification consume the constant-address candidate
+    // loads emitted by the scalarizer and remove the local array allocation.
+    let cleanup_args = vec!["-passes=default<O2>".to_string()];
+    if let Err(message) = run_opt_stage(&opt.path, &cleanup_args, &scalarized_ll, &opt_ll) {
+        if strict {
+            return Err(PipelineError::Optimization(message));
         }
+        return Ok((
+            Some(pre_scalar_ll),
+            vec![format!(
+                "warning: {message}\nwarning: continuing with pre-scalarization optimized IR"
+            )],
+        ));
+    }
+
+    let diagnostics = if opts.verbose {
+        vec![
+            format!(
+                "opt {} via {}: {}",
+                initial_args.join(" "),
+                opt.path,
+                pre_scalar_ll.display()
+            ),
+            format!(
+                "small-array scalarization: replaced {replacement_count} dynamic load(s): {}",
+                scalarized_ll.display()
+            ),
+            format!(
+                "opt {} via {}: {}",
+                cleanup_args.join(" "),
+                opt.path,
+                opt_ll.display()
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+
+    Ok((Some(opt_ll), diagnostics))
+}
+
+fn run_opt_stage(
+    opt_path: &str,
+    args: &[String],
+    input: &Path,
+    output: &Path,
+) -> Result<(), String> {
+    match std::process::Command::new(opt_path)
+        .args(args)
+        .arg(input)
+        .arg("-S")
+        .arg("-o")
+        .arg(output)
+        .output()
+    {
+        Ok(command_output) if command_output.status.success() => Ok(()),
+        Ok(command_output) => Err(format!(
+            "opt ({opt_path}) failed with status {}:\n{}",
+            command_output.status,
+            String::from_utf8_lossy(&command_output.stderr).trim()
+        )),
+        Err(error) => Err(format!("failed to run opt ({opt_path}): {error}")),
     }
 }
 

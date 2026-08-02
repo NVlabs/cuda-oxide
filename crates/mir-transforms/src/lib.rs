@@ -13,5 +13,6 @@
 //! live here too.
 
 pub mod analyses;
+pub mod bounded_unroll;
 mod canonicalize;
 pub mod unroll;

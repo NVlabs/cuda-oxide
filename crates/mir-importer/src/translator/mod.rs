@@ -48,6 +48,7 @@ pub mod body;
 pub(crate) mod layout;
 pub(crate) mod location;
 pub mod rvalue;
+pub(crate) mod small_array_iterators;
 pub mod statement;
 pub mod terminator;
 pub mod types;

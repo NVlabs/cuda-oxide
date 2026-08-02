@@ -25,9 +25,11 @@ use super::statement;
 use super::terminator;
 use crate::error::TranslationResult;
 use crate::translator::values::ValueMap;
+use dialect_mir::ops::MirBoundedUnrollHintOp;
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Legaliser;
+use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
 
@@ -44,6 +46,8 @@ use rustc_public::mir;
 /// * `block_map` - Block index → Pliron IR block mapping
 /// * `rustc_mono_successors` - Exact successors selected by rustc's
 ///   monomorphization traversal for this block
+/// * `bounded_unroll` - Proven maximum number of successful iterator
+///   iterations when this block contains `Iterator::next`
 /// * `legaliser` - Shared identifier legaliser for name uniqueness
 /// * `entry_prev_op` - For the entry block only: the last op emitted by
 ///   `body::translate_body`'s alloca/store setup (see `emit_entry_allocas`),
@@ -59,10 +63,20 @@ pub fn translate_block(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     rustc_mono_successors: &[usize],
+    bounded_unroll: Option<u32>,
     legaliser: &mut Legaliser,
     entry_prev_op: Option<Ptr<Operation>>,
 ) -> TranslationResult<()> {
     let mut prev_op: Option<Ptr<Operation>> = entry_prev_op;
+
+    if let Some(max_iterations) = bounded_unroll {
+        let hint = MirBoundedUnrollHintOp::new(ctx, max_iterations).get_operation();
+        match prev_op {
+            Some(previous) => hint.insert_after(ctx, previous),
+            None => hint.insert_at_front(block_ptr, ctx),
+        }
+        prev_op = Some(hint);
+    }
 
     // A block that ends in a diverging call into `core::panicking` is lowered
     // to `nvvm.trap` + `mir.unreachable`; the call itself is dropped, because

@@ -42,6 +42,15 @@ pub fn prepare_mir_module(
     })?;
     verify_operation(ctx, module, "module post-mem2reg")?;
 
+    mir_transforms::bounded_unroll::unroll_bounded_loops(module, ctx, &mut analyses).map_err(
+        |error| PipelineError::Verification {
+            name: "bounded-loop-unroll".to_string(),
+            message: error.disp(ctx).to_string(),
+            operation: None,
+        },
+    )?;
+    verify_operation(ctx, module, "module post-bounded-unroll")?;
+
     mir_transforms::unroll::unroll_annotated_loops(module, ctx, &mut analyses).map_err(
         |error| PipelineError::Verification {
             name: "loop-unroll".to_string(),
