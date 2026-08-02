@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Regression test for assigning through nested runtime array indexes.
+//! Regression tests for assigning through nested array indexes.
 //!
 //! MIR represents `local[i][j] = value` as a two-level `Index, Index`
-//! projection. The statement translator must lower that chained projection to
+//! projection. A constant outer index followed by a runtime inner index uses
+//! `ConstantIndex, Index`. The statement translator must lower both chains to
 //! an address and store through it instead of rejecting the assignment before
 //! the generic projection walker can handle it.
 
@@ -42,6 +43,19 @@ mod kernels {
 
         if let Some((slot, _idx)) = out.get_mut_indexed() {
             *slot = values[i][j];
+        }
+    }
+
+    #[kernel]
+    pub fn nested_constant_runtime_index_assignment_kernel(
+        j: usize,
+        mut out: DisjointSlice<u32>,
+    ) {
+        let mut values = [[0u32; 3]; 5];
+        values[4][j] = 0x6b00_0000 | j as u32;
+
+        if let Some((slot, _idx)) = out.get_mut_indexed() {
+            *slot = values[4][j];
         }
     }
 }
@@ -83,5 +97,25 @@ fn main() {
     .expect("Non-square kernel launch failed");
     assert_eq!(out_ns.to_host_vec(&stream).unwrap(), vec![0x5a00_0402]);
 
-    println!("PASS: nested runtime indexes assigned and read back correctly (square + non-square)");
+    // Constant outer row followed by a runtime inner column: write [4][2].
+    let mut out_constant_runtime = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+    // SAFETY: one thread is launched, the output contains one element, and j=2
+    // is within the inner array's length of 3.
+    unsafe {
+        module.nested_constant_runtime_index_assignment_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            2usize,
+            &mut out_constant_runtime,
+        )
+    }
+    .expect("Constant/runtime nested-index kernel launch failed");
+    assert_eq!(
+        out_constant_runtime.to_host_vec(&stream).unwrap(),
+        vec![0x6b00_0002],
+    );
+
+    println!(
+        "PASS: nested Index->Index and ConstantIndex->Index assignments wrote and read back correctly"
+    );
 }

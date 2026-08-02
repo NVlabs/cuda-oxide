@@ -695,6 +695,29 @@ pub fn translate_statement(
                         )
                     }
                     (
+                        mir::ProjectionElem::ConstantIndex {
+                            from_end: false, ..
+                        },
+                        mir::ProjectionElem::Index(_),
+                    ) => {
+                        // `_local[CONST][j] = value` for nested arrays. The shared
+                        // address walker already handles a forward constant index
+                        // followed by a runtime index, so delegate the complete
+                        // destination place instead of duplicating address logic.
+                        store_through_place_address(
+                            ctx,
+                            body,
+                            value_map,
+                            place,
+                            result_value,
+                            rvalue_op_opt,
+                            last_inserted,
+                            prev_op,
+                            block_ptr,
+                            loc,
+                        )
+                    }
+                    (
                         mir::ProjectionElem::Field(_, _),
                         mir::ProjectionElem::ConstantIndex { .. } | mir::ProjectionElem::Index(_),
                     ) => {
