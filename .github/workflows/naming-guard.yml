@@ -29,26 +29,62 @@ jobs:
       # prefixes is `crates/reserved-oxide-symbols/`; everything else must
       # route through that crate's constants, builders, and predicates.
       #
-      # The pipeline is two-step:
-      #   1. ripgrep finds candidate lines containing `"cuda_oxide_*_`.
-      #   2. grep -v drops lines whose content (after `file:lineno:`)
-      #      starts with optional whitespace then `//` — i.e. pure
-      #      comment lines, which are free to mention the legacy
-      #      prefix forms in prose.
+      # The pipeline is three-step:
+      #   1. a self-test proves the search still matches a known violation.
+      #   2. grep finds candidate lines containing `"cuda_oxide_*_`.
+      #   3. grep -v drops the canonical crate, then drops lines whose
+      #      content (after `file:lineno:`) starts with optional whitespace
+      #      then `//` — i.e. pure comment lines, which are free to mention
+      #      the legacy prefix forms in prose.
       #
-      # We avoid PCRE2 negative-lookahead because some ripgrep builds
+      # This step used to search with ripgrep, which `ubuntu-latest` does
+      # not ship. `rg ... || true` turned the resulting "command not found"
+      # into an empty result set, so the guard reported OK on every commit
+      # without ever reading a file. `grep` is in the runner's base image,
+      # and the self-test plus the exit-status check below make a search
+      # that cannot run fail the job instead of passing it.
+      #
+      # We avoid PCRE2 negative-lookahead because some regex engines
       # tickle catastrophic backtracking on `.*"…"` patterns over the
       # full repo.
       - name: Search for hardcoded reserved-prefix literals
         run: |
           set -euo pipefail
-          matches="$(rg --type rust -n \
-              '"cuda_oxide_(kernel|device|instantiate)_' \
-              crates \
-              -g '!crates/reserved-oxide-symbols/**' \
-              -g '!**/target/**' \
+
+          pattern='"cuda_oxide_(kernel|device|instantiate)_'
+
+          # Self-test. The failure mode this guard has to survive is
+          # "silently stops matching anything", so require it to prove it
+          # can still match before a clean result is believed.
+          canary="$(mktemp -d)"
+          trap 'rm -rf "${canary}"' EXIT
+          mkdir -p "${canary}/crates"
+          printf 'const CANARY: &str = %s;\n' \
+              '"cuda_oxide_kernel_246e25db_canary"' \
+              >"${canary}/crates/canary.rs"
+          if ! grep -rEn --include='*.rs' "${pattern}" "${canary}/crates" \
+              >/dev/null; then
+              echo "::error::reserved-prefix guard self-test failed: the search did not match a known violation"
+              exit 1
+          fi
+
+          # grep exits 0 with matches, 1 with none, and >=2 on error. Only 1
+          # means clean; anything higher must fail the job rather than be
+          # mistaken for an empty result.
+          set +e
+          matches="$(grep -rEn --include='*.rs' "${pattern}" crates \
+              --exclude-dir=target)"
+          status=$?
+          set -e
+          if [ "${status}" -gt 1 ]; then
+              echo "::error::reserved-prefix search failed (grep exit ${status})"
+              exit 1
+          fi
+
+          violations="$(printf '%s\n' "${matches}" \
+              | grep -v '^crates/reserved-oxide-symbols/' \
+              | grep -vE ':[0-9]+:[[:space:]]*//' \
               || true)"
-          violations="$(echo "$matches" | grep -vE ':[0-9]+:[[:space:]]*//' || true)"
           if [ -n "$violations" ]; then
               echo "::error::Hardcoded cuda_oxide_* prefix literals found outside reserved-oxide-symbols:"
               echo "$violations"

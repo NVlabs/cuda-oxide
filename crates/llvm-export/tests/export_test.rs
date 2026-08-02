@@ -1387,11 +1387,13 @@ fn ptx_export_records_standalone_device_function_roots_for_internalization() {
     let module = ModuleOp::new(&mut ctx, "ptx_device_root".try_into().unwrap());
     let module_block = module_top_block(&mut ctx, &module);
     let func_ty = FuncType::get(&ctx, VoidType::get(&ctx).into(), vec![], false);
+    let prefixed_name = format!(
+        "{}standalone_export",
+        reserved_oxide_symbols::LEGACY_DEVICE_PREFIX
+    );
     let func = FuncOp::new(
         &mut ctx,
-        "cuda_oxide_device_246e25db_standalone_export"
-            .try_into()
-            .unwrap(),
+        prefixed_name.as_str().try_into().unwrap(),
         func_ty,
     );
     let entry = func.get_or_create_entry_block(&mut ctx);
