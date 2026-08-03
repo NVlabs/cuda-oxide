@@ -3420,6 +3420,22 @@ fn packed_alu_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
             PackedAluOperation::FmaRelu,
             PackedAluAdapter::DirectPackedU32,
         ) => "fma.rn.relu.f16x2",
+        (PackedAluFormat::F16x2, PackedAluOperation::FmaFtz, PackedAluAdapter::DirectPackedU32) => {
+            "fma.rn.ftz.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::FmaSat, PackedAluAdapter::DirectPackedU32) => {
+            "fma.rn.sat.f16x2"
+        }
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaFtzSat,
+            PackedAluAdapter::DirectPackedU32,
+        ) => "fma.rn.ftz.sat.f16x2",
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaFtzRelu,
+            PackedAluAdapter::DirectPackedU32,
+        ) => "fma.rn.ftz.relu.f16x2",
         (PackedAluFormat::F16x2, PackedAluOperation::Min, PackedAluAdapter::DirectPackedU32) => {
             "min.f16x2"
         }
@@ -3432,6 +3448,9 @@ fn packed_alu_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
         (PackedAluFormat::F16x2, PackedAluOperation::Abs, PackedAluAdapter::DirectPackedU32) => {
             "abs.f16x2"
         }
+        // bf16x2 has no NVPTX selection pattern for the ftz and sat fma forms;
+        // `packed_alu_recipe` rejects those pairs before a record can exist.
+        combination => panic!("unsupported generated packed-ALU recipe {combination:?}"),
     }
 }
 
@@ -19503,7 +19522,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(packed_alus(&catalog).count(), 18);
+        assert_eq!(packed_alus(&catalog).count(), 22);
         assert_eq!(packed_conversions(&catalog).count(), 18);
 
         let dialect = render_dialect_packed_alu(&catalog, "test-hash");
@@ -21028,7 +21047,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 853);
+        assert_eq!(catalog.intrinsics.len(), 857);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 129);
         let generated_records = records

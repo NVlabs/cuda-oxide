@@ -739,3 +739,171 @@ backend_lowerings = [
 packed_alu = { format = "f16x2", native_minimum_sm = 53, operation = "abs", adapter = "direct_packed_u32" }
 expected_ptx = { mnemonic = "abs", modifiers = ["f16x2"], operands = [{ kind = "register" }, { kind = "register" }] }
 summary = "Takes the absolute value of both packed f16x2 lanes."
+
+[[intrinsic]]
+id = "fma_ftz_f16x2"
+abi_id = "i0854"
+operation_key = "packed.alu.f16x2.fma.ftz"
+family = "packed_alu"
+source_record = "int_nvvm_fma_rn_ftz_f16x2"
+rust_module = "f16x2"
+rust_name = "fma_ftz_f16x2"
+rust_arguments = ["u32", "u32", "u32"]
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f16x2::fma_ftz_f16x2"
+compatibility_rust_paths = ["cuda_device::f16x2::fma_ftz_f16x2"]
+dialect_op_type = "FmaFtzF16x2Op"
+dialect_op_name = "nvvm.fma_ftz_f16x2"
+dialect_operands = ["i32", "i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.fma.rn.ftz.f16x2"
+llvm_arguments = ["v2f16", "v2f16", "v2f16"]
+llvm_results = ["v2f16"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "4.2"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.4.4 Half Precision Floating Point Instructions: fma"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "6.0", minimum_sm = "sm_70" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-13.3-libnvvm-13.3.33", minimum_ptx = "4.2", minimum_sm = "sm_75" },
+]
+packed_alu = { format = "f16x2", native_minimum_sm = 53, operation = "fma_ftz", adapter = "direct_packed_u32" }
+expected_ptx = { mnemonic = "fma", modifiers = ["rn", "ftz", "f16x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Computes a packed f16x2 fused multiply-add, flushing subnormals to zero."
+
+[[intrinsic]]
+id = "fma_sat_f16x2"
+abi_id = "i0855"
+operation_key = "packed.alu.f16x2.fma.sat"
+family = "packed_alu"
+source_record = "int_nvvm_fma_rn_sat_f16x2"
+rust_module = "f16x2"
+rust_name = "fma_sat_f16x2"
+rust_arguments = ["u32", "u32", "u32"]
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f16x2::fma_sat_f16x2"
+compatibility_rust_paths = ["cuda_device::f16x2::fma_sat_f16x2"]
+dialect_op_type = "FmaSatF16x2Op"
+dialect_op_name = "nvvm.fma_sat_f16x2"
+dialect_operands = ["i32", "i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.fma.rn.sat.f16x2"
+llvm_arguments = ["v2f16", "v2f16", "v2f16"]
+llvm_results = ["v2f16"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "4.2"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.4.4 Half Precision Floating Point Instructions: fma"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "6.0", minimum_sm = "sm_70" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-13.3-libnvvm-13.3.33", minimum_ptx = "4.2", minimum_sm = "sm_75" },
+]
+packed_alu = { format = "f16x2", native_minimum_sm = 53, operation = "fma_sat", adapter = "direct_packed_u32" }
+expected_ptx = { mnemonic = "fma", modifiers = ["rn", "sat", "f16x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Computes a packed f16x2 fused multiply-add and clamps the result to [0.0, 1.0]."
+
+[[intrinsic]]
+id = "fma_ftz_sat_f16x2"
+abi_id = "i0856"
+operation_key = "packed.alu.f16x2.fma.ftz.sat"
+family = "packed_alu"
+source_record = "int_nvvm_fma_rn_ftz_sat_f16x2"
+rust_module = "f16x2"
+rust_name = "fma_ftz_sat_f16x2"
+rust_arguments = ["u32", "u32", "u32"]
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f16x2::fma_ftz_sat_f16x2"
+compatibility_rust_paths = ["cuda_device::f16x2::fma_ftz_sat_f16x2"]
+dialect_op_type = "FmaFtzSatF16x2Op"
+dialect_op_name = "nvvm.fma_ftz_sat_f16x2"
+dialect_operands = ["i32", "i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.fma.rn.ftz.sat.f16x2"
+llvm_arguments = ["v2f16", "v2f16", "v2f16"]
+llvm_results = ["v2f16"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "4.2"
+minimum_sm = "sm_70"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.4.4 Half Precision Floating Point Instructions: fma"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "6.0", minimum_sm = "sm_70" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-13.3-libnvvm-13.3.33", minimum_ptx = "4.2", minimum_sm = "sm_75" },
+]
+packed_alu = { format = "f16x2", native_minimum_sm = 53, operation = "fma_ftz_sat", adapter = "direct_packed_u32" }
+expected_ptx = { mnemonic = "fma", modifiers = ["rn", "ftz", "sat", "f16x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Computes a packed f16x2 fused multiply-add, flushing subnormals to zero and clamping the result to [0.0, 1.0]."
+
+[[intrinsic]]
+id = "fma_ftz_relu_f16x2"
+abi_id = "i0857"
+operation_key = "packed.alu.f16x2.fma.ftz.relu"
+family = "packed_alu"
+source_record = "int_nvvm_fma_rn_ftz_relu_f16x2"
+rust_module = "f16x2"
+rust_name = "fma_ftz_relu_f16x2"
+rust_arguments = ["u32", "u32", "u32"]
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f16x2::fma_ftz_relu_f16x2"
+compatibility_rust_paths = ["cuda_device::f16x2::fma_ftz_relu_f16x2"]
+dialect_op_type = "FmaFtzReluF16x2Op"
+dialect_op_name = "nvvm.fma_ftz_relu_f16x2"
+dialect_operands = ["i32", "i32", "i32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.fma.rn.ftz.relu.f16x2"
+llvm_arguments = ["v2f16", "v2f16", "v2f16"]
+llvm_results = ["v2f16"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.4.4 Half Precision Floating Point Instructions: fma"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "7.0", minimum_sm = "sm_80" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-13.3-libnvvm-13.3.33", minimum_ptx = "7.0", minimum_sm = "sm_80" },
+]
+packed_alu = { format = "f16x2", native_minimum_sm = 80, operation = "fma_ftz_relu", adapter = "direct_packed_u32" }
+expected_ptx = { mnemonic = "fma", modifiers = ["rn", "ftz", "relu", "f16x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Computes a packed f16x2 fused multiply-add, flushing subnormals to zero and applying ReLU."

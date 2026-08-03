@@ -5942,3 +5942,31 @@ status = "active"
 catalog_id = "max_nan_xorsign_abs_bf16"
 operation_key = "floating.minmax.bf16.max.preserve.nan.xorsign_abs"
 raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0854"
+status = "active"
+catalog_id = "fma_ftz_f16x2"
+operation_key = "packed.alu.f16x2.fma.ftz"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0855"
+status = "active"
+catalog_id = "fma_sat_f16x2"
+operation_key = "packed.alu.f16x2.fma.sat"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0856"
+status = "active"
+catalog_id = "fma_ftz_sat_f16x2"
+operation_key = "packed.alu.f16x2.fma.ftz.sat"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0857"
+status = "active"
+catalog_id = "fma_ftz_relu_f16x2"
+operation_key = "packed.alu.f16x2.fma.ftz.relu"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
