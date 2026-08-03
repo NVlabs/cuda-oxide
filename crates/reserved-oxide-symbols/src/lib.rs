@@ -585,12 +585,31 @@ mod tests {
             PTX_MERGE_REQUIRED_PREFIX,
             "cuda_oxide_ptx_merge_required_246e25db_"
         );
+        assert_eq!(
+            ARTIFACT_ANCHOR_PREFIX,
+            "cuda_oxide_artifact_anchor_246e25db_"
+        );
+        // `KERNEL_SCOPE_LOCAL` is not a link symbol, but renaming it silently
+        // disarms two hygiene regressions that spell it as an *identifier*,
+        // where no compiler check ties them back to this constant:
+        //
+        //   * crates/cuda-macros/tests/pass/kernel_launch_context_api.rs
+        //     declares a binding named `{KERNEL_SCOPE_LOCAL}_storage` so the
+        //     mixed-site storage binding must survive the collision.
+        //   * crates/rustc-codegen-cuda/examples/const_generic/src/main.rs
+        //     declares a const generic named `KERNEL_SCOPE_LOCAL` so
+        //     `call_site_ident_avoiding_item` must take its rename path.
+        //
+        // Both keep passing once renamed, because there is simply nothing left
+        // to collide with. Update them together with this constant.
+        assert_eq!(KERNEL_SCOPE_LOCAL, "cuda_oxide_kernel_scope_246e25db");
     }
 
-    /// Every prefix shares the reserved root. The macro guard checks
+    /// Every reserved name shares the reserved root. The macro guard checks
     /// for `RESERVED_ROOT` and rejects user-defined names that start
     /// with it; this test ensures the reserved root remains a true
-    /// prefix of all four mangled categories.
+    /// prefix of every mangled category this crate hands out, including the
+    /// artifact anchor and the injected scope local.
     #[test]
     fn all_prefixes_share_reserved_root() {
         for p in [
@@ -602,6 +621,8 @@ mod tests {
             INSTANTIATE_PREFIX,
             CONSTANT_PREFIX,
             PTX_MERGE_REQUIRED_PREFIX,
+            ARTIFACT_ANCHOR_PREFIX,
+            KERNEL_SCOPE_LOCAL,
         ] {
             assert!(
                 p.starts_with(RESERVED_ROOT),

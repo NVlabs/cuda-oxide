@@ -9717,4 +9717,33 @@ mod tests {
             "minimum blocks affects device occupancy metadata, not the host launch contract",
         );
     }
+
+    /// The two hygiene regressions for the injected launch-context scope spell
+    /// `KERNEL_SCOPE_LOCAL`-derived names as *identifiers*, so no compiler
+    /// check ties them back to the constant. Rename the constant and both
+    /// fixtures quietly stop colliding with the generated bindings: they keep
+    /// passing while testing nothing, because there is no longer anything to
+    /// collide with. Pin the coupling so a rename fails here and names the
+    /// fixtures that have to move with it.
+    #[test]
+    fn hygiene_fixtures_still_collide_with_the_generated_scope_names() {
+        let storage = format!("{KERNEL_SCOPE_LOCAL}_storage");
+
+        let launch_context = include_str!("../tests/pass/kernel_launch_context_api.rs");
+        assert!(
+            launch_context.contains(&storage),
+            "tests/pass/kernel_launch_context_api.rs must bind `{storage}` so \
+             `generated_storage_name_is_hygienic` exercises the mixed-site \
+             hygiene of the generated storage binding"
+        );
+
+        let const_generic =
+            include_str!("../../rustc-codegen-cuda/examples/const_generic/src/main.rs");
+        assert!(
+            const_generic.contains(KERNEL_SCOPE_LOCAL),
+            "examples/const_generic must declare a const generic named \
+             `{KERNEL_SCOPE_LOCAL}` so `call_site_ident_avoiding_item` is \
+             forced down its rename path"
+        );
+    }
 }
