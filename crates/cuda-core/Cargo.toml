@@ -16,4 +16,7 @@ oxide-artifacts = { workspace = true, features = ["object-read"] }
 
 [dev-dependencies]
 oxide-artifacts = { workspace = true, features = ["object-write"] }
+# Test-only: the embedded-artifact round trip builds a link-anchor symbol,
+# whose spelling is owned by reserved-oxide-symbols rather than restated here.
+reserved-oxide-symbols = { workspace = true }
 trybuild = "1"

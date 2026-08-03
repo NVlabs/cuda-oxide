@@ -385,6 +385,7 @@ dependencies = [
  "cuda-macros",
  "half",
  "oxide-artifacts",
+ "reserved-oxide-symbols",
  "trybuild",
 ]
 
