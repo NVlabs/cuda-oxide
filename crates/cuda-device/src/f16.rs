@@ -1,5 +1,7 @@
-// Copyright (c) 2024-2026 NVIDIA CORPORATION. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 //! Scalar `f16` min/max intrinsics.
 //!
@@ -14,5 +16,10 @@
 //! `xorsign.abs` compares magnitudes and takes the sign from the XOR of the
 //! input signs. The plain and `NaN` forms require `sm_80` and PTX ISA 7.0; every
 //! `xorsign.abs` form requires `sm_86` and PTX ISA 7.2.
+//!
+//! The canonical NaN the `NaN` forms return is `0x7FFF`, not the IEEE default
+//! quiet NaN `0x7E00`: PTX canonicalizes to an all-ones exponent and mantissa
+//! with a clear sign. Measured on `sm_86`; the `generated_intrinsics` example
+//! asserts it.
 
 include!("generated/f16.rs");

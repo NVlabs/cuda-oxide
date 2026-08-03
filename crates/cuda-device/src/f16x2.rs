@@ -11,5 +11,8 @@
 //! (e.g. eight packed halves moving as one 128-bit access), see
 //! [`crate::vector`]. For multi-register *value* groups, see
 //! [`crate::cusimd::CuSimd`].
+//!
+//! See also [`crate::f16`] for the scalar min/max forms that operate on a
+//! single half rather than a packed pair.
 
 include!("generated/f16x2.rs");

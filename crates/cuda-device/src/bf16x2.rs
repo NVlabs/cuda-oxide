@@ -10,5 +10,8 @@
 //! *memory element* types that make loads and stores single wide transactions,
 //! see [`crate::vector`]. For multi-register *value* groups, see
 //! [`crate::cusimd::CuSimd`].
+//!
+//! See also [`crate::bf16`] for the scalar min/max forms that operate on a
+//! single bfloat16 rather than a packed pair.
 
 include!("generated/bf16x2.rs");
