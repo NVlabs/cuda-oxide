@@ -5774,3 +5774,171 @@ status = "active"
 catalog_id = "cvt_rn_relu_f16x2_e5m2x2"
 operation_key = "packed.convert.e5m2x2.f16x2.nearest_even.relu"
 raw_rust_signature = { safe = true, arguments = ["u16"], result = "u32" }
+
+[[entry]]
+abi_id = "i0830"
+status = "active"
+catalog_id = "min_f16"
+operation_key = "floating.minmax.f16.min.preserve.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0831"
+status = "active"
+catalog_id = "min_ftz_f16"
+operation_key = "floating.minmax.f16.min.ftz.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0832"
+status = "active"
+catalog_id = "min_nan_f16"
+operation_key = "floating.minmax.f16.min.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0833"
+status = "active"
+catalog_id = "min_ftz_nan_f16"
+operation_key = "floating.minmax.f16.min.ftz.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0834"
+status = "active"
+catalog_id = "min_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.min.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0835"
+status = "active"
+catalog_id = "min_ftz_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.min.ftz.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0836"
+status = "active"
+catalog_id = "min_nan_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.min.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0837"
+status = "active"
+catalog_id = "min_ftz_nan_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.min.ftz.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0838"
+status = "active"
+catalog_id = "min_bf16"
+operation_key = "floating.minmax.bf16.min.preserve.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0839"
+status = "active"
+catalog_id = "min_nan_bf16"
+operation_key = "floating.minmax.bf16.min.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0840"
+status = "active"
+catalog_id = "min_xorsign_abs_bf16"
+operation_key = "floating.minmax.bf16.min.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0841"
+status = "active"
+catalog_id = "min_nan_xorsign_abs_bf16"
+operation_key = "floating.minmax.bf16.min.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0842"
+status = "active"
+catalog_id = "max_f16"
+operation_key = "floating.minmax.f16.max.preserve.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0843"
+status = "active"
+catalog_id = "max_ftz_f16"
+operation_key = "floating.minmax.f16.max.ftz.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0844"
+status = "active"
+catalog_id = "max_nan_f16"
+operation_key = "floating.minmax.f16.max.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0845"
+status = "active"
+catalog_id = "max_ftz_nan_f16"
+operation_key = "floating.minmax.f16.max.ftz.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0846"
+status = "active"
+catalog_id = "max_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.max.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0847"
+status = "active"
+catalog_id = "max_ftz_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.max.ftz.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0848"
+status = "active"
+catalog_id = "max_nan_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.max.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0849"
+status = "active"
+catalog_id = "max_ftz_nan_xorsign_abs_f16"
+operation_key = "floating.minmax.f16.max.ftz.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0850"
+status = "active"
+catalog_id = "max_bf16"
+operation_key = "floating.minmax.bf16.max.preserve.number.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0851"
+status = "active"
+catalog_id = "max_nan_bf16"
+operation_key = "floating.minmax.bf16.max.preserve.nan.direct"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0852"
+status = "active"
+catalog_id = "max_xorsign_abs_bf16"
+operation_key = "floating.minmax.bf16.max.preserve.number.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i0853"
+status = "active"
+catalog_id = "max_nan_xorsign_abs_bf16"
+operation_key = "floating.minmax.bf16.max.preserve.nan.xorsign_abs"
+raw_rust_signature = { safe = true, arguments = ["u16", "u16"], result = "u16" }

@@ -78,7 +78,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 44;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 59;
+const OVERLAY_SHARD_SCHEMA: u32 = 60;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
@@ -102,7 +102,7 @@ const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
 const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
 const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 45;
-const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 51;
+const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 60;
 const TCGEN05_CP_SHARD_SCHEMA: u32 = 52;
 const TCGEN05_LD_SHARD_SCHEMA: u32 = 53;
 const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
@@ -17159,7 +17159,7 @@ struct ExtendedMinMaxRecipe {
 }
 
 fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
-    use ExtendedMinMaxFormat::{Bf16x2, F16x2, F32};
+    use ExtendedMinMaxFormat::{Bf16, Bf16x2, F16, F16x2, F32};
     use ExtendedMinMaxNan::{Nan, Number};
     use ExtendedMinMaxOperation::{Max, Min};
     use ExtendedMinMaxSubnormal::{Ftz, Preserve};
@@ -17182,15 +17182,81 @@ fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
             (F16x2, operation, Preserve, Number, true),
         ]
     };
+    // The scalar 16-bit forms. LLVM declares every `f16` modifier combination
+    // and the four `bf16` combinations that do not request `ftz`; the four
+    // `bf16` `ftz` declarations exist but have no NVPTX selection pattern and
+    // fail instruction selection, so they are deliberately absent here.
+    //
+    // These variants were admitted after the first block, so they continue the
+    // ABI id space at a second base - see `extended_minmax_abi_id`.
+    let scalar_halves = |operation| {
+        [
+            (F16, operation, Preserve, Number, false),
+            (F16, operation, Ftz, Number, false),
+            (F16, operation, Preserve, Nan, false),
+            (F16, operation, Ftz, Nan, false),
+            (F16, operation, Preserve, Number, true),
+            (F16, operation, Ftz, Number, true),
+            (F16, operation, Preserve, Nan, true),
+            (F16, operation, Ftz, Nan, true),
+            (Bf16, operation, Preserve, Number, false),
+            (Bf16, operation, Preserve, Nan, false),
+            (Bf16, operation, Preserve, Number, true),
+            (Bf16, operation, Preserve, Nan, true),
+        ]
+    };
     one_operation(Min)
         .into_iter()
         .chain(one_operation(Max))
+        .chain(scalar_halves(Min))
+        .chain(scalar_halves(Max))
         .collect()
+}
+
+/// Maps a canonical variant index to its reserved ABI id.
+///
+/// The family was admitted as one contiguous block at
+/// `EXTENDED_MINMAX_FIRST_ABI_BASE`. Later additions cannot continue that block
+/// because the ids immediately after it were already reserved by other
+/// families, so they open a second block instead. The ledger is append-only,
+/// which makes the discontinuity permanent.
+fn extended_minmax_abi_id(index: usize) -> String {
+    const EXTENDED_MINMAX_FIRST_ABI_BASE: usize = 550;
+    const EXTENDED_MINMAX_FIRST_ABI_COUNT: usize = 28;
+    const EXTENDED_MINMAX_SECOND_ABI_BASE: usize = 830;
+
+    if index < EXTENDED_MINMAX_FIRST_ABI_COUNT {
+        format!("i{:04}", EXTENDED_MINMAX_FIRST_ABI_BASE + index)
+    } else {
+        format!(
+            "i{:04}",
+            EXTENDED_MINMAX_SECOND_ABI_BASE + index - EXTENDED_MINMAX_FIRST_ABI_COUNT
+        )
+    }
+}
+
+/// Joins an operation name, its modifiers, and its format into one identifier.
+///
+/// `min.f16` and `min.bf16` carry no modifier at all, so the separators have to
+/// come from joining the parts that are present rather than from a format
+/// string with fixed separators.
+fn extended_minmax_joined_name(
+    leading: &str,
+    trailing: &str,
+    modifiers: &[&str],
+    separator: &str,
+) -> String {
+    let mut parts = vec![leading];
+    parts.extend(modifiers.iter().copied());
+    parts.push(trailing);
+    parts.join(separator)
 }
 
 fn extended_minmax_format_name(format: ExtendedMinMaxFormat) -> &'static str {
     match format {
         ExtendedMinMaxFormat::F32 => "f32",
+        ExtendedMinMaxFormat::F16 => "f16",
+        ExtendedMinMaxFormat::Bf16 => "bf16",
         ExtendedMinMaxFormat::F16x2 => "f16x2",
         ExtendedMinMaxFormat::Bf16x2 => "bf16x2",
     }
@@ -17229,11 +17295,16 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
         source_modifiers.extend(["xorsign", "abs"]);
         ptx_modifiers.extend(["xorsign".to_owned(), "abs".to_owned()]);
     }
-    let source_modifier = source_modifiers.join("_");
-    let llvm_modifier = source_modifiers.join(".");
-    let id = format!("{operation_name}_{source_modifier}_{format_name}");
-    let source_record = format!("int_nvvm_f{operation_name}_{source_modifier}_{source_type}");
-    let llvm_symbol = format!("llvm.nvvm.f{operation_name}.{llvm_modifier}.{source_type}");
+    let id = extended_minmax_joined_name(operation_name, format_name, &source_modifiers, "_");
+    let intrinsic_name = format!("f{operation_name}");
+    let source_record = format!(
+        "int_nvvm_{}",
+        extended_minmax_joined_name(&intrinsic_name, source_type, &source_modifiers, "_")
+    );
+    let llvm_symbol = format!(
+        "llvm.nvvm.{}",
+        extended_minmax_joined_name(&intrinsic_name, source_type, &source_modifiers, ".")
+    );
     let selection_record = if format == ExtendedMinMaxFormat::F32 {
         format!(
             "INT_NVVM_{}",
@@ -17243,15 +17314,17 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
         )
     } else {
         let prefix = match operation {
-            ExtendedMinMaxOperation::Min => "INT_NVVM_FMIN",
-            ExtendedMinMaxOperation::Max => "INT_NVVM_FMAN",
+            ExtendedMinMaxOperation::Min => "FMIN",
+            ExtendedMinMaxOperation::Max => "FMAN",
         };
         let selection_modifiers = source_modifiers
             .iter()
             .map(|modifier| if *modifier == "nan" { "NaN" } else { modifier })
-            .collect::<Vec<_>>()
-            .join("_");
-        format!("{prefix}_{selection_modifiers}_{format_name}")
+            .collect::<Vec<_>>();
+        format!(
+            "INT_NVVM_{}",
+            extended_minmax_joined_name(prefix, format_name, &selection_modifiers, "_")
+        )
     };
     let ptx_format = if format == ExtendedMinMaxFormat::F32 {
         "f32"
@@ -17289,6 +17362,28 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
             "f32",
             "f32",
             ExtendedMinMaxAdapter::DirectF32,
+            vec![
+                "ClangBuiltin",
+                "NVVMBuiltin",
+                "SDPatternOperator",
+                "Intrinsic",
+                "DefaultAttrsIntrinsic",
+            ],
+        ),
+        ExtendedMinMaxFormat::F16 => (
+            "f16",
+            "f16",
+            "u16",
+            "i16",
+            ExtendedMinMaxAdapter::DirectHalfU16,
+            vec!["SDPatternOperator", "Intrinsic", "DefaultAttrsIntrinsic"],
+        ),
+        ExtendedMinMaxFormat::Bf16 => (
+            "bf16",
+            "bf16",
+            "u16",
+            "i16",
+            ExtendedMinMaxAdapter::DirectHalfU16,
             vec![
                 "ClangBuiltin",
                 "NVVMBuiltin",
@@ -17340,7 +17435,7 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
     };
     Some(ExtendedMinMaxRecipe {
         id,
-        abi_id: format!("i{:04}", 550 + index),
+        abi_id: extended_minmax_abi_id(index),
         operation_key: format!(
             "floating.minmax.{format_name}.{operation_name}.{}.{}.{}",
             match subnormal {
@@ -17566,10 +17661,14 @@ fn validate_extended_minmax_policy(
         "{} extended-minmax runtime may be executed only with GPU evidence",
         policy.id
     );
-    let expected_adapter = if minmax.format == ExtendedMinMaxFormat::F32 {
-        ExtendedMinMaxAdapter::DirectF32
-    } else {
-        ExtendedMinMaxAdapter::DirectPackedU32
+    let expected_adapter = match minmax.format {
+        ExtendedMinMaxFormat::F32 => ExtendedMinMaxAdapter::DirectF32,
+        ExtendedMinMaxFormat::F16 | ExtendedMinMaxFormat::Bf16 => {
+            ExtendedMinMaxAdapter::DirectHalfU16
+        }
+        ExtendedMinMaxFormat::F16x2 | ExtendedMinMaxFormat::Bf16x2 => {
+            ExtendedMinMaxAdapter::DirectPackedU32
+        }
     };
     ensure!(
         minmax.adapter == expected_adapter,
@@ -28023,7 +28122,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 59);
-        assert_eq!(overlay.intrinsics.len(), 829);
+        assert_eq!(overlay.intrinsics.len(), 853);
         assert_eq!(
             overlay
                 .intrinsics
@@ -37889,25 +37988,31 @@ scope = "system"
                 .collect(),
         };
         let records = expand_extended_minmax_admission(&admission).unwrap();
-        assert_eq!(records.len(), 28);
+        assert_eq!(records.len(), 52);
         assert_eq!(records.first().unwrap().id, "min_ftz_f16x2");
         assert_eq!(records.first().unwrap().abi_id, "i0550");
-        assert_eq!(records.last().unwrap().id, "max_xorsign_abs_f16x2");
-        assert_eq!(records.last().unwrap().abi_id, "i0577");
+        // The first reserved block ends here; the scalar 16-bit forms admitted
+        // afterwards continue at a second base rather than at i0578.
+        assert_eq!(records[27].id, "max_xorsign_abs_f16x2");
+        assert_eq!(records[27].abi_id, "i0577");
+        assert_eq!(records[28].id, "min_f16");
+        assert_eq!(records[28].abi_id, "i0830");
+        assert_eq!(records.last().unwrap().id, "max_nan_xorsign_abs_bf16");
+        assert_eq!(records.last().unwrap().abi_id, "i0853");
         validate_unique_overlay(&records, 1).unwrap();
         assert_eq!(
             records
                 .iter()
                 .filter(|record| record.minimum_sm.as_deref() == Some("sm_80"))
                 .count(),
-            8
+            20
         );
         assert_eq!(
             records
                 .iter()
                 .filter(|record| record.minimum_sm.as_deref() == Some("sm_86"))
                 .count(),
-            20
+            32
         );
         assert!(records.iter().all(|record| {
             record.backend_lowerings.len() == 2

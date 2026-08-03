@@ -63,6 +63,100 @@
       ]
     },
     {
+      "id": "extended_minmax_scalar_half_compute80_ptx93",
+      "coverage_count": 12,
+      "stages": [
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "12 pure inline-PTX min/max calls with =h,h,h constraints (every f16 modifier combination and the bf16 combinations without ftz)",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 1,898-byte fixture (SHA-256 57018f57857ba7445a9dba481bdcf694fed97b079f1222a5a1cc027f29b7dd2e) to 5,669-byte PTX 9.3 (SHA-256 a787c4dde57c6ba45dee605a8bb9a641f42f95083695f847da4c3e16bde35d5b) retaining all 12 exact instruction heads."
+        },
+        {
+          "targets": [
+            "compute_80",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 assembled at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 1,464-byte sm_80 cubin (SHA-256 6bcec1b1eab13da703fdade053704aa6ab00591a1b38dd7daf48ac0dec541df2), byte-identical to the pinned-LLVM cubin for the same forms, so both front ends assemble to the same machine code.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained libNVVM LTOIR linked to an sm_80 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM emitted 3,400-byte LTOIR (SHA-256 9b77da4481d9db1b16f31b68a64d3e9eeb25480f8bc79e7c5b3b7c630f7074ff) under -gen-lto. nvJitLink produced a 1,464-byte sm_80 cubin (SHA-256 3e4a06eab6319f8d75a890f4b2645d35d92125c79eaa2b63dba2e5383552d632), so the forms survive link-time optimization.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "nvJitLinkVersion 13.3; CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "extended_minmax_scalar_half_xorsign_compute86_ptx93",
+      "coverage_count": 12,
+      "stages": [
+        {
+          "targets": [
+            "compute_86",
+            "ptx93"
+          ],
+          "representation": "12 pure inline-PTX min/max calls with =h,h,h constraints (the xorsign.abs forms)",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 2,186-byte fixture (SHA-256 7b0e1b22096a297e428700d7be31bbd8e200b5ed0c2f9371928f2b4c40cb0a07) to 6,677-byte PTX 9.3 (SHA-256 09c57871571ba5317ee21cce0ee8cc05f3116b857084644a1923ca0d188a5524) retaining all 12 exact instruction heads."
+        },
+        {
+          "targets": [
+            "compute_86",
+            "ptx93"
+          ],
+          "representation": "libNVVM PTX 9.3 assembled at the admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas produced a 1,464-byte sm_86 cubin (SHA-256 ac87a5754b27655c80d8e61387ce051754d199d422f7d209f16a4208816152df), byte-identical to the pinned-LLVM cubin for the same forms, so both front ends assemble to the same machine code.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_86",
+            "ptx93"
+          ],
+          "representation": "retained libNVVM LTOIR linked to an sm_86 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM emitted 3,788-byte LTOIR (SHA-256 335c7c2f3488f1025b60376e0ec954b463cd8417b7acd62703748c9670b755b4) under -gen-lto. nvJitLink produced a 1,464-byte sm_86 cubin (SHA-256 3cf1096d7318aa9175bf174fe9254487a8d0030d98a961600a4e1d729739cffd), so the forms survive link-time optimization.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "nvJitLinkVersion 13.3; CUDA 13.3 V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
       "id": "extended_minmax_xorsign_compute86_ptx93",
       "coverage_count": 20,
       "stages": [
@@ -1489,6 +1583,1178 @@
           ],
           "llvm_results": [
             "v2f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_nan_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_nan_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.nan.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_ftz_nan_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_ftz_nan_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmin.ftz.nan.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_bf16",
+        "llvm_symbol": "llvm.nvvm.fmin.bf16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_bf16",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.bf16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_xorsign_abs_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_xorsign_abs_bf16",
+        "llvm_symbol": "llvm.nvvm.fmin.xorsign.abs.bf16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "min_nan_xorsign_abs_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmin_nan_xorsign_abs_bf16",
+        "llvm_symbol": "llvm.nvvm.fmin.nan.xorsign.abs.bf16",
+        "expected_ptx": {
+          "mnemonic": "min",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_nan_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_nan_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.nan.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_ftz_nan_xorsign_abs_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_ftz_nan_xorsign_abs_f16",
+        "llvm_symbol": "llvm.nvvm.fmax.ftz.nan.xorsign.abs.f16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "ftz",
+            "NaN",
+            "xorsign",
+            "abs",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "f16",
+            "f16"
+          ],
+          "llvm_results": [
+            "f16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_bf16",
+        "llvm_symbol": "llvm.nvvm.fmax.bf16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_compute80_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_bf16",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.bf16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_80",
+          "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_xorsign_abs_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_xorsign_abs_bf16",
+        "llvm_symbol": "llvm.nvvm.fmax.xorsign.abs.bf16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "xorsign",
+            "abs",
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
+          ],
+          "gpu_target": "compute_86",
+          "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "max_nan_xorsign_abs_bf16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "extended_minmax_scalar_half_xorsign_compute86_ptx93"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fmax_nan_xorsign_abs_bf16",
+        "llvm_symbol": "llvm.nvvm.fmax.nan.xorsign.abs.bf16",
+        "expected_ptx": {
+          "mnemonic": "max",
+          "modifiers": [
+            "NaN",
+            "xorsign",
+            "abs",
+            "bf16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        },
+        "facts": {
+          "llvm_arguments": [
+            "bf16",
+            "bf16"
+          ],
+          "llvm_results": [
+            "bf16"
           ],
           "gpu_target": "compute_86",
           "ptx_feature": "PTX ISA 7.2 minimum; CUDA 13.3 emits PTX 9.3"

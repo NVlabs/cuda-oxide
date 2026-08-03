@@ -2583,6 +2583,8 @@ pub struct ExtendedMinMax {
 #[serde(rename_all = "snake_case")]
 pub enum ExtendedMinMaxFormat {
     F32,
+    F16,
+    Bf16,
     F16x2,
     Bf16x2,
 }
@@ -2612,6 +2614,9 @@ pub enum ExtendedMinMaxNan {
 #[serde(rename_all = "snake_case")]
 pub enum ExtendedMinMaxAdapter {
     DirectF32,
+    /// A single 16-bit float carried as its `u16` bit pattern, matching how
+    /// `packed_conversion` already carries `e4m3x2` and `e5m2x2` operands.
+    DirectHalfU16,
     DirectPackedU32,
 }
 
