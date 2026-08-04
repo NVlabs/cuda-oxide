@@ -32,6 +32,19 @@ pub fn prepare_mir_module(
         return Ok(());
     }
 
+    // A by-value aggregate argument initially lives in a MIR alloca. Read-only
+    // field/index projections make that alloca non-promotable even though the
+    // original entry-block argument is already an SSA value. Canonicalize the
+    // validated pointer chains back to value extraction before mem2reg.
+    mir_transforms::scalarize_borrowed_aggregate_reads::canonicalize_read_only_aggregate_arguments(
+        module, ctx,
+    );
+    verify_operation(
+        ctx,
+        module,
+        "module post-borrowed-aggregate-read-canonicalization",
+    )?;
+
     let mut analyses = pliron::pass::AnalysisManager::default();
     pliron::opts::mem2reg::mem2reg(module, ctx, &mut analyses).map_err(|error| {
         PipelineError::Verification {
@@ -41,6 +54,17 @@ pub fn prepare_mir_module(
         }
     })?;
     verify_operation(ctx, module, "module post-mem2reg")?;
+
+    // An immutable aggregate pointer argument in an always-inline helper can
+    // still retain dynamic field/array pointer chains after mem2reg. Recover
+    // bounded read-only accesses in typed MIR before LLVM lowering.
+    mir_transforms::scalarize_borrowed_aggregate_reads::
+        canonicalize_bounded_borrowed_pointer_arguments(module, ctx);
+    verify_operation(
+        ctx,
+        module,
+        "module post-borrowed-pointer-read-canonicalization",
+    )?;
 
     mir_transforms::unroll::unroll_annotated_loops(module, ctx, &mut analyses).map_err(
         |error| PipelineError::Verification {

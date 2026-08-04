@@ -616,20 +616,76 @@ pub(crate) fn convert_construct_array(
 
     Ok(())
 }
-
-/// Convert `mir.extract_array_element` to LLVM alloca+store+GEP+load sequence.
+/// Convert `mir.extract_array_element` to LLVM operations.
 ///
-/// Since LLVM's `extractvalue` only supports constant indices, we need to:
-/// 1. Allocate stack space for the array
-/// 2. Store the array value to the stack
-/// 3. GEP to compute the element address
-/// 4. Load the element
+/// A runtime index normally requires materializing the array in memory because
+/// LLVM `extractvalue` accepts only constant indices. When the index is proven
+/// to be `urem value, C`, however, it is in `0..C`. For small `C` within the
+/// array bounds, emit one constant `extractvalue` per candidate and select the
+/// runtime result in SSA. This avoids the temporary alloca that otherwise
+/// becomes NVPTX local memory.
+///
+/// Unbounded, oversized, or otherwise unsupported indices retain the existing
+/// alloca+store+GEP+load fallback.
 pub(crate) fn convert_extract_array_element(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     operands_info: &OperandsInfo,
 ) -> Result<()> {
+    const MAX_SCALARIZED_CANDIDATES: u64 = 16;
+
+    fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
+        let defining_op = value.defining_op()?;
+        let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
+        constant
+            .get_value(ctx)
+            .downcast_ref::<pliron::builtin::attributes::IntegerAttr>()
+            .map(|integer| integer.value().to_u64())
+    }
+
+    fn bounded_urem_candidate_count(ctx: &Context, index: Value, array_size: u64) -> Option<u64> {
+        let defining_op = index.defining_op()?;
+        Operation::get_op::<llvm::URemOp>(defining_op, ctx)?;
+
+        let divisor = defining_op.deref(ctx).get_operand(1);
+        let candidate_count = integer_constant_u64(ctx, divisor)?;
+        (candidate_count > 0
+            && candidate_count <= array_size
+            && candidate_count <= MAX_SCALARIZED_CANDIDATES)
+            .then_some(candidate_count)
+    }
+
+    fn integer_constant_like(
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        reference: Value,
+        value: u64,
+    ) -> Result<Value> {
+        let reference_ty = reference.get_type(ctx);
+        let width = reference_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .ok_or_else(|| {
+                pliron::input_error_noloc!(
+                    "mir.extract_array_element index must lower to an integer"
+                )
+            })?
+            .width();
+
+        let integer_ty = IntegerType::get(ctx, width, Signedness::Signless);
+        let attribute = pliron::builtin::attributes::IntegerAttr::new(
+            integer_ty,
+            APInt::from_u64(
+                value,
+                NonZeroUsize::new(width as usize).expect("integer width is nonzero"),
+            ),
+        );
+        let constant = llvm::ConstantOp::new(ctx, attribute.into());
+        rewriter.insert_operation(ctx, constant.get_operation());
+        Ok(constant.get_operation().deref(ctx).get_result(0))
+    }
+
     let array_val = op.deref(ctx).get_operand(0);
     let index_val = op.deref(ctx).get_operand(1);
 
@@ -639,6 +695,34 @@ pub(crate) fn convert_extract_array_element(
             None => return pliron::input_err_noloc!("Expected MirArrayType"),
         }
     };
+
+    if let Some(candidate_count) = bounded_urem_candidate_count(ctx, index_val, array_size) {
+        let mut candidates = Vec::with_capacity(candidate_count as usize);
+        for candidate_index in 0..candidate_count {
+            let extract = llvm::ExtractValueOp::new(ctx, array_val, vec![candidate_index as u32])?;
+            rewriter.insert_operation(ctx, extract.get_operation());
+            candidates.push(extract.get_operation().deref(ctx).get_result(0));
+        }
+
+        let mut selected = *candidates
+            .last()
+            .expect("candidate count is proven nonzero");
+        for candidate_index in (0..candidates.len().saturating_sub(1)).rev() {
+            let candidate_constant =
+                integer_constant_like(ctx, rewriter, index_val, candidate_index as u64)?;
+            let compare =
+                llvm::ICmpOp::new(ctx, ICmpPredicateAttr::EQ, index_val, candidate_constant);
+            rewriter.insert_operation(ctx, compare.get_operation());
+            let condition = compare.get_operation().deref(ctx).get_result(0);
+
+            let select = llvm::SelectOp::new(ctx, condition, candidates[candidate_index], selected);
+            rewriter.insert_operation(ctx, select.get_operation());
+            selected = select.get_operation().deref(ctx).get_result(0);
+        }
+
+        rewriter.replace_operation_with_values(ctx, op, vec![selected]);
+        return Ok(());
+    }
 
     let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
     let llvm_array_ty = llvm_export::types::ArrayType::get(ctx, llvm_element_ty, array_size);
@@ -2325,6 +2409,110 @@ mod tests {
         .into();
         MirTupleType::get_with_layout(ctx, vec![marker, byte], vec![0, 1], vec![0, 0], 32, 32)
             .into()
+    }
+
+    fn lower_array_extract_case(
+        ctx: &mut Context,
+        array_size: u64,
+        divisor: Option<u64>,
+    ) -> Ptr<Operation> {
+        let element_type: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        let index_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
+        let index_handle: TypeHandle = index_type.into();
+        let array_type: TypeHandle = MirArrayType::get(ctx, element_type, array_size).into();
+
+        let (module, block) = build_kernel(ctx, vec![index_handle], vec![element_type]);
+        let raw_index = block.deref(ctx).get_argument(0);
+
+        let undef = mir::MirUndefOp::new(ctx, array_type);
+        undef.get_operation().insert_at_back(block, ctx);
+        let array = undef.get_operation().deref(ctx).get_result(0);
+
+        let index = if let Some(divisor) = divisor {
+            let constant = Operation::new(
+                ctx,
+                mir::MirConstantOp::get_concrete_op_info(),
+                vec![index_handle],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstantOp::new(constant).set_attr_value(
+                ctx,
+                IntegerAttr::new(
+                    index_type,
+                    APInt::from_u64(divisor, NonZeroUsize::new(64).unwrap()),
+                ),
+            );
+            constant.insert_at_back(block, ctx);
+            let divisor_value = constant.deref(ctx).get_result(0);
+
+            let rem = Operation::new(
+                ctx,
+                mir::MirRemOp::get_concrete_op_info(),
+                vec![index_handle],
+                vec![raw_index, divisor_value],
+                vec![],
+                0,
+            );
+            rem.insert_at_back(block, ctx);
+            rem.deref(ctx).get_result(0)
+        } else {
+            raw_index
+        };
+
+        let extract = Operation::new(
+            ctx,
+            mir::MirExtractArrayElementOp::get_concrete_op_info(),
+            vec![element_type],
+            vec![array, index],
+            vec![],
+            0,
+        );
+        extract.insert_at_back(block, ctx);
+        let result = extract.deref(ctx).get_result(0);
+        append_mir_return(ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(ctx, module).expect("lowering failed");
+        module
+    }
+
+    fn assert_array_extract_memory_fallback(ctx: &Context, module: Ptr<Operation>) {
+        let body = kernel_blocks(ctx, module);
+        assert_eq!(count_ops::<llvm::AllocaOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::StoreOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::LoadOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::SelectOp>(ctx, &body), 0);
+    }
+
+    #[test]
+    fn bounded_urem_array_extract_stays_in_ssa() {
+        let mut ctx = make_ctx();
+        let module = lower_array_extract_case(&mut ctx, 3, Some(3));
+        let body = kernel_blocks(&ctx, module);
+
+        assert_eq!(count_ops::<llvm::ExtractValueOp>(&ctx, &body), 3);
+        assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 2);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 2);
+        assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn unbounded_array_extract_keeps_memory_fallback() {
+        let mut ctx = make_ctx();
+        let module = lower_array_extract_case(&mut ctx, 3, None);
+        assert_array_extract_memory_fallback(&ctx, module);
+    }
+
+    #[test]
+    fn oversized_urem_array_extract_keeps_memory_fallback() {
+        let mut ctx = make_ctx();
+        let module = lower_array_extract_case(&mut ctx, 17, Some(17));
+        assert_array_extract_memory_fallback(&ctx, module);
     }
 
     #[test]

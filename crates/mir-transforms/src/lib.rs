@@ -14,4 +14,5 @@
 
 pub mod analyses;
 mod canonicalize;
+pub mod scalarize_borrowed_aggregate_reads;
 pub mod unroll;
