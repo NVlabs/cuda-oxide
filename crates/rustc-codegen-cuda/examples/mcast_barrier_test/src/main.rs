@@ -117,6 +117,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== MCAST Barrier Protocol Test ===\n");
 
     let ctx = CudaContext::new(0)?;
+
+    // Cluster-scoped mbarrier arrival and multicast need sm_90 (Hopper) or
+    // later.
+    let (major, minor) = ctx.compute_capability()?;
+    if major < 9 {
+        println!("skipping: cluster mbarrier requires sm_90+ (device is sm_{major}{minor})");
+        return Ok(());
+    }
+
     let stream = ctx.default_stream();
 
     let ptx_path =

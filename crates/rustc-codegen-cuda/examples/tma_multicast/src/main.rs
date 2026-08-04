@@ -152,7 +152,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("GPU Compute Capability: sm_{}{}", major, minor);
 
     if major < 10 {
-        println!("\n⚠️  TMA multicast requires sm_100a (Blackwell datacenter).");
+        // Same clean-skip contract as the load-failure arm below: the marker
+        // has to be on whichever path actually runs, and on a pre-Blackwell
+        // GPU it is this one.
+        println!("\nskipping: TMA multicast requires sm_100a (Blackwell datacenter)");
         println!(
             "   Your GPU is sm_{}{}. Use: cargo oxide run tma_copy",
             major, minor

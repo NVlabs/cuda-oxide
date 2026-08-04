@@ -665,6 +665,14 @@ fn main() {
     println!("=== Cooperative Groups Demo ===\n");
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
+
+    // Thread block clusters require sm_90 (Hopper) or later.
+    let (major, minor) = ctx.compute_capability().expect("compute capability");
+    if major < 9 {
+        println!("skipping: thread block clusters require sm_90+ (device is sm_{major}{minor})");
+        return;
+    }
+
     let stream = ctx.default_stream();
 
     let module = ctx

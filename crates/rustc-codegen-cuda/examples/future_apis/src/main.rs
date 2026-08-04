@@ -243,6 +243,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Future APIs Test (Unified) ===\n");
 
     let ctx = CudaContext::new(0)?;
+
+    // The mbarrier APIs exercised below require sm_80 (Ampere) or later.
+    let (major, minor) = ctx.compute_capability()?;
+    if major < 8 {
+        println!("skipping: mbarrier requires sm_80+ (device is sm_{major}{minor})");
+        return Ok(());
+    }
+
     let stream = ctx.default_stream();
 
     let module = ctx.load_module_from_file("future_apis.ptx")?;
