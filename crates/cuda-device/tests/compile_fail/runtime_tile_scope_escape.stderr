@@ -1,11 +1,11 @@
 error[E0597]: `c` does not live long enough
-  --> tests/compile_fail/runtime_tile_scope_escape.rs:16:25
+  --> tests/compile_fail/runtime_tile_scope_escape.rs:16:16
    |
 13 |     mut c: DisjointSlice<'_, f32, RuntimeRowMajorTiles<1, 1>>,
    |     ----- binding `c` declared here
 ...
-16 |     let tile = unsafe { c.tile_2d32_rt(coord, 64) };
-   |                         ^ borrowed value does not live long enough
+16 |     let tile = c.tile_2d32_rt(coord);
+   |                ^ borrowed value does not live long enough
 17 |     unsafe {
 18 |         SAVED = tile;
    |         ------------ assignment requires that `c` is borrowed for `'static`

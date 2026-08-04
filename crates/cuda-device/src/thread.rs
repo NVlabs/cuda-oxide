@@ -577,14 +577,18 @@ pub mod __internal {
     }
 
     /// Real `index_2d_runtime` intrinsic the macros call in place of the public
-    /// `super::index_2d_runtime` stub. Like `index_2d` but the row stride is a
-    /// runtime value, so cross-thread uniqueness is the caller's `unsafe`
-    /// obligation (every thread must pass the same `row_stride`).
+    /// `super::index_2d_runtime` stub. Like `index_2d`, but the row stride is a
+    /// runtime value read from the slice the index will address, so every
+    /// thread of the launch necessarily uses the same one.
     #[inline(always)]
-    pub unsafe fn index_2d_runtime<'kernel>(
+    pub fn index_2d_runtime<'kernel, T>(
         scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
-        row_stride: usize,
+        slice: &crate::disjoint::DisjointSlice<'_, T, Runtime2DIndex>,
     ) -> Option<ThreadIndex<'kernel, Runtime2DIndex>> {
+        let row_stride = slice.row_pitch() as usize;
+        if row_stride == 0 {
+            return None;
+        }
         if !at_most_two_dimensional_launch(scope) {
             return None;
         }
@@ -811,13 +815,16 @@ pub fn index_2d<'kernel, const ROW_STRIDE: usize>()
     )
 }
 
-/// Runtime-stride 2D indexing escape hatch.
+/// Runtime-stride 2D indexing over the slice that supplies the stride.
 ///
-/// # Safety
+/// The row width comes from `slice`, where the host bound it once for the
+/// slice's whole lifetime, so every thread of the launch indexes the same grid
+/// and distinct threads get distinct indices. Passing the stride separately
+/// could not give that: safe code can select between two launch-uniform values
+/// under a thread-varying condition, and two threads then resolve one element.
 ///
-/// Every thread in the kernel that uses the resulting index with the same
-/// `DisjointSlice<T, Runtime2DIndex>` must pass the same `row_stride`. Mixing
-/// runtime strides can create colliding indices and data races.
+/// `None` when the launch uses more than two dimensions, when the pitch is
+/// zero, or when the coordinate arithmetic would overflow.
 ///
 /// # Stub body
 ///
@@ -826,10 +833,10 @@ pub fn index_2d<'kernel, const ROW_STRIDE: usize>()
 /// The public function exists only so imports and aliases resolve
 /// cleanly; invoking it directly from host code panics.
 #[inline(always)]
-pub unsafe fn index_2d_runtime<'kernel>(
-    row_stride: usize,
+pub fn index_2d_runtime<'kernel, T>(
+    slice: &crate::disjoint::DisjointSlice<'_, T, Runtime2DIndex>,
 ) -> Option<ThreadIndex<'kernel, Runtime2DIndex>> {
-    let _ = row_stride;
+    let _ = slice;
     unreachable!(
         "thread::index_2d_runtime called outside #[kernel] / #[device] — the macro rewrites real call sites; the public item is a stub"
     )

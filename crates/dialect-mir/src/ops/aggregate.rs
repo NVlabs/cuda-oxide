@@ -176,10 +176,23 @@ impl Verify for MirExtractFieldOp {
                         "MirExtractFieldOp result must be integer for disjoint slice len"
                     );
                 }
+            } else if let Some(expected_ty) = slice_ty.space_field_type(index) {
+                // Fields 2..: the index space's runtime layout, in order.
+                if res_ty != expected_ty {
+                    return verify_err!(
+                        op.loc(),
+                        "MirExtractFieldOp result type mismatch for disjoint slice index-space field {}. Expected: {}, Actual: {}",
+                        index,
+                        expected_ty.disp(ctx),
+                        res_ty.disp(ctx)
+                    );
+                }
             } else {
                 return verify_err!(
                     op.loc(),
-                    "MirExtractFieldOp index out of bounds for disjoint slice"
+                    "MirExtractFieldOp index {} out of bounds for disjoint slice with {} fields",
+                    index,
+                    slice_ty.field_count()
                 );
             }
         } else if let Some(struct_ty) = operand_ty_obj.downcast_ref::<MirStructType>() {

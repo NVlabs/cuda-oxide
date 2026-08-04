@@ -71,10 +71,14 @@ pub enum RowMajorTiles<const ROWS: usize, const COLS: usize, const ROW_STRIDE: u
 /// compile-time constant, while here it is an ordinary runtime value (for
 /// example a GEMM dimension `n`) passed to [`DisjointSlice::tile_2d32_rt`].
 ///
-/// Because the row width is not in the type, the compiler cannot verify that
-/// every thread uses the same one. That "same value in every thread"
-/// requirement moves into the `unsafe` contract of `tile_2d32_rt`, just as
-/// [`crate::thread::index_2d_runtime`] does for `Runtime2DIndex`.
+/// Because the row width is not in the type, it travels as data: the host
+/// writes it into the launch packet beside the slice's pointer and length, and
+/// [`DisjointSlice::row_pitch`] reads it back. One pitch per slice for the
+/// slice's whole lifetime is what tile disjointness needs, and a value the
+/// host wrote is one device code cannot vary between threads, so
+/// [`tile_2d32_rt`](DisjointSlice::tile_2d32_rt) is safe.
+///
+/// [`DisjointSlice::row_pitch`]: crate::disjoint::DisjointSlice::row_pitch
 pub enum RuntimeRowMajorTiles<const ROWS: usize, const COLS: usize> {}
 
 /// A checked local index into a static `N`-element view.
@@ -1124,29 +1128,43 @@ impl<'a, T, const ROWS: usize, const COLS: usize>
     /// Zero-sized element types are rejected, as for every mutable view:
     /// distinct threads would otherwise share one address.
     ///
-    /// # Safety
+    /// # Why the stride comes from the slice
     ///
-    /// `stride` must be the same value in **every** thread of the launch, and
-    /// it must be the row width actually used for this slice. Passing a
-    /// kernel scalar argument (such as `n`) satisfies this automatically:
-    /// every thread reads the same argument. The danger is a stride computed
-    /// per thread. Two threads that disagree about the row width describe
-    /// two different grids over the same memory, and their "disjoint" tiles
-    /// can land on the same elements. With 1x1 tiles: thread `(1, 0)` with
-    /// stride 5 resolves flat index `1*5 + 0 = 5`, while thread `(0, 5)`
-    /// with stride 100 resolves `0*100 + 5 = 5`. Same element, two `&mut`, a
-    /// data race. This is the same obligation as
-    /// [`crate::thread::index_2d_runtime`]; when the row width is known at
-    /// compile time, prefer the fully safe [`tile_2d32`], which makes a
-    /// mismatch a type error.
+    /// Two threads that disagree about the row width describe two different
+    /// grids over the same memory, and their "disjoint" tiles can land on the
+    /// same elements. With 1x1 tiles: thread `(1, 0)` with stride 5 resolves
+    /// flat index `1*5 + 0 = 5`, while thread `(0, 5)` with stride 100
+    /// resolves `0*100 + 5 = 5`. Same element, two `&mut`, a data race.
+    ///
+    /// The pitch is therefore a property of the slice rather than of the call.
+    /// The host writes it into the launch packet beside the pointer and length,
+    /// every thread reads that one word, and device code has no step at which
+    /// it could substitute another. Under a pitch fixed this way the
+    /// `last_col < stride` check below keeps each tile inside one logical row,
+    /// which makes the coordinate-to-offset mapping injective and the tiles of
+    /// distinct threads disjoint.
+    ///
+    /// A per-call pitch cannot give that guarantee even when each candidate
+    /// value is itself launch-uniform, because safe code can select between two
+    /// such values under a thread-varying condition, or pass different ones at
+    /// two call sites on one slice.
+    ///
+    /// The pitch still has to be the row width this slice actually uses for
+    /// the kernel to compute the intended result. That is a correctness
+    /// requirement rather than a safety one: a pitch that misdescribes the
+    /// layout gives wrong answers inside the slice, never aliasing or an
+    /// out-of-bounds access.
+    ///
+    /// When the row width is known at compile time, prefer [`tile_2d32`],
+    /// which makes a mismatch a type error.
     ///
     /// [`tile_2d32`]: DisjointSlice::tile_2d32
     #[inline(always)]
-    pub unsafe fn tile_2d32_rt<'kernel>(
+    pub fn tile_2d32_rt<'kernel>(
         &mut self,
         thread: ThreadCoord2D32<'kernel>,
-        stride: u32,
     ) -> Option<RuntimeTileMut32<'_, T, ROWS, COLS>> {
+        let stride = self.row_pitch();
         let start = checked_runtime_tile_start::<T, ROWS, COLS>(
             thread.row(),
             thread.col(),
@@ -1160,8 +1178,9 @@ impl<'a, T, const ROWS: usize, const COLS: usize>
         // SAFETY: the scalar-only helper checked the complete rectangle.
         // The `&mut self` borrow keeps at most one tile live per thread, and
         // a re-minted coordinate re-derives the same rectangle. Across
-        // threads, the caller asserts a launch-uniform pitch, under which
-        // distinct hardware coordinates map to disjoint row and column bands.
+        // threads, the pitch is the one the host bound to this slice, under
+        // which distinct hardware coordinates map to disjoint row and column
+        // bands.
         Some(unsafe {
             RuntimeTileMut32::from_checked_ptr(self.as_mut_ptr().add(start as usize), stride)
         })

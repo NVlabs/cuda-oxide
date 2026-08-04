@@ -11,8 +11,8 @@ fn cannot_mint_two_tiles_from_one_coordinate<'kernel>(
     mut c: DisjointSlice<'_, f32, RuntimeRowMajorTiles<1, 1>>,
 ) {
     let coord = __internal::coord_2d_u32(launch_context);
-    let _first = unsafe { c.tile_2d32_rt(coord, 64) };
-    let _second = unsafe { c.tile_2d32_rt(coord, 64) };
+    let _first = c.tile_2d32_rt(coord);
+    let _second = c.tile_2d32_rt(coord);
 }
 
 fn main() {}

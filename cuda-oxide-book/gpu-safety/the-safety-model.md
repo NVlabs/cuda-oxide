@@ -123,7 +123,7 @@ are the constructors cuda-oxide provides:
 |:------------------------------|:----------------------------------------|:----------------------------------------------|:-------------------------------------------------|
 | `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`               | Invalid when an untyped launch has active Y/Z    |
 | `index_2d::<S>()`             | `row * S + col`                         | `Option<ThreadIndex<'kernel, Index2D<S>>>`    | Const stride; mixing strides is a compile error  |
-| `unsafe index_2d_runtime(s)`  | `row * s + col`                         | `Option<ThreadIndex<'kernel, Runtime2DIndex>>`| Caller asserts every thread used the same `s`    |
+| `index_2d_runtime(&slice)`    | `row * pitch + col`                     | `Option<ThreadIndex<'kernel, Runtime2DIndex>>`| Pitch read from the slice, bound by the host     |
 | `index_2d_row()`              | `blockIdx.y * blockDim.y + threadIdx.y` | `usize`                                       | Component accessor, not a witness constructor    |
 | `index_2d_col()`              | `blockIdx.x * blockDim.x + threadIdx.x` | `usize`                                       | Component accessor, not a witness constructor    |
 
@@ -232,23 +232,102 @@ lifetime is borrowed from a stack-local scope the macros inject -- so a
 thread can't park its `ThreadIndex` in shared memory and have a neighbour
 pick it up later, and the witness can't outlive the kernel body.
 
-#### Truly runtime strides: `unsafe index_2d_runtime`
+#### Truly runtime strides: `index_2d_runtime`
 
 Some kernels really do receive their stride at launch time
-(e.g. matrix dimensions known only on the host). For those cases there's
-a corresponding witness `Runtime2DIndex` and an `unsafe` constructor:
+(e.g. matrix dimensions known only on the host). For those cases there is a
+corresponding witness `Runtime2DIndex`, minted from the slice the index will
+address:
 
 ```rust
-let idx = unsafe { thread::index_2d_runtime(n)? };
+let idx = thread::index_2d_runtime(&c)?;
 ```
 
-The `unsafe` is the contract: every thread in the kernel that feeds a
-`Runtime2DIndex` into the same `DisjointSlice<T, Runtime2DIndex>` must
-have used the same `n`. The type system *can't* prove this -- two
-`ThreadIndex<'_, Runtime2DIndex>` values produced under different
-runtime strides have the same type. If you can pin the stride at compile
-time, prefer `index_2d::<S>()`. If you can't, the `unsafe` keyword on
-`index_2d_runtime` is the marker that the safety obligation is yours.
+No `unsafe`, because there is no per-call stride to disagree about. The pitch
+travels inside the slice, written once by the host into the launch packet, so
+every thread that indexes `c` uses the same row width by construction. Passing
+the stride separately could not give that: two `ThreadIndex<'_, Runtime2DIndex>`
+values produced under different runtime strides have the same type, so the
+type system cannot tell them apart. If you can pin the stride at compile time,
+prefer `index_2d::<S>()`.
+
+#### Where a runtime pitch lives
+
+The *launch* establishes "every thread saw the same value": the host marshals
+one word into the launch packet, and every thread of every block reads those
+same bytes. A kernel body has no comparable way to establish it about one of
+its own locals.
+
+So a slice whose index space carries a runtime row width receives that width
+the same way. On the host, `Pitched` binds it:
+
+```rust
+module.write_c(&stream, &prepared, cuda_host::Pitched::new(&mut c, n))?;
+```
+
+and on the device the accessor reads it back with no argument of its own:
+
+```rust
+#[kernel(launch_context = lc)]
+#[launch_contract(domain = 2, coordinates = u32, block = (16, 16, 1))]
+pub fn write_c(mut c: DisjointSlice<f32, RuntimeRowMajorTiles<1, 1>>) {
+    let coord = thread::coord_2d_u32(lc);
+    // No `unsafe`: the pitch came from the host, bound to `c`.
+    if let Some(mut cell) = c.tile_2d32_rt(coord) {
+        cell.at_const::<0, 0>().write(1.0);
+    }
+}
+```
+
+Why this is enough: under one pitch per slice the `last_col < stride` check
+keeps each tile inside one logical row, which makes the coordinate-to-offset
+mapping injective, so distinct threads own disjoint elements. Two threads
+disagreeing about the pitch is exactly the case that breaks it. With 1x1 tiles,
+thread `(1, 0)` at stride 5 resolves flat index 5, and thread `(0, 5)` at
+stride 100 also resolves 5: one element, two `&mut`.
+
+A pitch supplied per call cannot rule that out even when each candidate value
+is itself launch-uniform, because safe code can select between two of them
+under a thread-varying condition, or pass different ones at two call sites on
+one slice. Binding at the host boundary removes the choice.
+
+The pitch still has to be the row width the buffer actually uses for the
+kernel to compute the intended result. That is a correctness requirement rather
+than a safety one; a pitch that misdescribes the layout gives wrong answers
+inside the slice, never aliasing or an out-of-bounds access.
+
+#### Launch-uniform scalars: `Uniform<T>`
+
+The same reasoning applies to any scalar a kernel needs to be the same in
+every thread, not only to a row pitch. `Uniform<T>` is that fact as a type.
+Declare the parameter and the obligation is discharged by the kernel ABI:
+
+```rust
+#[kernel(launch_context = lc)]
+#[launch_contract(domain = 2, coordinates = u32, block = (16, 16, 1))]
+pub fn write_c(rows: Uniform<u32>, mut c: DisjointSlice<f32, RuntimeRowMajorTiles<1, 1>>) {
+    let coord = thread::coord_2d_u32(lc);
+    if coord.row() >= rows.get() {
+        return;
+    }
+    if let Some(mut cell) = c.tile_2d32_rt(coord) {
+        cell.at_const::<0, 0>().write(1.0);
+    }
+}
+```
+
+The host method still takes a plain `u32`; `#[cuda_module]` wraps it, and
+`#[repr(transparent)]` keeps the launch packet byte-identical. There is no
+constructor, so device code cannot promote a per-thread value into a witness.
+`Uniform::new_unchecked` remains for a value proven uniform some other way, and
+`block_dim_x()` and its siblings return witnesses directly, since a launch has
+one block shape.
+
+Uniformity is closed under arithmetic whose operands are all uniform, so a
+derived value keeps the witness. It is not closed under selection: choosing
+between two uniform values on a thread-varying condition gives a value that
+differs between threads, which is why a witness of this kind cannot carry a
+proof that has to hold across a whole slice.
 
 ### The GEMM pattern
 

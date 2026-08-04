@@ -36,10 +36,82 @@
 //! raw launch is unsafe and leaves that proof to the caller. Constructing a
 //! `DisjointSlice` from raw memory is also unsafe.
 
-use crate::thread::{Index1D, IndexFormula, LaunchContext, ThreadIndex};
+use crate::thread::{Index1D, Index2D, IndexFormula, LaunchContext, Runtime2DIndex, ThreadIndex};
 use crate::view::{LinearTiles, RowMajorTiles, RuntimeRowMajorTiles};
 use core::marker::PhantomData;
 use core::mem::size_of;
+
+mod space_layout_sealed {
+    pub trait Sealed {}
+}
+
+/// The layout data an index space needs at runtime, carried in the slice.
+///
+/// An index space that fixes its geometry in the type needs nothing here, so
+/// [`Data`](Self::Data) is `()` and the slice keeps its `{ ptr, len }` layout.
+/// A space whose row pitch is a runtime value sets `Data = u32`, and the host
+/// marshals that pitch into the launch packet beside the pointer and length.
+///
+/// # Why the pitch belongs here and not at the access site
+///
+/// Tile disjointness needs one pitch per slice for the slice's whole lifetime.
+/// A pitch supplied per call cannot give that, even when each candidate value
+/// is itself launch-uniform: safe code can select between two [`Uniform<u32>`]
+/// values under a thread-varying condition, and the selected pitch then differs
+/// between threads. Two threads that disagree about the row width describe two
+/// grids over one buffer, and their "disjoint" tiles collide. With 1x1 tiles,
+/// thread `(1, 0)` at pitch 5 and thread `(0, 5)` at pitch 100 both resolve
+/// flat index 5.
+///
+/// Binding the pitch at the host boundary removes the choice. The host writes
+/// one value into the launch packet, every thread reads that word, and device
+/// code has no step at which it could substitute another.
+///
+/// [`Uniform<u32>`]: crate::uniform::Uniform
+pub trait SpaceLayout: space_layout_sealed::Sealed {
+    /// Runtime layout data marshalled with the slice, or `()` when the index
+    /// space is fully described by its type.
+    type Data: Copy;
+}
+
+impl space_layout_sealed::Sealed for Index1D {}
+impl SpaceLayout for Index1D {
+    type Data = ();
+}
+
+impl<const ROW_STRIDE: usize> space_layout_sealed::Sealed for Index2D<ROW_STRIDE> {}
+impl<const ROW_STRIDE: usize> SpaceLayout for Index2D<ROW_STRIDE> {
+    type Data = ();
+}
+
+impl<const N: usize> space_layout_sealed::Sealed for LinearTiles<N> {}
+impl<const N: usize> SpaceLayout for LinearTiles<N> {
+    type Data = ();
+}
+
+impl<const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize> space_layout_sealed::Sealed
+    for RowMajorTiles<ROWS, COLS, ROW_STRIDE>
+{
+}
+impl<const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize> SpaceLayout
+    for RowMajorTiles<ROWS, COLS, ROW_STRIDE>
+{
+    type Data = ();
+}
+
+impl space_layout_sealed::Sealed for Runtime2DIndex {}
+impl SpaceLayout for Runtime2DIndex {
+    type Data = u32;
+}
+
+impl<const ROWS: usize, const COLS: usize> space_layout_sealed::Sealed
+    for RuntimeRowMajorTiles<ROWS, COLS>
+{
+}
+impl<const ROWS: usize, const COLS: usize> SpaceLayout for RuntimeRowMajorTiles<ROWS, COLS> {
+    /// The matrix row width, in elements.
+    type Data = u32;
+}
 
 /// A slice-like type that can only be accessed with thread-local indices.
 ///
@@ -93,18 +165,44 @@ use core::mem::size_of;
 /// }
 /// ```
 #[repr(C)]
-pub struct DisjointSlice<'a, T, IndexSpace = Index1D> {
+pub struct DisjointSlice<'a, T, IndexSpace: SpaceLayout = Index1D> {
     ptr: *mut T,
     len: usize,
+    /// Runtime layout for the index space, written once by the host. A
+    /// zero-sized `()` for every space whose geometry is in its type, so the
+    /// struct keeps its `{ ptr, len }` layout and ABI in that case.
+    space: IndexSpace::Data,
     _marker: PhantomData<&'a mut [T]>,
     _space: PhantomData<fn() -> IndexSpace>,
 }
+
+/// The `space` field must not disturb the kernel ABI of any index space that
+/// carries no runtime layout. `()` is zero-sized, so a `#[repr(C)]` slice over
+/// a static space stays exactly `{ ptr, len }` and every existing kernel keeps
+/// its two-word parameter lowering. A runtime pitch adds one word.
+const _: () = {
+    assert!(
+        size_of::<DisjointSlice<'static, f32, Index1D>>()
+            == size_of::<*mut f32>() + size_of::<usize>()
+    );
+    assert!(
+        size_of::<DisjointSlice<'static, f32, RowMajorTiles<2, 2, 64>>>()
+            == size_of::<*mut f32>() + size_of::<usize>()
+    );
+    assert!(
+        size_of::<DisjointSlice<'static, f32, RuntimeRowMajorTiles<1, 1>>>()
+            == size_of::<*mut f32>() + size_of::<usize>() + size_of::<u64>()
+    );
+};
 
 mod launch_contract_sealed {
     pub trait Sealed {}
 }
 
-impl<'a, T, IndexSpace> launch_contract_sealed::Sealed for DisjointSlice<'a, T, IndexSpace> {}
+impl<'a, T, IndexSpace: SpaceLayout> launch_contract_sealed::Sealed
+    for DisjointSlice<'a, T, IndexSpace>
+{
+}
 
 /// Compiler-facing proof that a `DisjointSlice` has the expected element type
 /// and supports a launch domain.
@@ -159,7 +257,37 @@ impl<'a, T> __LaunchContractDisjointSlice<T, 2>
 {
 }
 
-impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
+impl<'a, T, IndexSpace: SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
+    /// Create a `DisjointSlice` from a raw pointer, a length and the runtime
+    /// layout its index space needs.
+    ///
+    /// This is the general form. For an index space whose geometry is fixed in
+    /// its type, [`from_raw_parts`](Self::from_raw_parts) says the same thing
+    /// without the `()`.
+    ///
+    /// # Safety
+    ///
+    /// Carries every obligation of [`from_raw_parts`](Self::from_raw_parts),
+    /// and one more: `space` must describe the buffer's real layout, and must
+    /// be the same value for every thread of the launch. The host writes it
+    /// once into the launch packet, which is what discharges the second half.
+    #[inline]
+    pub unsafe fn from_raw_parts_with_space(
+        ptr: *mut T,
+        len: usize,
+        space: IndexSpace::Data,
+    ) -> Self {
+        DisjointSlice {
+            ptr,
+            len,
+            space,
+            _marker: PhantomData,
+            _space: PhantomData,
+        }
+    }
+}
+
+impl<'a, T, IndexSpace: SpaceLayout<Data = ()>> DisjointSlice<'a, T, IndexSpace> {
     /// Create a DisjointSlice from a raw pointer and length.
     ///
     /// # Safety
@@ -179,6 +307,7 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
         DisjointSlice {
             ptr,
             len,
+            space: (),
             _marker: PhantomData,
             _space: PhantomData,
         }
@@ -195,7 +324,9 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     pub unsafe fn from_mut_slice(slice: &'a mut [T]) -> Self {
         unsafe { Self::from_raw_parts(slice.as_mut_ptr(), slice.len()) }
     }
+}
 
+impl<'a, T, IndexSpace: SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
     /// Get the length of the slice.
     #[inline]
     pub fn len(&self) -> usize {
@@ -300,7 +431,32 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     }
 }
 
-impl<'a, T, IS: IndexFormula> DisjointSlice<'a, T, IS> {
+impl<'a, T, const ROWS: usize, const COLS: usize>
+    DisjointSlice<'a, T, RuntimeRowMajorTiles<ROWS, COLS>>
+{
+    /// The row width this slice was built with, in elements.
+    ///
+    /// Written once by the host into the launch packet, so every thread of the
+    /// launch reads the same value. That is what lets
+    /// [`tile_2d32_rt`](Self::tile_2d32_rt) be safe.
+    #[inline(always)]
+    pub fn row_pitch(&self) -> u32 {
+        self.space
+    }
+}
+
+impl<'a, T> DisjointSlice<'a, T, Runtime2DIndex> {
+    /// The row width this slice was built with, in elements.
+    ///
+    /// Written once by the host into the launch packet, so every thread of the
+    /// launch reads the same value.
+    #[inline(always)]
+    pub fn row_pitch(&self) -> u32 {
+        self.space
+    }
+}
+
+impl<'a, T, IS: IndexFormula + SpaceLayout> DisjointSlice<'a, T, IS> {
     /// One-shot indexed access — mints this thread's witness and resolves
     /// it to a mutable reference in a single call.
     ///
@@ -379,7 +535,7 @@ impl<'a, T, IS: IndexFormula> DisjointSlice<'a, T, IS> {
 //   ThreadIndex selects a unique element for the active geometry
 // - The pointer and length are just data, no thread affinity
 // - T: Send means the elements themselves can be sent between threads
-unsafe impl<'a, T: Send, IndexSpace> Send for DisjointSlice<'a, T, IndexSpace> {}
+unsafe impl<'a, T: Send, IndexSpace: SpaceLayout> Send for DisjointSlice<'a, T, IndexSpace> {}
 
 // DisjointSlice auto-trait summary:
 //   Send: yes (explicit impl above, when T: Send)

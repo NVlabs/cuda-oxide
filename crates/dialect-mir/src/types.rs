@@ -328,23 +328,84 @@ impl Verify for MirSliceType {
 /// A disjoint slice type.
 ///
 /// Same layout as slice, but enforces thread-local access semantics in the compiler.
-/// Syntax: `mir.disjoint_slice <type>`
+/// Syntax: `mir.disjoint_slice <type, [space types]>`
+///
+/// # Index-space layout fields
+///
+/// A disjoint slice is `{ ptr, len }` followed by whatever runtime layout its
+/// index space carries. An index space whose geometry is fixed in its type
+/// carries none, so `space_tys` is empty and the slice keeps its two-field
+/// shape and kernel ABI. A space with a runtime row pitch contributes one `u32`
+/// field, which the host writes into the launch packet beside the pointer and
+/// length.
+///
+/// The fields appear in declaration order after `len`, so field index `2 + i`
+/// selects `space_tys[i]`.
 ///
 /// # Verification
 /// * Element type must be valid.
-#[pliron_type(name = "mir.disjoint_slice", format = "`<` $element_ty `>`")]
+#[pliron_type(
+    name = "mir.disjoint_slice",
+    format = "`<` $element_ty `,` `[` vec($space_tys, CharSpace(`,`)) `]` `>`"
+)]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirDisjointSliceType {
     pub element_ty: TypeHandle,
+    /// Runtime layout fields the index space carries, after `{ ptr, len }`.
+    pub space_tys: Vec<TypeHandle>,
 }
 
 impl MirDisjointSliceType {
+    /// A slice over an index space that carries no runtime layout.
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Type::instantiate(MirDisjointSliceType { element_ty }, ctx)
+        Type::instantiate(
+            MirDisjointSliceType {
+                element_ty,
+                space_tys: Vec::new(),
+            },
+            ctx,
+        )
+    }
+
+    /// A slice whose index space carries `space_tys` after `{ ptr, len }`.
+    pub fn get_with_space(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        space_tys: Vec<TypeHandle>,
+    ) -> TypedHandle<Self> {
+        Type::instantiate(
+            MirDisjointSliceType {
+                element_ty,
+                space_tys,
+            },
+            ctx,
+        )
     }
 
     pub fn element_type(&self) -> TypeHandle {
         self.element_ty
+    }
+
+    /// The index space's runtime layout fields, after `{ ptr, len }`.
+    pub fn space_types(&self) -> &[TypeHandle] {
+        &self.space_tys
+    }
+
+    /// Total field count: `ptr`, `len`, then one per index-space layout field.
+    pub fn field_count(&self) -> usize {
+        2 + self.space_tys.len()
+    }
+
+    /// The type of field `index`, or `None` when it is out of bounds.
+    ///
+    /// Fields 0 and 1 are the pointer and length, whose types depend on the
+    /// element type and target, so this only answers for the index-space
+    /// fields that follow them.
+    pub fn space_field_type(&self, index: usize) -> Option<TypeHandle> {
+        index
+            .checked_sub(2)
+            .and_then(|i| self.space_tys.get(i))
+            .copied()
     }
 }
 

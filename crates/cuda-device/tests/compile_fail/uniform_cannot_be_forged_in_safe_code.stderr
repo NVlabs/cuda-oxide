@@ -1,0 +1,5 @@
+error[E0451]: field `value` of struct `Uniform` is private
+  --> tests/compile_fail/uniform_cannot_be_forged_in_safe_code.rs:13:49
+   |
+13 |     let _from_struct_literal = Uniform::<u32> { value: 7 };
+   |                                                 ^^^^^ private field

@@ -112,7 +112,8 @@ mod kernels {
         }
 
         // Write result to global memory
-        if let Some(c_idx) = unsafe { thread::index_2d_runtime(n_size) } {
+        // The pitch comes from `c`, bound on the host to this same `n`.
+        if let Some(c_idx) = thread::index_2d_runtime(&c) {
             // col < n_size guaranteed by index_2d_runtime returning Some
             if row < m_size
                 && let Some(c_elem) = c.get_mut(c_idx)
@@ -204,7 +205,7 @@ fn main() {
             &a_dev,
             &b_dev,
             BETA,
-            &mut c_dev,
+            cuda_host::Pitched::new(&mut c_dev, n_arg),
         )
     }
     .unwrap();
@@ -227,7 +228,7 @@ fn main() {
                 &a_dev,
                 &b_dev,
                 BETA,
-                &mut c_dev,
+                cuda_host::Pitched::new(&mut c_dev, n_arg),
             )
         }
         .unwrap();

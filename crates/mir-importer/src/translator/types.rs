@@ -669,7 +669,7 @@ pub fn translate_type(
             if trimmed_name == "DisjointSlice" {
                 // Extract the element type from the generic parameter
                 // DisjointSlice<'a, T> has T as the second parameter (first is lifetime)
-                let generic_args = substs.0;
+                let generic_args = &substs.0;
 
                 // Find the first type argument (skip lifetimes)
                 let elem_ty = generic_args
@@ -685,7 +685,35 @@ pub fn translate_type(
                     })?;
 
                 let elem = translate_type(ctx, elem_ty)?;
-                Ok(MirDisjointSliceType::get(ctx, elem).into())
+
+                // Fields after `{ ptr, len }` carry whatever runtime layout the
+                // index space needs, read from rustc's own view of the struct
+                // rather than from the index space's name. A space fixed in its
+                // type has `()` there, which is zero-sized and contributes no
+                // field, so the slice keeps its two-word kernel ABI.
+                let mut space_tys = Vec::new();
+                if let Some(variant) = adt_def.variants().first() {
+                    for field in variant.fields() {
+                        if field.name != "space" {
+                            continue;
+                        }
+                        let field_ty = field.ty_with_args(&substs);
+                        let is_zst = field_ty
+                            .layout()
+                            .map(|layout| layout.shape().size.bytes() == 0)
+                            .map_err(|e| {
+                                input_error_noloc!(TranslationErr::unsupported(format!(
+                                    "Failed to query DisjointSlice index-space layout: {:?}",
+                                    e
+                                )))
+                            })?;
+                        if !is_zst {
+                            space_tys.push(translate_type(ctx, &field_ty)?);
+                        }
+                    }
+                }
+
+                Ok(MirDisjointSliceType::get_with_space(ctx, elem, space_tys).into())
             } else if trimmed_name == "ThreadIndex" {
                 // ThreadIndex is a newtype around usize - translate to usize
                 // The type safety is enforced at the Rust level, not the IR level

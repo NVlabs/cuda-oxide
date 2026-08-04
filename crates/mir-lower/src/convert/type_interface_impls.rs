@@ -24,7 +24,7 @@ use crate::type_conversion_interface::{ConvertMirTypeFn, MirConvertibleType, Mir
 
 use super::types::{
     StructLayoutInfo, build_struct_slot_map, build_union_storage_type, convert_enum_to_llvm,
-    convert_type, make_slice_struct,
+    convert_type, make_disjoint_slice_struct, make_slice_struct,
 };
 
 // =============================================================================
@@ -47,7 +47,14 @@ impl MirConvertibleType for MirDisjointSliceType {}
 #[type_interface_impl]
 impl MirTypeConversion for MirDisjointSliceType {
     fn converter(&self) -> ConvertMirTypeFn {
-        |_ty, ctx| Ok(make_slice_struct(ctx))
+        |ty, ctx| {
+            let space_tys = ty
+                .deref(ctx)
+                .downcast_ref::<MirDisjointSliceType>()
+                .map(|slice_ty| slice_ty.space_tys.clone())
+                .unwrap_or_default();
+            make_disjoint_slice_struct(ctx, &space_tys)
+        }
     }
 }
 

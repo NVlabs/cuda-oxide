@@ -419,18 +419,30 @@ fn build_entry_prologue(
         let kind = classify_argument_type(ctx, mir_ty, is_kernel_entry);
 
         match kind {
-            ReconstructKind::Slice => {
-                if llvm_arg_idx + 1 >= llvm_args.len() {
+            ReconstructKind::Slice { space_fields } => {
+                let needed = 2 + space_fields;
+                if llvm_arg_idx + needed > llvm_args.len() {
                     return Err(anyhow::anyhow!(
-                        "Entry block arg mismatch: need 2 more LLVM args for slice"
+                        "Entry block arg mismatch: need {} more LLVM args for slice",
+                        needed
                     ));
                 }
                 let ptr_val = llvm_args[llvm_arg_idx];
                 let len_val = llvm_args[llvm_arg_idx + 1];
-                llvm_arg_idx += 2;
+                let space_vals: Vec<Value> = (0..space_fields)
+                    .map(|i| llvm_args[llvm_arg_idx + 2 + i])
+                    .collect();
+                llvm_arg_idx += needed;
 
-                let (val, new_last) =
-                    reconstruct_slice(ctx, llvm_entry, last_op, mir_ty, ptr_val, len_val)?;
+                let (val, new_last) = reconstruct_slice(
+                    ctx,
+                    llvm_entry,
+                    last_op,
+                    mir_ty,
+                    ptr_val,
+                    len_val,
+                    &space_vals,
+                )?;
                 last_op = Some(new_last);
                 result_args.push(val);
             }
@@ -479,8 +491,9 @@ fn build_entry_prologue(
 
 /// Classification of argument types for reconstruction strategy.
 enum ReconstructKind {
-    /// A slice type (`&[T]` or `DisjointSlice<T>`), flattened to `(ptr, len)`.
-    Slice,
+    /// A slice type (`&[T]` or `DisjointSlice<T>`), flattened to `(ptr, len)`
+    /// followed by `space_fields` index-space layout arguments.
+    Slice { space_fields: usize },
     /// A struct type with N non-ZST fields, flattened to N separate arguments.
     Struct(usize),
     /// A zero-sized argument omitted from the LLVM signature.
@@ -505,17 +518,33 @@ fn classify_argument_type(
         return ReconstructKind::Zst;
     }
 
-    let (is_slice, struct_fields) = {
+    let (slice_space_tys, struct_fields) = {
         let arg_ty_ref = arg_ty.deref(ctx);
-        let is_slice = arg_ty_ref.is::<MirSliceType>() || arg_ty_ref.is::<MirDisjointSliceType>();
+        let slice_space_tys = if arg_ty_ref.is::<MirSliceType>() {
+            Some(Vec::new())
+        } else {
+            arg_ty_ref
+                .downcast_ref::<MirDisjointSliceType>()
+                .map(|s| s.space_tys.clone())
+        };
         let struct_fields = arg_ty_ref
             .downcast_ref::<MirStructType>()
             .map(|s| s.field_types.clone());
-        (is_slice, struct_fields)
+        (slice_space_tys, struct_fields)
     };
 
-    if is_slice {
-        ReconstructKind::Slice
+    if let Some(space_tys) = slice_space_tys {
+        // A zero-sized index-space field contributes no argument, matching
+        // `convert_function_type`.
+        let space_fields = space_tys
+            .iter()
+            .filter(|f| {
+                convert_type(ctx, **f)
+                    .map(|llvm_ty| !is_zero_sized_type(ctx, llvm_ty))
+                    .unwrap_or(true)
+            })
+            .count();
+        ReconstructKind::Slice { space_fields }
     } else if let Some(fields) = struct_fields {
         // Count non-ZST fields the same way `convert_function_type` does
         // — empty structs and structs of all-ZSTs are themselves ZST and
@@ -548,9 +577,13 @@ fn classify_argument_type(
 // Aggregate Reconstruction
 // ============================================================================
 
-/// Reconstruct a slice value from flattened pointer and length.
+/// Reconstruct a slice value from its flattened fields.
 ///
-/// Generates: `undef → insertvalue ptr[0] → insertvalue len[1]`.
+/// Generates: `undef → insertvalue ptr[0] → insertvalue len[1]`, then one
+/// `insertvalue` per index-space layout field at slot `2 + i`. Leaving those
+/// slots undef would give every thread a garbage row pitch, so the count here
+/// has to match what `convert_function_type` put in the signature.
+///
 /// Returns the final reconstructed value and the last inserted operation.
 fn reconstruct_slice(
     ctx: &mut Context,
@@ -559,6 +592,7 @@ fn reconstruct_slice(
     mir_ty: TypeHandle,
     ptr_val: Value,
     len_val: Value,
+    space_vals: &[Value],
 ) -> std::result::Result<(Value, Ptr<Operation>), anyhow::Error> {
     let struct_ty = convert_type(ctx, mir_ty)?;
 
@@ -575,9 +609,18 @@ fn reconstruct_slice(
     let insert_len = llvm::InsertValueOp::new(ctx, val_with_ptr, len_val, vec![1]);
     let insert_len_op = insert_len.get_operation();
     insert_len_op.insert_after(ctx, insert_ptr_op);
-    let final_val = insert_len_op.deref(ctx).get_result(0);
 
-    Ok((final_val, insert_len_op))
+    let mut last_op = insert_len_op;
+    let mut current_val = insert_len_op.deref(ctx).get_result(0);
+    for (i, &space_val) in space_vals.iter().enumerate() {
+        let insert_space = llvm::InsertValueOp::new(ctx, current_val, space_val, vec![2 + i as u32]);
+        let insert_space_op = insert_space.get_operation();
+        insert_space_op.insert_after(ctx, last_op);
+        current_val = insert_space_op.deref(ctx).get_result(0);
+        last_op = insert_space_op;
+    }
+
+    Ok((current_val, last_op))
 }
 
 /// Reconstruct a struct value from flattened field values.

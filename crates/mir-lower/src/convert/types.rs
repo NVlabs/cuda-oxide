@@ -309,7 +309,8 @@ pub fn convert_function_type(
         // Determine what kind of flattening this type needs
         // Extract all info first, then drop the borrow
         enum FlattenKind {
-            Slice,
+            /// `{ ptr, len }`, then one parameter per index-space layout field.
+            Slice { space_tys: Vec<TypeHandle> },
             Struct {
                 field_types: Vec<TypeHandle>,
                 mem_to_decl: Vec<usize>,
@@ -319,8 +320,14 @@ pub fn convert_function_type(
 
         let flatten_kind = {
             let ty_ref = t.deref(ctx);
-            if ty_ref.is::<MirSliceType>() || ty_ref.is::<MirDisjointSliceType>() {
-                FlattenKind::Slice
+            if ty_ref.is::<MirSliceType>() {
+                FlattenKind::Slice {
+                    space_tys: Vec::new(),
+                }
+            } else if let Some(slice_ty) = ty_ref.downcast_ref::<MirDisjointSliceType>() {
+                FlattenKind::Slice {
+                    space_tys: slice_ty.space_tys.clone(),
+                }
             } else if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
                 if is_kernel_entry {
                     // Kernel-boundary ABI: keep the struct intact so the
@@ -339,11 +346,19 @@ pub fn convert_function_type(
         };
 
         match flatten_kind {
-            FlattenKind::Slice => {
+            FlattenKind::Slice { space_tys } => {
                 let ptr_ty = llvm_types::PointerType::get_generic(ctx);
                 let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
                 inputs.push(ptr_ty.into());
                 inputs.push(len_ty.into());
+                for space_ty in space_tys {
+                    let converted = convert_type(ctx, space_ty)?;
+                    // A zero-sized index-space field contributes no parameter,
+                    // as NVPTX has no empty `.param`.
+                    if !is_zero_sized_type(ctx, converted) {
+                        inputs.push(converted);
+                    }
+                }
             }
             FlattenKind::Struct {
                 field_types,
@@ -1771,7 +1786,9 @@ pub(crate) fn find_unmodeled_enum_in_abi(
         } else if let Some(s) = ty_ref.downcast_ref::<MirSliceType>() {
             vec![s.element_ty]
         } else if let Some(s) = ty_ref.downcast_ref::<MirDisjointSliceType>() {
-            vec![s.element_ty]
+            let mut nested = vec![s.element_ty];
+            nested.extend_from_slice(&s.space_tys);
+            nested
         } else if let Some(a) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
             vec![a.element_ty]
         } else if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
@@ -2140,6 +2157,26 @@ pub(crate) fn make_slice_struct(ctx: &mut Context) -> TypeHandle {
     let ptr_ty = llvm_types::PointerType::get_generic(ctx);
     let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     llvm_types::StructType::get_unnamed(ctx, vec![ptr_ty.into(), len_ty.into()]).into()
+}
+
+/// The fat pointer, followed by an index space's runtime layout fields.
+///
+/// With no such fields this is exactly [`make_slice_struct`], so a slice over
+/// an index space fixed in its type keeps its two-field representation.
+pub(crate) fn make_disjoint_slice_struct(
+    ctx: &mut Context,
+    space_tys: &[TypeHandle],
+) -> anyhow::Result<TypeHandle> {
+    if space_tys.is_empty() {
+        return Ok(make_slice_struct(ctx));
+    }
+    let ptr_ty = llvm_types::PointerType::get_generic(ctx);
+    let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let mut fields: Vec<TypeHandle> = vec![ptr_ty.into(), len_ty.into()];
+    for space_ty in space_tys {
+        fields.push(convert_type(ctx, *space_ty)?);
+    }
+    Ok(llvm_types::StructType::get_unnamed(ctx, fields).into())
 }
 
 #[cfg(test)]

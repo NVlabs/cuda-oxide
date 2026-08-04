@@ -1,0 +1,7 @@
+error[E0133]: call to unsafe function `Uniform::<T>::new_unchecked` is unsafe and requires unsafe block
+  --> tests/compile_fail/uniform_new_unchecked_requires_unsafe.rs:14:30
+   |
+14 |     let _from_thread_index = Uniform::new_unchecked(thread::threadIdx_x());
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior

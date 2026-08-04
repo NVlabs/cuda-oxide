@@ -183,6 +183,132 @@ pub fn push_kernel_device_slice(
     args.push(len as *mut u64 as *mut c_void);
 }
 
+/// A device buffer together with the row width the kernel will index it by.
+///
+/// Kernels whose index space fixes the row pitch in the type need nothing here.
+/// A kernel taking `DisjointSlice<T, RuntimeRowMajorTiles<R, C>>` or
+/// `DisjointSlice<T, Runtime2DIndex>` reads its pitch from the slice, and this
+/// is where that pitch is supplied.
+///
+/// Binding the pitch on the host is what makes the device-side accessor safe.
+/// One value is written into the launch packet, so every thread reads the same
+/// row width and distinct thread coordinates map to disjoint tiles. A pitch
+/// passed per call could not give that: device code can select between two
+/// launch-uniform values under a thread-varying condition, and two threads then
+/// resolve the same element.
+///
+/// ```rust,ignore
+/// kernels::sgemm(&stream, cfg, m, k, alpha, &a, &b, Pitched::new(&mut c, n))?;
+/// ```
+pub struct Pitched<'a, T> {
+    buffer: &'a mut cuda_core::DeviceBuffer<T>,
+    pitch: u32,
+}
+
+impl<'a, T> Pitched<'a, T> {
+    /// Bind `pitch` as the row width for this launch's view of `buffer`.
+    ///
+    /// `pitch` is a count of elements, not bytes.
+    #[inline]
+    pub fn new(buffer: &'a mut cuda_core::DeviceBuffer<T>, pitch: u32) -> Self {
+        Pitched { buffer, pitch }
+    }
+
+    /// The row width bound here, in elements.
+    #[inline]
+    pub fn pitch(&self) -> u32 {
+        self.pitch
+    }
+
+    /// The element count of the bound buffer.
+    ///
+    /// A `requires` clause naming `c.len()` resolves here, so a size relation
+    /// reads the same whether or not the slice carries a pitch.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Whether the bound buffer is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.buffer.len() == 0
+    }
+}
+
+/// An owned device buffer together with the row width the kernel indexes it by.
+///
+/// The owned counterpart of [`Pitched`], for the async launch flavours that
+/// take ownership of their buffers so the allocation outlives the launch. The
+/// pitch binds the same way and for the same reason.
+pub struct PitchedOwned<B> {
+    buffer: B,
+    pitch: u32,
+}
+
+impl<B> PitchedOwned<B> {
+    /// Bind `pitch` as the row width for this launch's view of `buffer`.
+    ///
+    /// `pitch` is a count of elements, not bytes.
+    #[inline]
+    pub fn new(buffer: B, pitch: u32) -> Self {
+        PitchedOwned { buffer, pitch }
+    }
+
+    /// The row width bound here, in elements.
+    #[inline]
+    pub fn pitch(&self) -> u32 {
+        self.pitch
+    }
+
+    /// The buffer this pitch was bound to.
+    #[inline]
+    pub fn buffer(&self) -> &B {
+        &self.buffer
+    }
+
+    /// Recover the buffer, dropping the binding.
+    ///
+    /// An owned async launch hands its resources back when it completes, so a
+    /// later stage that no longer indexes by rows takes the buffer out here.
+    #[inline]
+    pub fn into_buffer(self) -> B {
+        self.buffer
+    }
+}
+
+/// Returns the `(device pointer, element count, row pitch)` triple used for
+/// writable slice parameters whose index space carries a runtime row width.
+#[inline]
+#[doc(hidden)]
+pub fn pitched_device_buffer_arg<T>(
+    pitched: Pitched<'_, T>,
+) -> (cuda_core::sys::CUdeviceptr, u64, u32) {
+    (
+        pitched.buffer.cu_deviceptr(),
+        pitched.buffer.len() as u64,
+        pitched.pitch,
+    )
+}
+
+/// Pushes a pitched device slice argument triple into a driver argument list.
+///
+/// A slice over an index space with a runtime row width lowers to three kernel
+/// parameters: `CUdeviceptr`, `u64` element count and `u32` pitch, matching the
+/// `{ ptr, len, space }` layout of the device-side `DisjointSlice`.
+#[inline]
+#[doc(hidden)]
+pub fn push_kernel_pitched_device_slice(
+    args: &mut Vec<*mut c_void>,
+    ptr: &mut cuda_core::sys::CUdeviceptr,
+    len: &mut u64,
+    pitch: &mut u32,
+) {
+    args.push(ptr as *mut cuda_core::sys::CUdeviceptr as *mut c_void);
+    args.push(len as *mut u64 as *mut c_void);
+    args.push(pitch as *mut u32 as *mut c_void);
+}
+
 // =============================================================================
 // Typed Async Kernel Arguments
 // =============================================================================
@@ -535,6 +661,36 @@ pub fn push_async_writable_device_slice<B>(
 {
     launch.push_scalar_arg(buffer.cu_deviceptr());
     launch.push_scalar_arg(buffer.len() as u64);
+}
+
+/// Pushes a pitched device slice as three async kernel arguments.
+///
+/// Matches the `{ ptr, len, space }` layout of a device-side `DisjointSlice`
+/// whose index space carries a runtime row width.
+#[doc(hidden)]
+#[cfg(feature = "async")]
+pub fn push_async_pitched_device_slice<T>(
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'_>,
+    pitched: Pitched<'_, T>,
+) {
+    let (ptr, len, pitch) = pitched_device_buffer_arg(pitched);
+    launch.push_scalar_arg(ptr);
+    launch.push_scalar_arg(len);
+    launch.push_scalar_arg(pitch);
+}
+
+/// Pushes an owned pitched device slice as three async kernel arguments.
+#[doc(hidden)]
+#[cfg(feature = "async")]
+pub fn push_async_owned_pitched_device_slice<B>(
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'_>,
+    pitched: &mut PitchedOwned<B>,
+) where
+    B: KernelSliceArgMut,
+{
+    launch.push_scalar_arg(pitched.buffer.cu_deviceptr());
+    launch.push_scalar_arg(pitched.buffer.len() as u64);
+    launch.push_scalar_arg(pitched.pitch);
 }
 
 #[doc(hidden)]
