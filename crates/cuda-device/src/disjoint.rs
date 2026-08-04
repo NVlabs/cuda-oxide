@@ -149,6 +149,8 @@ impl<'a, T, const ROW_STRIDE: usize> __LaunchContractDisjointSlice<T, 2>
 {
 }
 
+impl<'a, T> __LaunchContractDisjointSlice<T, 1> for DisjointSlice<'a, T, crate::thread::WarpIndex> {}
+
 impl<'a, T> __LaunchContractDisjointSlice<T, 1>
     for DisjointSlice<'a, T, crate::thread::Runtime2DIndex>
 {
@@ -266,11 +268,23 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// Get a mutable reference to an element at a raw index, without
     /// bounds checking.
     ///
-    /// This is an escape hatch for performance-critical paths where bounds
-    /// have been validated by other means, such as:
-    /// - Warp reductions where only lane 0 writes to a unique warp index
+    /// This is an escape hatch for paths where bounds have been validated by
+    /// other means. It gives up the bounds check as well as the disjointness
+    /// proof, so reach for it only when no index space describes the access.
+    ///
+    /// One shape that used to need it no longer does: a warp reduction where
+    /// only lane 0 writes is [`WarpIndex`](crate::thread::WarpIndex). The warp
+    /// is the index space, [`thread::warp_index`](crate::thread::warp_index)
+    /// mints the witness for lane 0 alone, and the write goes through
+    /// [`get_mut`](Self::get_mut) with its bounds check intact.
+    ///
+    /// What genuinely remains here is a destination drawn from data, such as a
+    /// scatter through a permutation. That the permutation is a bijection is a
+    /// fact about buffer contents, so no device-side type can carry it, and
+    /// both the bounds and the disjointness stay the caller's obligation.
+    ///
+    /// Other uses:
     /// - Histogram updates with atomic operations
-    /// - Scatter operations with known-unique destinations
     ///
     /// # Safety
     ///

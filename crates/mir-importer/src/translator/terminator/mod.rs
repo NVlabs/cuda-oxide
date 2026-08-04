@@ -2734,7 +2734,10 @@ fn try_dispatch_intrinsic(
         | "cuda_device::index_2d"
         | "cuda_device::thread::index_2d"
         | "cuda_device::index_2d_runtime"
-        | "cuda_device::thread::index_2d_runtime" => Ok(None),
+        | "cuda_device::thread::index_2d_runtime"
+        | "cuda_device::thread::__internal::warp_index"
+        | "cuda_device::warp_index"
+        | "cuda_device::thread::warp_index" => Ok(None),
 
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)

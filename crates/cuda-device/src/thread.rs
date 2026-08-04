@@ -54,6 +54,22 @@ pub enum Index1D {}
 /// Type-level index space for a 2D row-major index with a const row stride.
 pub enum Index2D<const ROW_STRIDE: usize> {}
 
+/// Type-level index space where element `w` belongs to warp `w`.
+///
+/// One element per warp of the launch, written by that warp's lane 0. This is
+/// the output shape of a warp-level reduction, where the value is complete in
+/// one lane and the other thirty-one have nothing to store.
+///
+/// Uniqueness comes from the same place as every other index space here, the
+/// launch geometry, so it needs no new mechanism: [`warp_index`] mints the
+/// witness only for lane 0, and distinct warps get distinct indices. A slice
+/// declared over this space accepts that witness through the ordinary
+/// [`DisjointSlice::get_mut`], so a warp-reduction write is bounds-checked and
+/// safe rather than dropping to `get_unchecked_mut`.
+///
+/// [`DisjointSlice::get_mut`]: crate::DisjointSlice::get_mut
+pub enum WarpIndex {}
+
 /// Index spaces whose `ThreadIndex` can be derived from the launch context alone.
 ///
 /// `Index1D` and `Index2D<S>` impl this — their formulas take no runtime
@@ -394,8 +410,11 @@ impl fmt::Debug for ThreadCoord2D32<'_> {
 pub mod __internal {
     use super::{
         Index1D, Index2D, LaunchContext, Runtime2DIndex, ThreadCoord2D32, ThreadIndex,
-        ThreadIndex32,
+        ThreadIndex32, WarpIndex,
     };
+
+    /// Threads per warp on every currently supported target.
+    const WARP_SIZE: u32 = 32;
 
     mod sealed {
         pub trait Sealed {}
@@ -541,6 +560,37 @@ pub mod __internal {
         );
         let valid = one_dimensional_launch(scope) && raw != usize::MAX;
         unsafe { ThreadIndex::new(raw, valid, scope) }
+    }
+
+    /// Real `warp_index` intrinsic the macros call in place of the public
+    /// `super::warp_index` stub. `Some(warp)` for lane 0 of each warp in a 1D
+    /// launch, `None` for every other lane.
+    ///
+    /// The index is built from the block and the lane rather than from
+    /// `index_1d() / 32`. Those differ: when `blockDim.x` is not a multiple of
+    /// the warp size the last warp of each block is partial, and dividing the
+    /// global thread index would give two different warps the same value. With
+    /// `blockDim.x = 48`, global indices 32 and 48 are both a lane 0 and both
+    /// divide to 1.
+    #[inline(always)]
+    pub fn warp_index<'kernel>(
+        scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
+    ) -> Option<ThreadIndex<'kernel, WarpIndex>> {
+        if !one_dimensional_launch(scope) {
+            return None;
+        }
+        // Only the lane that holds a completed warp reduction gets a witness,
+        // so at most one thread per warp can write.
+        if crate::warp::lane_id() != 0 {
+            return None;
+        }
+        let warps_per_block = super::blockDim_x().div_ceil(WARP_SIZE);
+        let raw = (super::blockIdx_x() as usize)
+            .checked_mul(warps_per_block as usize)?
+            .checked_add((super::threadIdx_x() / WARP_SIZE) as usize)?;
+        // SAFETY: distinct warps of a 1D launch get distinct `raw` values, and
+        // only lane 0 reaches here, so the witness is unique across the launch.
+        Some(unsafe { ThreadIndex::new(raw, true, scope) })
     }
 
     /// Real `index_2d::<ROW_STRIDE>` intrinsic the macros call in place of the
@@ -808,6 +858,40 @@ pub fn index_2d<'kernel, const ROW_STRIDE: usize>()
 -> Option<ThreadIndex<'kernel, Index2D<ROW_STRIDE>>> {
     unreachable!(
         "thread::index_2d called outside #[kernel] / #[device] — the macro rewrites real call sites; the public item is a stub"
+    )
+}
+
+/// This warp's index, for the lane that will write its reduction.
+///
+/// `Some(warp)` for lane 0 of each warp in a 1D launch, `None` for every other
+/// lane and for a launch with active Y or Z. Feed it to
+/// [`DisjointSlice::get_mut`] on a slice declared over [`WarpIndex`]:
+///
+/// ```rust,ignore
+/// let value = warp::reduce_sum_f32(u32::MAX, contribution);
+/// if let Some(warp) = thread::warp_index()
+///     && let Some(slot) = sums.get_mut(warp)
+/// {
+///     *slot = value;
+/// }
+/// ```
+///
+/// The write is bounds-checked and needs no `unsafe`, where the same kernel
+/// previously had to compute a warp index by hand and store it through
+/// `get_unchecked_mut`, giving up the bounds check along with the proof.
+///
+/// # Stub body
+///
+/// Calls inside `#[kernel]` / `#[device]` are rewritten by the macros
+/// to the real intrinsic path (`thread::__internal::warp_index`).
+/// The public function exists only so imports and aliases resolve
+/// cleanly; invoking it directly from host code panics.
+///
+/// [`DisjointSlice::get_mut`]: crate::DisjointSlice::get_mut
+#[inline(always)]
+pub fn warp_index<'kernel>() -> Option<ThreadIndex<'kernel, WarpIndex>> {
+    unreachable!(
+        "thread::warp_index called outside #[kernel] / #[device] — the macro rewrites real call sites; the public item is a stub"
     )
 }
 
