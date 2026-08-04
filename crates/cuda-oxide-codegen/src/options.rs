@@ -34,10 +34,11 @@ pub struct BackendOptions {
     pub llc_override: Option<PathBuf>,
     /// Explicit `opt` binary (was `CUDA_OXIDE_OPT`).
     pub opt_override: Option<PathBuf>,
-    /// Optional dialect-mir pass pipeline (`CUDA_OXIDE_MIR_PASSES`).
+    /// Optional staged dialect-mir pass pipeline (`CUDA_OXIDE_MIR_PASSES`).
     ///
     /// Empty or `None` preserves the default pipeline. The available names
-    /// are defined by the cuda-oxide-owned optimization registry.
+    /// are defined by the cuda-oxide-owned optimization registry. Each entry
+    /// declares whether it runs before or after standard MIR preparation.
     pub mir_pass_pipeline: Option<String>,
 }
 

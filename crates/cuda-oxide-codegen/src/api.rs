@@ -170,7 +170,7 @@ impl CompileOptions {
         self
     }
 
-    /// Select an optional post-preparation MIR pass pipeline.
+    /// Select an optional staged MIR pass pipeline.
     pub fn with_mir_pass_pipeline(mut self, pipeline: impl Into<String>) -> Self {
         self.mir_pass_pipeline = Some(pipeline.into());
         self
@@ -212,7 +212,7 @@ impl CompileOptions {
         self.linking
     }
 
-    /// Requested optional post-preparation MIR pass pipeline.
+    /// Requested optional staged MIR pass pipeline.
     pub fn mir_pass_pipeline(&self) -> Option<&str> {
         self.mir_pass_pipeline.as_deref()
     }

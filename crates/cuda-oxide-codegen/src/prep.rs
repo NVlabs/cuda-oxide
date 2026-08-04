@@ -4,6 +4,7 @@
  */
 
 use crate::error::PipelineError;
+use crate::mir_pass_registry::{MirPassStage, SelectedMirPasses};
 use crate::verify::verify_operation;
 use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
@@ -47,6 +48,20 @@ pub fn prepare_mir_module(
         return Ok(());
     }
 
+    // Validate every requested pass before any transformation runs. This keeps
+    // an invalid later-stage name from leaving a module partially transformed.
+    let selected_passes = select_optional_mir_passes(preparation.mir_pass_pipeline)?;
+
+    let mut analyses = pliron::pass::AnalysisManager::default();
+    run_optional_mir_passes(
+        ctx,
+        module,
+        &selected_passes,
+        MirPassStage::PrePreparation,
+        &mut analyses,
+    )?;
+    verify_operation(ctx, module, "module post-preparation-formation-passes")?;
+
     // A by-value aggregate argument initially lives in a MIR alloca. Read-only
     // field/index projections make that alloca non-promotable even though the
     // original entry-block argument is already an SSA value. Canonicalize the
@@ -61,8 +76,6 @@ pub fn prepare_mir_module(
         module,
         "module post-borrowed-aggregate-read-canonicalization",
     )?;
-
-    let mut analyses = pliron::pass::AnalysisManager::default();
     pliron::opts::mem2reg::mem2reg(module, ctx, &mut analyses).map_err(|error| {
         PipelineError::Verification {
             name: "mem2reg".to_string(),
@@ -71,6 +84,18 @@ pub fn prepare_mir_module(
         }
     })?;
     verify_operation(ctx, module, "module post-mem2reg")?;
+
+    // Formation passes that need promoted SSA values but must still see the
+    // original loop CFG run here. In particular, a reduction formation pass
+    // cannot safely infer a source loop once generic unrolling has cloned it.
+    run_optional_mir_passes(
+        ctx,
+        module,
+        &selected_passes,
+        MirPassStage::PostMem2Reg,
+        &mut analyses,
+    )?;
+    verify_operation(ctx, module, "module post-mem2reg-formation-passes")?;
 
     // An immutable aggregate pointer argument in an always-inline helper can
     // still retain dynamic field/array pointer chains after mem2reg. Recover
@@ -92,24 +117,29 @@ pub fn prepare_mir_module(
     )?;
     verify_operation(ctx, module, "module post-unroll")?;
 
-    run_optional_mir_passes(ctx, module, preparation.mir_pass_pipeline, &mut analyses)
+    run_optional_mir_passes(
+        ctx,
+        module,
+        &selected_passes,
+        MirPassStage::PostPreparation,
+        &mut analyses,
+    )
+}
+
+fn select_optional_mir_passes(spec: Option<&str>) -> Result<SelectedMirPasses, PipelineError> {
+    crate::mir_pass_registry::registry()
+        .select(spec.unwrap_or_default())
+        .map_err(|error| PipelineError::InvalidMirPassPipeline(error.to_string()))
 }
 
 fn run_optional_mir_passes(
     ctx: &mut Context,
     module: Ptr<Operation>,
-    spec: Option<&str>,
+    selected: &SelectedMirPasses,
+    stage: MirPassStage,
     analyses: &mut pliron::pass::AnalysisManager,
 ) -> Result<(), PipelineError> {
-    let Some(spec) = spec.map(str::trim).filter(|spec| !spec.is_empty()) else {
-        return Ok(());
-    };
-
-    // Construct the full pipeline before running anything, so malformed input
-    // cannot leave a half-optimized module behind.
-    let mut passes = crate::mir_pass_registry::registry()
-        .build_pipeline(spec)
-        .map_err(|error| PipelineError::InvalidMirPassPipeline(error.to_string()))?;
+    let mut passes = crate::mir_pass_registry::registry().build_stage_pipeline(selected, stage);
 
     <pliron::pass::Passes as pliron::pass::PassManager>::run_pass(
         &mut passes,
@@ -118,12 +148,16 @@ fn run_optional_mir_passes(
         analyses,
     )
     .map_err(|error| PipelineError::Verification {
-        name: "optional MIR passes".to_string(),
+        name: format!("optional MIR passes ({stage:?})"),
         message: error.disp(ctx).to_string(),
         operation: None,
     })?;
 
-    verify_operation(ctx, module, "module post-optional-mir-passes")
+    verify_operation(
+        ctx,
+        module,
+        &format!("module post-optional-mir-passes ({stage:?})"),
+    )
 }
 
 #[cfg(test)]
@@ -143,6 +177,23 @@ mod tests {
                 promote_and_unroll: false,
                 verbose: false,
                 mir_pass_pipeline: Some("future-pass"),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, PipelineError::InvalidMirPassPipeline(_)));
+    }
+
+    #[test]
+    fn invalid_staged_pipeline_is_rejected_before_preparation() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "test".try_into().unwrap());
+        let error = prepare_mir_module(
+            &mut ctx,
+            module.get_operation(),
+            MirPreparation {
+                promote_and_unroll: true,
+                verbose: false,
+                mir_pass_pipeline: Some("missing-pass"),
             },
         )
         .unwrap_err();

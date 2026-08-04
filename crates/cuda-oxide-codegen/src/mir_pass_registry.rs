@@ -5,10 +5,10 @@
 
 //! Optional MIR passes selected by `CUDA_OXIDE_MIR_PASSES`.
 //!
-//! This registry runs after the standard MIR preparation passes. Add only
-//! workload-specific passes that are safe at that point; defaults belong in
-//! the normal pipeline instead. New entries need correctness coverage and a
-//! measured workload benefit.
+//! Entries declare the earliest compiler stage at which their IR contract is
+//! valid. The driver validates the selected names once, then invokes the
+//! selected entries at each declared stage. This deliberately keeps an early
+//! formation pass separate from late MIR peepholes.
 
 use pliron::{
     context::{Context, Ptr},
@@ -20,10 +20,37 @@ use thiserror::Error;
 
 type OptCtor = fn() -> Box<dyn Pass>;
 
+/// Extension points in the dialect-MIR preparation pipeline.
+///
+/// `PrePreparation` sees imported MIR before mem2reg and annotated-loop
+/// unrolling. It is the earliest existing hook for passes that require source
+/// loop and local-allocation structure. `PostPreparation` is for ordinary SSA
+/// cleanups after those standard transformations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MirPassStage {
+    PrePreparation,
+    /// Runs after scalar promotion, while loop structure is still intact.
+    PostMem2Reg,
+    PostPreparation,
+    /// A late backend transformation over generated PTX. It is selected and
+    /// validated together with MIR passes, but has no dialect-MIR instance.
+    /// No in-tree pass currently registers at this stage.
+    #[allow(dead_code)]
+    PostPtx,
+}
+
+#[derive(Clone, Copy)]
 struct OptEntry {
     name: &'static str,
-    build: OptCtor,
+    stage: MirPassStage,
+    build: Option<OptCtor>,
 }
+
+/// A fully validated optional pass selection.
+///
+/// Keep this opaque: callers must select once before any transformation runs,
+/// then request the pipeline for each stage in compiler order.
+pub struct SelectedMirPasses(Vec<OptEntry>);
 
 /// Errors from selecting a MIR pass pipeline.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -34,40 +61,58 @@ pub enum MirPassPipelineError {
     UnknownName { name: String, available: String },
 }
 
-/// The cuda-oxide-owned registry of post-preparation MIR passes.
+/// The cuda-oxide-owned registry of staged optional MIR passes.
 #[derive(Default)]
 pub struct MirPassRegistry {
     entries: Vec<OptEntry>,
 }
 
 impl MirPassRegistry {
-    /// Build a comma-separated pipeline. Empty specs select no passes.
-    pub fn build_pipeline(&self, spec: &str) -> std::result::Result<Passes, MirPassPipelineError> {
+    /// Validate a comma-separated pipeline. Empty specs select no passes.
+    ///
+    /// The textual order is preserved among entries at the same stage. Stages
+    /// themselves always execute in compiler order, regardless of where names
+    /// appear in `spec`.
+    pub fn select(
+        &self,
+        spec: &str,
+    ) -> std::result::Result<SelectedMirPasses, MirPassPipelineError> {
         let spec = spec.trim();
         if spec.is_empty() {
-            return Ok(Passes::default());
+            return Ok(SelectedMirPasses(Vec::new()));
         }
-        let constructors = spec
+        let entries = spec
             .split(',')
             .map(str::trim)
             .map(|name| self.lookup(name))
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let mut passes = Passes::default();
-        for build in constructors {
-            passes.add_pass(BoxedPass(build()));
-        }
-        Ok(passes)
+        Ok(SelectedMirPasses(entries))
     }
 
-    fn lookup(&self, name: &str) -> std::result::Result<OptCtor, MirPassPipelineError> {
+    /// Build the selected pipeline for one compiler stage.
+    pub fn build_stage_pipeline(
+        &self,
+        selected: &SelectedMirPasses,
+        stage: MirPassStage,
+    ) -> Passes {
+        let mut passes = Passes::default();
+        for entry in selected.0.iter().filter(|entry| entry.stage == stage) {
+            if let Some(build) = entry.build {
+                passes.add_pass(BoxedPass(build()));
+            }
+        }
+        passes
+    }
+
+    fn lookup(&self, name: &str) -> std::result::Result<OptEntry, MirPassPipelineError> {
         if name.is_empty() {
             return Err(MirPassPipelineError::EmptyName);
         }
         self.entries
             .iter()
             .find(|entry| entry.name == name)
-            .map(|entry| entry.build)
+            .copied()
             .ok_or_else(|| MirPassPipelineError::UnknownName {
                 name: name.to_owned(),
                 available: self
@@ -82,7 +127,7 @@ impl MirPassRegistry {
 
 /// Build the registry of supported optional CUDA Oxide MIR passes.
 pub fn registry() -> MirPassRegistry {
-    MirPassRegistry::default()
+    MirPassRegistry { entries: vec![] }
 }
 
 struct BoxedPass(Box<dyn Pass>);
@@ -110,6 +155,7 @@ mod tests {
     use std::sync::Mutex;
 
     static RUNS: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct TestPass(&'static str);
 
@@ -137,6 +183,14 @@ mod tests {
         Box::new(TestPass("second"))
     }
 
+    fn early() -> Box<dyn Pass> {
+        Box::new(TestPass("early"))
+    }
+
+    fn middle() -> Box<dyn Pass> {
+        Box::new(TestPass("middle"))
+    }
+
     fn run(passes: &mut Passes) {
         let mut ctx = Context::new();
         let module = ModuleOp::new(&mut ctx, "test".try_into().unwrap());
@@ -154,45 +208,55 @@ mod tests {
             entries: vec![
                 OptEntry {
                     name: "first",
-                    build: first,
+                    stage: MirPassStage::PostPreparation,
+                    build: Some(first),
                 },
                 OptEntry {
                     name: "second",
-                    build: second,
+                    stage: MirPassStage::PostPreparation,
+                    build: Some(second),
+                },
+                OptEntry {
+                    name: "early",
+                    stage: MirPassStage::PrePreparation,
+                    build: Some(early),
+                },
+                OptEntry {
+                    name: "middle",
+                    stage: MirPassStage::PostMem2Reg,
+                    build: Some(middle),
                 },
             ],
         }
     }
 
     #[test]
-    fn default_registry_is_empty() {
-        assert!(registry().build_pipeline("").is_ok());
+    fn empty_registry_accepts_only_the_empty_pipeline() {
+        assert!(registry().select("").is_ok());
         assert!(matches!(
-            registry().build_pipeline("first"),
+            registry().select("first"),
             Err(MirPassPipelineError::UnknownName { .. })
         ));
     }
 
     #[test]
     fn selected_passes_run_in_order() {
+        let _serial = TEST_LOCK.lock().unwrap();
         RUNS.lock().unwrap().clear();
-        let mut passes = registry_with_test_passes()
-            .build_pipeline("first,second")
-            .unwrap();
+        let registry = registry_with_test_passes();
+        let selected = registry.select("first,second").unwrap();
+        let mut passes = registry.build_stage_pipeline(&selected, MirPassStage::PostPreparation);
         run(&mut passes);
         assert_eq!(*RUNS.lock().unwrap(), ["first", "second"]);
     }
 
     #[test]
     fn invalid_pipeline_does_not_run_a_prefix() {
+        let _serial = TEST_LOCK.lock().unwrap();
         RUNS.lock().unwrap().clear();
-        assert!(
-            registry_with_test_passes()
-                .build_pipeline("first,missing")
-                .is_err()
-        );
+        assert!(registry_with_test_passes().select("first,missing").is_err());
         assert!(matches!(
-            registry_with_test_passes().build_pipeline("first,"),
+            registry_with_test_passes().select("first,"),
             Err(MirPassPipelineError::EmptyName)
         ));
         assert!(RUNS.lock().unwrap().is_empty());
@@ -200,9 +264,32 @@ mod tests {
 
     #[test]
     fn empty_pipeline_runs_nothing() {
+        let _serial = TEST_LOCK.lock().unwrap();
         RUNS.lock().unwrap().clear();
-        let mut passes = registry_with_test_passes().build_pipeline("").unwrap();
+        let registry = registry_with_test_passes();
+        let selected = registry.select("").unwrap();
+        let mut passes = registry.build_stage_pipeline(&selected, MirPassStage::PostPreparation);
         run(&mut passes);
         assert!(RUNS.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn selection_runs_only_entries_declared_for_each_stage() {
+        let _serial = TEST_LOCK.lock().unwrap();
+        RUNS.lock().unwrap().clear();
+        let registry = registry_with_test_passes();
+        let selected = registry.select("first,early,middle,second").unwrap();
+
+        let mut pre = registry.build_stage_pipeline(&selected, MirPassStage::PrePreparation);
+        run(&mut pre);
+        let mut middle = registry.build_stage_pipeline(&selected, MirPassStage::PostMem2Reg);
+        run(&mut middle);
+        let mut post = registry.build_stage_pipeline(&selected, MirPassStage::PostPreparation);
+        run(&mut post);
+
+        assert_eq!(
+            *RUNS.lock().unwrap(),
+            ["early", "middle", "first", "second"]
+        );
     }
 }
