@@ -30,10 +30,15 @@ jobs:
       # route through that crate's constants, builders, and predicates.
       #
       # The alternation below covers all ten symbol constants that crate
-      # exports: `kernel` covers KERNEL_PREFIX, LEGACY_KERNEL_PREFIX and
-      # KERNEL_SCOPE_LOCAL; `device` covers DEVICE_PREFIX,
-      # LEGACY_DEVICE_PREFIX and DEVICE_EXTERN_PREFIX; and `instantiate`,
-      # `const`, `artifact_anchor` and `ptx_merge_required` cover one each.
+      # exports: `kernel` covers LEGACY_KERNEL_PREFIX and
+      # KERNEL_SCOPE_LOCAL; `device` covers LEGACY_DEVICE_PREFIX and
+      # DEVICE_EXTERN_PREFIX; `instantiate`, `const`, `artifact_anchor`
+      # and `ptx_merge_required` cover one each; and `codegen_v1` covers
+      # the modern KERNEL_PREFIX and DEVICE_PREFIX. The last one matters
+      # because the pattern is anchored to the opening quote: a hardcoded
+      # full modern prefix starts with `cuda_oxide_codegen_v1_`, so its
+      # embedded `cuda_oxide_kernel_` segment sits mid-string where the
+      # quote-anchored `kernel` family can never match it.
       #
       # It deliberately does NOT match bare `cuda_oxide_`. That word-space
       # also holds things this crate does not own and must not police:
@@ -65,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          pattern='"cuda_oxide_(kernel|device|instantiate|const|artifact_anchor|ptx_merge_required)_'
+          pattern='"cuda_oxide_(kernel|device|instantiate|const|artifact_anchor|ptx_merge_required|codegen_v1)_'
 
           # Self-test. The failure mode this guard has to survive is
           # "silently stops matching anything", so require it to prove it
