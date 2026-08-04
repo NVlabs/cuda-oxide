@@ -745,6 +745,26 @@ pub fn translate_statement(
                             loc,
                         )
                     }
+                    (mir::ProjectionElem::Downcast(_), mir::ProjectionElem::Field(_, _)) => {
+                        // `(_local as Variant).field = value`, which is how a
+                        // write through `&mut` to an enum payload arrives once
+                        // the borrow is inlined away. The payload shares the
+                        // enum's storage, so the walk-and-store path resolves
+                        // the flattened payload position and the store lands in
+                        // the enum itself rather than in a copy.
+                        store_through_place_address(
+                            ctx,
+                            body,
+                            value_map,
+                            place,
+                            result_value,
+                            rvalue_op_opt,
+                            last_inserted,
+                            prev_op,
+                            block_ptr,
+                            loc,
+                        )
+                    }
                     _ => input_err!(
                         loc,
                         TranslationErr::unsupported(format!(

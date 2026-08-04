@@ -1488,13 +1488,57 @@ pub(crate) fn convert_field_addr(
         return Ok(());
     }
 
+    // An enum payload field, addressed by its position in the flattened
+    // `all_field_types`. Variants share bytes, so the slot map resolves each
+    // field one of two ways: its own LLVM slot, or, when its bytes are already
+    // held by a differently typed field of another variant, a byte offset into
+    // the enum. Both give the address of the same storage, which is what makes
+    // a write through the returned pointer land in the enum rather than a copy.
+    let enum_pointee = mir_ptr_pointee.deref(ctx).is::<MirEnumType>();
+    if enum_pointee {
+        let map = build_enum_slot_map(ctx, mir_ptr_pointee).map_err(anyhow_to_pliron)?;
+        let Some(slot_entry) = map.field_slots.get(field_index).copied() else {
+            return pliron::input_err_noloc!(
+                "field_addr index {} out of bounds for enum with {} payload fields",
+                field_index,
+                map.field_slots.len()
+            );
+        };
+
+        use llvm_export::ops::GepIndex;
+        let gep = match slot_entry {
+            Some(slot) => llvm::GetElementPtrOp::new(
+                ctx,
+                ptr_operand,
+                vec![GepIndex::Constant(0), GepIndex::Constant(slot)],
+                map.llvm_struct_ty,
+            ),
+            None => {
+                // No slot of its own: address the bytes directly. A zero-sized
+                // field lands at its offset like any other and simply spans
+                // nothing.
+                let offset = map.field_offsets.get(field_index).copied().unwrap_or(0);
+                let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+                llvm::GetElementPtrOp::new(
+                    ctx,
+                    ptr_operand,
+                    vec![GepIndex::Constant(offset as u32)],
+                    i8_ty,
+                )
+            }
+        };
+        rewriter.insert_operation(ctx, gep.get_operation());
+        rewriter.replace_operation(ctx, op, gep.get_operation());
+        return Ok(());
+    }
+
     let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
         match pointee_ref.downcast_ref::<MirStructType>() {
             Some(struct_ty) => StructLayoutInfo::of_struct(struct_ty),
             None => {
                 return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to struct or union type, got {}",
+                    "MirFieldAddrOp pointer must point to a struct, union or enum type, got {}",
                     mir_ptr_pointee.deref(ctx).disp(ctx)
                 );
             }

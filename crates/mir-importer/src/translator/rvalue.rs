@@ -3974,6 +3974,9 @@ fn translate_place_addr_from_slot(
     let mut current = slot;
     let mut current_prev_op = prev_op;
     let mut current_is_slice_data = false;
+    // Set by a `Downcast` and consumed by the `Field` that follows it, which
+    // is the only projection pair that can name an enum payload.
+    let mut pending_variant: Option<usize> = None;
 
     for (proj_idx, elem) in projection.iter().enumerate() {
         // The slice-data provenance bit only describes the pointer produced by
@@ -4228,6 +4231,36 @@ fn translate_place_addr_from_slot(
             mir::ProjectionElem::Field(field_idx, field_ty) => {
                 let field_type = types::translate_type(ctx, field_ty)?;
 
+                // After a `Downcast`, the field belongs to that variant, and an
+                // enum names its payload fields by position in the flattened
+                // `all_field_types`. Translate the per-variant index into that
+                // flat one; a non-enum pointee keeps the index as written.
+                let flat_field_index = match pending_variant.take() {
+                    Some(variant) => {
+                        let pointee = current
+                            .get_type(ctx)
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirPtrType>()
+                            .map(|ptr| ptr.pointee);
+                        let flat = pointee.and_then(|pointee| {
+                            pointee
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirEnumType>()
+                                .and_then(|enum_ty| {
+                                    enum_ty.flat_field_index(variant, *field_idx)
+                                })
+                        });
+                        match flat {
+                            Some(flat) => flat as u32,
+                            // A downcast over something this walker cannot
+                            // resolve to an enum payload position. Punt rather
+                            // than address the wrong bytes.
+                            None => return Ok(None),
+                        }
+                    }
+                    None => *field_idx as u32,
+                };
+
                 // Field address computation must remain in the address space of the
                 // aggregate pointer. LLVM GEP cannot change address spaces.
                 let Some(result_ptr_ty) =
@@ -4248,7 +4281,7 @@ fn translate_place_addr_from_slot(
 
                 MirFieldAddrOp::new(op).set_attr_field_index(
                     ctx,
-                    dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                    dialect_mir::attributes::FieldIndexAttr(flat_field_index),
                 );
 
                 match current_prev_op {
@@ -4354,15 +4387,15 @@ fn translate_place_addr_from_slot(
                 current_prev_op = Some(addr_op);
             }
 
-            // Enum-variant downcast (`(x as Variant).field`). Addressing an
-            // enum payload in memory needs variant/niche layout machinery
-            // (per-variant payload offsets, tag placement) that the importer
-            // currently models only in VALUE space via
-            // `MirExtractEnumPayloadOp`. This arm is the designed extension
-            // point for the enum-layout work tracked in issues #131/#146;
-            // until that lands, punt so shared borrows can fall back to a
-            // value copy and mutable borrows fail loudly at the caller.
-            mir::ProjectionElem::Downcast(_) => return Ok(None),
+            // Enum-variant downcast (`(x as Variant).field`). The downcast
+            // itself moves no address: a payload shares the enum's storage, so
+            // the variant only decides which field the next `Field` names.
+            // Record it and let that arm resolve the flattened payload
+            // position; lowering maps it to a slot or a byte offset through
+            // the enum slot map.
+            mir::ProjectionElem::Downcast(variant_idx) => {
+                pending_variant = Some(variant_idx.to_index());
+            }
 
             // Remaining projection kinds (Subslice, from-end ConstantIndex,
             // ...) aren't lowered to addresses here yet. Punt to the caller,
