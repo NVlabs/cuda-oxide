@@ -12964,10 +12964,14 @@ fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRe
                 selection_asm: "abs.bf16x2 \t$dst, $src0;",
             },
         },
-        // bf16x2 has no NVPTX selection pattern for the ftz and sat fma forms.
-        // LLVM declares them, but instruction selection fails with
-        // "Cannot select: intrinsic %llvm.nvvm.fma.rn.ftz.bf16x2". They are
-        // rejected here rather than admitted with a recipe that cannot lower.
+        // The ftz and sat fma forms do not exist for bf16x2 in the PTX ISA at
+        // all: ptxas rejects hand-written `fma.rn.ftz.bf16x2` with
+        // "Illegal modifier '.ftz' for instruction 'fma'", and accepts
+        // `fma.rn.relu.bf16x2` beside it. LLVM declares the intrinsics anyway,
+        // so instruction selection is what fails first ("Cannot select:
+        // intrinsic %llvm.nvvm.fma.rn.ftz.bf16x2"), but the assembler is the
+        // authority here. Reject them rather than admit a recipe that has no
+        // instruction to lower to.
         PackedAluOperation::FmaFtz
         | PackedAluOperation::FmaSat
         | PackedAluOperation::FmaFtzSat
