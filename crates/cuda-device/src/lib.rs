@@ -81,7 +81,8 @@ pub use tcgen05::{
 pub use thread::*;
 pub use tma::TmaDescriptor;
 pub use view::{
-    ColView32, ColViewIter32, InBounds32, InBoundsMut32, LinearTiles, LocalIndex32, MatrixView32,
-    RowMajorTiles, RowView32, RowViewIter32, RuntimeRowMajorTiles, RuntimeTileMut32,
-    StaticTileMut32, StaticView32, StaticViewMut32, ZipView32,
+    ColView32, ColViewIter32, GridStrideRuns32, InBounds32, InBoundsMut32, LinearTiles,
+    LocalIndex32, MatrixView32, RowMajorTiles, RowView32, RowViewIter32, RuntimeRowMajorTiles,
+    RuntimeTileMut32, RuntimeViewMut32, StaticTileMut32, StaticView32, StaticViewMut32,
+    ThreadRunMut32, ZipView32,
 };

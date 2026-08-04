@@ -469,6 +469,123 @@ impl<'a, T, const N: usize> StaticViewMut32<'a, T, N> {
     }
 }
 
+/// A mutable run of runtime length, checked once at construction.
+///
+/// The 1D counterpart of [`RuntimeTileMut32`], for the clipped tail of a run
+/// whose full extent would leave the parent. Its length is a runtime value, so
+/// [`at`](Self::at) keeps one bounds branch where [`StaticViewMut32::at`] has
+/// none.
+#[must_use]
+pub struct RuntimeViewMut32<'a, T> {
+    ptr: *mut T,
+    len: u32,
+    _borrow: PhantomData<&'a mut [T]>,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl<'a, T> RuntimeViewMut32<'a, T> {
+    #[inline(always)]
+    unsafe fn from_checked_ptr(ptr: *mut T, len: u32) -> Self {
+        Self {
+            ptr,
+            len,
+            _borrow: PhantomData,
+            _not_send_sync: PhantomData,
+        }
+    }
+
+    /// Resolve a local index, `None` when it is past this run's end.
+    #[inline(always)]
+    pub fn at(&mut self, index: u32) -> Option<InBoundsMut32<'_, T>> {
+        if index >= self.len {
+            return None;
+        }
+        // SAFETY: the index is below the length construction checked against
+        // the parent, so the element is inside the parent allocation.
+        Some(unsafe { InBoundsMut32::from_ptr(self.ptr.add(index as usize)) })
+    }
+
+    /// Number of elements in this run.
+    #[inline(always)]
+    pub const fn len(&self) -> u32 {
+        self.len
+    }
+
+    /// Whether the run is empty.
+    #[inline(always)]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// One thread's run of contiguous elements, whole or clipped by the parent end.
+///
+/// Real launches round the grid up, so the last thread with any work usually
+/// owns fewer than `N` elements. Returning `None` for that thread, as
+/// [`DisjointSlice::tile_thread32`] does, pushes the tail back to raw indexing
+/// and gives up the proof exactly where it is most fiddly to reason about.
+///
+/// Splitting the two cases keeps the check-free [`StaticViewMut32`] for every
+/// thread whose run is whole, which is all but one of them, and still hands the
+/// tail a checked view rather than nothing.
+#[must_use]
+pub enum ThreadRunMut32<'a, T, const N: usize> {
+    /// The thread owns all `N` elements.
+    Full(StaticViewMut32<'a, T, N>),
+    /// The parent ended part-way through the run.
+    Clipped(RuntimeViewMut32<'a, T>),
+}
+
+impl<'a, T, const N: usize> ThreadRunMut32<'a, T, N> {
+    /// This run's base pointer and length, read out by value.
+    ///
+    /// The arms copy the two scalars rather than borrowing the variant's
+    /// payload. A `&mut` through an enum downcast has no in-memory address the
+    /// device backend can name, so borrowing here would not compile for a
+    /// kernel.
+    #[inline(always)]
+    fn raw_parts(&self) -> (*mut T, u32) {
+        match self {
+            ThreadRunMut32::Full(view) => (view.ptr, N as u32),
+            ThreadRunMut32::Clipped(view) => (view.ptr, view.len),
+        }
+    }
+
+    /// Number of elements this thread owns, `N` unless the run was clipped.
+    #[inline(always)]
+    pub fn len(&self) -> u32 {
+        self.raw_parts().1
+    }
+
+    /// Whether the run is empty. Construction never produces an empty run.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Whether the parent ended part-way through this run.
+    #[inline(always)]
+    pub fn is_clipped(&self) -> bool {
+        matches!(self, ThreadRunMut32::Clipped(_))
+    }
+
+    /// Resolve a local index, `None` when it is past this run's end.
+    ///
+    /// The uniform accessor, for code that treats both cases alike. Match on
+    /// the variant instead when the whole-run case should keep
+    /// [`StaticViewMut32::at_const`] and its absent bounds branch.
+    #[inline(always)]
+    pub fn at(&mut self, index: u32) -> Option<InBoundsMut32<'_, T>> {
+        let (ptr, len) = self.raw_parts();
+        if index >= len {
+            return None;
+        }
+        // SAFETY: the index is below the length that construction checked
+        // against the parent, so the element is inside the parent allocation.
+        Some(unsafe { InBoundsMut32::from_ptr(ptr.add(index as usize)) })
+    }
+}
+
 // =============================================================================
 // Read-side views with runtime extents
 // =============================================================================
@@ -1056,6 +1173,142 @@ impl<'a, T, const N: usize> DisjointSlice<'a, T, LinearTiles<N>> {
         // complete range. Consuming the unique thread index makes tiles
         // disjoint, and the non-ZST check gives each element an address.
         Some(unsafe { StaticViewMut32::from_checked_ptr(self.as_mut_ptr().add(start as usize)) })
+    }
+
+    /// This thread's run of up to `N` contiguous elements, clipped at the end
+    /// of the parent rather than refused.
+    ///
+    /// [`tile_thread32`](Self::tile_thread32) accepts only a whole tile, so the
+    /// one thread whose run straddles the end gets `None` and has to fall back
+    /// to raw indexing. Since launches round the grid up, that thread almost
+    /// always exists. This returns a [`ThreadRunMut32`] instead: `Full` for
+    /// every thread whose `N` elements fit, `Clipped` for the one that
+    /// straddles the end, and `None` only for a thread whose run starts at or
+    /// past the end and therefore owns nothing.
+    ///
+    /// Disjointness is unchanged. Thread `t` owns `t * N .. t * N + N`, runs of
+    /// distinct threads do not overlap, and clipping only shortens the last
+    /// one.
+    #[inline(always)]
+    pub fn thread_run32<'kernel>(
+        &mut self,
+        thread: ThreadIndex32<'kernel>,
+    ) -> Option<ThreadRunMut32<'_, T, N>> {
+        if size_of::<T>() == 0 || N == 0 {
+            return None;
+        }
+        let len = self.len();
+        // Widened so neither the product nor the sum can wrap.
+        let start = (thread.get() as u64).checked_mul(N as u64)?;
+        if start >= len as u64 || start > u32::MAX as u64 {
+            return None;
+        }
+        let available = len as u64 - start;
+        let ptr = self.as_mut_ptr();
+
+        if available >= N as u64 {
+            // SAFETY: the complete N-element range starts inside the parent and
+            // ends at or before its end. The consumed unique thread index makes
+            // runs of distinct threads disjoint.
+            return Some(ThreadRunMut32::Full(unsafe {
+                StaticViewMut32::from_checked_ptr(ptr.add(start as usize))
+            }));
+        }
+
+        // SAFETY: `available` is what remains of the parent from `start`, and
+        // is below `N` here, so it fits `u32` whenever `N` does.
+        Some(ThreadRunMut32::Clipped(unsafe {
+            RuntimeViewMut32::from_checked_ptr(ptr.add(start as usize), available as u32)
+        }))
+    }
+
+    /// Walk every run this thread owns under a grid-stride loop.
+    ///
+    /// The period is read from the launch geometry rather than taken as an
+    /// argument. A passed stride is the defect described in #583: one that
+    /// disagrees with the actual launch makes threads overlap silently, and
+    /// nothing in the signature would catch it.
+    ///
+    /// # Disjointness
+    ///
+    /// With `period = gridDim.x * blockDim.x`, thread `t` owns tiles `t`,
+    /// `t + period`, `t + 2 * period`, and so on. Every tile index this thread
+    /// takes is congruent to `t` modulo `period`, and `t < period` holds for a
+    /// 1D launch because `t = blockIdx.x * blockDim.x + threadIdx.x`, so two
+    /// distinct threads never take the same tile. Clipping only shortens the
+    /// final run.
+    #[inline(always)]
+    pub fn grid_stride_runs32<'kernel>(
+        &mut self,
+        thread: ThreadIndex32<'kernel>,
+    ) -> GridStrideRuns32<'_, 'a, T, N> {
+        let period = (crate::thread::gridDim_x() as u64) * (crate::thread::blockDim_x() as u64);
+        GridStrideRuns32 {
+            slice: self,
+            next_tile: thread.get() as u64,
+            period,
+        }
+    }
+}
+
+/// The runs one thread owns under a grid-stride loop.
+///
+/// Produced by [`DisjointSlice::grid_stride_runs32`]. Each run is borrowed from
+/// the parent slice for as long as it is held, so runs are taken one at a time
+/// rather than through [`Iterator`], which cannot express that.
+///
+/// ```rust,ignore
+/// let mut runs = data.grid_stride_runs32(thread);
+/// while let Some(mut run) = runs.next_run() {
+///     for k in 0..run.len() {
+///         if let Some(mut slot) = run.at(k) {
+///             slot.write(slot.read() * 2.0);
+///         }
+///     }
+/// }
+/// ```
+#[must_use]
+pub struct GridStrideRuns32<'slice, 'a, T, const N: usize> {
+    slice: &'slice mut DisjointSlice<'a, T, LinearTiles<N>>,
+    next_tile: u64,
+    period: u64,
+}
+
+impl<'slice, 'a, T, const N: usize> GridStrideRuns32<'slice, 'a, T, N> {
+    /// The next run this thread owns, or `None` once they are exhausted.
+    #[inline(always)]
+    pub fn next_run(&mut self) -> Option<ThreadRunMut32<'_, T, N>> {
+        if size_of::<T>() == 0 || N == 0 || self.period == 0 {
+            return None;
+        }
+        let len = self.slice.len();
+        let start = self.next_tile.checked_mul(N as u64)?;
+        if start >= len as u64 || start > u32::MAX as u64 {
+            return None;
+        }
+        self.next_tile = self.next_tile.checked_add(self.period)?;
+
+        let available = len as u64 - start;
+        let ptr = self.slice.as_mut_ptr();
+        if available >= N as u64 {
+            // SAFETY: the complete N-element range lies inside the parent, and
+            // every tile index this thread takes is congruent to its own index
+            // modulo the launch period, so runs never overlap another thread's.
+            return Some(ThreadRunMut32::Full(unsafe {
+                StaticViewMut32::from_checked_ptr(ptr.add(start as usize))
+            }));
+        }
+        // SAFETY: `available` is what remains of the parent from `start` and is
+        // below `N`, so it fits `u32` whenever `N` does.
+        Some(ThreadRunMut32::Clipped(unsafe {
+            RuntimeViewMut32::from_checked_ptr(ptr.add(start as usize), available as u32)
+        }))
+    }
+
+    /// The grid-stride period this walk uses, in tiles.
+    #[inline(always)]
+    pub const fn period(&self) -> u64 {
+        self.period
     }
 }
 
