@@ -32,6 +32,9 @@ use cuda_intrinsics::{
     bf16 as raw_bf16, bf16x2 as raw_bf16x2, f16 as raw_f16, f16x2 as raw_f16x2, float as raw_float,
 };
 
+/// Scalar half min/max results checked per launch: six `f16` then six `bf16`.
+const HALF_MINMAX_RESULTS: usize = 12;
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -314,7 +317,7 @@ mod kernels {
     /// Values are carried as raw `u16` bit patterns.
     #[kernel]
     pub fn scalar_half_minmax(
-        mut output: DisjointSlice<[u16; 12]>,
+        mut output: DisjointSlice<[u16; HALF_MINMAX_RESULTS]>,
         a_f16: u16,
         b_f16: u16,
         a_bf16: u16,
@@ -1318,8 +1321,8 @@ mod half_bits {
 fn verify_scalar_half_minmax(module: &kernels::LoadedModule, stream: &cuda_core::CudaStream) {
     use half_bits::*;
 
-    let launch = |a_f16: u16, b_f16: u16, a_bf16: u16, b_bf16: u16| -> [u16; 12] {
-        let mut buffer = DeviceBuffer::<[u16; 12]>::zeroed(stream, 1)
+    let launch = |a_f16: u16, b_f16: u16, a_bf16: u16, b_bf16: u16| -> [u16; HALF_MINMAX_RESULTS] {
+        let mut buffer = DeviceBuffer::<[u16; HALF_MINMAX_RESULTS]>::zeroed(stream, 1)
             .expect("failed to allocate scalar half output");
         // SAFETY: one thread, one row, and the row is live for the launch.
         unsafe {
