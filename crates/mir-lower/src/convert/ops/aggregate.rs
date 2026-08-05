@@ -1494,8 +1494,11 @@ pub(crate) fn convert_field_addr(
     // held by a differently typed field of another variant, a byte offset into
     // the enum. Both give the address of the same storage, which is what makes
     // a write through the returned pointer land in the enum rather than a copy.
-    let enum_pointee = mir_ptr_pointee.deref(ctx).is::<MirEnumType>();
-    if enum_pointee {
+    let enum_name = mir_ptr_pointee
+        .deref(ctx)
+        .downcast_ref::<MirEnumType>()
+        .map(|enum_ty| enum_ty.name().to_string());
+    if let Some(enum_name) = enum_name {
         let map = build_enum_slot_map(ctx, mir_ptr_pointee).map_err(anyhow_to_pliron)?;
         let Some(slot_entry) = map.field_slots.get(field_index).copied() else {
             return pliron::input_err_noloc!(
@@ -1504,6 +1507,31 @@ pub(crate) fn convert_field_addr(
                 map.field_slots.len()
             );
         };
+
+        // Enum payload bytes hold one CANONICAL storage type that can differ
+        // from the field's semantic type: a bool is physically an i8 byte and
+        // a shared-memory pointer is stored as a generic pointer, with the
+        // value paths (construct/extract) coercing exactly at that boundary.
+        // The address computed here ESCAPES this site: the loads and stores
+        // made through it happen at arbitrary other sites and are typed with
+        // the SEMANTIC type, so no storage coercion can be attached at
+        // address-formation time. Handing the address out anyway would let an
+        // i1 store leave the byte's upper seven bits undefined for the i8 and
+        // niche-tag readers, or write a shared-pointer representation into
+        // bytes every other reader interprets (and, on modern NVVM, sizes) as
+        // a generic pointer. Fail closed instead, the same way the slot map
+        // already rejects bool bytes hidden behind unions.
+        let semantic_ty = map.field_llvm_types[field_index];
+        let storage_ty = enum_payload_storage_type(ctx, semantic_ty).map_err(anyhow_to_pliron)?;
+        if storage_ty != semantic_ty {
+            return pliron::input_err_noloc!(
+                "field_addr: cannot address payload field {} of enum `{}` in place: its bytes use canonical storage type {} while its semantic type is {}, and an escaped payload address cannot carry the storage coercion the value paths apply; in-place mutation of bool or shared-pointer enum payloads is not supported, rebuild the enum with the new payload value instead",
+                field_index,
+                enum_name,
+                storage_ty.deref(ctx).disp(ctx),
+                semantic_ty.deref(ctx).disp(ctx)
+            );
+        }
 
         use llvm_export::ops::GepIndex;
         let gep = match slot_entry {
@@ -1514,17 +1542,23 @@ pub(crate) fn convert_field_addr(
                 map.llvm_struct_ty,
             ),
             None => {
-                // No slot of its own: address the bytes directly. A zero-sized
-                // field lands at its offset like any other and simply spans
-                // nothing.
-                let offset = map.field_offsets.get(field_index).copied().unwrap_or(0);
+                // No slot of its own: address the bytes directly, off the
+                // ORIGINAL enum pointer, so a write through the result lands
+                // in the enum. A zero-sized field lands at its offset like
+                // any other and simply spans nothing. The offset is always
+                // present: the slot map builds `field_offsets` and
+                // `field_slots` from one walk over the same fields, and the
+                // bounds check above already validated the index.
+                let offset = map.field_offsets[field_index];
+                let offset = u32::try_from(offset).map_err(|_| {
+                    pliron::input_error_noloc!(
+                        "field_addr: payload byte offset {} of enum `{}` exceeds u32",
+                        offset,
+                        enum_name
+                    )
+                })?;
                 let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-                llvm::GetElementPtrOp::new(
-                    ctx,
-                    ptr_operand,
-                    vec![GepIndex::Constant(offset as u32)],
-                    i8_ty,
-                )
+                llvm::GetElementPtrOp::new(ctx, ptr_operand, vec![GepIndex::Constant(offset)], i8_ty)
             }
         };
         rewriter.insert_operation(ctx, gep.get_operation());
@@ -2856,6 +2890,195 @@ mod tests {
                 .downcast_ref::<IntegerType>()
                 .is_some_and(|integer| integer.width() == 8)
         }));
+    }
+
+    /// Taking the in-place address of a bool payload must fail loudly: the
+    /// payload's canonical storage is an i8 byte, and a semantic i1 store
+    /// through the escaped address would leave that byte's upper seven bits
+    /// undefined for every i8 reader (including a niche tag sharing them).
+    #[test]
+    fn bool_payload_field_addr_fails_closed() {
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let bool_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "DirectBool".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![bool_ty], vec![4], vec![1]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let bool_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, bool_ty, true).into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let op = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![bool_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("addressing a bool enum payload in place must fail to lower");
+        assert!(
+            err.err.to_string().contains("canonical storage type"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    /// Same gate for the slot arm: a shared-memory pointer payload is stored
+    /// as a GENERIC pointer (its slot is typed `ptr`), so an in-place address
+    /// would let a semantic `ptr addrspace(3)` store write a representation
+    /// every other reader interprets as a generic pointer.
+    #[test]
+    fn shared_pointer_payload_field_addr_fails_closed() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, true).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OptionShared".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![shared], vec![0], vec![8]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                carrier_address_space: llvm_types::address_space::GENERIC,
+                niche_start: 0,
+                niche_variant_start: 0,
+                niche_variant_end: 0,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let payload_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, shared, true).into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let op = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![payload_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("addressing a shared-pointer enum payload in place must fail to lower");
+        assert!(
+            err.err.to_string().contains("canonical storage type"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    /// A payload with no slot of its own is addressed at its byte offset off
+    /// the ORIGINAL enum pointer: no stack spill is introduced, so a write
+    /// through the result lands in the enum rather than in a copy.
+    #[test]
+    fn slotless_payload_field_addr_geps_original_storage_at_byte_offset() {
+        use llvm_export::ops::GepIndex;
+        use pliron::builtin::types::FP32Type;
+
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Either".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("Real".into(), vec![f32_ty], vec![4], vec![4]),
+                EnumVariant::new_with_layout("Bits".into(), vec![u32_ty], vec![4], vec![4]),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(
+            slot_map.field_slots,
+            vec![Some(1), None],
+            "Real's f32 claims byte 4 first; Bits shares those bytes slotless"
+        );
+
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let u32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, true).into();
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let op = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![u32_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AllocaOp>(&ctx, &body),
+            0,
+            "an in-place payload address must not spill the enum to a stack copy"
+        );
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 1, "one field_addr lowers to one GEP");
+        let gep = &geps[0];
+        // The MIR entry block and its arguments are the ORIGINALS (moved by
+        // `inline_region`), so the enum pointer argument keeps its identity
+        // through lowering and the GEP must be based directly on it.
+        assert_eq!(
+            gep.get_operation().deref(&ctx).get_operand(0),
+            base,
+            "the byte-offset GEP must address the ORIGINAL enum storage"
+        );
+        assert!(
+            matches!(gep.indices(&ctx).as_slice(), [GepIndex::Constant(4)]),
+            "the slotless payload must be addressed at its rustc byte offset"
+        );
+        assert_eq!(
+            gep.src_elem_type(&ctx),
+            IntegerType::get(&ctx, 8, Signedness::Signless).into(),
+            "byte addressing must step in i8 units"
+        );
     }
 
     #[test]
