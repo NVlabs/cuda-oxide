@@ -132,13 +132,32 @@ fn resolve_aggregate_slots(
 
     // No conversion history at all (e.g. a slice reconstructed in the entry
     // prologue, which is born as an LLVM struct). Identity is still fine if
-    // the current type is the fat-pointer struct or an LLVM array.
+    // the current type is a slice fat pointer or an LLVM array. A pitched
+    // disjoint slice is the same case one word longer: every runtime index
+    // space today carries a single `u32` pitch, and the struct the type
+    // converter builds for it (`make_disjoint_slice_struct`) is
+    // index-preserving by construction, exactly like the two-field fat
+    // pointer. Both shape checks share the two-field caveat that an unnamed
+    // user struct with the identical lowered layout would be accepted too;
+    // that has been the accepted trade-off for `{ ptr, i64 }` since issue
+    // #128, and a struct needing a slot map still errors below whenever its
+    // lowered shape differs (padding slots, reordering, other field types).
     let aggregate_ty = aggregate.get_type(ctx);
     let slice_struct_ty = make_slice_struct(ctx);
+    let pitched_slice_struct_ty = {
+        // The one runtime layout current `SpaceLayout` impls produce: a
+        // single u32 row pitch. Built through the real constructor so this
+        // check cannot drift from the lowered shape. A future space with a
+        // different `Data` shape is not listed here and thus fails closed
+        // into the refuse-to-guess error until this site learns it.
+        let pitch_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        crate::convert::types::make_disjoint_slice_struct(ctx, &[pitch_ty])
+            .map_err(anyhow_to_pliron)?
+    };
     let is_llvm_array = aggregate_ty
         .deref(ctx)
         .is::<llvm_export::types::ArrayType>();
-    if aggregate_ty == slice_struct_ty || is_llvm_array {
+    if aggregate_ty == slice_struct_ty || aggregate_ty == pitched_slice_struct_ty || is_llvm_array {
         return Ok(AggregateSlots::Identity);
     }
 
@@ -146,8 +165,8 @@ fn resolve_aggregate_slots(
     pliron::input_err_noloc!(
         "Cannot map field indices for aggregate of type {ty_disp}: no struct/tuple \
          conversion history was recorded for this operand, and identity indexing is \
-         only sound for arrays and slice fat pointers. Refusing to guess a field \
-         mapping (issue #128)."
+         only sound for arrays and slice fat pointers (with or without the runtime \
+         row-pitch word). Refusing to guess a field mapping (issue #128)."
     )
 }
 
