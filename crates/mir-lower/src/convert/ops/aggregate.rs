@@ -3099,4 +3099,54 @@ mod tests {
             assert_eq!(count_ops::<llvm::SExtOp>(&ctx, &body) == 1, expects_sext);
         }
     }
+
+    /// The pitched arm of [`resolve_aggregate_slots`]' no-history fallback is
+    /// defensive symmetry: no current lowering path produces a pitched slice
+    /// value with an empty conversion history, so no end-to-end pipeline test
+    /// can reach it. This exercises the fallback directly: a value born as
+    /// the lowered `{ ptr, i64, i32 }` pitched shape (a block argument, which
+    /// carries no history) must resolve to identity indexing exactly like the
+    /// two-field `{ ptr, i64 }` fat pointer, and any other unrecognized
+    /// no-history shape must keep failing closed into the refuse-to-guess
+    /// error (issue #128).
+    #[test]
+    fn no_history_fallback_resolves_pitched_slice_shape_and_stays_closed_otherwise() {
+        let mut ctx = make_ctx();
+
+        // The exact struct the type converter lowers a pitched disjoint
+        // slice to, built through the same constructor the fallback uses so
+        // the test cannot drift from the lowered shape.
+        let pitch_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let pitched_ty = crate::convert::types::make_disjoint_slice_struct(&mut ctx, &[pitch_ty])
+            .expect("building the pitched slice struct must succeed");
+
+        // A three-field control shape that is NOT the pitched slice: i64
+        // where the u32 pitch word belongs.
+        use llvm_export::types::PointerTypeExt;
+        let ptr_ty: TypeHandle = llvm_types::PointerType::get_generic(&mut ctx).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
+        let foreign_ty: TypeHandle =
+            llvm_types::StructType::get_unnamed(&mut ctx, vec![ptr_ty, i64_ty, i64_ty]).into();
+
+        let (_module, block) = build_kernel(&mut ctx, vec![pitched_ty, foreign_ty], vec![]);
+        let pitched_value = block.deref(&ctx).get_argument(0);
+        let foreign_value = block.deref(&ctx).get_argument(1);
+
+        // Block arguments have no recorded conversion history at all.
+        let no_history = OperandsInfo::default();
+
+        let resolved = resolve_aggregate_slots(&mut ctx, &no_history, pitched_value)
+            .expect("the pitched slice shape with no history must resolve");
+        assert!(
+            matches!(resolved, AggregateSlots::Identity),
+            "the pitched {{ ptr, i64, u32 }} shape is index-preserving and must map identically"
+        );
+
+        let refused = resolve_aggregate_slots(&mut ctx, &no_history, foreign_value);
+        assert!(
+            refused.is_err(),
+            "a no-history shape that is not a slice fat pointer (pitched or unpitched) \
+             must fail closed"
+        );
+    }
 }
