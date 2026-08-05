@@ -532,6 +532,12 @@ impl<'a, T> RuntimeViewMut32<'a, T> {
 /// Splitting the two cases keeps the check-free [`StaticViewMut32`] for every
 /// thread whose run is whole, which is all but one of them, and still hands the
 /// tail a checked view rather than nothing.
+///
+/// Matching on `&mut` and calling through the borrowed view compiles for a
+/// kernel: the payload is a view of two scalars, so the importer reads it out
+/// of the enum by value and no payload address is ever taken. Reaching for the
+/// pointer and length by hand instead would duplicate the bounds argument each
+/// view already carries.
 #[must_use]
 pub enum ThreadRunMut32<'a, T, const N: usize> {
     /// The thread owns all `N` elements.
@@ -541,24 +547,13 @@ pub enum ThreadRunMut32<'a, T, const N: usize> {
 }
 
 impl<'a, T, const N: usize> ThreadRunMut32<'a, T, N> {
-    /// This run's base pointer and length, read out by value.
-    ///
-    /// The arms copy the two scalars rather than borrowing the variant's
-    /// payload. A `&mut` through an enum downcast has no in-memory address the
-    /// device backend can name, so borrowing here would not compile for a
-    /// kernel.
-    #[inline(always)]
-    fn raw_parts(&self) -> (*mut T, u32) {
-        match self {
-            ThreadRunMut32::Full(view) => (view.ptr, N as u32),
-            ThreadRunMut32::Clipped(view) => (view.ptr, view.len),
-        }
-    }
-
     /// Number of elements this thread owns, `N` unless the run was clipped.
     #[inline(always)]
     pub fn len(&self) -> u32 {
-        self.raw_parts().1
+        match self {
+            ThreadRunMut32::Full(_) => N as u32,
+            ThreadRunMut32::Clipped(view) => view.len(),
+        }
     }
 
     /// Whether the run is empty. Construction never produces an empty run.
@@ -578,15 +573,18 @@ impl<'a, T, const N: usize> ThreadRunMut32<'a, T, N> {
     /// The uniform accessor, for code that treats both cases alike. Match on
     /// the variant instead when the whole-run case should keep
     /// [`StaticViewMut32::at_const`] and its absent bounds branch.
+    ///
+    /// Each arm defers to the view it holds, so the bounds argument lives in
+    /// one place per view kind: [`LocalIndex32`] proves `index < N` for a
+    /// whole run, and [`RuntimeViewMut32::at`] checks the clipped length that
+    /// construction measured against the parent. This method therefore owns
+    /// no `unsafe` of its own.
     #[inline(always)]
     pub fn at(&mut self, index: u32) -> Option<InBoundsMut32<'_, T>> {
-        let (ptr, len) = self.raw_parts();
-        if index >= len {
-            return None;
+        match self {
+            ThreadRunMut32::Full(view) => LocalIndex32::<N>::new(index).map(|local| view.at(local)),
+            ThreadRunMut32::Clipped(view) => view.at(index),
         }
-        // SAFETY: the index is below the length that construction checked
-        // against the parent, so the element is inside the parent allocation.
-        Some(unsafe { InBoundsMut32::from_ptr(ptr.add(index as usize)) })
     }
 }
 
