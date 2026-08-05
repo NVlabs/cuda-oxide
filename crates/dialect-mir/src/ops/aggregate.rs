@@ -937,6 +937,18 @@ impl MirExtractArrayElementOp {
     }
 }
 
+/// Maximum candidate count for scalarizing a bounded runtime array index.
+///
+/// When a `mir.extract_array_element` index is proven to lie in `0..C`, the
+/// LLVM lowering can emit one constant `extractvalue` per candidate plus a
+/// select chain instead of the alloca+GEP memory fallback. This cap bounds
+/// the emitted candidate chain.
+///
+/// The pre-lowering canonicalization in `mir-transforms` and the lowering
+/// fast path in `mir-lower` both gate on this one constant so their
+/// profitability decisions cannot drift apart silently.
+pub const MAX_SCALARIZED_CANDIDATES: u64 = 16;
+
 impl Verify for MirExtractArrayElementOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = &*self.get_operation().deref(ctx);

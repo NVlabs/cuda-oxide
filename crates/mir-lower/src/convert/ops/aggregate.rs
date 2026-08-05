@@ -633,15 +633,19 @@ pub(crate) fn convert_extract_array_element(
     op: Ptr<Operation>,
     operands_info: &OperandsInfo,
 ) -> Result<()> {
-    const MAX_SCALARIZED_CANDIDATES: u64 = 16;
+    // One shared cap for the candidate chain, so the mir-transforms
+    // canonicalization and this lowering fast path cannot drift apart.
+    use dialect_mir::ops::MAX_SCALARIZED_CANDIDATES;
 
     fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
         let defining_op = value.defining_op()?;
         let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
-        constant
-            .get_value(ctx)
-            .downcast_ref::<pliron::builtin::attributes::IntegerAttr>()
-            .map(|integer| integer.value().to_u64())
+        let attribute = constant.get_value(ctx);
+        let integer = attribute.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
+        let integer_value = integer.value();
+        // `APInt::to_u64` truncates wider values, so a >64-bit constant could
+        // be misread as a small in-range divisor. Fail closed on such widths.
+        (integer_value.bw() <= 64).then(|| integer_value.to_u64())
     }
 
     fn bounded_urem_candidate_count(ctx: &Context, index: Value, array_size: u64) -> Option<u64> {
