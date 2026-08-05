@@ -3086,6 +3086,115 @@ mod tests {
         );
     }
 
+    /// The capability split, read side: a payload whose storage IS its
+    /// semantic type keeps the address path even for a SHARED borrow. The
+    /// borrow lowers to one GEP into the ORIGINAL enum storage and the read
+    /// to one load through it: no stack spill, no value copy. (Non-canonical
+    /// payloads never get here for shared borrows; the importer punts them
+    /// to the value-copy fallback before an address is formed.)
+    #[test]
+    fn canonical_payload_shared_read_loads_through_gep_without_copy() {
+        use llvm_export::ops::GepIndex;
+        use pliron::builtin::types::FP32Type;
+
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Slot".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("Occupied".into(), vec![f32_ty], vec![4], vec![4]),
+                EnumVariant::unit("Empty".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(
+            slot_map.field_slots,
+            vec![Some(1)],
+            "an f32 payload owns its LLVM slot; storage equals semantic type"
+        );
+
+        // Immutable pointer types model the shared borrow.
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, false).into();
+        let f32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, false).into();
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![f32_ty]);
+        let base = block.deref(&ctx).get_argument(0);
+        let addr = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![f32_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(addr).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        addr.insert_at_back(block, &ctx);
+        let payload_ptr = addr.deref(&ctx).get_result(0);
+
+        let load = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![payload_ptr],
+            vec![],
+            0,
+        );
+        load.insert_at_back(block, &ctx);
+        let loaded = load.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![loaded]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AllocaOp>(&ctx, &body),
+            0,
+            "a canonical payload read must not spill or copy the enum"
+        );
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 1, "one field_addr lowers to one GEP");
+        let gep = &geps[0];
+        assert_eq!(
+            gep.get_operation().deref(&ctx).get_operand(0),
+            base,
+            "the GEP must address the ORIGINAL enum storage"
+        );
+        assert!(
+            matches!(
+                gep.indices(&ctx).as_slice(),
+                [GepIndex::Constant(0), GepIndex::Constant(1)]
+            ),
+            "an own-slot payload is addressed through its struct slot"
+        );
+        let loads = find_all::<llvm::LoadOp>(&ctx, &body);
+        assert_eq!(
+            loads.len(),
+            1,
+            "the read is a single load through the payload address"
+        );
+        let gep_result = gep.get_operation().deref(&ctx).get_result(0);
+        assert_eq!(
+            loads[0].get_operation().deref(&ctx).get_operand(0),
+            gep_result,
+            "the load must go through the GEP result, not a copy"
+        );
+        assert_eq!(
+            loads[0]
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx),
+            f32_ty,
+            "the load reads the payload at its semantic type"
+        );
+    }
+
     #[test]
     fn later_field_niche_set_writes_exact_carrier_offset() {
         use llvm_export::ops::GepIndex;
