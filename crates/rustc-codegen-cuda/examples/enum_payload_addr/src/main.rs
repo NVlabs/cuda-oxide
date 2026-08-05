@@ -21,6 +21,12 @@
 //! - `shared_bytes_no_slot` mutates the variant WITHOUT a slot of its own
 //!   (`Bits` shares `Real`'s bytes), so the byte-offset addressing path runs
 //!   against the original storage.
+//! - `shared_borrow_bool_payload` takes a SHARED borrow of a `bool` payload
+//!   and passes it to a `#[device]` helper. A bool payload's bytes use
+//!   canonical i8 storage, so no raw payload address can be handed out; the
+//!   importer must fall back to a sound value copy for the read, exactly as
+//!   it did before payload addressing existed. (Mutable borrows of such
+//!   payloads stay rejected; see the `error_enum_bool_payload_addr` fixture.)
 //! - `rebuild_payload` is the workaround this replaces, kept as a baseline.
 //!
 //! Each kernel reads its value back after mutating, so a write that landed in
@@ -50,11 +56,25 @@ mod kernels {
         Bits(u32),
     }
 
+    /// A bool payload: semantically i1, physically a canonical i8 byte
+    /// inside enum storage, so no raw payload address can represent it.
+    pub enum Flag {
+        On(bool),
+        Off,
+    }
+
     /// Scale a borrowed payload. Taking `&mut f32` across a call boundary
     /// keeps the borrow from folding into a plain store.
     #[device]
     pub fn scale_in_place(value: &mut f32, factor: f32) {
         *value *= factor;
+    }
+
+    /// Read a borrowed bool. Taking `&bool` across a call boundary keeps
+    /// the shared borrow from folding into a direct payload read.
+    #[device]
+    pub fn read_bool(b: &bool) -> u32 {
+        if *b { 1 } else { 0 }
     }
 
     /// Write through `(slot as Occupied).0 = v`.
@@ -144,6 +164,39 @@ mod kernels {
         }
     }
 
+    /// SHARED borrow of a bool payload, handed to a `#[device]` helper so it
+    /// survives MIR optimization into the importer. Canonical i8 storage
+    /// means the payload has no honest raw address; the importer's address
+    /// walker must punt and read through a sound value copy instead. Each
+    /// input maps to a distinct output (On(true) doubles, On(false) triples,
+    /// Off quadruples), so reading the wrong byte or the wrong variant shows
+    /// up as a mismatched element.
+    #[kernel]
+    pub fn shared_borrow_bool_payload(input: &[f32], mut out: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if i >= input.len() {
+            return;
+        }
+        let flag = if input[i] >= 100.0 {
+            Flag::On(input[i] >= 250.0)
+        } else {
+            Flag::Off
+        };
+        let result = if let Flag::On(b) = &flag {
+            if read_bool(b) == 1 {
+                input[i] * 2.0
+            } else {
+                input[i] * 3.0
+            }
+        } else {
+            input[i] * 4.0
+        };
+        if let Some(cell) = out.get_mut(index) {
+            *cell = result;
+        }
+    }
+
     /// The workaround this replaces: rebuild the enum from a matched copy.
     #[kernel]
     pub fn rebuild_payload(input: &[f32], mut out: DisjointSlice<f32>) {
@@ -217,6 +270,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     check("rebuild_payload", &|out| unsafe {
         module.rebuild_payload(&stream, config, &input, out)
     })?;
+
+    // The bool-payload kernel maps each input to a variant-dependent output,
+    // so it gets its own expectation instead of the uniform `* 2.0` check.
+    {
+        let mut out = DeviceBuffer::from_host(&stream, &vec![f32::MIN; LEN as usize])?;
+        // SAFETY: the grid covers exactly `LEN` elements and both buffers
+        // hold that many.
+        unsafe { module.shared_borrow_bool_payload(&stream, config, &input, &mut out)? };
+        stream.synchronize()?;
+        let got = out.to_host_vec(&stream)?;
+        for (i, value) in got.iter().enumerate() {
+            let x = host[i];
+            let expected = if x >= 100.0 {
+                if x >= 250.0 { x * 2.0 } else { x * 3.0 }
+            } else {
+                x * 4.0
+            };
+            if (value - expected).abs() > 1e-6 {
+                return Err(format!(
+                    "shared_borrow_bool_payload: element {i} is {value}, expected {expected}"
+                )
+                .into());
+            }
+        }
+        println!(
+            "shared_borrow_bool_payload: {LEN} bool payloads read through a copy, exact match"
+        );
+    }
 
     // In-place mutation against the rebuild-from-a-copy workaround.
     let mut out = DeviceBuffer::from_host(&stream, &vec![0.0f32; LEN as usize])?;

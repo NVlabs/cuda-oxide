@@ -3928,6 +3928,59 @@ pub(crate) fn translate_place_address(
     )
 }
 
+/// Whether an enum payload's SEMANTIC type needs canonical-storage coercion
+/// when its bytes live inside enum storage.
+///
+/// Mirrors what mir-lower's `enum_payload_storage_type` rewrites: `bool`
+/// leaves are stored as canonical `i8` bytes and shared-memory pointer
+/// leaves are stored as CUDA generic pointers, recursively through
+/// struct/tuple/array nesting. An address of such a payload cannot carry
+/// that coercion (the address escapes, and loads and stores through it are
+/// typed with the SEMANTIC type), so the address walker uses this predicate
+/// to punt SHARED borrows back to the sound value-copy fallback.
+///
+/// Layering: this predicate is allowed to be conservative. A nested enum
+/// payload, for example, is treated as needing coercion whenever any of its
+/// own payload fields does, without proving the leaf survives into the
+/// nested enum's converted storage. Over-punting only costs a copy for a
+/// shared borrow and stays sound. mir-lower's canonical-storage gate on
+/// `mir.field_addr` remains the fail-closed authority, so a miss here still
+/// errors loudly instead of miscompiling.
+fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
+    // Bool leaf: semantic i1, canonical i8 byte in enum storage.
+    if let Some(integer) = ty.deref(ctx).downcast_ref::<IntegerType>() {
+        return integer.width() == 1;
+    }
+    // Pointer leaf: shared-memory pointers are stored as generic pointers
+    // because their physical width is target-mode dependent.
+    if let Some(pointer) = ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+    {
+        return pointer.address_space() == dialect_mir::types::address_space::SHARED;
+    }
+    // Aggregates: recurse through every leaf position the storage rewrite
+    // visits. Collect the children first so the type `Ref` is dropped
+    // before recursing.
+    let children: Vec<TypeHandle> = {
+        let ty_ref = ty.deref(ctx);
+        if let Some(tuple) = ty_ref.downcast_ref::<dialect_mir::types::MirTupleType>() {
+            tuple.types.clone()
+        } else if let Some(struct_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirStructType>() {
+            struct_ty.field_types.clone()
+        } else if let Some(array) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+            vec![array.element_ty]
+        } else if let Some(enum_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirEnumType>() {
+            enum_ty.all_field_types.clone()
+        } else {
+            return false;
+        }
+    };
+    children
+        .into_iter()
+        .any(|child| enum_payload_needs_storage_coercion(ctx, child))
+}
+
 /// Compute the in-memory address of `place` starting from its alloca `slot`.
 ///
 /// Walks the projection chain and emits the correct pliron ops for each
@@ -3949,6 +4002,10 @@ pub(crate) fn translate_place_address(
 /// `Downcast` records the variant for the `Field` immediately after it (the
 /// pair addresses an enum payload through the flattened `all_field_types`
 /// index); rustc guarantees that pairing, and any other continuation punts.
+/// A SHARED borrow of a payload whose enum storage is canonical rather than
+/// semantic (see [`enum_payload_needs_storage_coercion`]) also punts, so the
+/// caller's value-copy fallback handles the read soundly instead of handing
+/// out an address that cannot honor the storage coercion.
 /// `Subslice` and from-end `ConstantIndex` are NOT handled; the walker punts
 /// on them (returns `Ok(None)`).
 ///
@@ -4262,7 +4319,28 @@ fn translate_place_addr_from_slot(
                                 .and_then(|enum_ty| enum_ty.flat_field_index(variant, *field_idx))
                         });
                         match flat {
-                            Some(flat) => flat as u32,
+                            Some(flat) => {
+                                // A payload whose bytes use canonical storage
+                                // that differs from its semantic type (bool
+                                // leaves are i8 bytes, shared-memory pointer
+                                // leaves are generic pointers) has no honest
+                                // raw address: reads and writes through one
+                                // are typed with the SEMANTIC type. For a
+                                // SHARED borrow the value-copy fallback is
+                                // sound and matches what the importer did
+                                // before payload addressing existed, so punt.
+                                // Mutable borrows and assignment stores keep
+                                // the address path, where mir-lower's
+                                // canonical-storage gate stays the loud,
+                                // fail-closed authority (so a conservative
+                                // miss here errors instead of miscompiling).
+                                if !is_mutable
+                                    && enum_payload_needs_storage_coercion(ctx, field_type)
+                                {
+                                    return Ok(None);
+                                }
+                                flat as u32
+                            }
                             // A downcast over something this walker cannot
                             // resolve to an enum payload position. Punt rather
                             // than address the wrong bytes.
@@ -10454,6 +10532,59 @@ mod tests {
                 "field projection must preserve the base pointer address space"
             );
         }
+    }
+
+    /// The shared-borrow punt predicate must flag exactly the payload shapes
+    /// whose enum storage differs from their semantic type: bool leaves and
+    /// shared-memory pointer leaves, at any nesting depth. Canonical scalars
+    /// and generic pointers must stay on the address path so shared reads of
+    /// ordinary payloads keep compiling without a copy.
+    #[test]
+    fn payload_storage_coercion_predicate_flags_bool_and_shared_pointer_leaves() {
+        use dialect_mir::types::{MirArrayType, MirTupleType};
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let bool_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let shared_ptr: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let generic_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+
+        // Leaves.
+        assert!(enum_payload_needs_storage_coercion(&ctx, bool_ty));
+        assert!(enum_payload_needs_storage_coercion(&ctx, shared_ptr));
+        assert!(!enum_payload_needs_storage_coercion(&ctx, u32_ty));
+        assert!(!enum_payload_needs_storage_coercion(&ctx, f32_ty));
+        assert!(!enum_payload_needs_storage_coercion(&ctx, generic_ptr));
+
+        // Nesting: one flagged leaf taints the aggregate, and a clean
+        // aggregate stays clean.
+        let mixed_tuple: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty, bool_ty]).into();
+        let clean_tuple: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty, f32_ty]).into();
+        assert!(enum_payload_needs_storage_coercion(&ctx, mixed_tuple));
+        assert!(!enum_payload_needs_storage_coercion(&ctx, clean_tuple));
+
+        let bool_struct: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "HasBool".into(),
+            vec!["a".into(), "b".into()],
+            vec![u32_ty, bool_ty],
+        )
+        .into();
+        assert!(enum_payload_needs_storage_coercion(&ctx, bool_struct));
+
+        let bool_array: TypeHandle = MirArrayType::get(&mut ctx, bool_ty, 4).into();
+        let f32_array: TypeHandle = MirArrayType::get(&mut ctx, f32_ty, 4).into();
+        assert!(enum_payload_needs_storage_coercion(&ctx, bool_array));
+        assert!(!enum_payload_needs_storage_coercion(&ctx, f32_array));
+
+        // Deep nesting: struct-of-tuple-of-shared-pointer.
+        let inner: TypeHandle = MirTupleType::get(&mut ctx, vec![f32_ty, shared_ptr]).into();
+        let deep: TypeHandle =
+            MirStructType::get(&mut ctx, "Deep".into(), vec!["inner".into()], vec![inner]).into();
+        assert!(enum_payload_needs_storage_coercion(&ctx, deep));
     }
 
     #[test]
