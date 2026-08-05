@@ -112,10 +112,7 @@ fn launch_cfg(grid: (u32, u32), block: (u32, u32)) -> LaunchConfig {
     }
 }
 
-fn device_buffer_of_sentinels(
-    stream: &cuda_core::CudaStream,
-    len: usize,
-) -> DeviceBuffer<u32> {
+fn device_buffer_of_sentinels(stream: &cuda_core::CudaStream, len: usize) -> DeviceBuffer<u32> {
     DeviceBuffer::from_host(stream, &vec![SENTINEL; len]).expect("sentinel buffer")
 }
 

@@ -3127,7 +3127,7 @@ mod tests {
         let ptr_ty: TypeHandle = llvm_types::PointerType::get_generic(&mut ctx).into();
         let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let foreign_ty: TypeHandle =
-            llvm_types::StructType::get_unnamed(&mut ctx, vec![ptr_ty, i64_ty, i64_ty]).into();
+            llvm_types::StructType::get_unnamed(&ctx, vec![ptr_ty, i64_ty, i64_ty]).into();
 
         let (_module, block) = build_kernel(&mut ctx, vec![row_width_ty, foreign_ty], vec![]);
         let row_width_value = block.deref(&ctx).get_argument(0);
