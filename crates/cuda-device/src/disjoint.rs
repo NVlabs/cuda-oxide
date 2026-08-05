@@ -262,6 +262,41 @@ impl<'a, T> __LaunchContractDisjointSlice<T, 2>
 {
 }
 
+/// Compiler-facing proof that a `DisjointSlice`'s launch-packet shape matches
+/// the host ABI `#[cuda_module]` chose for it.
+///
+/// The macro selects between the two-word `(ptr, len)` and three-word
+/// `(ptr, len, pitch)` host marshalling from the *spelling* of the index
+/// space, because a proc macro cannot resolve types. Spelling alone is
+/// forgeable: `type Rt = RuntimeRowMajorTiles<1, 1>;` names a pitched space
+/// without saying so, and a host launch that pushed two parameters for a
+/// three-parameter kernel would make the driver read past the argument array.
+///
+/// This sealed trait is the semantic authority behind that fast path. The
+/// macro bounds every `DisjointSlice` parameter by the pitched-ness it chose
+/// (`PITCHED = true` or `false`), and only the genuine `DisjointSlice` whose
+/// [`SpaceLayout::Data`] actually matches that packet shape implements the
+/// corresponding instantiation. An alias that hides a runtime pitch, or a
+/// look-alike space that fakes one, fails the bound before any launch code is
+/// generated. If a future index space carries layout data of another shape,
+/// it implements neither instantiation and every kernel using it fails
+/// closed until the host marshalling learns the new shape.
+#[doc(hidden)]
+pub trait __LaunchContractDisjointSliceAbi<Element, const PITCHED: bool>:
+    launch_contract_sealed::Sealed
+{
+}
+
+impl<'a, T, IndexSpace: SpaceLayout<Data = ()>> __LaunchContractDisjointSliceAbi<T, false>
+    for DisjointSlice<'a, T, IndexSpace>
+{
+}
+
+impl<'a, T, IndexSpace: SpaceLayout<Data = u32>> __LaunchContractDisjointSliceAbi<T, true>
+    for DisjointSlice<'a, T, IndexSpace>
+{
+}
+
 impl<'a, T, IndexSpace: SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
     /// Create a `DisjointSlice` from a raw pointer, a length and the runtime
     /// layout its index space needs.

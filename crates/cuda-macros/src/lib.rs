@@ -1366,6 +1366,10 @@ fn cuda_module_kernel(
     // A `Uniform` parameter carries its proof with or without a launch
     // contract, so this bound is not conditional on one.
     add_cuda_module_uniform_bounds(&mut generics, &params);
+    // The launch packet's shape (two or three words per slice) must match the
+    // resolved device type with or without a launch contract, so this bound
+    // is unconditional too.
+    add_cuda_module_disjoint_abi_bounds(&mut generics, &params);
     let is_generic = has_codegen_generics(&item_fn.sig.generics);
     let cfg_attrs = cuda_module_cfg_attrs(&item_fn.attrs)?;
     let mut effective_cfg_attrs = ancestor_cfg_attrs.to_vec();
@@ -2780,6 +2784,38 @@ fn add_cuda_module_disjoint_contract_bounds(
         generics.make_where_clause().predicates.push(parse_quote! {
             for<#bound_lifetime> #device_ty:
                 ::cuda_device::__LaunchContractDisjointSlice<#element_ty, #domain>
+        });
+    }
+}
+
+/// Requires every `DisjointSlice` parameter's resolved type to carry exactly
+/// the launch-packet shape the macro chose for it.
+///
+/// The macro picks the two-word `(ptr, len)` or three-word `(ptr, len, pitch)`
+/// host marshalling from the index space's spelling, which type aliases can
+/// defeat: `type Rt = RuntimeRowMajorTiles<1, 1>;` spells an unpitched slice
+/// over a pitched space, and the launch would then push two kernel parameters
+/// for a three-parameter kernel, making the driver read past the argument
+/// array. The sealed `__LaunchContractDisjointSliceAbi` trait is the semantic
+/// authority: only the genuine `DisjointSlice` whose index space really has
+/// (`true`) or really lacks (`false`) a runtime pitch satisfies the bound, so
+/// a spelling/semantics mismatch is a compile error instead of a malformed
+/// launch packet.
+fn add_cuda_module_disjoint_abi_bounds(generics: &mut syn::Generics, params: &[CudaModuleParam]) {
+    for param in params {
+        let (Some(device_ty), Some(element_ty)) =
+            (&param.disjoint_slice_ty, &param.disjoint_slice_elem)
+        else {
+            continue;
+        };
+        let pitched = matches!(
+            param.marshal,
+            CudaModuleParamMarshal::PitchedDeviceBuffer { .. }
+        );
+        let (device_ty, bound_lifetime) = cuda_module_disjoint_bound_type(device_ty);
+        generics.make_where_clause().predicates.push(parse_quote! {
+            for<#bound_lifetime> #device_ty:
+                ::cuda_device::__LaunchContractDisjointSliceAbi<#element_ty, #pitched>
         });
     }
 }
@@ -9404,6 +9440,47 @@ mod tests {
             error
                 .to_string()
                 .contains("contracted kernels cannot take `&mut [T]`")
+        );
+    }
+
+    #[test]
+    fn disjoint_slice_packet_shape_is_bound_to_the_resolved_type() {
+        // The spelling `Rt` hides a runtime pitch, so the macro selects the
+        // two-word host ABI. The generated launch methods must carry the
+        // semantic `PITCHED = false` bound for Rust to reject at the call
+        // site once `Rt` resolves to a pitched index space.
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                type Rt = RuntimeRowMajorTiles<1, 1>;
+
+                #[kernel]
+                pub fn alias_hides_pitch(mut out: DisjointSlice<f32, Rt>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        assert!(
+            expanded.contains(
+                "for<'__cuda_oxide_disjoint>DisjointSlice<'__cuda_oxide_disjoint,f32,Rt>:\
+                 ::cuda_device::__LaunchContractDisjointSliceAbi<f32,false>"
+            ),
+            "unpitched spelling must bind PITCHED = false: {expanded}"
+        );
+
+        // The direct spelling selects the three-word ABI and must bind
+        // `PITCHED = true`.
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn really_pitched(mut out: DisjointSlice<f32, Runtime2DIndex>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        assert!(
+            expanded.contains(
+                "for<'__cuda_oxide_disjoint>DisjointSlice<'__cuda_oxide_disjoint,f32,\
+                 Runtime2DIndex>:::cuda_device::__LaunchContractDisjointSliceAbi<f32,true>"
+            ),
+            "pitched spelling must bind PITCHED = true: {expanded}"
         );
     }
 
