@@ -13,12 +13,15 @@
 //! Safety is enforced through the type system and bounds checking:
 //!
 //! 1. **ThreadIndex**: Can only be constructed by `index_1d`,
-//!    `index_2d::<S>`, or the unsafe `index_2d_runtime`, which derive
+//!    `index_2d::<S>`, or `index_2d_runtime(&slice)`, which derive
 //!    the index from hardware built-in variables (`threadIdx`,
 //!    `blockIdx`, `blockDim`) -- read-only special registers assigned
-//!    by the runtime at kernel launch. The formula combines these into
-//!    a scalar index per thread. 2D stride is encoded in the index
-//!    space, so mixing const strides is rejected at compile time.
+//!    by the runtime at kernel launch. Flat spaces combine these into
+//!    a scalar index per thread, with the 2D const stride encoded in
+//!    the index space so mixing const strides is rejected at compile
+//!    time. A `Runtime2DIndex` witness instead carries the raw
+//!    `(row, col)` coordinates, and the addressed slice resolves them
+//!    against its own host-bound pitch at the access site.
 //!
 //! 2. **`get_mut(idx)`**: Bounds-checked access via an explicit
 //!    `ThreadIndex`. Returns `Option<&mut T>` — `None` for out-of-bounds
@@ -36,7 +39,9 @@
 //! raw launch is unsafe and leaves that proof to the caller. Constructing a
 //! `DisjointSlice` from raw memory is also unsafe.
 
-use crate::thread::{Index1D, Index2D, IndexFormula, LaunchContext, Runtime2DIndex, ThreadIndex};
+use crate::thread::{
+    FlatIndexSpace, Index1D, Index2D, IndexFormula, LaunchContext, Runtime2DIndex, ThreadIndex,
+};
 use crate::view::{LinearTiles, RowMajorTiles, RuntimeRowMajorTiles};
 use core::marker::PhantomData;
 use core::mem::size_of;
@@ -120,7 +125,7 @@ impl<const ROWS: usize, const COLS: usize> SpaceLayout for RuntimeRowMajorTiles<
 /// The type system enforces these invariants:
 /// 1. Default access via `get_mut(ThreadIndex)` is bounds-checked and sound.
 /// 2. `ThreadIndex` can only be created by trusted index functions
-///    (`index_1d`, `index_2d::<S>`, `unsafe index_2d_runtime`), which
+///    (`index_1d`, `index_2d::<S>`, `index_2d_runtime(&slice)`), which
 ///    derive the index from hardware built-in variables -- read-only
 ///    special registers assigned by the runtime at launch.
 /// 3. Each thread's `ThreadIndex` is unique within its index space when the
@@ -339,55 +344,6 @@ impl<'a, T, IndexSpace: SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
         self.len == 0
     }
 
-    /// Get a mutable reference to an element at a thread-local index,
-    /// returning `None` if the index is out of bounds.
-    ///
-    /// This is the default, sound access method. Mirrors `slice::get_mut()`.
-    ///
-    /// # Safety Argument
-    ///
-    /// This method is safe (not marked `unsafe`) because:
-    ///
-    /// 1. **Bounds checked**: Returns `None` for out-of-bounds indices.
-    ///
-    /// 2. **Unique access**: `ThreadIndex` can only be constructed by
-    ///    `index_1d()`, `index_2d::<S>()`, or the unsafe
-    ///    `index_2d_runtime()`, which derive the index from hardware
-    ///    built-in variables (`threadIdx`, `blockIdx`, `blockDim`) --
-    ///    read-only special registers assigned by the runtime at kernel
-    ///    launch. 2D stride is carried in the index space, so a slice
-    ///    can only be indexed by a matching witness.
-    ///
-    /// 3. **No data races**: Given the constraint above, each thread's
-    ///    `ThreadIndex` is unique under the prepared launch's matching index
-    ///    domain. An unsafe raw launch takes responsibility for the same
-    ///    geometry invariant, so each thread accesses a different location.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let idx = thread::index_1d();
-    /// let i = idx.get();
-    /// if let Some(elem) = c.get_mut(idx) {
-    ///     *elem = a[i] + b[i];
-    /// }
-    /// ```
-    #[inline]
-    pub fn get_mut<'kernel>(&mut self, idx: ThreadIndex<'kernel, IndexSpace>) -> Option<&mut T> {
-        let i = idx.get();
-        if size_of::<T>() != 0 && idx.is_valid() && i < self.len {
-            // SAFETY:
-            // - Bounds check passed above.
-            // - `idx` is a ThreadIndex derived from hardware built-in variables.
-            //   The prepared launch contract, or an unsafe raw launch caller,
-            //   guarantees that its index space is unique for this geometry.
-            // - The DisjointSlice was constructed with valid memory (from_raw_parts safety).
-            Some(unsafe { &mut *self.ptr.add(i) })
-        } else {
-            None
-        }
-    }
-
     /// Get a raw pointer to the underlying data.
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut T {
@@ -431,6 +387,56 @@ impl<'a, T, IndexSpace: SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
     }
 }
 
+impl<'a, T, IndexSpace: FlatIndexSpace + SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
+    /// Get a mutable reference to an element at a thread-local index,
+    /// returning `None` if the index is out of bounds.
+    ///
+    /// This is the default, sound access method. Mirrors `slice::get_mut()`.
+    ///
+    /// # Safety Argument
+    ///
+    /// This method is safe (not marked `unsafe`) because:
+    ///
+    /// 1. **Bounds checked**: Returns `None` for out-of-bounds indices.
+    ///
+    /// 2. **Unique access**: `ThreadIndex` can only be constructed by
+    ///    `index_1d()`, `index_2d::<S>()`, or `index_2d_runtime()`, which
+    ///    derive the index from hardware built-in variables (`threadIdx`,
+    ///    `blockIdx`, `blockDim`) -- read-only special registers assigned
+    ///    by the runtime at kernel launch. 2D stride is carried in the
+    ///    index space, so a slice can only be indexed by a matching witness.
+    ///
+    /// 3. **No data races**: Given the constraint above, each thread's
+    ///    `ThreadIndex` is unique under the prepared launch's matching index
+    ///    domain. An unsafe raw launch takes responsibility for the same
+    ///    geometry invariant, so each thread accesses a different location.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let idx = thread::index_1d();
+    /// let i = idx.get();
+    /// if let Some(elem) = c.get_mut(idx) {
+    ///     *elem = a[i] + b[i];
+    /// }
+    /// ```
+    #[inline]
+    pub fn get_mut<'kernel>(&mut self, idx: ThreadIndex<'kernel, IndexSpace>) -> Option<&mut T> {
+        let i = idx.get();
+        if size_of::<T>() != 0 && idx.is_valid() && i < self.len {
+            // SAFETY:
+            // - Bounds check passed above.
+            // - `idx` is a ThreadIndex derived from hardware built-in variables.
+            //   The prepared launch contract, or an unsafe raw launch caller,
+            //   guarantees that its index space is unique for this geometry.
+            // - The DisjointSlice was constructed with valid memory (from_raw_parts safety).
+            Some(unsafe { &mut *self.ptr.add(i) })
+        } else {
+            None
+        }
+    }
+}
+
 impl<'a, T, const ROWS: usize, const COLS: usize>
     DisjointSlice<'a, T, RuntimeRowMajorTiles<ROWS, COLS>>
 {
@@ -453,6 +459,63 @@ impl<'a, T> DisjointSlice<'a, T, Runtime2DIndex> {
     #[inline(always)]
     pub fn row_pitch(&self) -> u32 {
         self.space
+    }
+
+    /// Get a mutable reference to the element this thread's witness selects,
+    /// returning `None` if the thread owns no cell of this slice's grid.
+    ///
+    /// # Safety Argument
+    ///
+    /// A [`Runtime2DIndex`] witness stores the thread's raw `(row, col)`
+    /// coordinates, and this method resolves them against **this** slice's
+    /// own host-bound pitch (`row * pitch + col`, requiring `col < pitch`).
+    /// That per-slice resolution is what makes the method safe:
+    ///
+    /// 1. **Bounds checked**: `col < pitch` and `flat < len` both return
+    ///    `None` on failure.
+    ///
+    /// 2. **Injective per slice**: with one pitch for the whole launch
+    ///    (written once by the host) and `col < pitch`, distinct `(row, col)`
+    ///    pairs resolve to distinct flat indices. Distinct threads hold
+    ///    distinct hardware coordinates, so no two threads reach the same
+    ///    element through this slice.
+    ///
+    /// 3. **No witness mixing**: a witness minted from a slice with a
+    ///    different pitch carries only its coordinates, never the minting
+    ///    slice's grid. Resolving here uses this slice's pitch, so handing
+    ///    witnesses across differently pitched slices cannot alias two
+    ///    `&mut` onto one element the way flat-index witnesses could.
+    #[inline]
+    pub fn get_mut<'kernel>(
+        &mut self,
+        idx: ThreadIndex<'kernel, Runtime2DIndex>,
+    ) -> Option<&mut T> {
+        if size_of::<T>() == 0 || !idx.is_valid() {
+            return None;
+        }
+        let row = idx.row();
+        let col = idx.col();
+        let pitch = self.space as usize;
+        // `col < pitch` keeps the coordinate inside one logical row, which is
+        // what makes `row * pitch + col` injective; it also rejects a zero
+        // pitch. `row` and `col` each fit 32 bits (packed representation) and
+        // `pitch <= u32::MAX`, so the flat index cannot wrap 64-bit `usize`.
+        if col >= pitch {
+            return None;
+        }
+        let i = row * pitch + col;
+        if i < self.len {
+            // SAFETY:
+            // - Bounds check passed above.
+            // - The per-slice resolution argument in the doc comment: one
+            //   host-bound pitch per launch plus `col < pitch` makes the
+            //   coordinate-to-offset map injective across threads.
+            // - The DisjointSlice was constructed with valid memory
+            //   (from_raw_parts_with_space safety).
+            Some(unsafe { &mut *self.ptr.add(i) })
+        } else {
+            None
+        }
     }
 }
 
@@ -495,7 +558,7 @@ impl<'a, T, IS: IndexFormula + SpaceLayout> DisjointSlice<'a, T, IS> {
     ///
     /// Available for slices whose index space implements [`IndexFormula`]:
     /// `Index1D` and `Index2D<ROW_STRIDE>`. For `Runtime2DIndex` the row
-    /// stride is opaque to the type system, so use the unsafe
+    /// stride is a runtime value read from the slice, so use the
     /// [`index_2d_runtime`](crate::thread::index_2d_runtime) and
     /// [`get_mut`](Self::get_mut) pair explicitly.
     ///
@@ -544,3 +607,85 @@ unsafe impl<'a, T: Send, IndexSpace: SpaceLayout> Send for DisjointSlice<'a, T, 
 //         different element. Sharing &DisjointSlice across threads would allow
 //         multiple threads to call get_mut() on the same struct, which
 //         would produce aliasing &mut T references — unsound.
+
+#[cfg(test)]
+mod tests {
+    //! Host-side proofs of the `Runtime2DIndex` resolution semantics.
+    //!
+    //! The witness carries `(row, col)` and the ADDRESSED slice resolves it
+    //! against its own pitch. These tests replay the exact scenario that made
+    //! flat-index witnesses unsound: witnesses minted for pitches 5 and 100
+    //! both flattened to element 5 (from `(1, 0)` and `(0, 5)`), so two
+    //! threads held `&mut` to one element. Per-slice resolution has to make
+    //! those resolutions distinct for every slice they could be handed to.
+
+    use super::DisjointSlice;
+    use crate::thread::{Runtime2DIndex, ThreadIndex, pack_runtime_2d_coords};
+
+    /// Resolve a witness against a freshly built slice and return the flat
+    /// element index it lands on, via pointer arithmetic on a real buffer.
+    fn resolved_flat_index(buffer: &mut [f32], pitch: u32, row: usize, col: usize) -> Option<usize> {
+        let base = buffer.as_mut_ptr();
+        let len = buffer.len();
+        // SAFETY: `buffer` is exclusively borrowed for the call and `pitch`
+        // describes the grid the assertions below expect.
+        let mut slice: DisjointSlice<'_, f32, Runtime2DIndex> =
+            unsafe { DisjointSlice::from_raw_parts_with_space(base, len, pitch) };
+        let witness = ThreadIndex::<Runtime2DIndex>::for_test(pack_runtime_2d_coords(row, col));
+        slice
+            .get_mut(witness)
+            .map(|elem| (core::ptr::from_mut(elem) as usize - base as usize) / size_of::<f32>())
+    }
+
+    #[test]
+    fn witnesses_from_two_pitches_cannot_alias_one_element() {
+        let mut buffer = [0.0f32; 512];
+
+        // The historical collision: flat witnesses gave (1, 0)@pitch5 -> 5
+        // and (0, 5)@pitch100 -> 5, one element for two threads. Resolved
+        // against the addressed slice instead, the two coordinate pairs must
+        // never land on the same element of any one slice.
+        //
+        // Addressed at pitch 5: (0, 5) has col >= pitch, no cell at all.
+        assert_eq!(resolved_flat_index(&mut buffer, 5, 1, 0), Some(5));
+        assert_eq!(resolved_flat_index(&mut buffer, 5, 0, 5), None);
+        // Addressed at pitch 100: distinct elements.
+        assert_eq!(resolved_flat_index(&mut buffer, 100, 1, 0), Some(100));
+        assert_eq!(resolved_flat_index(&mut buffer, 100, 0, 5), Some(5));
+    }
+
+    #[test]
+    fn resolution_is_injective_per_slice() {
+        let mut buffer = [0.0f32; 1024];
+        for pitch in [1u32, 3, 7, 64] {
+            let mut seen = [false; 1024];
+            for row in 0..8usize {
+                for col in 0..8usize {
+                    if let Some(flat) = resolved_flat_index(&mut buffer, pitch, row, col) {
+                        assert!(col < pitch as usize, "resolved a cell outside the row");
+                        assert!(
+                            !seen[flat],
+                            "coordinates ({row}, {col}) aliased element {flat} at pitch {pitch}"
+                        );
+                        seen[flat] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_pitch_resolves_nothing() {
+        let mut buffer = [0.0f32; 16];
+        assert_eq!(resolved_flat_index(&mut buffer, 0, 0, 0), None);
+    }
+
+    #[test]
+    fn out_of_len_coordinates_resolve_to_none() {
+        let mut buffer = [0.0f32; 10];
+        // Row 3 at pitch 4 starts at element 12, past len 10.
+        assert_eq!(resolved_flat_index(&mut buffer, 4, 3, 0), None);
+        // Last in-bounds cell still resolves.
+        assert_eq!(resolved_flat_index(&mut buffer, 4, 2, 1), Some(9));
+    }
+}

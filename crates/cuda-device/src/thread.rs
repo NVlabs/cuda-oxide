@@ -11,7 +11,7 @@
 //!   hardware built-in variables, with a `'kernel` lifetime that pins it
 //!   to the kernel body
 //! - Thread intrinsics: `threadIdx_x`, `blockIdx_x`, etc.
-//! - Index helpers: `index_1d`, `index_2d::<S>`, `unsafe index_2d_runtime`
+//! - Index helpers: `index_1d`, `index_2d::<S>`, `index_2d_runtime(&slice)`
 //!   that return typed `ThreadIndex` witnesses
 //! - `IndexFormula`: a marker trait for index spaces that can be derived
 //!   from the kernel launch context alone (used by `DisjointSlice::get_mut_indexed`)
@@ -22,7 +22,7 @@
 //! accessing a unique memory location. This is guaranteed as follows:
 //!
 //! 1. **ThreadIndex** can only be constructed by trusted functions:
-//!    `index_1d()`, `index_2d::<S>()`, and the unsafe `index_2d_runtime(s)`.
+//!    `index_1d()`, `index_2d::<S>()`, and `index_2d_runtime(&slice)`.
 //! 2. These functions derive the index from hardware built-in variables
 //!    (`threadIdx`, `blockIdx`, `blockDim`) -- read-only special registers
 //!    assigned by the runtime at kernel launch. The formula
@@ -34,9 +34,11 @@
 //!    The stride lives in the witness type, and `DisjointSlice` only
 //!    accepts indices from the matching index space -- mismatched
 //!    strides are a compile error.
-//! 5. `unsafe index_2d_runtime(s)`: caller asserts every thread used the
-//!    same `s`. The type system can't prove uniformity for runtime
-//!    strides; the `unsafe` keyword is the contract.
+//! 5. `index_2d_runtime(&slice)`: the witness stores the thread's raw
+//!    `(row, col)` coordinates, not a flat index. The addressed
+//!    `DisjointSlice` resolves them against its own host-bound pitch at
+//!    the access site, so distinct threads always resolve distinct
+//!    elements no matter which slice minted the witness.
 //! 6. The witness is `!Send + !Sync + !Copy + !Clone` and `'kernel`-scoped,
 //!    so threads can't launder it through shared memory and it can't
 //!    outlive the kernel body.
@@ -54,16 +56,39 @@ pub enum Index1D {}
 /// Type-level index space for a 2D row-major index with a const row stride.
 pub enum Index2D<const ROW_STRIDE: usize> {}
 
+mod flat_index_sealed {
+    pub trait Sealed {}
+}
+
+/// Index spaces whose `ThreadIndex` stores the flat element index directly.
+///
+/// `Index1D` and `Index2D<S>` fix their geometry in the type, so the flat
+/// index is computed at minting time and [`ThreadIndex::get`] returns it
+/// as-is. [`Runtime2DIndex`] does **not** impl this: its witness stores the
+/// thread's raw `(row, col)` coordinates and the addressed `DisjointSlice`
+/// resolves them against its own host-bound pitch at the access site.
+///
+/// This trait is sealed. Implementing it for a coordinate-carrying space
+/// would let `ThreadIndex::get` hand out the packed representation as if it
+/// were a flat index.
+pub trait FlatIndexSpace: flat_index_sealed::Sealed {}
+
+impl flat_index_sealed::Sealed for Index1D {}
+impl FlatIndexSpace for Index1D {}
+
+impl<const ROW_STRIDE: usize> flat_index_sealed::Sealed for Index2D<ROW_STRIDE> {}
+impl<const ROW_STRIDE: usize> FlatIndexSpace for Index2D<ROW_STRIDE> {}
+
 /// Index spaces whose `ThreadIndex` can be derived from the launch context alone.
 ///
 /// `Index1D` and `Index2D<S>` impl this — their formulas take no runtime
 /// inputs. [`Runtime2DIndex`] does **not** impl this, because the row stride
-/// is a runtime value the type system can't see; reach for the unsafe
+/// is a runtime value the type system can't see; reach for
 /// [`index_2d_runtime`] when you need a runtime stride.
 ///
 /// Used by `DisjointSlice::get_mut_indexed` to mint the per-thread index
 /// in the same call that resolves it to a mutable reference.
-pub trait IndexFormula: Sized {
+pub trait IndexFormula: Sized + FlatIndexSpace {
     #[doc(hidden)]
     fn from_scope<'kernel, Domain, Coordinates>(
         scope: &'kernel LaunchContext<'kernel, Domain, Coordinates>,
@@ -97,15 +122,25 @@ impl<const ROW_STRIDE: usize> IndexFormula for Index2D<ROW_STRIDE> {
     }
 }
 
-/// Type-level index space for manually audited runtime-stride 2D indexing.
+/// Type-level index space for runtime-pitch 2D indexing.
 ///
-/// Two `ThreadIndex<'_, Runtime2DIndex>` values produced under different runtime
-/// strides have the same type, so the type system can't tell them apart. The
-/// `unsafe` on [`index_2d_runtime`] is the only thing keeping callers honest:
-/// every thread in the kernel that feeds a `Runtime2DIndex` into the same
-/// `DisjointSlice` must have used the same `row_stride`. If you can pin the
-/// stride at compile time, prefer [`index_2d`] — the const-generic version
-/// makes a stride mismatch a type error instead of a contract.
+/// A `ThreadIndex<'_, Runtime2DIndex>` stores the thread's raw `(row, col)`
+/// hardware coordinates, packed into one word exactly as [`ThreadCoord2D32`]
+/// does. It deliberately does **not** store a flat index: two slices with
+/// different pitches would then disagree about which element a witness names,
+/// and safe code that minted a witness from each and selected one under a
+/// thread-varying condition could alias two `&mut` onto one element (with 1x1
+/// cells, `(1, 0)` at pitch 5 and `(0, 5)` at pitch 100 both flatten to 5).
+///
+/// Instead, the addressed [`DisjointSlice`](crate::disjoint::DisjointSlice)
+/// resolves the coordinates against its **own** host-bound pitch at the access
+/// site (`row * pitch + col`, with a `col < pitch` check). Distinct threads
+/// hold distinct coordinates, and every thread of the launch reads the same
+/// host-written pitch from the slice it addresses, so the mapping is injective
+/// per slice regardless of which slice minted the witness.
+///
+/// If the stride is known at compile time, prefer [`index_2d`]: the
+/// const-generic version makes a stride mismatch a type error.
 pub enum Runtime2DIndex {}
 
 /// Stack-local launch context produced by the kernel macro and consumed by
@@ -263,14 +298,6 @@ impl<'kernel, IndexSpace> ThreadIndex<'kernel, IndexSpace> {
         }
     }
 
-    /// Get the raw index value.
-    ///
-    /// Use this when you need the index for array indexing on regular slices.
-    #[inline(always)]
-    pub fn get(&self) -> usize {
-        self.raw
-    }
-
     /// Whether the launch shape and index arithmetic produced a valid witness.
     ///
     /// Legacy uncontracted kernels learn their rank only at runtime. A 1D
@@ -281,12 +308,74 @@ impl<'kernel, IndexSpace> ThreadIndex<'kernel, IndexSpace> {
         self.raw != usize::MAX
     }
 
+    /// Host-test-only minting with a chosen storage word.
+    ///
+    /// Exists so unit tests can exercise `DisjointSlice` resolution against
+    /// specific coordinates without a kernel launch context. Never compiled
+    /// into device or non-test builds, so it creates no new witness source.
+    #[cfg(test)]
+    pub(crate) fn for_test(raw: usize) -> Self {
+        ThreadIndex {
+            raw,
+            _kernel: PhantomData,
+            _space: PhantomData,
+            _not_send_sync: PhantomData,
+        }
+    }
+}
+
+impl<'kernel, IndexSpace: FlatIndexSpace> ThreadIndex<'kernel, IndexSpace> {
+    /// Get the raw index value.
+    ///
+    /// Use this when you need the index for array indexing on regular slices.
+    ///
+    /// Only flat index spaces expose this: a [`Runtime2DIndex`] witness
+    /// stores `(row, col)` coordinates rather than a flat index, and the flat
+    /// index it resolves to depends on the pitch of the slice it addresses.
+    #[inline(always)]
+    pub fn get(&self) -> usize {
+        self.raw
+    }
+
     /// Check if this index is less than a bound.
     ///
     /// Convenience method for bounds checking.
     #[inline(always)]
     pub fn in_bounds(&self, len: usize) -> bool {
         self.is_valid() && self.raw < len
+    }
+}
+
+// The packed (row, col) representation below needs 32 bits per half. The
+// crate already assumes 64-bit targets (host x86-64/aarch64 and nvptx64);
+// this makes the assumption explicit where the packing relies on it.
+const _: () = assert!(usize::BITS >= 64);
+
+/// Coordinate packing for [`Runtime2DIndex`] witnesses, mirroring
+/// [`ThreadCoord2D32`]'s one-word scalar layout. Callers must have checked
+/// that each half fits 32 bits; the minting function rejects coordinates that
+/// do not (unreachable on real hardware, where `gridDim.y <= 65535` bounds
+/// the row far below `2^32`).
+///
+/// The packed word never equals `usize::MAX` for a minted witness: `col` is
+/// strictly below a `u32` pitch, so the low half is at most `u32::MAX - 1`.
+/// That keeps `usize::MAX` free as the invalid-witness sentinel.
+#[inline(always)]
+pub(crate) fn pack_runtime_2d_coords(row: usize, col: usize) -> usize {
+    (row << 32) | col
+}
+
+impl<'kernel> ThreadIndex<'kernel, Runtime2DIndex> {
+    /// The thread's global row coordinate this witness was minted from.
+    #[inline(always)]
+    pub fn row(&self) -> usize {
+        self.raw >> 32
+    }
+
+    /// The thread's global column coordinate this witness was minted from.
+    #[inline(always)]
+    pub fn col(&self) -> usize {
+        self.raw & (u32::MAX as usize)
     }
 }
 
@@ -580,6 +669,14 @@ pub mod __internal {
     /// `super::index_2d_runtime` stub. Like `index_2d`, but the row stride is a
     /// runtime value read from the slice the index will address, so every
     /// thread of the launch necessarily uses the same one.
+    ///
+    /// The witness stores the thread's packed `(row, col)` coordinates, not a
+    /// flat index. Flattening here against `slice`'s pitch would bake the
+    /// MINTING slice's grid into the witness; a second slice with a different
+    /// pitch could then be addressed through it, and two threads' "unique"
+    /// indices would land on one element. The addressed slice resolves the
+    /// coordinates against its own pitch instead, so `Some` means only "this
+    /// thread owns a cell in `slice`'s grid".
     #[inline(always)]
     pub fn index_2d_runtime<'kernel, T>(
         scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
@@ -605,10 +702,13 @@ pub mod __internal {
         if row == usize::MAX || col == usize::MAX || col >= row_stride {
             return None;
         }
-        if row > (usize::MAX - col) / row_stride {
+        // Each packed half is 32 bits. `col < row_stride <= u32::MAX` already
+        // fits; reject rows that do not (no real launch reaches them:
+        // `gridDim.y * blockDim.y` tops out below 2^26).
+        if row > u32::MAX as usize {
             return None;
         }
-        let raw = row * row_stride + col;
+        let raw = super::pack_runtime_2d_coords(row, col);
         Some(unsafe { ThreadIndex::new(raw, true, scope) })
     }
 
@@ -823,8 +923,16 @@ pub fn index_2d<'kernel, const ROW_STRIDE: usize>()
 /// could not give that: safe code can select between two launch-uniform values
 /// under a thread-varying condition, and two threads then resolve one element.
 ///
+/// The witness stores the thread's raw `(row, col)` coordinates. Whichever
+/// `DisjointSlice<T, Runtime2DIndex>` it is handed to resolves them against
+/// that slice's own host-bound pitch at the access site, so handing a witness
+/// minted from one slice to another slice cannot smuggle the first slice's
+/// grid along with it. `Some` here means only that this thread owns a cell of
+/// `slice`'s grid (`col < slice.row_pitch()`).
+///
 /// `None` when the launch uses more than two dimensions, when the pitch is
-/// zero, or when the coordinate arithmetic would overflow.
+/// zero, or when a coordinate does not fit the packed 32-bit-per-axis
+/// representation (unreachable for real launch shapes).
 ///
 /// # Stub body
 ///

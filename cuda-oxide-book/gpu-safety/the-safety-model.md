@@ -251,6 +251,18 @@ values produced under different runtime strides have the same type, so the
 type system cannot tell them apart. If you can pin the stride at compile time,
 prefer `index_2d::<S>()`.
 
+One consequence shapes the witness itself. Two `Runtime2DIndex` slices in one
+kernel may carry different pitches, and their witnesses share a type, so safe
+code can mint a witness from each and hand either one to either slice. The
+witness therefore stores the thread's raw `(row, col)` coordinates rather than
+a flat index, and `get_mut` resolves them against the **addressed** slice's
+own pitch (`row * pitch + col`, requiring `col < pitch`). Distinct threads
+hold distinct coordinates and every thread reads the same host-bound pitch
+from the slice it addresses, so the mapping stays injective per slice no
+matter which slice minted the witness. A flat index baked in at minting time
+would instead smuggle the minting slice's grid across: `(1, 0)` flattened at
+pitch 5 and `(0, 5)` flattened at pitch 100 both name element 5.
+
 #### Where a runtime pitch lives
 
 The *launch* establishes "every thread saw the same value": the host marshals
@@ -357,11 +369,10 @@ explicit and `unsafe`:
 ```rust
 #[kernel]
 pub fn gemm_runtime(a: &[f32], b: &[f32], mut c: DisjointSlice<f32, Runtime2DIndex>, m: u32, n: u32) {
-    let n = n as usize;             // ONE binding, ONE stride value
     let row = thread::index_2d_row();
 
-    // SAFETY: every thread in the kernel sees the same `n` (kernel arg).
-    if let Some(c_idx) = unsafe { thread::index_2d_runtime(n) } {
+    // The pitch comes from `c`, bound once by the host. No `unsafe`.
+    if let Some(c_idx) = thread::index_2d_runtime(&c) {
         if row < m as usize {
             // ... compute dot product ...
             if let Some(c_elem) = c.get_mut(c_idx) {
@@ -667,9 +678,9 @@ The rules:
 - For const-stride 2D grids, parameterise the slice as
   `DisjointSlice<T, Index2D<S>>` and use `get_mut_indexed()` or
   `thread::index_2d::<S>()`. Mismatched strides are a compile error.
-- For runtime strides, reach for `unsafe { thread::index_2d_runtime(n) }`
-  with a `Runtime2DIndex`-tagged slice. The `unsafe` is the contract that
-  every thread used the same `n`.
+- For runtime strides, reach for `thread::index_2d_runtime(&slice)` with a
+  `Runtime2DIndex`-tagged slice. The pitch travels inside the slice, bound
+  once by the host, so no `unsafe` and no per-call stride to disagree about.
 - Always bounds-check via `get_mut()` / `get_mut_indexed()` (both return
   `Option`).
 
@@ -722,7 +733,7 @@ the code until the argument is obvious, or use a safe API instead.
 | Borrow checker on device code                                   | Enforced (real `rustc` frontend)                     |
 | Safe 1D parallel writes (`DisjointSlice + index_1d`)            | Enforced with a `domain = 1` prepared launch         |
 | Safe 2D parallel writes -- const stride                         | Enforced (`Index2D<S>` mismatch is a compile error)  |
-| Safe 2D parallel writes -- runtime stride                       | Caller-asserted via `unsafe index_2d_runtime`        |
+| Safe 2D parallel writes -- runtime stride                       | Enforced (host-bound pitch, per-slice resolution)    |
 | `ThreadIndex` non-transferable across threads (smem laundering) | Enforced (`!Send + !Sync + !Copy + !Clone + 'kernel`)|
 | `&mut [T]` kernel parameter                                     | NOT enforced -- treat any `&mut` arg as `unsafe`     |
 | Explicit `unsafe` for shared memory, intrinsics                 | Enforced (Rust language rules)                       |
