@@ -56,16 +56,33 @@
 //! unique predecessor `mir.assert(mir.lt(index, constant))`. Guarded indices are
 //! canonicalized to an equivalent remainder in the assertion-success block so
 //! the existing typed `mir.extract_array_element` lowering can scalarize them.
+//!
+//! The second phase widens one dynamic element load into a load of the whole
+//! array field, which is only legal when the pointed-to aggregate lives in
+//! caller-private memory. Borrowed pointers that may reference global, shared,
+//! or otherwise external memory must keep exactly one dynamic memory access
+//! (issue #400, following the #398 precedent). The phase therefore proves
+//! caller provenance before rewriting a helper: every `mir.call` of the helper
+//! in the module must pass a pointer traceable, through pointer-identity
+//! casts, to a caller-local `mir.alloca` of exactly the helper's aggregate
+//! type. Kernel pointer parameters, phi/select merges, pointers forwarded
+//! from another helper's parameter, shared/global allocations, externally
+//! callable device exports, and helpers without a single visible call site
+//! all fail closed and keep the original dynamic load.
+
+use std::collections::HashMap;
 
 use dialect_mir::{
-    attributes::FieldIndexAttr,
+    attributes::{FieldIndexAttr, MirCastKindAttr},
     ops::{
-        MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirConstantOp, MirExtractArrayElementOp,
-        MirExtractFieldOp, MirFieldAddrOp, MirFuncOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
+        MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirCallOp,
+        MirCastOp, MirConstantOp, MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp,
+        MirFuncOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
     },
     types::{MirArrayType, MirPtrType, MirStructType},
 };
 use pliron::{
+    builtin::op_interfaces::SymbolOpInterface,
     builtin::types::{IntegerType, Signedness},
     context::{Context, Ptr},
     graph::ControlFlowGraph,
@@ -102,7 +119,14 @@ struct AllocaPlan {
 /// Only entry-block allocas initialized from an argument of the same block are
 /// considered. Every pointer use must belong to the exact read-only projection
 /// graph accepted by [`analyze_alloca`].
-pub fn canonicalize_read_only_aggregate_arguments(module: Ptr<Operation>, ctx: &mut Context) {
+///
+/// `verbose` is threaded from the pipeline's backend options; the pass itself
+/// never reads the environment.
+pub fn canonicalize_read_only_aggregate_arguments(
+    module: Ptr<Operation>,
+    ctx: &mut Context,
+    verbose: bool,
+) {
     let mut ops = Vec::new();
     collect_ops(ctx, module, &mut ops);
 
@@ -119,7 +143,7 @@ pub fn canonicalize_read_only_aggregate_arguments(module: Ptr<Operation>, ctx: &
         rewritten_loads += rewrite_plan(ctx, plan);
     }
 
-    if rewritten_loads > 0 && std::env::var_os("CUDA_OXIDE_VERBOSE").is_some() {
+    if rewritten_loads > 0 && verbose {
         eprintln!("borrowed-aggregate scalarization: rewrote {rewritten_loads} dynamic load(s)");
     }
 }
@@ -321,8 +345,6 @@ fn rewrite_plan(ctx: &mut Context, plan: AllocaPlan) -> usize {
     load_count
 }
 
-const MAX_SCALARIZED_CANDIDATES: u64 = 16;
-
 #[derive(Clone, Copy)]
 enum BoundedPointerIndex {
     /// The original index is already `mir.rem(value, constant)`.
@@ -349,25 +371,52 @@ struct BorrowedPointerPlan {
 /// immutable, and both pointer results must have exactly one use. The index
 /// must be bounded either by an unsigned remainder or by the unique predecessor
 /// assertion `assert(index < constant)`.
-pub fn canonicalize_bounded_borrowed_pointer_arguments(module: Ptr<Operation>, ctx: &mut Context) {
+///
+/// On top of the helper-local shape, every call site of the helper must prove
+/// that the aggregate pointer targets caller-private memory (see
+/// [`all_call_sites_pass_owned_aggregate`]); any unproven call site keeps the
+/// helper untouched.
+///
+/// `verbose` is threaded from the pipeline's backend options; the pass itself
+/// never reads the environment.
+pub fn canonicalize_bounded_borrowed_pointer_arguments(
+    module: Ptr<Operation>,
+    ctx: &mut Context,
+    verbose: bool,
+) {
     let mut operations = Vec::new();
     collect_ops(ctx, module, &mut operations);
 
-    let array_addrs: Vec<_> = operations
-        .into_iter()
-        .filter(|operation| Operation::get_op::<MirArrayElementAddrOp>(*operation, ctx).is_some())
-        .collect();
+    let mut calls_by_callee: HashMap<String, Vec<Ptr<Operation>>> = HashMap::new();
+    let mut array_addrs = Vec::new();
+    for operation in operations {
+        if let Some(call) = Operation::get_op::<MirCallOp>(operation, ctx) {
+            let callee = call
+                .get_attr_callee(ctx)
+                .map(|attribute| String::from((*attribute).clone()));
+            if let Some(callee) = callee {
+                calls_by_callee.entry(callee).or_default().push(operation);
+            }
+            continue;
+        }
+        if Operation::get_op::<MirArrayElementAddrOp>(operation, ctx).is_some() {
+            array_addrs.push(operation);
+        }
+    }
 
+    let mut provenance_cache: HashMap<(Ptr<Operation>, usize), bool> = HashMap::new();
     let mut rewritten_loads = 0usize;
     for array_addr in array_addrs {
-        let Some(plan) = analyze_borrowed_pointer_read(ctx, array_addr) else {
+        let Some(plan) =
+            analyze_borrowed_pointer_read(ctx, array_addr, &calls_by_callee, &mut provenance_cache)
+        else {
             continue;
         };
         rewrite_borrowed_pointer_read(ctx, plan);
         rewritten_loads += 1;
     }
 
-    if rewritten_loads > 0 && std::env::var_os("CUDA_OXIDE_VERBOSE").is_some() {
+    if rewritten_loads > 0 && verbose {
         eprintln!(
             "borrowed-pointer aggregate scalarization: rewrote \
              {rewritten_loads} dynamic load(s)"
@@ -378,6 +427,8 @@ pub fn canonicalize_bounded_borrowed_pointer_arguments(module: Ptr<Operation>, c
 fn analyze_borrowed_pointer_read(
     ctx: &Context,
     array_addr: Ptr<Operation>,
+    calls_by_callee: &HashMap<String, Vec<Ptr<Operation>>>,
+    provenance_cache: &mut HashMap<(Ptr<Operation>, usize), bool>,
 ) -> Option<BorrowedPointerPlan> {
     Operation::get_op::<MirArrayElementAddrOp>(array_addr, ctx)?;
     let load_block = array_addr.deref(ctx).get_parent_block()?;
@@ -450,6 +501,29 @@ fn analyze_borrowed_pointer_read(
     let aggregate_type = aggregate_pointer_type.pointee;
     aggregate_type.deref(ctx).downcast_ref::<MirStructType>()?;
 
+    let argument_index = entry_block
+        .deref(ctx)
+        .arguments()
+        .position(|argument| argument == aggregate_pointer)?;
+    let provenance_key = (function, argument_index);
+    let caller_owned = match provenance_cache.get(&provenance_key) {
+        Some(&caller_owned) => caller_owned,
+        None => {
+            let caller_owned = all_call_sites_pass_owned_aggregate(
+                ctx,
+                calls_by_callee,
+                function,
+                argument_index,
+                aggregate_type,
+            );
+            provenance_cache.insert(provenance_key, caller_owned);
+            caller_owned
+        }
+    };
+    if !caller_owned {
+        return None;
+    }
+
     let index_value = array_addr.deref(ctx).get_operand(1);
     let index = bounded_pointer_index(ctx, index_value, load_block, array_size)?;
 
@@ -521,12 +595,88 @@ fn bounded_pointer_index(
     Some(BoundedPointerIndex::Asserted { index, bound })
 }
 
+/// Decide whether every visible call site of `function` passes the pointer
+/// argument at `argument_index` into caller-private memory.
+///
+/// Issue #400 fail-closed rule (the #398 precedent): a borrowed pointer that
+/// may reference global, shared, or otherwise external memory must keep
+/// exactly one dynamic memory access, so the widened array-field load is only
+/// legal when every caller passes the address of a compiler-owned local slot
+/// holding exactly the helper's aggregate type. Externally callable device
+/// exports have call sites this module cannot see, and a helper without any
+/// visible call site proves nothing; both disqualify the helper outright.
+fn all_call_sites_pass_owned_aggregate(
+    ctx: &Context,
+    calls_by_callee: &HashMap<String, Vec<Ptr<Operation>>>,
+    function: Ptr<Operation>,
+    argument_index: usize,
+    aggregate_type: TypeHandle,
+) -> bool {
+    let Some(function_op) = Operation::get_op::<MirFuncOp>(function, ctx) else {
+        return false;
+    };
+    let symbol = String::from(function_op.get_symbol_name(ctx));
+    if reserved_oxide_symbols::is_device_symbol(&symbol) {
+        return false;
+    }
+    let Some(calls) = calls_by_callee.get(&symbol) else {
+        return false;
+    };
+    !calls.is_empty()
+        && calls.iter().all(|call| {
+            let call_ref = call.deref(ctx);
+            if argument_index >= call_ref.get_num_operands() {
+                return false;
+            }
+            let pointer = call_ref.get_operand(argument_index);
+            drop(call_ref);
+            pointer_is_owned_aggregate_slot(ctx, pointer, aggregate_type)
+        })
+}
+
+/// Trace `pointer` back to its allocation through pointer-identity casts
+/// (an `&mut slot -> &slot` reborrow imports as `mir.cast PtrToPtr`).
+///
+/// Accept only a function-local `mir.alloca` whose pointee is exactly the
+/// helper's aggregate type: reading a whole array field stays inside the
+/// allocation only when the slot and the callee agree on the layout. Block
+/// arguments (kernel pointer parameters, phi merges, pointers forwarded from
+/// another helper's parameter) and every other producer (shared or global
+/// allocations, selects, offsets) fail closed.
+fn pointer_is_owned_aggregate_slot(
+    ctx: &Context,
+    mut pointer: Value,
+    aggregate_type: TypeHandle,
+) -> bool {
+    loop {
+        let Some(defining_op) = pointer.defining_op() else {
+            return false;
+        };
+        if let Some(cast) = Operation::get_op::<MirCastOp>(defining_op, ctx) {
+            let is_pointer_identity_cast = cast
+                .get_attr_cast_kind(ctx)
+                .is_some_and(|kind| matches!(*kind, MirCastKindAttr::PtrToPtr));
+            if !is_pointer_identity_cast {
+                return false;
+            }
+            pointer = defining_op.deref(ctx).get_operand(0);
+            continue;
+        }
+        let Some(alloca) = Operation::get_op::<MirAllocaOp>(defining_op, ctx) else {
+            return false;
+        };
+        return alloca.pointee_type(ctx) == aggregate_type;
+    }
+}
+
 fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
     let defining_op = value.defining_op()?;
     let constant = Operation::get_op::<MirConstantOp>(defining_op, ctx)?;
-    constant
-        .get_attr_value(ctx)
-        .map(|attribute| attribute.value().to_u64())
+    let attribute = constant.get_attr_value(ctx)?;
+    let constant_value = attribute.value();
+    // `APInt::to_u64` truncates wider values, so a >64-bit constant could be
+    // misread as a small in-range bound. Fail closed on such widths.
+    (constant_value.bw() <= 64).then(|| constant_value.to_u64())
 }
 
 fn validate_candidate_count(candidate_count: u64, array_size: u64) -> Option<()> {
@@ -808,7 +958,7 @@ mod tests {
         let mut ctx = Context::new();
         let fixture = build_fixture(&mut ctx, 64, Some(3), false, false);
 
-        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx);
+        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractFieldOp>(&ctx, fixture.module), 1);
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
@@ -826,7 +976,7 @@ mod tests {
         let mut ctx = Context::new();
         let fixture = build_fixture(&mut ctx, 3, None, false, false);
 
-        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx);
+        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractFieldOp>(&ctx, fixture.module), 1);
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
@@ -840,7 +990,7 @@ mod tests {
         let mut ctx = Context::new();
         let fixture = build_fixture(&mut ctx, 64, Some(17), false, false);
 
-        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx);
+        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractFieldOp>(&ctx, fixture.module), 1);
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
@@ -854,7 +1004,7 @@ mod tests {
         let mut ctx = Context::new();
         let fixture = build_fixture(&mut ctx, 3, Some(3), true, false);
 
-        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx);
+        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
         assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
@@ -865,7 +1015,7 @@ mod tests {
         let mut ctx = Context::new();
         let fixture = build_fixture(&mut ctx, 3, Some(3), false, true);
 
-        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx);
+        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
         assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
@@ -875,11 +1025,154 @@ mod tests {
         module: Ptr<Operation>,
     }
 
+    /// Who calls the borrowed-pointer helper, and what backs the pointer.
+    #[derive(Clone, Copy)]
+    enum CallerShape {
+        /// Every call site passes the address of a caller-local slot.
+        OwnedSlot,
+        /// The single call site forwards the caller's own pointer parameter.
+        PointerParameter,
+        /// One owned-slot call site plus one forwarded-parameter call site.
+        Mixed,
+        /// The helper has no call site in the module.
+        None,
+    }
+
+    fn add_helper_call(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        helper_symbol: &str,
+        pointer: Value,
+        index: Value,
+        element_type: TypeHandle,
+    ) {
+        let call = Operation::new(
+            ctx,
+            MirCallOp::get_concrete_op_info(),
+            vec![element_type],
+            vec![pointer, index],
+            vec![],
+            0,
+        );
+        MirCallOp::new(call).set_attr_callee(
+            ctx,
+            pliron::builtin::attributes::StringAttr::new(helper_symbol.to_string()),
+        );
+        call.insert_at_back(block, ctx);
+
+        let return_op = Operation::new(
+            ctx,
+            MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        return_op.insert_at_back(block, ctx);
+    }
+
+    fn add_caller_function(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        argument_types: Vec<TypeHandle>,
+    ) -> Ptr<BasicBlock> {
+        let function_type = FunctionType::get(ctx, argument_types.clone(), vec![]);
+        let function = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let function_op = MirFuncOp::new(ctx, function, TypeAttr::new(function_type.into()));
+        function_op.set_symbol_name(ctx, name.try_into().unwrap());
+        module.append_operation(ctx, function, 0);
+
+        let region: Ptr<Region> = function.deref(ctx).get_region(0);
+        let entry = BasicBlock::new(ctx, None, argument_types);
+        entry.insert_at_back(region, ctx);
+        entry
+    }
+
+    /// A caller holding the aggregate by value in a local slot, calling the
+    /// helper with a `&mut slot -> &slot` reborrow of that slot's address.
+    fn add_owned_slot_caller(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        helper_symbol: &str,
+        aggregate_type: TypeHandle,
+        aggregate_pointer: TypeHandle,
+        index_handle: TypeHandle,
+        element_type: TypeHandle,
+    ) {
+        let entry = add_caller_function(ctx, module, name, vec![aggregate_type, index_handle]);
+        let aggregate_argument = entry.deref(ctx).get_argument(0);
+        let index = entry.deref(ctx).get_argument(1);
+
+        let slot_pointer: TypeHandle = MirPtrType::get_generic(ctx, aggregate_type, true).into();
+        let slot = Operation::new(
+            ctx,
+            MirAllocaOp::get_concrete_op_info(),
+            vec![slot_pointer],
+            vec![],
+            vec![],
+            0,
+        );
+        slot.insert_at_back(entry, ctx);
+        let slot_value = slot.deref(ctx).get_result(0);
+
+        let store = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![slot_value, aggregate_argument],
+            vec![],
+            0,
+        );
+        store.insert_at_back(entry, ctx);
+
+        let reborrow = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![aggregate_pointer],
+            vec![slot_value],
+            vec![],
+            0,
+        );
+        MirCastOp::new(reborrow).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+        reborrow.insert_at_back(entry, ctx);
+        let reborrow_value = reborrow.deref(ctx).get_result(0);
+
+        add_helper_call(ctx, entry, helper_symbol, reborrow_value, index, element_type);
+    }
+
+    /// A caller forwarding its own aggregate pointer parameter, i.e. memory
+    /// this module cannot prove to be caller-private.
+    fn add_pointer_parameter_caller(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        helper_symbol: &str,
+        aggregate_pointer: TypeHandle,
+        index_handle: TypeHandle,
+        element_type: TypeHandle,
+    ) {
+        let entry = add_caller_function(ctx, module, name, vec![aggregate_pointer, index_handle]);
+        let forwarded_pointer = entry.deref(ctx).get_argument(0);
+        let index = entry.deref(ctx).get_argument(1);
+        add_helper_call(ctx, entry, helper_symbol, forwarded_pointer, index, element_type);
+    }
+
     fn build_borrowed_pointer_fixture(
         ctx: &mut Context,
         asserted_bound: Option<u64>,
         alwaysinline: bool,
         volatile_load: bool,
+        caller_shape: CallerShape,
+        helper_symbol: &str,
     ) -> BorrowedPointerFixture {
         dialect_mir::register(ctx);
 
@@ -916,7 +1209,7 @@ mod tests {
             1,
         );
         let function_op = MirFuncOp::new(ctx, function, TypeAttr::new(function_type.into()));
-        function_op.set_symbol_name(ctx, "helper".try_into().unwrap());
+        function_op.set_symbol_name(ctx, helper_symbol.try_into().unwrap());
         if alwaysinline {
             function.deref_mut(ctx).attributes.set(
                 "alwaysinline".try_into().unwrap(),
@@ -1033,6 +1326,54 @@ mod tests {
         );
         return_op.insert_at_back(body, ctx);
 
+        match caller_shape {
+            CallerShape::OwnedSlot => {
+                add_owned_slot_caller(
+                    ctx,
+                    &module,
+                    "caller_owned",
+                    helper_symbol,
+                    aggregate_type,
+                    aggregate_pointer,
+                    index_handle,
+                    element_type,
+                );
+            }
+            CallerShape::PointerParameter => {
+                add_pointer_parameter_caller(
+                    ctx,
+                    &module,
+                    "caller_external",
+                    helper_symbol,
+                    aggregate_pointer,
+                    index_handle,
+                    element_type,
+                );
+            }
+            CallerShape::Mixed => {
+                add_owned_slot_caller(
+                    ctx,
+                    &module,
+                    "caller_owned",
+                    helper_symbol,
+                    aggregate_type,
+                    aggregate_pointer,
+                    index_handle,
+                    element_type,
+                );
+                add_pointer_parameter_caller(
+                    ctx,
+                    &module,
+                    "caller_external",
+                    helper_symbol,
+                    aggregate_pointer,
+                    index_handle,
+                    element_type,
+                );
+            }
+            CallerShape::None => {}
+        }
+
         BorrowedPointerFixture {
             module: module.get_operation(),
         }
@@ -1041,9 +1382,16 @@ mod tests {
     #[test]
     fn asserted_immutable_pointer_read_is_canonicalized_after_mem2reg() {
         let mut ctx = Context::new();
-        let fixture = build_borrowed_pointer_fixture(&mut ctx, Some(3), true, false);
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            true,
+            false,
+            CallerShape::OwnedSlot,
+            "helper",
+        );
 
-        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx);
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirFieldAddrOp>(&ctx, fixture.module), 1);
         assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 0);
@@ -1060,9 +1408,16 @@ mod tests {
     #[test]
     fn pointer_read_without_exact_assert_is_left_unchanged() {
         let mut ctx = Context::new();
-        let fixture = build_borrowed_pointer_fixture(&mut ctx, None, true, false);
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            None,
+            true,
+            false,
+            CallerShape::OwnedSlot,
+            "helper",
+        );
 
-        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx);
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
         assert_eq!(count::<MirFieldAddrOp>(&ctx, fixture.module), 1);
@@ -1073,9 +1428,16 @@ mod tests {
     #[test]
     fn non_alwaysinline_pointer_helper_is_left_unchanged() {
         let mut ctx = Context::new();
-        let fixture = build_borrowed_pointer_fixture(&mut ctx, Some(3), false, false);
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            false,
+            false,
+            CallerShape::OwnedSlot,
+            "helper",
+        );
 
-        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx);
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
         assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
@@ -1084,11 +1446,106 @@ mod tests {
     #[test]
     fn volatile_pointer_read_is_left_unchanged() {
         let mut ctx = Context::new();
-        let fixture = build_borrowed_pointer_fixture(&mut ctx, Some(3), true, true);
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            true,
+            true,
+            CallerShape::OwnedSlot,
+            "helper",
+        );
 
-        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx);
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
         assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+    }
+
+    /// Asserts the helper kept its single dynamic memory access: the pointer
+    /// chain survives, no value-level extraction or widened array-field load
+    /// was introduced, and no bounded remainder was materialized.
+    fn assert_single_dynamic_load_survives(ctx: &Context, module: Ptr<Operation>) {
+        assert_eq!(count::<MirExtractArrayElementOp>(ctx, module), 0);
+        assert_eq!(count::<MirExtractFieldOp>(ctx, module), 0);
+        assert_eq!(count::<MirFieldAddrOp>(ctx, module), 1);
+        assert_eq!(count::<MirArrayElementAddrOp>(ctx, module), 1);
+        assert_eq!(count::<MirRemOp>(ctx, module), 0);
+        assert_eq!(
+            count::<MirLoadOp>(ctx, module),
+            1,
+            "the original dynamic element load must survive unwidened"
+        );
+    }
+
+    #[test]
+    fn pointer_parameter_call_site_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            true,
+            false,
+            CallerShape::PointerParameter,
+            "helper",
+        );
+
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
+
+        assert_single_dynamic_load_survives(&ctx, fixture.module);
+    }
+
+    #[test]
+    fn mixed_call_sites_are_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            true,
+            false,
+            CallerShape::Mixed,
+            "helper",
+        );
+
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
+
+        assert_single_dynamic_load_survives(&ctx, fixture.module);
+    }
+
+    #[test]
+    fn helper_without_visible_call_site_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            true,
+            false,
+            CallerShape::None,
+            "helper",
+        );
+
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
+
+        assert_single_dynamic_load_survives(&ctx, fixture.module);
+    }
+
+    #[test]
+    fn device_export_helper_is_left_unchanged() {
+        // An exported `#[device]` function is externally callable, so the
+        // module-level call scan cannot see every call site. Even an owned
+        // in-module call site must not enable the rewrite.
+        let mut ctx = Context::new();
+        let exported_symbol = reserved_oxide_symbols::device_symbol("helper");
+        let fixture = build_borrowed_pointer_fixture(
+            &mut ctx,
+            Some(3),
+            true,
+            false,
+            CallerShape::OwnedSlot,
+            &exported_symbol,
+        );
+
+        canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
+
+        assert_single_dynamic_load_survives(&ctx, fixture.module);
     }
 }

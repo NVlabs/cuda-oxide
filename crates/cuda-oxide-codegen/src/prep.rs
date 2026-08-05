@@ -15,6 +15,9 @@ use pliron::printable::Printable;
 pub struct MirPreparation {
     /// Promote stack slots to SSA and run annotation-driven loop unrolling.
     pub promote_and_unroll: bool,
+    /// Print preparation-pass progress notes to stderr. Threaded from the
+    /// pipeline's `BackendOptions`; the passes never read the environment.
+    pub verbose: bool,
 }
 
 /// Verify and prepare a dialect-mir module before LLVM lowering.
@@ -37,7 +40,9 @@ pub fn prepare_mir_module(
     // original entry-block argument is already an SSA value. Canonicalize the
     // validated pointer chains back to value extraction before mem2reg.
     mir_transforms::scalarize_borrowed_aggregate_reads::canonicalize_read_only_aggregate_arguments(
-        module, ctx,
+        module,
+        ctx,
+        preparation.verbose,
     );
     verify_operation(
         ctx,
@@ -59,7 +64,7 @@ pub fn prepare_mir_module(
     // still retain dynamic field/array pointer chains after mem2reg. Recover
     // bounded read-only accesses in typed MIR before LLVM lowering.
     mir_transforms::scalarize_borrowed_aggregate_reads::
-        canonicalize_bounded_borrowed_pointer_arguments(module, ctx);
+        canonicalize_bounded_borrowed_pointer_arguments(module, ctx, preparation.verbose);
     verify_operation(
         ctx,
         module,
