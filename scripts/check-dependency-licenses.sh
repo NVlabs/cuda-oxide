@@ -17,6 +17,13 @@
 #     required.
 set -euo pipefail
 
+# Pin the collation locale for every sort/comm in this script.  Both comm
+# inputs are produced with byte-wise C ordering; without this, an ambient
+# UTF-8 locale (e.g. en_US.UTF-8) makes GNU comm re-check the order under
+# dictionary collation, reject the pair rustc-hash/rustc_apfloat with
+# "input is not in sorted order", and abort the run via set -e.
+export LC_ALL=C
+
 cd "$(dirname "$0")/.."
 
 CSV=dependency-licenses.csv
