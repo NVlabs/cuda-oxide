@@ -183,6 +183,10 @@ are configured.
   Zlib, or similar).
 - No GPL, AGPL, SSPL, or other copyleft-licensed dependencies.
 - If adding a new dependency, update `dependency-licenses.csv` accordingly.
+  `scripts/check-dependency-licenses.sh` reports anything the workspace
+  declares but that file does not record; CI runs it as the
+  `cargo-deny / license-manifest` job. It checks presence, not versions, so a
+  routine version bump needs no CSV edit.
 
 ## IP Review Process
 
