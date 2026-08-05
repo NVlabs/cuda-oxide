@@ -7,13 +7,16 @@ use dialect_mir::{
     attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr},
     ops::{
         MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
-        MirCondBranchOp, MirConstantOp, MirConstructEnumOp, MirConstructSliceOp, MirDivOp,
-        MirEnumPayloadOp, MirEqOp, MirExtractFieldOp, MirFuncOp, MirGeOp, MirGetDiscriminantOp,
-        MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp,
-        MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp, MirSetDiscriminantOp,
-        MirStoreOp, MirSubOp,
+        MirCondBranchOp, MirConstantOp, MirConstructDisjointSliceOp, MirConstructEnumOp,
+        MirConstructSliceOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractFieldOp, MirFuncOp,
+        MirGeOp, MirGetDiscriminantOp, MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp,
+        MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp,
+        MirSetDiscriminantOp, MirStoreOp, MirSubOp,
     },
-    types::{EnumVariant, MirEnumType, MirPtrType, MirSliceType, MirTupleType, MirUnionType},
+    types::{
+        EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirTupleType,
+        MirUnionType,
+    },
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -398,6 +401,127 @@ fn test_mir_extract_field_verify() {
     let union_extract = MirExtractFieldOp::new(union_extract);
     union_extract.set_attr_index(&ctx, dialect_mir::attributes::FieldIndexAttr(1));
     assert!(union_extract.verify(&ctx).is_ok(), "Valid union extract");
+}
+
+#[test]
+fn test_mir_construct_disjoint_slice_verify() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let width_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let f32_ptr_ty = MirPtrType::get_generic(&mut ctx, f32_ty.into(), true);
+    let plain_ty = MirDisjointSliceType::get(&mut ctx, f32_ty.into());
+    let width_ty_handle: pliron::r#type::TypeHandle = width_ty.into();
+    let row_width_ty =
+        MirDisjointSliceType::get_with_space(&mut ctx, f32_ty.into(), vec![width_ty_handle]);
+
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![f32_ptr_ty.into(), usize_ty.into(), width_ty.into()],
+    );
+    let ptr_val = block.deref(&ctx).get_argument(0);
+    let len_val = block.deref(&ctx).get_argument(1);
+    let width_val = block.deref(&ctx).get_argument(2);
+
+    // Valid: an index space with no runtime layout takes two operands.
+    let op = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![plain_ty.into()],
+        vec![ptr_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op).verify(&ctx).is_ok(),
+        "Valid space-free disjoint slice construction"
+    );
+
+    // Valid: a runtime row width takes a third operand.
+    let op_width = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![row_width_ty.into()],
+        vec![ptr_val, len_val, width_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op_width)
+            .verify(&ctx)
+            .is_ok(),
+        "Valid row-width disjoint slice construction"
+    );
+
+    // Invalid: the row width is missing, so the slice would carry whatever
+    // slot 2 held.
+    let op_missing_width = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![row_width_ty.into()],
+        vec![ptr_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op_missing_width)
+            .verify(&ctx)
+            .is_err(),
+        "Missing index-space operand"
+    );
+
+    // Invalid: a space-free slice given a third operand.
+    let op_extra = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![plain_ty.into()],
+        vec![ptr_val, len_val, width_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op_extra)
+            .verify(&ctx)
+            .is_err(),
+        "Index-space operand for a space-free slice"
+    );
+
+    // Invalid: the row width operand has the wrong width, which would write a
+    // 64-bit value into the 32-bit row width slot.
+    let op_wrong_width_ty = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![row_width_ty.into()],
+        vec![ptr_val, len_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op_wrong_width_ty)
+            .verify(&ctx)
+            .is_err(),
+        "Index-space operand type mismatch"
+    );
+
+    // Invalid: result is a plain slice, which `mir.construct_slice` owns.
+    let plain_slice_ty = MirSliceType::get(&mut ctx, f32_ty.into());
+    let op_bad_res = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![plain_slice_ty.into()],
+        vec![ptr_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op_bad_res)
+            .verify(&ctx)
+            .is_err(),
+        "Result must be a disjoint slice type"
+    );
 }
 
 #[test]

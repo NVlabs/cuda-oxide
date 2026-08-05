@@ -584,6 +584,69 @@ pub(crate) fn convert_construct_slice(
     Ok(())
 }
 
+/// Convert `mir.construct_disjoint_slice` to a chain of `llvm.insertvalue`
+/// operations.
+///
+/// The same shape as [`convert_construct_slice`], one insert longer per
+/// runtime layout word the index space carries. The struct type comes from
+/// [`make_disjoint_slice_struct`], the same constructor the type converter
+/// uses, so the field order here cannot drift from the lowered layout that
+/// [`resolve_aggregate_slots`] indexes identically.
+pub(crate) fn convert_construct_disjoint_slice(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let (result_ty, operands) = {
+        let mir_op = op.deref(ctx);
+        let operands: Vec<_> = mir_op.operands().collect();
+        (mir_op.get_result(0).get_type(ctx), operands)
+    };
+
+    let space_tys = {
+        let ty_ref = result_ty.deref(ctx);
+        match ty_ref.downcast_ref::<MirDisjointSliceType>() {
+            Some(slice_ty) => slice_ty.space_types().to_vec(),
+            None => {
+                return pliron::input_err_noloc!(
+                    "MirConstructDisjointSliceOp result type must be MirDisjointSliceType"
+                );
+            }
+        }
+    };
+
+    // The verifier already pins the operand count to the result type. Check
+    // it here too: this pass runs on operations the verifier accepted, and a
+    // short operand list would otherwise index past the end below.
+    let expected_operands = 2 + space_tys.len();
+    if operands.len() != expected_operands {
+        return pliron::input_err_noloc!(
+            "MirConstructDisjointSliceOp expects {expected_operands} operands, got {}",
+            operands.len()
+        );
+    }
+
+    let slice_struct_ty = crate::convert::types::make_disjoint_slice_struct(ctx, &space_tys)
+        .map_err(anyhow_to_pliron)?;
+
+    let undef_op = llvm::UndefOp::new(ctx, slice_struct_ty);
+    rewriter.insert_operation(ctx, undef_op.get_operation());
+    let mut current = undef_op.get_operation().deref(ctx).get_result(0);
+    let mut last_insert = undef_op.get_operation();
+
+    for (slot, operand) in operands.into_iter().enumerate() {
+        let insert = llvm::InsertValueOp::new(ctx, current, operand, vec![slot as u32]);
+        rewriter.insert_operation(ctx, insert.get_operation());
+        current = insert.get_operation().deref(ctx).get_result(0);
+        last_insert = insert.get_operation();
+    }
+
+    rewriter.replace_operation(ctx, op, last_insert);
+
+    Ok(())
+}
+
 /// Convert `mir.construct_array` to a chain of `llvm.insertvalue` operations.
 ///
 /// Arrays are represented as LLVM arrays. Same construction pattern as structs:
@@ -1902,6 +1965,109 @@ mod tests {
             count_ops::<llvm::UndefOp>(&ctx, &body),
             1,
             "slice construction should start from one undef aggregate"
+        );
+    }
+
+    /// `mir.construct_disjoint_slice` lowers to the same insert chain as the
+    /// fat pointer for an index space with no runtime layout.
+    #[test]
+    fn construct_disjoint_slice_lowers_to_ptr_len_insert_values() {
+        let mut ctx = make_ctx();
+
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let slice_ty: TypeHandle = MirDisjointSliceType::get(&mut ctx, f32_ty).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty], vec![]);
+        let data_ptr = block.deref(&ctx).get_argument(0);
+        let len = block.deref(&ctx).get_argument(1);
+
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirConstructDisjointSliceOp::get_concrete_op_info(),
+            vec![slice_ty],
+            vec![data_ptr, len],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1]],
+            "a space-free disjoint slice must insert pointer at slot 0 and length at slot 1"
+        );
+        assert_eq!(
+            inserts[0].get_operation().deref(&ctx).get_operand(1),
+            data_ptr,
+            "slot 0 must receive the original data pointer"
+        );
+        assert_eq!(
+            inserts[1].get_operation().deref(&ctx).get_operand(1),
+            len,
+            "slot 1 must receive the original length"
+        );
+        assert_eq!(
+            count_ops::<llvm::UndefOp>(&ctx, &body),
+            1,
+            "construction should start from one undef aggregate"
+        );
+    }
+
+    /// The runtime row width is the third operand and must land in slot 2.
+    /// Writing it into the length slot, or dropping it, gives a slice whose
+    /// row width reads back as something else at every access site.
+    #[test]
+    fn construct_disjoint_slice_places_the_row_width_after_ptr_and_len() {
+        let mut ctx = make_ctx();
+
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let width_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let slice_ty: TypeHandle =
+            MirDisjointSliceType::get_with_space(&mut ctx, f32_ty, vec![width_ty]).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty, width_ty], vec![]);
+        let data_ptr = block.deref(&ctx).get_argument(0);
+        let len = block.deref(&ctx).get_argument(1);
+        let width = block.deref(&ctx).get_argument(2);
+
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirConstructDisjointSliceOp::get_concrete_op_info(),
+            vec![slice_ty],
+            vec![data_ptr, len, width],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1], vec![2]],
+            "the row width must occupy slot 2, after the pointer and the length"
+        );
+        assert_eq!(
+            inserts[2].get_operation().deref(&ctx).get_operand(1),
+            width,
+            "slot 2 must receive the row width operand, not the length"
+        );
+        assert_eq!(
+            inserts[1].get_operation().deref(&ctx).get_operand(1),
+            len,
+            "slot 1 must still receive the length"
         );
     }
 

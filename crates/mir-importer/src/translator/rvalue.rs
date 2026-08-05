@@ -1027,6 +1027,27 @@ pub fn translate_rvalue(
                                     || ty_obj.is::<dialect_mir::types::MirTupleType>()
                             };
 
+                            // A `DisjointSlice` literal, which
+                            // `DisjointSlice::from_raw_parts` builds. The type
+                            // translator gives the ADT its own slice type rather
+                            // than a struct, so without this arm the shape falls
+                            // into the scalar-lowered path below, where no field
+                            // carries the slice type and the search reports zero
+                            // runtime fields (issue #667).
+                            if adt_ty
+                                .deref(ctx)
+                                .is::<dialect_mir::types::MirDisjointSliceType>()
+                            {
+                                return construct_disjoint_slice_aggregate(
+                                    ctx,
+                                    adt_ty,
+                                    &field_values,
+                                    block_ptr,
+                                    current_prev_op,
+                                    loc,
+                                );
+                            }
+
                             if !is_struct_type {
                                 // Scalar-lowered ADT: layout collapsed to a single runtime
                                 // value. The MIR Aggregate may still list ZST fields
@@ -4656,6 +4677,88 @@ fn projected_pointer_type(
     };
 
     Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
+}
+
+/// Build a `DisjointSlice` value from the fields of its MIR aggregate.
+///
+/// The literal lists `ptr`, `len`, the index space's runtime layout, and the
+/// marker fields; the markers are zero-sized and carry nothing, so dropping
+/// them leaves the operands `mir.construct_disjoint_slice` takes, in the same
+/// order. An index space with no runtime layout (`Index1D`, `Index2D<S>`)
+/// stores `()` there, which drops with the markers and leaves the two-word
+/// slice.
+///
+/// Field selection is positional, which the op's verifier then checks against
+/// the result type: the data pointer must point to the element type, the
+/// length must be an integer, and each remaining operand must match the index
+/// space's layout types in order. A reordered or retyped field therefore
+/// fails at verification rather than silently writing a row width into the
+/// length slot.
+fn construct_disjoint_slice_aggregate(
+    ctx: &mut Context,
+    adt_ty: TypeHandle,
+    field_values: &[Value],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    let (element_type, space_tys) = {
+        let ty_obj = adt_ty.deref(ctx);
+        let slice_ty = ty_obj
+            .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
+            .expect("caller checked the disjoint slice type");
+        (slice_ty.element_type(), slice_ty.space_types().to_vec())
+    };
+
+    let runtime_fields: Vec<Value> = field_values
+        .iter()
+        .copied()
+        .filter(|value| !types::is_zst_type(ctx, value.get_type(ctx)))
+        .collect();
+
+    let expected = 2 + space_tys.len();
+    if runtime_fields.len() != expected {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "DisjointSlice aggregate expected {} runtime fields for {}, found {}",
+                expected,
+                adt_ty.disp(ctx),
+                runtime_fields.len()
+            ))
+        );
+    }
+
+    // The data pointer reaches the slice through the generic address space,
+    // as the fat-pointer arm does for `*mut [T]`: a value coming from shared
+    // memory carries addrspace(3) and would not match the element pointer the
+    // verifier expects.
+    let expected_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, true).into();
+    let (data_val, current_prev_op) = cast_to_generic_addrspace_if_needed(
+        ctx,
+        runtime_fields[0],
+        expected_ptr_ty,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    );
+
+    let mut operands = vec![data_val];
+    operands.extend_from_slice(&runtime_fields[1..]);
+
+    let op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![adt_ty],
+        operands,
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+
+    let result = op.deref(ctx).get_result(0);
+    Ok((Some(op), result, current_prev_op))
 }
 
 fn is_empty_tuple_type(ctx: &Context, ty: TypeHandle) -> bool {
