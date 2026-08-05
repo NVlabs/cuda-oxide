@@ -237,6 +237,7 @@ pub fn translate_statement(
                                 ))
                             );
                         };
+                        reject_raw_field_index_on_enum_pointee(ctx, slot, &place.projection, &loc)?;
 
                         let field_type = types::translate_type(ctx, field_ty)?;
                         let slot_mutable = pointer_is_mutable(ctx, slot);
@@ -487,6 +488,12 @@ pub fn translate_statement(
                             loc.clone(),
                         )?;
                         current_prev = prev_op_after_ptr.or(current_prev);
+                        reject_raw_field_index_on_enum_pointee(
+                            ctx,
+                            ptr_val,
+                            &place.projection,
+                            &loc,
+                        )?;
 
                         let ptr_mutable = pointer_is_mutable(ctx, ptr_val);
                         let ptr_addr_space = pointer_address_space(ctx, ptr_val);
@@ -570,6 +577,7 @@ pub fn translate_statement(
                                 ))
                             );
                         };
+                        reject_raw_field_index_on_enum_pointee(ctx, slot, &place.projection, &loc)?;
                         let slot_mutable = pointer_is_mutable(ctx, slot);
                         let slot_addr_space = pointer_address_space(ctx, slot);
 
@@ -603,6 +611,12 @@ pub fn translate_statement(
                         }
                         current_prev = Some(outer_addr_op);
                         let outer_ptr = outer_addr_op.deref(ctx).get_result(0);
+                        reject_raw_field_index_on_enum_pointee(
+                            ctx,
+                            outer_ptr,
+                            &place.projection,
+                            &loc,
+                        )?;
 
                         let inner_field_type = types::translate_type(ctx, inner_field_ty)?;
                         let inner_ptr_ty = dialect_mir::types::MirPtrType::get(
@@ -1209,6 +1223,44 @@ fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
         .unwrap_or(0)
 }
 
+/// Fail closed if a raw per-variant `Field` index is about to be applied to
+/// an enum pointee by one of the fast assignment paths.
+///
+/// Valid MIR never applies `Field` to an enum place without a `Downcast`
+/// naming the variant first, and every Downcast-bearing assignment routes
+/// through the walk-and-store path, so the 1- and 2-level fast paths can
+/// only meet an enum pointee through an importer bug or invalid MIR.
+/// `MirFieldAddrOp` reads an enum-pointee index as a FLATTENED
+/// (variant, field) position, so letting a raw per-variant index through
+/// could silently address another variant's payload. This mirrors the
+/// enum-pointee guard in the address walker's `Field` arm: an equally loud
+/// failure at the only layer that can still tell the two index spaces apart.
+fn reject_raw_field_index_on_enum_pointee(
+    ctx: &Context,
+    base_ptr: Value,
+    projection: &[mir::ProjectionElem],
+    loc: &Location,
+) -> TranslationResult<()> {
+    let pointee = base_ptr
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+        .map(|ptr| ptr.pointee);
+    let pointee_is_enum = pointee.is_some_and(|pointee| pointee.deref(ctx).is::<MirEnumType>());
+    if pointee_is_enum {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Field assignment on an enum place without a preceding Downcast \
+                 (projection {:?}); a raw per-variant field index would be misread \
+                 as a flattened (variant, field) position",
+                projection
+            ))
+        );
+    }
+    Ok(())
+}
+
 /// Assign an array aggregate element-by-element into addressable storage.
 ///
 /// Handles `Rvalue::Repeat(operand, N)` assigned to an addressable local.
@@ -1331,4 +1383,55 @@ fn translate_array_agg_into_alloca(
     }
 
     Ok(current_prev)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dialect_mir::types::{EnumVariant, MirEnumType, MirPtrType, MirStructType};
+    use pliron::r#type::TypeHandle;
+
+    /// The fast-path guard must refuse a raw `Field` index over an enum
+    /// pointee (MirFieldAddrOp would misread it as a flattened
+    /// (variant, field) position) and accept every non-enum pointee shape
+    /// the fast paths legitimately handle.
+    #[test]
+    fn raw_field_index_guard_rejects_enum_pointees_only() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let struct_ty: TypeHandle =
+            MirStructType::get(&mut ctx, "Plain".into(), vec!["a".into()], vec![u32_ty]).into();
+        let enum_ty: TypeHandle = MirEnumType::get(
+            &mut ctx,
+            "Guarded".into(),
+            u32_ty,
+            vec![0, 1],
+            vec![
+                EnumVariant::new("A".into(), vec![u32_ty]),
+                EnumVariant::unit("B".into()),
+            ],
+        )
+        .into();
+        let struct_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, struct_ty, true).into();
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+
+        let block = BasicBlock::new(&mut ctx, None, vec![struct_ptr_ty, enum_ptr_ty]);
+        let struct_ptr = block.deref(&ctx).get_argument(0);
+        let enum_ptr = block.deref(&ctx).get_argument(1);
+
+        assert!(
+            reject_raw_field_index_on_enum_pointee(&ctx, struct_ptr, &[], &Location::Unknown)
+                .is_ok(),
+            "a struct pointee is the fast paths' ordinary case and must pass"
+        );
+
+        let err = reject_raw_field_index_on_enum_pointee(&ctx, enum_ptr, &[], &Location::Unknown)
+            .expect_err("an enum pointee must be refused loudly");
+        assert!(
+            format!("{err:?}").contains("without a preceding Downcast"),
+            "unexpected error: {err:?}"
+        );
+    }
 }
