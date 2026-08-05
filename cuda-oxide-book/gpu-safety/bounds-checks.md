@@ -155,28 +155,30 @@ The safe way to *write* is still `DisjointSlice`, as described in
 for output matrices whose size isn't known at compile time:
 
 ```rust
-// SAFETY: `n` is a kernel scalar argument, so every thread of the
-// launch passes the same value, and `n` is C's actual row width.
-if let Some(mut cell) = unsafe { c.tile_2d32_rt(coord, n) } {
+// `c` carries its own row pitch, bound on the host to this same `n`,
+// so the call is safe: no per-thread width crosses the call.
+if let Some(mut cell) = c.tile_2d32_rt(coord) {
     let previous = cell.at_const::<0, 0>().read();
     cell.at_const::<0, 0>().write(alpha * sum + beta * previous);
 }
 ```
 
-Why the `unsafe`? The tile-disjointness argument -- "distinct thread
-coordinates own non-overlapping rectangles" -- silently assumes all threads
-agree on the row width. With the width as a runtime argument, the type
-system cannot check that. Two threads that disagree describe two different
-grids over the same memory: with 1x1 tiles, thread `(1, 0)` with width 5
-resolves flat index `1*5 + 0 = 5`, and thread `(0, 5)` with width 100
-resolves `0*100 + 5 = 5`. Same element, two `&mut`, a data race.
+Why does the width come from the slice and not from an argument? The
+tile-disjointness argument -- "distinct thread coordinates own
+non-overlapping rectangles" -- silently assumes all threads agree on the
+row width. Two threads that disagree describe two different grids over the
+same memory: with 1x1 tiles, thread `(1, 0)` with width 5 resolves flat
+index `1*5 + 0 = 5`, and thread `(0, 5)` with width 100 resolves
+`0*100 + 5 = 5`. Same element, two `&mut`, a data race.
 
-So the method carries exactly one obligation: **pass the same width in
-every thread**. A kernel scalar argument satisfies it by construction --
-all threads of a launch read the same arguments -- which is what the
-`SAFETY` comment above argues. When the width *is* known at compile time,
-use the fully safe `tile_2d32` instead and a mismatch becomes a type
-error.
+An earlier design took the width as an `unsafe` per-call argument, but no
+call-site obligation can close that hole: safe code can select between two
+"uniform" widths under a thread-varying condition. So the pitch lives in
+the slice instead. The host binds it once for the launch through
+`cuda_host::Pitched`, device code cannot choose it, and every thread that
+addresses `c` reads the same width by construction. When the width *is*
+known at compile time, use `tile_2d32` instead and a mismatch becomes a
+type error.
 
 ---
 

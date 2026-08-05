@@ -158,7 +158,7 @@ remain unsupported.
 
 | Feature | Status | Description |
 |:--------|:-------|:------------|
-| Thread/Block/Grid Intrinsics | **Full** | `threadIdx`, `blockIdx`, `blockDim`, `gridDim`. Index witnesses are layout-typed; their uniqueness also depends on matching launch dimensionality. `index_2d_runtime(s)` adds a caller-proved stride. See [The Safety Model](../gpu-safety/the-safety-model.md). |
+| Thread/Block/Grid Intrinsics | **Full** | `threadIdx`, `blockIdx`, `blockDim`, `gridDim`. Index witnesses are layout-typed; their uniqueness also depends on matching launch dimensionality. `index_2d_runtime(&slice)` resolves against the slice's own row pitch, bound once by the host. See [The Safety Model](../gpu-safety/the-safety-model.md). |
 | Block Synchronization | **Full** | `sync_threads()` — thread block barrier. |
 | Async Barriers (mbarrier) | **Full** | Hardware async barriers for Hopper+: init, arrive, test_wait, try_wait, inval. |
 | Cluster Synchronization | **Full** | `cluster_sync()` for all blocks in a cluster. sm_90+. |

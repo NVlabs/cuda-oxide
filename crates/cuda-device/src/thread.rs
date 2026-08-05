@@ -201,9 +201,10 @@ impl<'kernel, Domain, Coordinates> LaunchContext<'kernel, Domain, Coordinates> {
 ///
 /// `ThreadIndex` cannot be constructed directly. Use one of the trusted
 /// functions:
-/// - [`index_1d()`] — for 1D grids
-/// - [`index_2d()`] — for const-stride 2D grids
-/// - [`index_2d_runtime()`] — unsafe runtime-stride escape hatch
+/// - [`index_1d()`] for 1D grids
+/// - [`index_2d()`] for const-stride 2D grids
+/// - [`index_2d_runtime()`] for runtime-pitch 2D grids; safe, the pitch is
+///   read from the slice the index will address, bound once by the host
 ///
 /// # Where you can call them
 ///

@@ -363,8 +363,8 @@ pub fn gemm(a: &[f32], b: &[f32], mut c: DisjointSlice<f32, Index2D<STRIDE>>, m:
 }
 ```
 
-For runtime strides, the same shape works but the linearisation step is
-explicit and `unsafe`:
+For runtime strides, the same shape works and stays safe; the pitch comes
+from the output slice rather than from a const generic:
 
 ```rust
 #[kernel]
