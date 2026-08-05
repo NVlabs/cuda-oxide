@@ -16,7 +16,9 @@ pub struct MirPreparation {
     /// Promote stack slots to SSA and run annotation-driven loop unrolling.
     pub promote_and_unroll: bool,
     /// Print preparation-pass progress notes to stderr. Threaded from the
-    /// pipeline's `BackendOptions`; the passes never read the environment.
+    /// pipeline's `BackendOptions`; the scalarization passes read this flag
+    /// instead of the environment (loop unrolling still checks
+    /// `CUDA_OXIDE_VERBOSE` on its own).
     pub verbose: bool,
 }
 
