@@ -4251,9 +4251,7 @@ fn translate_place_addr_from_slot(
                     .downcast_ref::<dialect_mir::types::MirPtrType>()
                     .map(|ptr| ptr.pointee);
                 let pointee_is_enum = pointee.is_some_and(|pointee| {
-                    pointee
-                        .deref(ctx)
-                        .is::<dialect_mir::types::MirEnumType>()
+                    pointee.deref(ctx).is::<dialect_mir::types::MirEnumType>()
                 });
                 let flat_field_index = match pending_variant.take() {
                     Some(variant) => {
@@ -4261,9 +4259,7 @@ fn translate_place_addr_from_slot(
                             pointee
                                 .deref(ctx)
                                 .downcast_ref::<dialect_mir::types::MirEnumType>()
-                                .and_then(|enum_ty| {
-                                    enum_ty.flat_field_index(variant, *field_idx)
-                                })
+                                .and_then(|enum_ty| enum_ty.flat_field_index(variant, *field_idx))
                         });
                         match flat {
                             Some(flat) => flat as u32,

@@ -1558,7 +1558,12 @@ pub(crate) fn convert_field_addr(
                     )
                 })?;
                 let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-                llvm::GetElementPtrOp::new(ctx, ptr_operand, vec![GepIndex::Constant(offset)], i8_ty)
+                llvm::GetElementPtrOp::new(
+                    ctx,
+                    ptr_operand,
+                    vec![GepIndex::Constant(offset)],
+                    i8_ty,
+                )
             }
         };
         rewriter.insert_operation(ctx, gep.get_operation());
