@@ -205,7 +205,12 @@ mod kernels {
         if i >= input.len() {
             return;
         }
-        let slot = Slot::Occupied(input[i]);
+        let value = input[i];
+        let slot = if value.is_nan() {
+            Slot::Empty
+        } else {
+            Slot::Occupied(value)
+        };
         let slot = match slot {
             Slot::Occupied(value) => Slot::Occupied(value * 2.0),
             Slot::Empty => Slot::Empty,
