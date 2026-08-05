@@ -401,7 +401,7 @@ impl<'a, T, IndexSpace: SpaceLayout> DisjointSlice<'a, T, IndexSpace> {
     /// proof, so reach for it only when no index space describes the access.
     ///
     /// One shape that used to need it no longer does: a warp reduction where
-    /// only lane 0 writes is [`WarpIndex`](crate::thread::WarpIndex). The warp
+    /// only lane 0 writes is [`WarpIndex`]. The warp
     /// is the index space, [`thread::warp_index`](crate::thread::warp_index)
     /// mints the witness for lane 0 alone, and the write goes through
     /// [`get_mut`](Self::get_mut) with its bounds check intact.
