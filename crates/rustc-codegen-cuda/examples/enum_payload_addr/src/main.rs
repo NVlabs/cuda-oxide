@@ -18,6 +18,9 @@
 //! - `shared_bytes` uses an enum whose two payload variants hold different
 //!   types at the same offset, so at most one of them has an LLVM slot of its
 //!   own and the other is addressed by byte offset.
+//! - `shared_bytes_no_slot` mutates the variant WITHOUT a slot of its own
+//!   (`Bits` shares `Real`'s bytes), so the byte-offset addressing path runs
+//!   against the original storage.
 //! - `rebuild_payload` is the workaround this replaces, kept as a baseline.
 //!
 //! Each kernel reads its value back after mutating, so a write that landed in
@@ -117,6 +120,30 @@ mod kernels {
         }
     }
 
+    /// Mutate the payload that has NO slot of its own. `Real`'s f32 claims
+    /// the shared bytes first, so `Bits` is addressed by byte offset off the
+    /// original enum storage; a write landing in a copy (or at the wrong
+    /// offset) shows up as an unchanged or corrupted element.
+    #[kernel]
+    pub fn shared_bytes_no_slot(input: &[f32], mut out: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if i >= input.len() {
+            return;
+        }
+        let mut either = Either::Bits(input[i].to_bits());
+        if let Either::Bits(bits) = &mut either {
+            *bits = (f32::from_bits(*bits) * 2.0).to_bits();
+        }
+        let result = match either {
+            Either::Real(value) => value,
+            Either::Bits(bits) => f32::from_bits(bits),
+        };
+        if let Some(cell) = out.get_mut(index) {
+            *cell = result;
+        }
+    }
+
     /// The workaround this replaces: rebuild the enum from a matched copy.
     #[kernel]
     pub fn rebuild_payload(input: &[f32], mut out: DisjointSlice<f32>) {
@@ -183,6 +210,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     check("shared_bytes", &|out| unsafe {
         module.shared_bytes(&stream, config, &input, out)
+    })?;
+    check("shared_bytes_no_slot", &|out| unsafe {
+        module.shared_bytes_no_slot(&stream, config, &input, out)
     })?;
     check("rebuild_payload", &|out| unsafe {
         module.rebuild_payload(&stream, config, &input, out)
