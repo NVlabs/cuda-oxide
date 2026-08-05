@@ -1096,6 +1096,15 @@ mod tests {
         entry
     }
 
+    /// The type handles a fixture caller needs to call the helper.
+    #[derive(Clone, Copy)]
+    struct CallerTypes {
+        aggregate_type: TypeHandle,
+        aggregate_pointer: TypeHandle,
+        index_handle: TypeHandle,
+        element_type: TypeHandle,
+    }
+
     /// A caller holding the aggregate by value in a local slot, calling the
     /// helper with a `&mut slot -> &slot` reborrow of that slot's address.
     fn add_owned_slot_caller(
@@ -1103,11 +1112,14 @@ mod tests {
         module: &ModuleOp,
         name: &str,
         helper_symbol: &str,
-        aggregate_type: TypeHandle,
-        aggregate_pointer: TypeHandle,
-        index_handle: TypeHandle,
-        element_type: TypeHandle,
+        types: CallerTypes,
     ) {
+        let CallerTypes {
+            aggregate_type,
+            aggregate_pointer,
+            index_handle,
+            element_type,
+        } = types;
         let entry = add_caller_function(ctx, module, name, vec![aggregate_type, index_handle]);
         let aggregate_argument = entry.deref(ctx).get_argument(0);
         let index = entry.deref(ctx).get_argument(1);
@@ -1156,14 +1168,24 @@ mod tests {
         module: &ModuleOp,
         name: &str,
         helper_symbol: &str,
-        aggregate_pointer: TypeHandle,
-        index_handle: TypeHandle,
-        element_type: TypeHandle,
+        types: CallerTypes,
     ) {
-        let entry = add_caller_function(ctx, module, name, vec![aggregate_pointer, index_handle]);
+        let entry = add_caller_function(
+            ctx,
+            module,
+            name,
+            vec![types.aggregate_pointer, types.index_handle],
+        );
         let forwarded_pointer = entry.deref(ctx).get_argument(0);
         let index = entry.deref(ctx).get_argument(1);
-        add_helper_call(ctx, entry, helper_symbol, forwarded_pointer, index, element_type);
+        add_helper_call(
+            ctx,
+            entry,
+            helper_symbol,
+            forwarded_pointer,
+            index,
+            types.element_type,
+        );
     }
 
     fn build_borrowed_pointer_fixture(
@@ -1326,18 +1348,15 @@ mod tests {
         );
         return_op.insert_at_back(body, ctx);
 
+        let caller_types = CallerTypes {
+            aggregate_type,
+            aggregate_pointer,
+            index_handle,
+            element_type,
+        };
         match caller_shape {
             CallerShape::OwnedSlot => {
-                add_owned_slot_caller(
-                    ctx,
-                    &module,
-                    "caller_owned",
-                    helper_symbol,
-                    aggregate_type,
-                    aggregate_pointer,
-                    index_handle,
-                    element_type,
-                );
+                add_owned_slot_caller(ctx, &module, "caller_owned", helper_symbol, caller_types);
             }
             CallerShape::PointerParameter => {
                 add_pointer_parameter_caller(
@@ -1345,30 +1364,17 @@ mod tests {
                     &module,
                     "caller_external",
                     helper_symbol,
-                    aggregate_pointer,
-                    index_handle,
-                    element_type,
+                    caller_types,
                 );
             }
             CallerShape::Mixed => {
-                add_owned_slot_caller(
-                    ctx,
-                    &module,
-                    "caller_owned",
-                    helper_symbol,
-                    aggregate_type,
-                    aggregate_pointer,
-                    index_handle,
-                    element_type,
-                );
+                add_owned_slot_caller(ctx, &module, "caller_owned", helper_symbol, caller_types);
                 add_pointer_parameter_caller(
                     ctx,
                     &module,
                     "caller_external",
                     helper_symbol,
-                    aggregate_pointer,
-                    index_handle,
-                    element_type,
+                    caller_types,
                 );
             }
             CallerShape::None => {}
