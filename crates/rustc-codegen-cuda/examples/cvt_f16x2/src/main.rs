@@ -64,6 +64,15 @@ fn scalar_ref(lo: f32, hi: f32) -> u32 {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const N: usize = 256;
     let ctx = CudaContext::new(0)?;
+
+    // `cvt.rn.f16x2.f32` is a packed conversion and needs sm_80 (Ampere) or
+    // later, the same floor `cvt_packed` gates on.
+    let (major, minor) = ctx.compute_capability()?;
+    if major < 8 {
+        println!("skipping: cvt.rn.f16x2.f32 requires sm_80+ (device is sm_{major}{minor})");
+        return Ok(());
+    }
+
     let stream = ctx.default_stream();
     let module = ctx.load_module_from_file("cvt_f16x2.ptx")?;
     let module = kernels::from_module(module)?;

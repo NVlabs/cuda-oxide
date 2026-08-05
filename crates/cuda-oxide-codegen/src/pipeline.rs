@@ -193,7 +193,14 @@ pub fn compile_translated_module(
                 .emit("\n=== Skipping mem2reg (full debug keeps locals in memory) ===");
         }
     }
-    prepare_mir_module(ctx, module, MirPreparation { promote_and_unroll })?;
+    prepare_mir_module(
+        ctx,
+        module,
+        MirPreparation {
+            promote_and_unroll,
+            verbose: request.trace.verbose,
+        },
+    )?;
     if request.trace.verbose {
         request.trace.emit("dialect-mir preparation successful ✓");
     }

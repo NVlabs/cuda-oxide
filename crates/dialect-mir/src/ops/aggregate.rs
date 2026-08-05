@@ -26,8 +26,8 @@ use pliron_derive::pliron_op;
 
 use crate::attributes::FieldIndexAttr;
 use crate::types::{
-    MirArrayType, MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirTupleType,
-    MirUnionType,
+    MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirStructType,
+    MirTupleType, MirUnionType,
 };
 
 // ============================================================================
@@ -950,6 +950,18 @@ impl MirExtractArrayElementOp {
     }
 }
 
+/// Maximum candidate count for scalarizing a bounded runtime array index.
+///
+/// When a `mir.extract_array_element` index is proven to lie in `0..C`, the
+/// LLVM lowering can emit one constant `extractvalue` per candidate plus a
+/// select chain instead of the alloca+GEP memory fallback. This cap bounds
+/// the emitted candidate chain.
+///
+/// The pre-lowering canonicalization in `mir-transforms` and the lowering
+/// fast path in `mir-lower` both gate on this one constant so their
+/// profitability decisions cannot drift apart silently.
+pub const MAX_SCALARIZED_CANDIDATES: u64 = 16;
+
 impl Verify for MirExtractArrayElementOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = &*self.get_operation().deref(ctx);
@@ -1102,10 +1114,19 @@ impl Verify for MirFieldAddrOp {
             struct_ty.field_types()
         } else if let Some(union_ty) = pointee_ty_obj.downcast_ref::<MirUnionType>() {
             union_ty.field_types()
+        } else if let Some(enum_ty) = pointee_ty_obj.downcast_ref::<MirEnumType>() {
+            // An enum payload field is addressed by its position in the
+            // flattened `all_field_types`, which already runs variant by
+            // variant, so one index names a (variant, field) pair without a
+            // second attribute. Variants share bytes, and resolving that is
+            // lowering's job through the enum slot map; verification only
+            // checks that the index names a field and that the result points
+            // at its type.
+            &enum_ty.all_field_types
         } else {
             return verify_err!(
                 op.loc(),
-                "MirFieldAddrOp pointer must point to a struct or union type, got: {}",
+                "MirFieldAddrOp pointer must point to a struct, union or enum type, got: {}",
                 pointee_ty.disp(ctx)
             );
         };
@@ -1114,7 +1135,7 @@ impl Verify for MirFieldAddrOp {
         if index >= field_types.len() {
             return verify_err!(
                 op.loc(),
-                "MirFieldAddrOp field_index {} out of bounds for struct with {} fields",
+                "MirFieldAddrOp field_index {} out of bounds for an aggregate with {} fields",
                 index,
                 field_types.len()
             );

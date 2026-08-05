@@ -5,19 +5,24 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::f16x2::{
-    abs_f16x2, add_f16x2, fma_f16x2, fma_relu_f16x2, max_f16x2, min_f16x2, mul_f16x2, neg_f16x2,
-    sub_f16x2,
+    abs_f16x2, add_f16x2, fma_f16x2, fma_ftz_f16x2, fma_ftz_relu_f16x2, fma_ftz_sat_f16x2,
+    fma_relu_f16x2, fma_sat_f16x2, max_f16x2, min_f16x2, mul_f16x2, neg_f16x2, sub_f16x2,
 };
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
-const NUM_OPS: usize = 9;
+const NUM_OPS: usize = 14;
 
 // Packed lane pairs used by both the kernel and host oracle.
 const A: u32 = 0x4400_4000; // (2, 4)
 const B: u32 = 0x4500_4200; // (3, 5)
 const C: u32 = 0x4980_4700; // (7, 11)
 const NEG_ONE: u32 = 0xbc00_bc00; // (-1, -1)
+// Two subnormal halves (2^-24 and 2^-23). Multiplying them by 1.0 keeps the
+// product subnormal, which is what separates the ftz forms from the plain ones:
+// ftz flushes a subnormal result to zero, the plain form preserves it.
+const SUBNORMAL: u32 = 0x0002_0001;
+const ONE: u32 = 0x3c00_3c00; // (1, 1)
 
 #[cuda_module]
 mod kernels {
@@ -37,6 +42,14 @@ mod kernels {
             row[6] = negated;
             row[7] = abs_f16x2(negated);
             row[8] = fma_relu_f16x2(A, NEG_ONE, 0);
+            // ftz differs from plain fma only when a subnormal is involved.
+            row[9] = fma_f16x2(SUBNORMAL, ONE, 0);
+            row[10] = fma_ftz_f16x2(SUBNORMAL, ONE, 0);
+            // sat clamps the result into [0.0, 1.0]; 2*3+7 = 13 and 4*5+11 = 31.
+            row[11] = fma_sat_f16x2(A, B, C);
+            row[12] = fma_ftz_sat_f16x2(A, B, C);
+            // ReLU keeps a positive subnormal; the ftz form flushes it first.
+            row[13] = fma_ftz_relu_f16x2(SUBNORMAL, ONE, 0);
         }
     }
 }
@@ -74,6 +87,11 @@ fn main() {
         ("neg", 0xc400_c000),
         ("abs", A),
         ("fma_relu", 0x0000_0000),
+        ("fma (subnormal preserved)", SUBNORMAL),
+        ("fma_ftz (subnormal flushed)", 0x0000_0000),
+        ("fma_sat", ONE),
+        ("fma_ftz_sat", ONE),
+        ("fma_ftz_relu (subnormal flushed)", 0x0000_0000),
     ];
 
     let mut passed = true;
@@ -91,5 +109,7 @@ fn main() {
         println!("FAIL: f16x2_arith, one or more checks failed");
         std::process::exit(1);
     }
-    println!("PASS: f16x2_arith, all 9 packed f16x2 operations verified on sm_{major}{minor}");
+    println!(
+        "PASS: f16x2_arith, all {NUM_OPS} packed f16x2 operations verified on sm_{major}{minor}"
+    );
 }

@@ -4659,6 +4659,11 @@ const SCOPED_INTRINSICS: &[ScopedIntrinsic] = &[
         preserve_turbofish: false,
         forward_args: true,
     },
+    ScopedIntrinsic {
+        name: "warp_index",
+        preserve_turbofish: false,
+        forward_args: false,
+    },
 ];
 
 /// Method names whose zero-arg call sites get the kernel scope spliced in

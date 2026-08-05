@@ -55,7 +55,7 @@ LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
-ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 # Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
 NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
@@ -364,6 +364,13 @@ verdict_error() {
     # The generated-intrinsic fixtures protect fail-closed compiler contracts,
     # so merely observing an unrelated compile error is not enough.
     case "${ex}" in
+        error_enum_bool_payload_addr)
+            if ! grep -Fq 'canonical storage type' "${log}" \
+                || ! grep -Fq 'in-place mutation of bool or shared-pointer enum payloads is not supported' "${log}"; then
+                echo "FAIL (missing canonical-storage payload-address diagnostic)"
+                return 1
+            fi
+            ;;
         error_enum_pointer_overlap)
             if ! grep -Fq 'overlapping pointer and non-identical storage' "${log}"; then
                 echo "FAIL (missing overlapping enum pointer-provenance diagnostic)"

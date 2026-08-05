@@ -12730,17 +12730,24 @@ struct PackedAluRecipe {
     source: PackedAluRecipeSource,
 }
 
-fn packed_alu_recipe(format: PackedAluFormat, operation: PackedAluOperation) -> PackedAluRecipe {
+/// Returns the closed recipe for a packed-ALU (format, operation) pair.
+///
+/// `None` means the pair is outside the family: the operation exists for some
+/// other format but this one has no reviewed lowering for it.
+fn packed_alu_recipe(
+    format: PackedAluFormat,
+    operation: PackedAluOperation,
+) -> Option<PackedAluRecipe> {
     match format {
         PackedAluFormat::Bf16x2 => packed_bf16x2_alu_recipe(operation),
-        PackedAluFormat::F16x2 => packed_f16x2_alu_recipe(operation),
+        PackedAluFormat::F16x2 => Some(packed_f16x2_alu_recipe(operation)),
     }
 }
 
-fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
+fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRecipe> {
     const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
     const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
-    match operation {
+    Some(match operation {
         PackedAluOperation::Fma => PackedAluRecipe {
             id: "fma_bf16x2",
             abi_id: "i0062",
@@ -12957,7 +12964,19 @@ fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 selection_asm: "abs.bf16x2 \t$dst, $src0;",
             },
         },
-    }
+        // The ftz and sat fma forms do not exist for bf16x2 in the PTX ISA at
+        // all: ptxas rejects hand-written `fma.rn.ftz.bf16x2` with
+        // "Illegal modifier '.ftz' for instruction 'fma'", and accepts
+        // `fma.rn.relu.bf16x2` beside it. LLVM declares the intrinsics anyway,
+        // so instruction selection is what fails first ("Cannot select:
+        // intrinsic %llvm.nvvm.fma.rn.ftz.bf16x2"), but the assembler is the
+        // authority here. Reject them rather than admit a recipe that has no
+        // instruction to lower to.
+        PackedAluOperation::FmaFtz
+        | PackedAluOperation::FmaSat
+        | PackedAluOperation::FmaFtzSat
+        | PackedAluOperation::FmaFtzRelu => return None,
+    })
 }
 
 fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
@@ -12991,6 +13010,87 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 selection_asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
             },
         },
+        PackedAluOperation::FmaFtz => PackedAluRecipe {
+            id: "fma_ftz_f16x2",
+            abi_id: "i0854",
+            operation_key: "packed.alu.f16x2.fma.ftz",
+            rust_name: "fma_ftz_f16x2",
+            dialect_op_type: "FmaFtzF16x2Op",
+            dialect_op_name: "nvvm.fma_ftz_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.ftz.f16x2",
+            modifiers: &["rn", "ftz", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_ftz_f16x2",
+                symbol: "llvm.nvvm.fma.rn.ftz.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_ftz_f16x2",
+                selection_asm: "fma.rn.ftz.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaSat => PackedAluRecipe {
+            id: "fma_sat_f16x2",
+            abi_id: "i0855",
+            operation_key: "packed.alu.f16x2.fma.sat",
+            rust_name: "fma_sat_f16x2",
+            dialect_op_type: "FmaSatF16x2Op",
+            dialect_op_name: "nvvm.fma_sat_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.sat.f16x2",
+            modifiers: &["rn", "sat", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_sat_f16x2",
+                symbol: "llvm.nvvm.fma.rn.sat.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_sat_f16x2",
+                selection_asm: "fma.rn.sat.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaFtzSat => PackedAluRecipe {
+            id: "fma_ftz_sat_f16x2",
+            abi_id: "i0856",
+            operation_key: "packed.alu.f16x2.fma.ftz.sat",
+            rust_name: "fma_ftz_sat_f16x2",
+            dialect_op_type: "FmaFtzSatF16x2Op",
+            dialect_op_name: "nvvm.fma_ftz_sat_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.ftz.sat.f16x2",
+            modifiers: &["rn", "ftz", "sat", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_ftz_sat_f16x2",
+                symbol: "llvm.nvvm.fma.rn.ftz.sat.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_ftz_sat_f16x2",
+                selection_asm: "fma.rn.ftz.sat.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
         PackedAluOperation::FmaRelu => PackedAluRecipe {
             id: "fma_relu_f16x2",
             abi_id: "i0073",
@@ -13016,6 +13116,33 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 properties: PURE,
                 selection: "INT_NVVM_FMA_rn_relu_f16x2",
                 selection_asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaFtzRelu => PackedAluRecipe {
+            id: "fma_ftz_relu_f16x2",
+            abi_id: "i0857",
+            operation_key: "packed.alu.f16x2.fma.ftz.relu",
+            rust_name: "fma_ftz_relu_f16x2",
+            dialect_op_type: "FmaFtzReluF16x2Op",
+            dialect_op_name: "nvvm.fma_ftz_relu_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.ftz.relu.f16x2",
+            modifiers: &["rn", "ftz", "relu", "f16x2"],
+            native_minimum_sm: 80,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_ftz_relu_f16x2",
+                symbol: "llvm.nvvm.fma.rn.ftz.relu.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_ftz_relu_f16x2",
+                selection_asm: "fma.rn.ftz.relu.f16x2 \t$dst, $src0, $src1, $src2;",
             },
         },
         PackedAluOperation::Add => PackedAluRecipe {
@@ -13174,12 +13301,16 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
     }
 }
 
+/// Per-backend PTX and SM floors, which can sit above the recipe's own floor.
+///
+/// Takes the caller's already-resolved recipe rather than looking it up again,
+/// so this cannot be reached with a pair the family rejects.
 fn packed_alu_backend_floor(
+    recipe: &PackedAluRecipe,
     format: PackedAluFormat,
     operation: PackedAluOperation,
     backend: IntrinsicBackend,
 ) -> (&'static str, &'static str) {
-    let recipe = packed_alu_recipe(format, operation);
     match (format, operation, backend) {
         (
             PackedAluFormat::F16x2,
@@ -13195,6 +13326,19 @@ fn packed_alu_backend_floor(
             | PackedAluOperation::Add
             | PackedAluOperation::Sub
             | PackedAluOperation::Mul,
+            IntrinsicBackend::LibNvvm,
+        ) => ("4.2", "sm_75"),
+        // The ftz and sat fma forms share the plain fma floors: PTX 4.2 natively,
+        // but the pinned LLVM backend needs 6.0 and CUDA 13.3 ptxas no longer
+        // targets sm_70, so libNVVM is checked at sm_75.
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaFtz | PackedAluOperation::FmaSat | PackedAluOperation::FmaFtzSat,
+            IntrinsicBackend::LlvmNvptx,
+        ) => ("6.0", "sm_70"),
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaFtz | PackedAluOperation::FmaSat | PackedAluOperation::FmaFtzSat,
             IntrinsicBackend::LibNvvm,
         ) => ("4.2", "sm_75"),
         (PackedAluFormat::F16x2, PackedAluOperation::Neg, IntrinsicBackend::LlvmNvptx) => {
@@ -13227,7 +13371,8 @@ fn validate_packed_alu_policy(
         "{} requests an unsupported packed-ALU adapter",
         policy.id
     );
-    let recipe = packed_alu_recipe(packed.format, packed.operation);
+    let recipe = packed_alu_recipe(packed.format, packed.operation)
+        .with_context(|| format!("{} is outside the closed packed-ALU recipe", policy.id))?;
     let rust_module = match packed.format {
         PackedAluFormat::Bf16x2 => "bf16x2",
         PackedAluFormat::F16x2 => "f16x2",
@@ -13358,10 +13503,18 @@ fn validate_packed_alu_policy(
             );
         }
     }
-    let llvm_floor =
-        packed_alu_backend_floor(packed.format, packed.operation, IntrinsicBackend::LlvmNvptx);
-    let libnvvm_floor =
-        packed_alu_backend_floor(packed.format, packed.operation, IntrinsicBackend::LibNvvm);
+    let llvm_floor = packed_alu_backend_floor(
+        &recipe,
+        packed.format,
+        packed.operation,
+        IntrinsicBackend::LlvmNvptx,
+    );
+    let libnvvm_floor = packed_alu_backend_floor(
+        &recipe,
+        packed.format,
+        packed.operation,
+        IntrinsicBackend::LibNvvm,
+    );
     ensure_exact_inline_ptx_backends(
         policy,
         [
@@ -27094,7 +27247,7 @@ mod tests {
         format: PackedAluFormat,
         operation: PackedAluOperation,
     ) -> OverlayIntrinsic {
-        let recipe = packed_alu_recipe(format, operation);
+        let recipe = packed_alu_recipe(format, operation).expect("test recipe pair");
         let rust_module = match format {
             PackedAluFormat::Bf16x2 => "bf16x2",
             PackedAluFormat::F16x2 => "f16x2",
@@ -27159,7 +27312,7 @@ mod tests {
             .into_iter()
             .map(|backend| {
                 let (minimum_ptx, minimum_sm) =
-                    packed_alu_backend_floor(format, operation, backend);
+                    packed_alu_backend_floor(&recipe, format, operation, backend);
                 crate::model::OverlayBackendLowering {
                     backend,
                     mechanism: BackendLoweringMechanism::InlinePtx,
@@ -27189,7 +27342,7 @@ mod tests {
         format: PackedAluFormat,
         operation: PackedAluOperation,
     ) -> Option<ImportedIntrinsic> {
-        let recipe = packed_alu_recipe(format, operation);
+        let recipe = packed_alu_recipe(format, operation).expect("test recipe pair");
         let PackedAluRecipeSource::Imported {
             record,
             symbol,
@@ -28122,7 +28275,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 59);
-        assert_eq!(overlay.intrinsics.len(), 853);
+        assert_eq!(overlay.intrinsics.len(), 857);
         assert_eq!(
             overlay
                 .intrinsics
@@ -28169,7 +28322,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "packed_alu")
                 .count(),
-            18
+            22
         );
         assert_eq!(
             overlay
@@ -37514,7 +37667,7 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "packed_alu")
             .collect();
-        assert_eq!(packed.len(), 18);
+        assert_eq!(packed.len(), 22);
         for policy in packed {
             let source = resolve_policy_source(policy).unwrap();
             let declaration = policy

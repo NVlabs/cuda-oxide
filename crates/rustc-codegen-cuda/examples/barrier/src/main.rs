@@ -125,6 +125,15 @@ fn main() {
     println!("=== Unified Barrier Test ===\n");
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
+
+    // mbarrier requires sm_80 (Ampere) or later; below that the PTX does not
+    // JIT and loading the module fails.
+    let (major, minor) = ctx.compute_capability().expect("compute capability");
+    if major < 8 {
+        println!("skipping: mbarrier requires sm_80+ (device is sm_{major}{minor})");
+        return;
+    }
+
     let stream = ctx.default_stream();
 
     let module = ctx

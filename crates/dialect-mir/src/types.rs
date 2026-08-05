@@ -1279,6 +1279,23 @@ impl MirEnumType {
         self.niche_start.0
     }
 
+    /// Position of variant `variant`'s field `field` in `all_field_types`.
+    ///
+    /// `all_field_types` concatenates the variants in order, so this one index
+    /// names a (variant, field) pair. Operations that address a payload take
+    /// it in place of a second attribute.
+    ///
+    /// `None` when either the variant or the field is out of range.
+    pub fn flat_field_index(&self, variant: usize, field: usize) -> Option<usize> {
+        let counts = self.variant_field_counts.get(..variant)?;
+        if field >= *self.variant_field_counts.get(variant)? as usize {
+            return None;
+        }
+        let base: usize = counts.iter().map(|count| *count as usize).sum();
+        let flat = base + field;
+        (flat < self.all_field_types.len()).then_some(flat)
+    }
+
     pub fn variant_is_inhabited(&self, index: usize) -> Option<bool> {
         self.variant_inhabited.get(index).map(|value| *value != 0)
     }
@@ -1999,5 +2016,41 @@ mod enum_layout_tests {
         value.total_size = 8;
         value.abi_align = 8;
         assert!(value.verify(&ctx).is_err());
+    }
+
+    /// `all_field_types` runs variant by variant, so one flat index names a
+    /// (variant, field) pair. Operations that address a payload rely on that.
+    #[test]
+    fn flat_field_index_walks_variants_in_order() {
+        let ctx = Context::new();
+        let payload: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let mut value = niche(&ctx);
+        // Variant 0 has one field, variant 1 has two, variant 2 has none.
+        value.variant_names = vec!["A".into(), "B".into(), "C".into()];
+        value.variant_discriminants = vec![0, 1, 2];
+        value.variant_field_counts = vec![1, 2, 0];
+        value.all_field_types = vec![payload, payload, payload];
+        value.all_field_offsets = vec![0, 0, 1];
+        value.all_field_sizes = vec![1, 1, 1];
+        value.variant_inhabited = vec![1, 1, 1];
+
+        assert_eq!(value.flat_field_index(0, 0), Some(0));
+        assert_eq!(value.flat_field_index(1, 0), Some(1));
+        assert_eq!(value.flat_field_index(1, 1), Some(2));
+
+        // A field past the variant's own count is not that variant's, even
+        // when the flat position exists.
+        assert_eq!(value.flat_field_index(0, 1), None);
+        // A variant with no fields has none to address.
+        assert_eq!(value.flat_field_index(2, 0), None);
+        // Out-of-range variant.
+        assert_eq!(value.flat_field_index(3, 0), None);
+
+        // Layout metadata shorter than the counts promise (an inconsistent
+        // enum that its own verifier would reject): the final bound check
+        // still refuses rather than naming a position past
+        // `all_field_types`.
+        value.all_field_types = vec![payload, payload];
+        assert_eq!(value.flat_field_index(1, 1), None);
     }
 }

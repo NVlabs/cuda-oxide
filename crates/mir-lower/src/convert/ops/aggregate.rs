@@ -636,20 +636,80 @@ pub(crate) fn convert_construct_array(
 
     Ok(())
 }
-
-/// Convert `mir.extract_array_element` to LLVM alloca+store+GEP+load sequence.
+/// Convert `mir.extract_array_element` to LLVM operations.
 ///
-/// Since LLVM's `extractvalue` only supports constant indices, we need to:
-/// 1. Allocate stack space for the array
-/// 2. Store the array value to the stack
-/// 3. GEP to compute the element address
-/// 4. Load the element
+/// A runtime index normally requires materializing the array in memory because
+/// LLVM `extractvalue` accepts only constant indices. When the index is proven
+/// to be `urem value, C`, however, it is in `0..C`. For small `C` within the
+/// array bounds, emit one constant `extractvalue` per candidate and select the
+/// runtime result in SSA. This avoids the temporary alloca that otherwise
+/// becomes NVPTX local memory.
+///
+/// Unbounded, oversized, or otherwise unsupported indices retain the existing
+/// alloca+store+GEP+load fallback.
 pub(crate) fn convert_extract_array_element(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     operands_info: &OperandsInfo,
 ) -> Result<()> {
+    // One shared cap for the candidate chain, so the mir-transforms
+    // canonicalization and this lowering fast path cannot drift apart.
+    use dialect_mir::ops::MAX_SCALARIZED_CANDIDATES;
+
+    fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
+        let defining_op = value.defining_op()?;
+        let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
+        let attribute = constant.get_value(ctx);
+        let integer = attribute.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
+        let integer_value = integer.value();
+        // `APInt::to_u64` truncates wider values, so a >64-bit constant could
+        // be misread as a small in-range divisor. Fail closed on such widths.
+        (integer_value.bw() <= 64).then(|| integer_value.to_u64())
+    }
+
+    fn bounded_urem_candidate_count(ctx: &Context, index: Value, array_size: u64) -> Option<u64> {
+        let defining_op = index.defining_op()?;
+        Operation::get_op::<llvm::URemOp>(defining_op, ctx)?;
+
+        let divisor = defining_op.deref(ctx).get_operand(1);
+        let candidate_count = integer_constant_u64(ctx, divisor)?;
+        (candidate_count > 0
+            && candidate_count <= array_size
+            && candidate_count <= MAX_SCALARIZED_CANDIDATES)
+            .then_some(candidate_count)
+    }
+
+    fn integer_constant_like(
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        reference: Value,
+        value: u64,
+    ) -> Result<Value> {
+        let reference_ty = reference.get_type(ctx);
+        let width = reference_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .ok_or_else(|| {
+                pliron::input_error_noloc!(
+                    "mir.extract_array_element index must lower to an integer"
+                )
+            })?
+            .width();
+
+        let integer_ty = IntegerType::get(ctx, width, Signedness::Signless);
+        let attribute = pliron::builtin::attributes::IntegerAttr::new(
+            integer_ty,
+            APInt::from_u64(
+                value,
+                NonZeroUsize::new(width as usize).expect("integer width is nonzero"),
+            ),
+        );
+        let constant = llvm::ConstantOp::new(ctx, attribute.into());
+        rewriter.insert_operation(ctx, constant.get_operation());
+        Ok(constant.get_operation().deref(ctx).get_result(0))
+    }
+
     let array_val = op.deref(ctx).get_operand(0);
     let index_val = op.deref(ctx).get_operand(1);
 
@@ -659,6 +719,34 @@ pub(crate) fn convert_extract_array_element(
             None => return pliron::input_err_noloc!("Expected MirArrayType"),
         }
     };
+
+    if let Some(candidate_count) = bounded_urem_candidate_count(ctx, index_val, array_size) {
+        let mut candidates = Vec::with_capacity(candidate_count as usize);
+        for candidate_index in 0..candidate_count {
+            let extract = llvm::ExtractValueOp::new(ctx, array_val, vec![candidate_index as u32])?;
+            rewriter.insert_operation(ctx, extract.get_operation());
+            candidates.push(extract.get_operation().deref(ctx).get_result(0));
+        }
+
+        let mut selected = *candidates
+            .last()
+            .expect("candidate count is proven nonzero");
+        for candidate_index in (0..candidates.len().saturating_sub(1)).rev() {
+            let candidate_constant =
+                integer_constant_like(ctx, rewriter, index_val, candidate_index as u64)?;
+            let compare =
+                llvm::ICmpOp::new(ctx, ICmpPredicateAttr::EQ, index_val, candidate_constant);
+            rewriter.insert_operation(ctx, compare.get_operation());
+            let condition = compare.get_operation().deref(ctx).get_result(0);
+
+            let select = llvm::SelectOp::new(ctx, condition, candidates[candidate_index], selected);
+            rewriter.insert_operation(ctx, select.get_operation());
+            selected = select.get_operation().deref(ctx).get_result(0);
+        }
+
+        rewriter.replace_operation_with_values(ctx, op, vec![selected]);
+        return Ok(());
+    }
 
     let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
     let llvm_array_ty = llvm_export::types::ArrayType::get(ctx, llvm_element_ty, array_size);
@@ -1508,13 +1596,96 @@ pub(crate) fn convert_field_addr(
         return Ok(());
     }
 
+    // An enum payload field, addressed by its position in the flattened
+    // `all_field_types`. Variants share bytes, so the slot map resolves each
+    // field one of two ways: its own LLVM slot, or, when its bytes are already
+    // held by a differently typed field of another variant, a byte offset into
+    // the enum. Both give the address of the same storage, which is what makes
+    // a write through the returned pointer land in the enum rather than a copy.
+    let enum_name = mir_ptr_pointee
+        .deref(ctx)
+        .downcast_ref::<MirEnumType>()
+        .map(|enum_ty| enum_ty.name().to_string());
+    if let Some(enum_name) = enum_name {
+        let map = build_enum_slot_map(ctx, mir_ptr_pointee).map_err(anyhow_to_pliron)?;
+        let Some(slot_entry) = map.field_slots.get(field_index).copied() else {
+            return pliron::input_err_noloc!(
+                "field_addr index {} out of bounds for enum with {} payload fields",
+                field_index,
+                map.field_slots.len()
+            );
+        };
+
+        // Enum payload bytes hold one CANONICAL storage type that can differ
+        // from the field's semantic type: a bool is physically an i8 byte and
+        // a shared-memory pointer is stored as a generic pointer, with the
+        // value paths (construct/extract) coercing exactly at that boundary.
+        // The address computed here ESCAPES this site: the loads and stores
+        // made through it happen at arbitrary other sites and are typed with
+        // the SEMANTIC type, so no storage coercion can be attached at
+        // address-formation time. Handing the address out anyway would let an
+        // i1 store leave the byte's upper seven bits undefined for the i8 and
+        // niche-tag readers, or write a shared-pointer representation into
+        // bytes every other reader interprets (and, on modern NVVM, sizes) as
+        // a generic pointer. Fail closed instead, the same way the slot map
+        // already rejects bool bytes hidden behind unions.
+        let semantic_ty = map.field_llvm_types[field_index];
+        let storage_ty = enum_payload_storage_type(ctx, semantic_ty).map_err(anyhow_to_pliron)?;
+        if storage_ty != semantic_ty {
+            return pliron::input_err_noloc!(
+                "field_addr: cannot hand out the in-place address of payload field {} of enum `{}`: its bytes use canonical storage type {} while its semantic type is {}, and loads or stores made through an escaped payload address are typed with the semantic type, which the canonical bytes cannot honor; shared reads of such payloads are compiled through a value copy automatically, and in-place mutation of bool or shared-pointer enum payloads is not supported",
+                field_index,
+                enum_name,
+                storage_ty.deref(ctx).disp(ctx),
+                semantic_ty.deref(ctx).disp(ctx)
+            );
+        }
+
+        use llvm_export::ops::GepIndex;
+        let gep = match slot_entry {
+            Some(slot) => llvm::GetElementPtrOp::new(
+                ctx,
+                ptr_operand,
+                vec![GepIndex::Constant(0), GepIndex::Constant(slot)],
+                map.llvm_struct_ty,
+            ),
+            None => {
+                // No slot of its own: address the bytes directly, off the
+                // ORIGINAL enum pointer, so a write through the result lands
+                // in the enum. A zero-sized field lands at its offset like
+                // any other and simply spans nothing. The offset is always
+                // present: the slot map builds `field_offsets` and
+                // `field_slots` from one walk over the same fields, and the
+                // bounds check above already validated the index.
+                let offset = map.field_offsets[field_index];
+                let offset = u32::try_from(offset).map_err(|_| {
+                    pliron::input_error_noloc!(
+                        "field_addr: payload byte offset {} of enum `{}` exceeds u32",
+                        offset,
+                        enum_name
+                    )
+                })?;
+                let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+                llvm::GetElementPtrOp::new(
+                    ctx,
+                    ptr_operand,
+                    vec![GepIndex::Constant(offset)],
+                    i8_ty,
+                )
+            }
+        };
+        rewriter.insert_operation(ctx, gep.get_operation());
+        rewriter.replace_operation(ctx, op, gep.get_operation());
+        return Ok(());
+    }
+
     let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
         match pointee_ref.downcast_ref::<MirStructType>() {
             Some(struct_ty) => StructLayoutInfo::of_struct(struct_ty),
             None => {
                 return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to struct or union type, got {}",
+                    "MirFieldAddrOp pointer must point to a struct, union or enum type, got {}",
                     mir_ptr_pointee.deref(ctx).disp(ctx)
                 );
             }
@@ -2347,6 +2518,110 @@ mod tests {
             .into()
     }
 
+    fn lower_array_extract_case(
+        ctx: &mut Context,
+        array_size: u64,
+        divisor: Option<u64>,
+    ) -> Ptr<Operation> {
+        let element_type: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        let index_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
+        let index_handle: TypeHandle = index_type.into();
+        let array_type: TypeHandle = MirArrayType::get(ctx, element_type, array_size).into();
+
+        let (module, block) = build_kernel(ctx, vec![index_handle], vec![element_type]);
+        let raw_index = block.deref(ctx).get_argument(0);
+
+        let undef = mir::MirUndefOp::new(ctx, array_type);
+        undef.get_operation().insert_at_back(block, ctx);
+        let array = undef.get_operation().deref(ctx).get_result(0);
+
+        let index = if let Some(divisor) = divisor {
+            let constant = Operation::new(
+                ctx,
+                mir::MirConstantOp::get_concrete_op_info(),
+                vec![index_handle],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstantOp::new(constant).set_attr_value(
+                ctx,
+                IntegerAttr::new(
+                    index_type,
+                    APInt::from_u64(divisor, NonZeroUsize::new(64).unwrap()),
+                ),
+            );
+            constant.insert_at_back(block, ctx);
+            let divisor_value = constant.deref(ctx).get_result(0);
+
+            let rem = Operation::new(
+                ctx,
+                mir::MirRemOp::get_concrete_op_info(),
+                vec![index_handle],
+                vec![raw_index, divisor_value],
+                vec![],
+                0,
+            );
+            rem.insert_at_back(block, ctx);
+            rem.deref(ctx).get_result(0)
+        } else {
+            raw_index
+        };
+
+        let extract = Operation::new(
+            ctx,
+            mir::MirExtractArrayElementOp::get_concrete_op_info(),
+            vec![element_type],
+            vec![array, index],
+            vec![],
+            0,
+        );
+        extract.insert_at_back(block, ctx);
+        let result = extract.deref(ctx).get_result(0);
+        append_mir_return(ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(ctx, module).expect("lowering failed");
+        module
+    }
+
+    fn assert_array_extract_memory_fallback(ctx: &Context, module: Ptr<Operation>) {
+        let body = kernel_blocks(ctx, module);
+        assert_eq!(count_ops::<llvm::AllocaOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::StoreOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::LoadOp>(ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::SelectOp>(ctx, &body), 0);
+    }
+
+    #[test]
+    fn bounded_urem_array_extract_stays_in_ssa() {
+        let mut ctx = make_ctx();
+        let module = lower_array_extract_case(&mut ctx, 3, Some(3));
+        let body = kernel_blocks(&ctx, module);
+
+        assert_eq!(count_ops::<llvm::ExtractValueOp>(&ctx, &body), 3);
+        assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 2);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 2);
+        assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn unbounded_array_extract_keeps_memory_fallback() {
+        let mut ctx = make_ctx();
+        let module = lower_array_extract_case(&mut ctx, 3, None);
+        assert_array_extract_memory_fallback(&ctx, module);
+    }
+
+    #[test]
+    fn oversized_urem_array_extract_keeps_memory_fallback() {
+        let mut ctx = make_ctx();
+        let module = lower_array_extract_case(&mut ctx, 17, Some(17));
+        assert_array_extract_memory_fallback(&ctx, module);
+    }
+
     #[test]
     fn dynamic_array_extract_preserves_recursive_element_alignment() {
         let mut ctx = make_ctx();
@@ -2832,6 +3107,304 @@ mod tests {
                 .downcast_ref::<IntegerType>()
                 .is_some_and(|integer| integer.width() == 8)
         }));
+    }
+
+    /// Taking the in-place address of a bool payload must fail loudly: the
+    /// payload's canonical storage is an i8 byte, and a semantic i1 store
+    /// through the escaped address would leave that byte's upper seven bits
+    /// undefined for every i8 reader (including a niche tag sharing them).
+    #[test]
+    fn bool_payload_field_addr_fails_closed() {
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let bool_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "DirectBool".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("A".into(), vec![bool_ty], vec![4], vec![1]),
+                EnumVariant::unit("B".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let bool_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, bool_ty, true).into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let op = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![bool_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("addressing a bool enum payload in place must fail to lower");
+        assert!(
+            err.err.to_string().contains("canonical storage type"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    /// Same gate for the slot arm: a shared-memory pointer payload is stored
+    /// as a GENERIC pointer (its slot is typed `ptr`), so an in-place address
+    /// would let a semantic `ptr addrspace(3)` store write a representation
+    /// every other reader interprets as a generic pointer.
+    #[test]
+    fn shared_pointer_payload_field_addr_fails_closed() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, true).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OptionShared".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![shared], vec![0], vec![8]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                carrier_address_space: llvm_types::address_space::GENERIC,
+                niche_start: 0,
+                niche_variant_start: 0,
+                niche_variant_end: 0,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let payload_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, shared, true).into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let op = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![payload_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("addressing a shared-pointer enum payload in place must fail to lower");
+        assert!(
+            err.err.to_string().contains("canonical storage type"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    /// A payload with no slot of its own is addressed at its byte offset off
+    /// the ORIGINAL enum pointer: no stack spill is introduced, so a write
+    /// through the result lands in the enum rather than in a copy.
+    #[test]
+    fn slotless_payload_field_addr_geps_original_storage_at_byte_offset() {
+        use llvm_export::ops::GepIndex;
+        use pliron::builtin::types::FP32Type;
+
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Either".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("Real".into(), vec![f32_ty], vec![4], vec![4]),
+                EnumVariant::new_with_layout("Bits".into(), vec![u32_ty], vec![4], vec![4]),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(
+            slot_map.field_slots,
+            vec![Some(1), None],
+            "Real's f32 claims byte 4 first; Bits shares those bytes slotless"
+        );
+
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+        let u32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, true).into();
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let op = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![u32_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AllocaOp>(&ctx, &body),
+            0,
+            "an in-place payload address must not spill the enum to a stack copy"
+        );
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 1, "one field_addr lowers to one GEP");
+        let gep = &geps[0];
+        // The MIR entry block and its arguments are the ORIGINALS (moved by
+        // `inline_region`), so the enum pointer argument keeps its identity
+        // through lowering and the GEP must be based directly on it.
+        assert_eq!(
+            gep.get_operation().deref(&ctx).get_operand(0),
+            base,
+            "the byte-offset GEP must address the ORIGINAL enum storage"
+        );
+        assert!(
+            matches!(gep.indices(&ctx).as_slice(), [GepIndex::Constant(4)]),
+            "the slotless payload must be addressed at its rustc byte offset"
+        );
+        assert_eq!(
+            gep.src_elem_type(&ctx),
+            IntegerType::get(&ctx, 8, Signedness::Signless).into(),
+            "byte addressing must step in i8 units"
+        );
+    }
+
+    /// The capability split, read side: a payload whose storage IS its
+    /// semantic type keeps the address path even for a SHARED borrow. The
+    /// borrow lowers to one GEP into the ORIGINAL enum storage and the read
+    /// to one load through it: no stack spill, no value copy. (Non-canonical
+    /// payloads never get here for shared borrows; the importer punts them
+    /// to the value-copy fallback before an address is formed.)
+    #[test]
+    fn canonical_payload_shared_read_loads_through_gep_without_copy() {
+        use llvm_export::ops::GepIndex;
+        use pliron::builtin::types::FP32Type;
+
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Slot".into(),
+            tag,
+            vec![0, 1],
+            vec![
+                EnumVariant::new_with_layout("Occupied".into(), vec![f32_ty], vec![4], vec![4]),
+                EnumVariant::unit("Empty".into()),
+            ],
+            0,
+            8,
+            4,
+        )
+        .into();
+        let slot_map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
+        assert_eq!(
+            slot_map.field_slots,
+            vec![Some(1)],
+            "an f32 payload owns its LLVM slot; storage equals semantic type"
+        );
+
+        // Immutable pointer types model the shared borrow.
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, false).into();
+        let f32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, false).into();
+        let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![f32_ty]);
+        let base = block.deref(&ctx).get_argument(0);
+        let addr = Operation::new(
+            &mut ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![f32_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(addr).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        addr.insert_at_back(block, &ctx);
+        let payload_ptr = addr.deref(&ctx).get_result(0);
+
+        let load = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![payload_ptr],
+            vec![],
+            0,
+        );
+        load.insert_at_back(block, &ctx);
+        let loaded = load.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![loaded]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AllocaOp>(&ctx, &body),
+            0,
+            "a canonical payload read must not spill or copy the enum"
+        );
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 1, "one field_addr lowers to one GEP");
+        let gep = &geps[0];
+        assert_eq!(
+            gep.get_operation().deref(&ctx).get_operand(0),
+            base,
+            "the GEP must address the ORIGINAL enum storage"
+        );
+        assert!(
+            matches!(
+                gep.indices(&ctx).as_slice(),
+                [GepIndex::Constant(0), GepIndex::Constant(1)]
+            ),
+            "an own-slot payload is addressed through its struct slot"
+        );
+        let loads = find_all::<llvm::LoadOp>(&ctx, &body);
+        assert_eq!(
+            loads.len(),
+            1,
+            "the read is a single load through the payload address"
+        );
+        let gep_result = gep.get_operation().deref(&ctx).get_result(0);
+        assert_eq!(
+            loads[0].get_operation().deref(&ctx).get_operand(0),
+            gep_result,
+            "the load must go through the GEP result, not a copy"
+        );
+        assert_eq!(
+            loads[0]
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx),
+            f32_ty,
+            "the load reads the payload at its semantic type"
+        );
     }
 
     #[test]

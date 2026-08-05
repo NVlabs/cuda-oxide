@@ -473,6 +473,123 @@ impl<'a, T, const N: usize> StaticViewMut32<'a, T, N> {
     }
 }
 
+/// A mutable run of runtime length, checked once at construction.
+///
+/// The 1D counterpart of [`RuntimeTileMut32`], for the clipped tail of a run
+/// whose full extent would leave the parent. Its length is a runtime value, so
+/// [`at`](Self::at) keeps one bounds branch where [`StaticViewMut32::at`] has
+/// none.
+#[must_use]
+pub struct RuntimeViewMut32<'a, T> {
+    ptr: *mut T,
+    len: u32,
+    _borrow: PhantomData<&'a mut [T]>,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl<'a, T> RuntimeViewMut32<'a, T> {
+    #[inline(always)]
+    unsafe fn from_checked_ptr(ptr: *mut T, len: u32) -> Self {
+        Self {
+            ptr,
+            len,
+            _borrow: PhantomData,
+            _not_send_sync: PhantomData,
+        }
+    }
+
+    /// Resolve a local index, `None` when it is past this run's end.
+    #[inline(always)]
+    pub fn at(&mut self, index: u32) -> Option<InBoundsMut32<'_, T>> {
+        if index >= self.len {
+            return None;
+        }
+        // SAFETY: the index is below the length construction checked against
+        // the parent, so the element is inside the parent allocation.
+        Some(unsafe { InBoundsMut32::from_ptr(self.ptr.add(index as usize)) })
+    }
+
+    /// Number of elements in this run.
+    #[inline(always)]
+    pub const fn len(&self) -> u32 {
+        self.len
+    }
+
+    /// Whether the run is empty.
+    #[inline(always)]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// One thread's run of contiguous elements, whole or clipped by the parent end.
+///
+/// Real launches round the grid up, so the last thread with any work usually
+/// owns fewer than `N` elements. Returning `None` for that thread, as
+/// [`DisjointSlice::tile_thread32`] does, pushes the tail back to raw indexing
+/// and gives up the proof exactly where it is most fiddly to reason about.
+///
+/// Splitting the two cases keeps the check-free [`StaticViewMut32`] for every
+/// thread whose run is whole, which is all but one of them, and still hands the
+/// tail a checked view rather than nothing.
+#[must_use]
+pub enum ThreadRunMut32<'a, T, const N: usize> {
+    /// The thread owns all `N` elements.
+    Full(StaticViewMut32<'a, T, N>),
+    /// The parent ended part-way through the run.
+    Clipped(RuntimeViewMut32<'a, T>),
+}
+
+impl<'a, T, const N: usize> ThreadRunMut32<'a, T, N> {
+    /// This run's base pointer and length, read out by value.
+    ///
+    /// The arms copy the two scalars rather than borrowing the variant's
+    /// payload. A `&mut` through an enum downcast has no in-memory address the
+    /// device backend can name, so borrowing here would not compile for a
+    /// kernel.
+    #[inline(always)]
+    fn raw_parts(&self) -> (*mut T, u32) {
+        match self {
+            ThreadRunMut32::Full(view) => (view.ptr, N as u32),
+            ThreadRunMut32::Clipped(view) => (view.ptr, view.len),
+        }
+    }
+
+    /// Number of elements this thread owns, `N` unless the run was clipped.
+    #[inline(always)]
+    pub fn len(&self) -> u32 {
+        self.raw_parts().1
+    }
+
+    /// Whether the run is empty. Construction never produces an empty run.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Whether the parent ended part-way through this run.
+    #[inline(always)]
+    pub fn is_clipped(&self) -> bool {
+        matches!(self, ThreadRunMut32::Clipped(_))
+    }
+
+    /// Resolve a local index, `None` when it is past this run's end.
+    ///
+    /// The uniform accessor, for code that treats both cases alike. Match on
+    /// the variant instead when the whole-run case should keep
+    /// [`StaticViewMut32::at_const`] and its absent bounds branch.
+    #[inline(always)]
+    pub fn at(&mut self, index: u32) -> Option<InBoundsMut32<'_, T>> {
+        let (ptr, len) = self.raw_parts();
+        if index >= len {
+            return None;
+        }
+        // SAFETY: the index is below the length that construction checked
+        // against the parent, so the element is inside the parent allocation.
+        Some(unsafe { InBoundsMut32::from_ptr(ptr.add(index as usize)) })
+    }
+}
+
 // =============================================================================
 // Read-side views with runtime extents
 // =============================================================================
@@ -1061,6 +1178,163 @@ impl<'a, T, const N: usize> DisjointSlice<'a, T, LinearTiles<N>> {
         // disjoint, and the non-ZST check gives each element an address.
         Some(unsafe { StaticViewMut32::from_checked_ptr(self.as_mut_ptr().add(start as usize)) })
     }
+
+    /// This thread's run of up to `N` contiguous elements, clipped at the end
+    /// of the parent rather than refused.
+    ///
+    /// [`tile_thread32`](Self::tile_thread32) accepts only a whole tile, so the
+    /// one thread whose run straddles the end gets `None` and has to fall back
+    /// to raw indexing. Since launches round the grid up, that thread almost
+    /// always exists. This returns a [`ThreadRunMut32`] instead: `Full` for
+    /// every thread whose `N` elements fit, `Clipped` for the one that
+    /// straddles the end, and `None` for a thread whose run starts at or past
+    /// the end and therefore owns nothing.
+    ///
+    /// Like the rest of the 32-suffix family, run starts live in `u32`: a run
+    /// that would start past element offset `u32::MAX` is also `None`, and a
+    /// width `N` of zero or above `u32::MAX` is rejected outright, exactly as
+    /// [`tile_thread32`](Self::tile_thread32) rejects it.
+    ///
+    /// Disjointness is unchanged. Thread `t` owns `t * N .. t * N + N`, runs of
+    /// distinct threads do not overlap, and clipping only shortens the last
+    /// one.
+    #[inline(always)]
+    pub fn thread_run32<'kernel>(
+        &mut self,
+        thread: ThreadIndex32<'kernel>,
+    ) -> Option<ThreadRunMut32<'_, T, N>> {
+        if size_of::<T>() == 0 {
+            return None;
+        }
+        let bounds = checked_run_bounds::<N>(thread.get() as u64, self.len());
+        if bounds == NO_RUN {
+            return None;
+        }
+        let start = run_bounds_start(bounds) as usize;
+        let count = run_bounds_count(bounds);
+        let ptr = self.as_mut_ptr();
+
+        if count as usize == N {
+            // SAFETY: the complete N-element range starts inside the parent and
+            // ends at or before its end. The consumed unique thread index makes
+            // runs of distinct threads disjoint.
+            return Some(ThreadRunMut32::Full(unsafe {
+                StaticViewMut32::from_checked_ptr(ptr.add(start))
+            }));
+        }
+
+        // SAFETY: `count` is what remains of the parent from `start`, proven
+        // by `checked_run_bounds`, so the clipped range stays inside the
+        // parent allocation.
+        Some(ThreadRunMut32::Clipped(unsafe {
+            RuntimeViewMut32::from_checked_ptr(ptr.add(start), count)
+        }))
+    }
+
+    /// Walk every run this thread owns under a grid-stride loop.
+    ///
+    /// The period is read from the launch geometry rather than taken as an
+    /// argument. A passed stride is the defect described in #583: one that
+    /// disagrees with the actual launch makes threads overlap silently, and
+    /// nothing in the signature would catch it.
+    ///
+    /// # Disjointness
+    ///
+    /// With `period = gridDim.x * blockDim.x`, thread `t` owns tiles `t`,
+    /// `t + period`, `t + 2 * period`, and so on. Every tile index this thread
+    /// takes is congruent to `t` modulo `period`, and `t < period` holds for a
+    /// 1D launch because `t = blockIdx.x * blockDim.x + threadIdx.x`, so two
+    /// distinct threads never take the same tile. Clipping only shortens the
+    /// final run.
+    ///
+    /// # The `u32::MAX` offset cutoff
+    ///
+    /// Run starts live in `u32`, like everything in the 32-suffix family. A
+    /// run whose start element offset would exceed `u32::MAX` is never
+    /// yielded: for a parent longer than 2^32 elements the walk ends at that
+    /// boundary rather than continuing into the region past it. A run that
+    /// starts at or below the boundary may still extend past it, because each
+    /// element is proven against the parent length in full u64 width.
+    #[inline(always)]
+    pub fn grid_stride_runs32<'kernel>(
+        &mut self,
+        thread: ThreadIndex32<'kernel>,
+    ) -> GridStrideRuns32<'_, 'a, T, N> {
+        let period = (crate::thread::gridDim_x() as u64) * (crate::thread::blockDim_x() as u64);
+        GridStrideRuns32 {
+            slice: self,
+            next_tile: thread.get() as u64,
+            period,
+        }
+    }
+}
+
+/// The runs one thread owns under a grid-stride loop.
+///
+/// Produced by [`DisjointSlice::grid_stride_runs32`]. Each run is borrowed from
+/// the parent slice for as long as it is held, so runs are taken one at a time
+/// rather than through [`Iterator`], which cannot express that.
+///
+/// ```rust,ignore
+/// let mut runs = data.grid_stride_runs32(thread);
+/// while let Some(mut run) = runs.next_run() {
+///     for k in 0..run.len() {
+///         if let Some(mut slot) = run.at(k) {
+///             slot.write(slot.read() * 2.0);
+///         }
+///     }
+/// }
+/// ```
+#[must_use]
+pub struct GridStrideRuns32<'slice, 'a, T, const N: usize> {
+    slice: &'slice mut DisjointSlice<'a, T, LinearTiles<N>>,
+    next_tile: u64,
+    period: u64,
+}
+
+impl<'slice, 'a, T, const N: usize> GridStrideRuns32<'slice, 'a, T, N> {
+    /// The next run this thread owns, or `None` once they are exhausted.
+    ///
+    /// Exhaustion includes the `u32::MAX` start cutoff described on
+    /// [`DisjointSlice::grid_stride_runs32`]: for a parent longer than 2^32
+    /// elements the walk stops at that boundary.
+    #[inline(always)]
+    pub fn next_run(&mut self) -> Option<ThreadRunMut32<'_, T, N>> {
+        // A zero period would revisit the same tile forever; a launch always
+        // has at least one thread, so refusing it costs nothing real.
+        if size_of::<T>() == 0 || self.period == 0 {
+            return None;
+        }
+        let bounds = checked_run_bounds::<N>(self.next_tile, self.slice.len());
+        if bounds == NO_RUN {
+            return None;
+        }
+        self.next_tile = self.next_tile.checked_add(self.period)?;
+
+        let start = run_bounds_start(bounds) as usize;
+        let count = run_bounds_count(bounds);
+        let ptr = self.slice.as_mut_ptr();
+        if count as usize == N {
+            // SAFETY: the complete N-element range lies inside the parent, and
+            // every tile index this thread takes is congruent to its own index
+            // modulo the launch period, so runs never overlap another thread's.
+            return Some(ThreadRunMut32::Full(unsafe {
+                StaticViewMut32::from_checked_ptr(ptr.add(start))
+            }));
+        }
+        // SAFETY: `count` is what remains of the parent from `start`, proven
+        // by `checked_run_bounds`, so the clipped range stays inside the
+        // parent allocation.
+        Some(ThreadRunMut32::Clipped(unsafe {
+            RuntimeViewMut32::from_checked_ptr(ptr.add(start), count)
+        }))
+    }
+
+    /// The grid-stride period this walk uses, in tiles.
+    #[inline(always)]
+    pub const fn period(&self) -> u64 {
+        self.period
+    }
 }
 
 impl<'a, T, const ROWS: usize, const COLS: usize, const ROW_STRIDE: usize>
@@ -1311,6 +1585,59 @@ fn checked_linear_tile_start<const N: usize>(thread: u32, len: usize) -> u64 {
     }
 }
 
+/// The reserved no-run value for [`checked_run_bounds`]. A run that exists has
+/// at least one element, so its packed count field is nonzero and a valid
+/// packed word can never be zero.
+const NO_RUN: u64 = 0;
+
+/// Prove one clip-tolerant run of a `LinearTiles<N>` walk in bounds, entirely
+/// in u64.
+///
+/// The run for tile index `tile` covers `tile * N .. tile * N + N`, shortened
+/// at `len`. On success the element count is packed above the start offset,
+/// `(count << 32) | start`, with `start <= u32::MAX` and
+/// `1 <= count <= N <= u32::MAX`, so the packing is lossless and never
+/// produces the reserved [`NO_RUN`] zero. Like [`checked_linear_tile_start`],
+/// the proof stays scalar-only so the pointer-bearing wrappers above it
+/// MIR-inline without losing the kernel parameter's provenance.
+///
+/// [`NO_RUN`] when `N` is zero or exceeds `u32::MAX` (the same widths
+/// [`checked_linear_tile_start`] and `valid_mutable_extent` reject), when
+/// `tile * N` overflows, or when the run would start at or past `len` or past
+/// the `u32::MAX` element offset the 32-suffix family stops at.
+#[inline(always)]
+fn checked_run_bounds<const N: usize>(tile: u64, len: usize) -> u64 {
+    if N == 0 || N > u32::MAX as usize {
+        return NO_RUN;
+    }
+    let start = match tile.checked_mul(N as u64) {
+        Some(start) => start,
+        None => return NO_RUN,
+    };
+    if start >= len as u64 || start > u32::MAX as u64 {
+        return NO_RUN;
+    }
+    let available = len as u64 - start;
+    let count = if available < N as u64 {
+        available
+    } else {
+        N as u64
+    };
+    (count << 32) | start
+}
+
+/// The start offset packed into a non-[`NO_RUN`] [`checked_run_bounds`] word.
+#[inline(always)]
+const fn run_bounds_start(bounds: u64) -> u32 {
+    bounds as u32
+}
+
+/// The element count packed into a non-[`NO_RUN`] [`checked_run_bounds`] word.
+#[inline(always)]
+const fn run_bounds_count(bounds: u64) -> u32 {
+    (bounds >> 32) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1359,6 +1686,124 @@ mod tests {
             checked_linear_tile_start::<2>(u32::MAX, full_u32_len),
             u64::MAX
         );
+    }
+
+    #[test]
+    fn run_bounds_reject_empty_and_oversized_widths() {
+        assert_eq!(checked_run_bounds::<0>(0, 16), NO_RUN);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            checked_run_bounds::<{ u32::MAX as usize + 1 }>(0, usize::MAX),
+            NO_RUN
+        );
+    }
+
+    #[test]
+    fn run_bounds_stop_at_the_parent_end() {
+        // The first tile at or past the data owns nothing: start == len...
+        assert_eq!(checked_run_bounds::<4>(2, 8), NO_RUN);
+        // ...and start > len.
+        assert_eq!(checked_run_bounds::<4>(3, 8), NO_RUN);
+        // An empty parent owns no runs at all.
+        assert_eq!(checked_run_bounds::<4>(0, 0), NO_RUN);
+    }
+
+    #[test]
+    fn run_bounds_decide_full_against_clipped_at_the_exact_boundary() {
+        // available == N: the run is still whole.
+        let full = checked_run_bounds::<4>(1, 8);
+        assert_eq!(run_bounds_start(full), 4);
+        assert_eq!(run_bounds_count(full), 4);
+        // available == N - 1: one element short, so the run clips.
+        let clipped = checked_run_bounds::<4>(1, 7);
+        assert_eq!(run_bounds_start(clipped), 4);
+        assert_eq!(run_bounds_count(clipped), 3);
+        // available == 1: the shortest run that still exists.
+        let last = checked_run_bounds::<4>(2, 9);
+        assert_eq!(run_bounds_start(last), 8);
+        assert_eq!(run_bounds_count(last), 1);
+    }
+
+    #[test]
+    fn run_bounds_reject_tile_scale_overflow() {
+        // tile * N overflows u64 outright.
+        assert_eq!(checked_run_bounds::<2>(u64::MAX, usize::MAX), NO_RUN);
+        // The product fits u64 but lands past the u32::MAX start offset.
+        assert_eq!(
+            checked_run_bounds::<{ u32::MAX as usize }>(2, usize::MAX),
+            NO_RUN
+        );
+        // 2^33 * 2^31 == 2^64 wraps to a start of zero, which the start
+        // guard would wave through; only the checked multiply rejects it.
+        assert_eq!(checked_run_bounds::<{ 1usize << 31 }>(1 << 33, 8), NO_RUN);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn run_bounds_let_a_boundary_run_extend_past_the_u32_offset_space() {
+        // The u32::MAX cutoff bounds where a run may start, not where it may
+        // end: tile 1431655765 of width 3 starts exactly at u32::MAX, and
+        // its remaining two elements sit at offsets 2^32 and 2^32 + 1.
+        let len = u32::MAX as usize + 4; // 2^32 + 3, room past the run's end
+        let run = checked_run_bounds::<3>(1431655765, len);
+        assert_eq!(run_bounds_start(run), u32::MAX);
+        assert_eq!(run_bounds_count(run), 3);
+        // The very next tile would start at 2^32 + 2, past the cutoff, and
+        // is refused even though the parent still has an element there.
+        assert_eq!(checked_run_bounds::<3>(1431655766, len), NO_RUN);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn run_bounds_keep_the_exact_u32_boundary_and_stop_past_it() {
+        let long = u32::MAX as usize + 2;
+        // A run may start exactly at element offset u32::MAX...
+        let edge = checked_run_bounds::<1>(u64::from(u32::MAX), long);
+        assert_eq!(run_bounds_start(edge), u32::MAX);
+        assert_eq!(run_bounds_count(edge), 1);
+        // ...but never past it, even with parent elements remaining. This is
+        // the documented cutoff of the 32-suffix family, not the end of data.
+        assert_eq!(
+            checked_run_bounds::<1>(u64::from(u32::MAX) + 1, long),
+            NO_RUN
+        );
+    }
+
+    #[test]
+    fn grid_stride_walk_guards_a_zero_period_and_covers_runs_exactly_once() {
+        let mut data = [0u32; 11];
+        // A zero period would revisit tile 0 forever; the guard refuses to
+        // yield anything instead.
+        {
+            let mut slice =
+                unsafe { DisjointSlice::<u32, LinearTiles<4>>::from_mut_slice(&mut data) };
+            let mut runs = GridStrideRuns32 {
+                slice: &mut slice,
+                next_tile: 0,
+                period: 0,
+            };
+            assert!(runs.next_run().is_none());
+        }
+        // Two host-simulated threads with period 2: thread 0 takes tiles 0 and
+        // 2 (the last clipped to 3 elements), thread 1 takes tile 1 and then
+        // terminates at start >= len. Every element is touched exactly once.
+        for thread in 0..2u64 {
+            let mut slice =
+                unsafe { DisjointSlice::<u32, LinearTiles<4>>::from_mut_slice(&mut data) };
+            let mut runs = GridStrideRuns32 {
+                slice: &mut slice,
+                next_tile: thread,
+                period: 2,
+            };
+            while let Some(mut run) = runs.next_run() {
+                for k in 0..run.len() {
+                    let mut slot = run.at(k).expect("k < len must resolve");
+                    let value = slot.read();
+                    slot.write(value + 1);
+                }
+            }
+        }
+        assert!(data.iter().all(|&touched| touched == 1));
     }
 
     #[test]

@@ -190,7 +190,7 @@ fn main() {
     let (major, minor) = ctx.compute_capability().expect("compute capability");
     if major < 8 {
         println!(
-            "Skipping: cp.async requires sm_80+, device is sm_{}{} -- PASS (skipped)",
+            "skipping: cp.async requires sm_80+ (device is sm_{}{})",
             major, minor
         );
         return;

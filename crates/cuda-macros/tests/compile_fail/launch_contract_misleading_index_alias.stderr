@@ -11,6 +11,7 @@ error[E0277]: the trait bound `for<'__cuda_oxide_disjoint> cuda_device::Disjoint
              `cuda_device::DisjointSlice<'_, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'_, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'_, T, RuntimeRowMajorTiles<ROWS, COLS>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
+             `cuda_device::DisjointSlice<'_, T, WarpIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'_, T, cuda_device::Index2D<ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'_, T, cuda_device::Index2D<ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'_, T>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`

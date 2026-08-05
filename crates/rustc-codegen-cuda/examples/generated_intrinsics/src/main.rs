@@ -1253,6 +1253,15 @@ fn main() {
     const ELEMENTS: u32 = WIDTH * HEIGHT * DEPTH;
 
     let context = CudaContext::new(0).expect("failed to create CUDA context");
+
+    // The generated intrinsics exercised here include bf16 operations, which
+    // require sm_80 (Ampere) or later.
+    let (major, minor) = context.compute_capability().expect("compute capability");
+    if major < 8 {
+        println!("skipping: bf16 intrinsics require sm_80+ (device is sm_{major}{minor})");
+        return;
+    }
+
     let stream = context.default_stream();
     let mut output =
         DeviceBuffer::<u32>::zeroed(&stream, ELEMENTS as usize).expect("failed to allocate output");

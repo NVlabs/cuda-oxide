@@ -4,6 +4,13 @@ name: cargo-deny
 # Runs as a job of the top-level CI workflow (.github/workflows/ci.yml) on
 # push/pull_request, plus a standalone weekly security scan via schedule.
 # Concurrency for the CI path is governed by CI's own group.
+#
+# Two halves of the same concern. `check` enforces the license *policy* over
+# the whole resolved graph from deny.toml. `license-manifest` enforces that
+# the human-readable inventory in dependency-licenses.csv still lists what the
+# workspace declares, which nothing checked before: CONTRIBUTING asks
+# contributors to update that file by hand, and it had fallen behind by eight
+# direct third-party dependencies and thirteen workspace members.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -25,3 +32,16 @@ jobs:
 
       - name: Run cargo-deny
         run: cargo deny check
+
+  license-manifest:
+    name: dependency-licenses.csv covers every declared crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Only reads manifests: `cargo metadata` resolves the graph without
+      # running build scripts, so this needs no CUDA toolkit and no LLVM.
+      - name: Verify the license inventory covers the workspace
+        run: bash scripts/check-dependency-licenses.sh

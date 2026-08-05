@@ -10,5 +10,6 @@ description = "Optimization passes over the MIR dialect (loop unroll, ...)"
 [dependencies]
 pliron = { workspace = true }
 dialect-mir = { workspace = true }
+reserved-oxide-symbols = { workspace = true }
 rustc-hash = { workspace = true }
 thiserror = { workspace = true }
