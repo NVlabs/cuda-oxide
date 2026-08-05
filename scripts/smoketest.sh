@@ -366,7 +366,7 @@ verdict_error() {
     case "${ex}" in
         error_enum_bool_payload_addr)
             if ! grep -Fq 'canonical storage type' "${log}" \
-                || ! grep -Fq 'in-place mutation of bool or shared-pointer enum payloads is not supported' "${log}"; then
+                || ! grep -Fq 'a borrow that escapes into a call keeps no such rewrite and is refused here' "${log}"; then
                 echo "FAIL (missing canonical-storage payload-address diagnostic)"
                 return 1
             fi

@@ -1633,7 +1633,7 @@ pub(crate) fn convert_field_addr(
         let storage_ty = enum_payload_storage_type(ctx, semantic_ty).map_err(anyhow_to_pliron)?;
         if storage_ty != semantic_ty {
             return pliron::input_err_noloc!(
-                "field_addr: cannot hand out the in-place address of payload field {} of enum `{}`: its bytes use canonical storage type {} while its semantic type is {}, and loads or stores made through an escaped payload address are typed with the semantic type, which the canonical bytes cannot honor; shared reads of such payloads are compiled through a value copy automatically, and in-place mutation of bool or shared-pointer enum payloads is not supported",
+                "field_addr: cannot hand out the in-place address of payload field {} of enum `{}`: its bytes use canonical storage type {} while its semantic type is {}, and loads or stores made through an escaped payload address are typed with the semantic type, which the canonical bytes cannot honor; shared reads of such payloads are compiled through a value copy automatically, and a write that stays inside its function is compiled by rebuilding the enum around the new payload; a borrow that escapes into a call keeps no such rewrite and is refused here",
                 field_index,
                 enum_name,
                 storage_ty.deref(ctx).disp(ctx),

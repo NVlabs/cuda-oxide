@@ -3793,6 +3793,31 @@ fn apply_field_projection(
 }
 
 /// Apply a Field projection on an enum variant (after Downcast).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_enum_field_projection_pub(
+    ctx: &mut Context,
+    enum_value: Value,
+    enum_rust_ty: &rustc_public::ty::Ty,
+    variant_idx: rustc_public::ty::VariantIdx,
+    field_idx: mir::FieldIdx,
+    field_ty: &rustc_public::ty::Ty,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    apply_enum_field_projection(
+        ctx,
+        enum_value,
+        enum_rust_ty,
+        variant_idx,
+        field_idx,
+        field_ty,
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
 fn apply_enum_field_projection(
     ctx: &mut Context,
     enum_value: Value,
@@ -3946,6 +3971,10 @@ pub(crate) fn translate_place_address(
 /// shared borrow and stays sound. mir-lower's canonical-storage gate on
 /// `mir.field_addr` remains the fail-closed authority, so a miss here still
 /// errors loudly instead of miscompiling.
+pub(crate) fn enum_payload_needs_storage_coercion_pub(ctx: &Context, ty: TypeHandle) -> bool {
+    enum_payload_needs_storage_coercion(ctx, ty)
+}
+
 fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
     // Bool leaf: semantic i1, canonical i8 byte in enum storage.
     if let Some(integer) = ty.deref(ctx).downcast_ref::<IntegerType>() {

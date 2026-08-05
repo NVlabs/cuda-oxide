@@ -63,6 +63,13 @@ mod kernels {
         Off,
     }
 
+    /// A variant of two fields, one of them canonical storage. Rebuilding
+    /// around the bool has to carry the `f32` through untouched.
+    pub enum Pair {
+        Both(bool, f32),
+        Neither,
+    }
+
     /// Scale a borrowed payload. Taking `&mut f32` across a call boundary
     /// keeps the borrow from folding into a plain store.
     #[device]
@@ -197,6 +204,63 @@ mod kernels {
         }
     }
 
+    /// Write a bool payload without the borrow leaving the kernel.
+    ///
+    /// The borrow folds into a store to the payload place, which has no
+    /// address to write through: the byte is canonical `i8` storage while the
+    /// value is `i1`. The importer rebuilds the enum around the new payload
+    /// instead, so the write lands in the enum itself. Each input maps to a
+    /// distinct output, so a dropped write shows up as an unchanged element.
+    #[kernel]
+    pub fn mutate_bool_payload(input: &[f32], mut out: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if i >= input.len() {
+            return;
+        }
+        let mut flag = Flag::On(false);
+        if let Flag::On(value) = &mut flag {
+            *value = true;
+        }
+        let result = match flag {
+            // Only the written value gives the expected element, so a write
+            // that landed in a copy reports a mismatch.
+            Flag::On(true) => input[i] * 2.0,
+            Flag::On(false) => -input[i],
+            Flag::Off => f32::NAN,
+        };
+        if let Some(cell) = out.get_mut(index) {
+            *cell = result;
+        }
+    }
+
+    /// Write one field of a two-field variant, where the other must survive.
+    ///
+    /// The rebuild reads the sibling `f32` back out of the current value and
+    /// passes it through, so a rebuild that dropped it would return the
+    /// variant's default rather than the input.
+    #[kernel]
+    pub fn mutate_multi_field_payload(input: &[f32], mut out: DisjointSlice<f32>) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if i >= input.len() {
+            return;
+        }
+        let mut pair = Pair::Both(false, input[i] * 2.0);
+        if let Pair::Both(flag, _) = &mut pair {
+            *flag = true;
+        }
+        let result = match pair {
+            // The bool must have been written and the f32 must have survived.
+            Pair::Both(true, carried) => carried,
+            Pair::Both(false, _) => f32::NAN,
+            Pair::Neither => f32::NAN,
+        };
+        if let Some(cell) = out.get_mut(index) {
+            *cell = result;
+        }
+    }
+
     /// The workaround this replaces: rebuild the enum from a matched copy.
     #[kernel]
     pub fn rebuild_payload(input: &[f32], mut out: DisjointSlice<f32>) {
@@ -271,6 +335,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     check("shared_bytes_no_slot", &|out| unsafe {
         module.shared_bytes_no_slot(&stream, config, &input, out)
+    })?;
+    check("mutate_bool_payload", &|out| unsafe {
+        module.mutate_bool_payload(&stream, config, &input, out)
+    })?;
+    check("mutate_multi_field_payload", &|out| unsafe {
+        module.mutate_multi_field_payload(&stream, config, &input, out)
     })?;
     check("rebuild_payload", &|out| unsafe {
         module.rebuild_payload(&stream, config, &input, out)

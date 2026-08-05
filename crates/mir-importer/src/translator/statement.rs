@@ -37,6 +37,7 @@
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
+use crate::translator::payload_store;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::{
@@ -1069,6 +1070,26 @@ fn store_through_place_address(
         current_prev = Some(rvalue_op);
     } else if let Some(prev) = last_inserted {
         current_prev = Some(prev);
+    }
+
+    // A payload whose bytes use canonical storage has no address to write
+    // through: bool payloads occupy a full byte and shared-memory pointers
+    // are stored generic, while a store through an escaped address carries
+    // the semantic type. Rebuild the enum around the new payload instead,
+    // which coerces on the way in exactly as a whole-enum assignment does.
+    if let Some(payload_store) = payload_store::classify(ctx, body, place)?
+        && let Some(result) = payload_store::rebuild_and_store(
+            ctx,
+            body,
+            value_map,
+            &payload_store,
+            result_value,
+            block_ptr,
+            current_prev,
+            loc.clone(),
+        )?
+    {
+        return Ok(result);
     }
 
     // The destination is written through, so request a mutable address.
