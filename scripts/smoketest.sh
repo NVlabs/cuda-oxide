@@ -60,6 +60,15 @@ ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload
 # Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
 NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
 
+# Examples whose `main` deliberately never launches a kernel: they exist to
+# prove the device code compiles, and say so in their module docs
+# ("compilation and PTX generation only. Do not launch this kernel."). They
+# still belong to the `standard` category because the build and the host
+# binary must both succeed, but reporting a bare `PASS` would make them
+# indistinguishable in the summary from an example that launched kernels and
+# verified results.
+NO_LAUNCH_EXAMPLES=(wgmma_mma_bf16)
+
 # Examples whose verify-code-shape.sh asserts on `#[inline(never)]` marker
 # symbols. Those markers are private, so once the middle end inlines them into
 # their single caller it deletes them, and they survive only in the
@@ -83,6 +92,14 @@ classify() {
 verify_nvvm_in_compile_only() {
     local ex="$1" candidate
     for candidate in "${NVVM_VERIFY_EXAMPLES[@]}"; do
+        [[ "$ex" == "$candidate" ]] && return 0
+    done
+    return 1
+}
+
+example_never_launches() {
+    local ex="$1" candidate
+    for candidate in "${NO_LAUNCH_EXAMPLES[@]}"; do
         [[ "$ex" == "$candidate" ]] && return 0
     done
     return 1
@@ -319,7 +336,7 @@ fi
 # They never run cargo themselves; that is the caller's job.
 
 verdict_standard() {
-    local log="$1" ec="$2"
+    local log="$1" ec="$2" ex="${3:-}"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
     if grep_failure_markers "${log}"; then
@@ -330,11 +347,28 @@ verdict_standard() {
     # pre-Hopper, mathdx_ffi_test with no MathDx SDK). Accept it as PASS so
     # standard-category examples can gate themselves on hardware/SDK presence
     # without having to fake a success marker.
-    if grep -qE '^[[:space:]]*skipping:' "${log}"; then
+    #
+    # This has to recognise the declaration in every spelling the examples
+    # use, because the success-marker check below matches `SUCCESS|PASS|
+    # Complete` anywhere in the log and skip messages routinely contain those
+    # words. Missing a skip here therefore does not merely lose the
+    # "(skipped)" annotation: it promotes the example to a full execution
+    # PASS, indistinguishable from one that launched kernels and checked
+    # results. That is how `Skipping: ... -- PASS (skipped)` used to report a
+    # clean PASS, and `generated_ldmatrix` still prints the
+    # `PASS (skipped): ...` form below sm_75.
+    if grep -qiE '^[[:space:]]*(skipping:|pass \(skipped\))' "${log}"; then
         echo "PASS (skipped)"
         return 0
     fi
-    if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS"; return 0; fi
+    if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then
+        if example_never_launches "${ex}"; then
+            echo "PASS (compiled, no launch)"
+        else
+            echo "PASS"
+        fi
+        return 0
+    fi
     echo "FAIL (no success marker)"
     return 1
 }
@@ -1526,7 +1560,7 @@ for ex in "${selected[@]}"; do
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
-            standard)    verdict="$(verdict_standard    "${log}" "${ec}")"        && status=0 || status=$? ;;
+            standard)    verdict="$(verdict_standard    "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;
         esac
     fi
