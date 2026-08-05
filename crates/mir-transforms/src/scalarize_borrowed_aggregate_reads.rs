@@ -118,7 +118,7 @@ struct AllocaPlan {
 ///
 /// Only entry-block allocas initialized from an argument of the same block are
 /// considered. Every pointer use must belong to the exact read-only projection
-/// graph accepted by [`analyze_alloca`].
+/// graph accepted by `analyze_alloca`.
 ///
 /// `verbose` is threaded from the pipeline's backend options; the pass itself
 /// never reads the environment.
@@ -374,7 +374,7 @@ struct BorrowedPointerPlan {
 ///
 /// On top of the helper-local shape, every call site of the helper must prove
 /// that the aggregate pointer targets caller-private memory (see
-/// [`all_call_sites_pass_owned_aggregate`]); any unproven call site keeps the
+/// `all_call_sites_pass_owned_aggregate`); any unproven call site keeps the
 /// helper untouched.
 ///
 /// `verbose` is threaded from the pipeline's backend options; the pass itself
@@ -1158,7 +1158,14 @@ mod tests {
         reborrow.insert_at_back(entry, ctx);
         let reborrow_value = reborrow.deref(ctx).get_result(0);
 
-        add_helper_call(ctx, entry, helper_symbol, reborrow_value, index, element_type);
+        add_helper_call(
+            ctx,
+            entry,
+            helper_symbol,
+            reborrow_value,
+            index,
+            element_type,
+        );
     }
 
     /// A caller forwarding its own aggregate pointer parameter, i.e. memory
