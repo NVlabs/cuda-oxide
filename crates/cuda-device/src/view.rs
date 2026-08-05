@@ -1714,6 +1714,24 @@ mod tests {
             checked_run_bounds::<{ u32::MAX as usize }>(2, usize::MAX),
             NO_RUN
         );
+        // 2^33 * 2^31 == 2^64 wraps to a start of zero, which the start
+        // guard would wave through; only the checked multiply rejects it.
+        assert_eq!(checked_run_bounds::<{ 1usize << 31 }>(1 << 33, 8), NO_RUN);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn run_bounds_let_a_boundary_run_extend_past_the_u32_offset_space() {
+        // The u32::MAX cutoff bounds where a run may start, not where it may
+        // end: tile 1431655765 of width 3 starts exactly at u32::MAX, and
+        // its remaining two elements sit at offsets 2^32 and 2^32 + 1.
+        let len = u32::MAX as usize + 4; // 2^32 + 3, room past the run's end
+        let run = checked_run_bounds::<3>(1431655765, len);
+        assert_eq!(run_bounds_start(run), u32::MAX);
+        assert_eq!(run_bounds_count(run), 3);
+        // The very next tile would start at 2^32 + 2, past the cutoff, and
+        // is refused even though the parent still has an element there.
+        assert_eq!(checked_run_bounds::<3>(1431655766, len), NO_RUN);
     }
 
     #[cfg(target_pointer_width = "64")]
