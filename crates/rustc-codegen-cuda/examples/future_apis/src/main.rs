@@ -244,10 +244,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = CudaContext::new(0)?;
 
-    // The mbarrier APIs exercised below require sm_80 (Ampere) or later.
+    // sm_100, not sm_80. The mbarrier calls here would run on Ampere, but the
+    // kernels also construct `ManagedBarrier<_, TmaBarrier>`, and the backend
+    // detects that as a TMA feature: building for anything lower is refused
+    // with "CUDA target sm_86 cannot lower detected feature Tma + Sm80;
+    // cuda-oxide requires a target compatible with sm_100 for this module".
+    // Under an auto-detected target the build instead succeeds at sm_100 and
+    // the module then fails to load, so a lower floor here reads as
+    // DriverError(218) on every pre-Blackwell device.
     let (major, minor) = ctx.compute_capability()?;
-    if major < 8 {
-        println!("skipping: mbarrier requires sm_80+ (device is sm_{major}{minor})");
+    if major < 10 {
+        println!("skipping: TMA-typed barriers require sm_100+ (device is sm_{major}{minor})");
         return Ok(());
     }
 
