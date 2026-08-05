@@ -187,6 +187,11 @@ are configured.
   declares but that file does not record; CI runs it as the
   `cargo-deny / license-manifest` job. It checks presence, not versions, so a
   routine version bump needs no CSV edit.
+- The same applies to an example that pulls third-party code. Each example
+  under `crates/rustc-codegen-cuda/examples/` is its own workspace, so
+  `cargo deny check` does not resolve it; the script reads the example lock
+  files directly and asks for a row per third-party crate. Examples that
+  depend only on first-party crates by path need nothing.
 
 ## IP Review Process
 
