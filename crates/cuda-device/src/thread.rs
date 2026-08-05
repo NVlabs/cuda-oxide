@@ -208,7 +208,7 @@ impl<'kernel, Domain, Coordinates> LaunchContext<'kernel, Domain, Coordinates> {
 /// The macros rewrite a small set of names inside annotated bodies so
 /// the user never has to pass the launch context through by hand:
 ///
-/// - free functions: `index_1d`, `index_2d`, `index_2d_runtime`
+/// - free functions: `index_1d`, `index_2d`, `index_2d_runtime`, `warp_index`
 /// - methods (zero-arg call sites): `get_mut_indexed`
 ///
 /// Free-function calls are matched on path tail, so all of these resolve
@@ -868,7 +868,11 @@ pub fn index_2d<'kernel, const ROW_STRIDE: usize>()
 /// [`DisjointSlice::get_mut`] on a slice declared over [`WarpIndex`]:
 ///
 /// ```rust,ignore
-/// let value = warp::reduce_sum_f32(u32::MAX, contribution);
+/// // `reduce_sum_f32` requires every warp of the block to be full: it
+/// // shuffles with the full 32-lane member mask. When `blockDim.x` is not
+/// // a multiple of 32, reduce the partial tail warp over its live lanes
+/// // with `shuffle_xor_f32_sync` and a member mask of exactly those lanes.
+/// let value = warp::reduce_sum_f32(contribution);
 /// if let Some(warp) = thread::warp_index()
 ///     && let Some(slot) = sums.get_mut(warp)
 /// {
