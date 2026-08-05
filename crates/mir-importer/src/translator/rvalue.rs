@@ -3946,9 +3946,11 @@ pub(crate) fn translate_place_address(
 ///   so the walk continues against the ORIGINAL elements, while a trailing
 ///   fat deref (`&*s` reborrow) is just a load of the fat value.
 ///
-/// `Downcast` (enum payload addressing; issues #131/#146), `Subslice` and
-/// from-end `ConstantIndex` are NOT handled; the walker punts on them
-/// (returns `Ok(None)`).
+/// `Downcast` records the variant for the `Field` immediately after it (the
+/// pair addresses an enum payload through the flattened `all_field_types`
+/// index); rustc guarantees that pairing, and any other continuation punts.
+/// `Subslice` and from-end `ConstantIndex` are NOT handled; the walker punts
+/// on them (returns `Ok(None)`).
 ///
 /// Returns `Ok(Some((addr, last_op)))` on success, `Ok(None)` if the
 /// projection chain contains an element this helper doesn't know how to
@@ -3987,6 +3989,14 @@ fn translate_place_addr_from_slot(
         // no later projection arm can accidentally leak it forward.
         let entered_as_slice_data = current_is_slice_data;
         current_is_slice_data = false;
+
+        // A `Downcast` names a variant only for the `Field` IMMEDIATELY
+        // after it (rustc's MIR validator enforces the pairing). Any other
+        // continuation is not a shape valid MIR produces; punt rather than
+        // let a stale variant leak into a later `Field` arm.
+        if pending_variant.is_some() && !matches!(elem, mir::ProjectionElem::Field(_, _)) {
+            return Ok(None);
+        }
 
         match elem {
             // `*place` -- the place walked so far holds a pointer; the
@@ -4235,13 +4245,18 @@ fn translate_place_addr_from_slot(
                 // enum names its payload fields by position in the flattened
                 // `all_field_types`. Translate the per-variant index into that
                 // flat one; a non-enum pointee keeps the index as written.
+                let pointee = current
+                    .get_type(ctx)
+                    .deref(ctx)
+                    .downcast_ref::<dialect_mir::types::MirPtrType>()
+                    .map(|ptr| ptr.pointee);
+                let pointee_is_enum = pointee.is_some_and(|pointee| {
+                    pointee
+                        .deref(ctx)
+                        .is::<dialect_mir::types::MirEnumType>()
+                });
                 let flat_field_index = match pending_variant.take() {
                     Some(variant) => {
-                        let pointee = current
-                            .get_type(ctx)
-                            .deref(ctx)
-                            .downcast_ref::<dialect_mir::types::MirPtrType>()
-                            .map(|ptr| ptr.pointee);
                         let flat = pointee.and_then(|pointee| {
                             pointee
                                 .deref(ctx)
@@ -4257,6 +4272,23 @@ fn translate_place_addr_from_slot(
                             // than address the wrong bytes.
                             None => return Ok(None),
                         }
+                    }
+                    // Valid MIR never applies `Field` to an enum place without
+                    // a `Downcast` naming the variant first (rustc's own place
+                    // typing has no answer for it). `MirFieldAddrOp` reads an
+                    // enum-pointee index as a FLATTENED (variant, field)
+                    // position, so passing this raw per-variant index through
+                    // could silently address another variant's payload. Only an
+                    // importer bug or invalid MIR reaches here; fail loudly.
+                    None if pointee_is_enum => {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "Field projection on an enum place without a preceding \
+                                 Downcast (projection {:?})",
+                                projection
+                            ))
+                        );
                     }
                     None => *field_idx as u32,
                 };
@@ -4403,6 +4435,13 @@ fn translate_place_addr_from_slot(
             // hard error (mutable borrows).
             _ => return Ok(None),
         }
+    }
+
+    // A chain that ENDS on a `Downcast` never occurs in valid MIR (the
+    // validator requires a `Field` after it). Punt rather than hand back the
+    // enum's own address as if it were the variant's payload place.
+    if pending_variant.is_some() {
+        return Ok(None);
     }
 
     Ok(Some((current, current_prev_op)))

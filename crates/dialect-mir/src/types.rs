@@ -1984,5 +1984,12 @@ mod enum_layout_tests {
         assert_eq!(value.flat_field_index(2, 0), None);
         // Out-of-range variant.
         assert_eq!(value.flat_field_index(3, 0), None);
+
+        // Layout metadata shorter than the counts promise (an inconsistent
+        // enum that its own verifier would reject): the final bound check
+        // still refuses rather than naming a position past
+        // `all_field_types`.
+        value.all_field_types = vec![payload, payload];
+        assert_eq!(value.flat_field_index(1, 1), None);
     }
 }
