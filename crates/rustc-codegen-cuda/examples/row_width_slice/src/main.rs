@@ -73,7 +73,7 @@ mod kernels {
         if let (Some(wa), Some(wb)) = (wa, wb) {
             // Thread-varying selection between two witnesses of one type:
             // exactly the shape that aliased flat-index witnesses.
-            let chosen = if (row + col) % 2 == 0 { wa } else { wb };
+            let chosen = if (row + col).is_multiple_of(2) { wa } else { wb };
             if let Some(cell) = b.get_mut(chosen) {
                 *cell = (row * b_width + col) as u32;
             }
