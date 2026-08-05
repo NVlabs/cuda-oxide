@@ -51,7 +51,7 @@ Two safe/raw pairs, checked against a CPU reference:
 
 Both safe kernels write C through `tile_2d32_rt`, which is safe: the row
 width is not passed at the call site at all. The host binds it into C's
-slice once for the launch (`cuda_host::Pitched`), so every thread reads
+slice once for the launch (`cuda_host::RowWidth`), so every thread reads
 the same width by construction and no call-site obligation remains.
 
 The launch contract makes the buffer sizes part of the kernel's interface:

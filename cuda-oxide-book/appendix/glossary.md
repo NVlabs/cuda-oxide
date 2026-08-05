@@ -170,10 +170,10 @@ functions. Three forms:
   only accepts a witness with the matching `S` -- mixing strides is a
   type error.
 - `thread::index_2d_runtime(&slice) -> Option<ThreadIndex<'_, Runtime2DIndex>>`.
-  For strides only known at launch time, and safe: the row pitch lives
+  For strides only known at launch time, and safe: the row width lives
   in the slice, written once by the host into the launch packet. The
   witness stores the thread's `(row, col)` coordinates, and the slice
-  being addressed resolves them against its own pitch, so every thread
+  being addressed resolves them against its own width, so every thread
   indexing one slice uses the same row width by construction.
 
 The witness is `!Send + !Sync + !Copy + !Clone` and `'kernel`-scoped, so

@@ -113,7 +113,7 @@ mod kernels {
             for (x, y) in pair {
                 sum += x * y;
             }
-            // `c` carries its own row pitch, bound on the host to the same `n`
+            // `c` carries its own row width, bound on the host to the same `n`
             // this kernel reads, so no stride crosses the call and no `unsafe`
             // is needed here.
             if let Some(mut cell) = c.tile_2d32_rt(coord) {
@@ -264,7 +264,7 @@ mod kernels {
 
         // Epilogue after the final barrier: one rectangle proof for this
         // thread's C cell. Out-of-range threads get `None` and simply skip.
-        // `c` carries its own row pitch, bound on the host to the same `n`
+        // `c` carries its own row width, bound on the host to the same `n`
         // this kernel reads, so no stride crosses the call.
         if let Some(mut cell) = c.tile_2d32_rt(coord) {
             let previous = cell.at_const::<0, 0>().read();
@@ -465,7 +465,7 @@ fn bench() -> Result<(), Box<dyn std::error::Error>> {
             &b_dev,
             BETA,
             // C's row width is bound to the slice here, once for the launch.
-            cuda_host::Pitched::new(&mut c_views_naive, n),
+            cuda_host::RowWidth::new(&mut c_views_naive, n),
         )?;
         Ok(())
     })?;
@@ -503,7 +503,7 @@ fn bench() -> Result<(), Box<dyn std::error::Error>> {
             &b_dev,
             BETA,
             // C's row width is bound to the slice here, once for the launch.
-            cuda_host::Pitched::new(&mut c_views_tiled, n),
+            cuda_host::RowWidth::new(&mut c_views_tiled, n),
         )?;
         Ok(())
     })?;
@@ -599,7 +599,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &a_dev,
         &b_dev,
         BETA,
-        cuda_host::Pitched::new(&mut c_safe_naive, n_arg),
+        cuda_host::RowWidth::new(&mut c_safe_naive, n_arg),
     )?;
     // SAFETY: each buffer owns exactly the element count passed beside it and
     // stays alive until after stream synchronization in `to_host_vec`.
@@ -632,7 +632,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &a_dev,
         &b_dev,
         BETA,
-        cuda_host::Pitched::new(&mut c_safe_naive, n_arg),
+        cuda_host::RowWidth::new(&mut c_safe_naive, n_arg),
     ) {
         Err(err) => {
             let text = err.to_string();
@@ -664,7 +664,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &a_dev,
         &b_dev,
         BETA,
-        cuda_host::Pitched::new(&mut c_safe_tiled, n_arg),
+        cuda_host::RowWidth::new(&mut c_safe_tiled, n_arg),
     )?;
     // SAFETY: each buffer owns exactly the element count passed beside it and
     // stays alive until after stream synchronization in `to_host_vec`.

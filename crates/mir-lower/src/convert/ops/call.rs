@@ -1593,11 +1593,11 @@ fn flatten_arguments(
                 flattened_args.push(len_val);
                 flattened_arg_types.push(len_ty);
 
-                // Index-space layout fields (e.g. a runtime row pitch) follow
+                // Index-space layout fields (e.g. a runtime row width) follow
                 // at aggregate slots `2 + i`. `convert_function_type` gave the
                 // callee one parameter per non-zero-sized field, so the call
                 // must supply them symmetrically or the callee would read a
-                // garbage pitch from a missing argument.
+                // garbage row width from a missing argument.
                 for (i, space_ty) in space_tys.into_iter().enumerate() {
                     let converted = convert_type(ctx, space_ty).map_err(|e| {
                         pliron::input_error_noloc!(

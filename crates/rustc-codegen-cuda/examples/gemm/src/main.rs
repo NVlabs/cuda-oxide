@@ -46,7 +46,7 @@ mod kernels {
         let row = thread::index_2d_row();
         let col = thread::index_2d_col();
 
-        // The pitch comes from `c`, bound on the host to this same `n`.
+        // The row width comes from `c`, bound on the host to this same `n`.
         if let Some(c_idx) = thread::index_2d_runtime(&c) {
             // col < n guaranteed by index_2d_runtime returning Some
             if row < m as usize {
@@ -153,7 +153,7 @@ fn main() {
             &a_dev,
             &b_dev,
             BETA,
-            cuda_host::Pitched::new(&mut c_dev, n_arg),
+            cuda_host::RowWidth::new(&mut c_dev, n_arg),
         )
     }
     .expect("Kernel launch failed");
@@ -176,7 +176,7 @@ fn main() {
                 &a_dev,
                 &b_dev,
                 BETA,
-                cuda_host::Pitched::new(&mut c_dev, n_arg),
+                cuda_host::RowWidth::new(&mut c_dev, n_arg),
             )
         }
         .expect("Kernel launch failed");

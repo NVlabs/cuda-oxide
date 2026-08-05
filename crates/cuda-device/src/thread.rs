@@ -36,7 +36,7 @@
 //!    strides are a compile error.
 //! 5. `index_2d_runtime(&slice)`: the witness stores the thread's raw
 //!    `(row, col)` coordinates, not a flat index. The addressed
-//!    `DisjointSlice` resolves them against its own host-bound pitch at
+//!    `DisjointSlice` resolves them against its own host-bound row width at
 //!    the access site, so distinct threads always resolve distinct
 //!    elements no matter which slice minted the witness.
 //! 6. The witness is `!Send + !Sync + !Copy + !Clone` and `'kernel`-scoped,
@@ -66,7 +66,7 @@ mod flat_index_sealed {
 /// index is computed at minting time and [`ThreadIndex::get`] returns it
 /// as-is. [`Runtime2DIndex`] does **not** impl this: its witness stores the
 /// thread's raw `(row, col)` coordinates and the addressed `DisjointSlice`
-/// resolves them against its own host-bound pitch at the access site.
+/// resolves them against its own host-bound row width at the access site.
 ///
 /// This trait is sealed. Implementing it for a coordinate-carrying space
 /// would let `ThreadIndex::get` hand out the packed representation as if it
@@ -122,21 +122,21 @@ impl<const ROW_STRIDE: usize> IndexFormula for Index2D<ROW_STRIDE> {
     }
 }
 
-/// Type-level index space for runtime-pitch 2D indexing.
+/// Type-level index space for runtime-row-width 2D indexing.
 ///
 /// A `ThreadIndex<'_, Runtime2DIndex>` stores the thread's raw `(row, col)`
 /// hardware coordinates, packed into one word exactly as [`ThreadCoord2D32`]
 /// does. It deliberately does **not** store a flat index: two slices with
-/// different pitches would then disagree about which element a witness names,
+/// different row widths would then disagree about which element a witness names,
 /// and safe code that minted a witness from each and selected one under a
 /// thread-varying condition could alias two `&mut` onto one element (with 1x1
-/// cells, `(1, 0)` at pitch 5 and `(0, 5)` at pitch 100 both flatten to 5).
+/// cells, `(1, 0)` at row width 5 and `(0, 5)` at row width 100 both flatten to 5).
 ///
 /// Instead, the addressed [`DisjointSlice`](crate::disjoint::DisjointSlice)
-/// resolves the coordinates against its **own** host-bound pitch at the access
-/// site (`row * pitch + col`, with a `col < pitch` check). Distinct threads
-/// hold distinct coordinates, and every thread of the launch reads the same
-/// host-written pitch from the slice it addresses, so the mapping is injective
+/// resolves the coordinates against its **own** host-bound row width at the
+/// access site (`row * width + col`, with a `col < width` check). Distinct
+/// threads hold distinct coordinates, and every thread of the launch reads the
+/// same host-written width from the slice it addresses, so the mapping is injective
 /// per slice regardless of which slice minted the witness.
 ///
 /// If the stride is known at compile time, prefer [`index_2d`]: the
@@ -203,8 +203,8 @@ impl<'kernel, Domain, Coordinates> LaunchContext<'kernel, Domain, Coordinates> {
 /// functions:
 /// - [`index_1d()`] for 1D grids
 /// - [`index_2d()`] for const-stride 2D grids
-/// - [`index_2d_runtime()`] for runtime-pitch 2D grids; safe, the pitch is
-///   read from the slice the index will address, bound once by the host
+/// - [`index_2d_runtime()`] for runtime-row-width 2D grids; safe, the width
+///   is read from the slice the index will address, bound once by the host
 ///
 /// # Where you can call them
 ///
@@ -332,7 +332,7 @@ impl<'kernel, IndexSpace: FlatIndexSpace> ThreadIndex<'kernel, IndexSpace> {
     ///
     /// Only flat index spaces expose this: a [`Runtime2DIndex`] witness
     /// stores `(row, col)` coordinates rather than a flat index, and the flat
-    /// index it resolves to depends on the pitch of the slice it addresses.
+    /// index it resolves to depends on the row width of the slice it addresses.
     #[inline(always)]
     pub fn get(&self) -> usize {
         self.raw
@@ -359,7 +359,7 @@ const _: () = assert!(usize::BITS >= 64);
 /// the row far below `2^32`).
 ///
 /// The packed word never equals `usize::MAX` for a minted witness: `col` is
-/// strictly below a `u32` pitch, so the low half is at most `u32::MAX - 1`.
+/// strictly below a `u32` row width, so the low half is at most `u32::MAX - 1`.
 /// That keeps `usize::MAX` free as the invalid-witness sentinel.
 #[inline(always)]
 pub(crate) fn pack_runtime_2d_coords(row: usize, col: usize) -> usize {
@@ -672,18 +672,18 @@ pub mod __internal {
     /// thread of the launch necessarily uses the same one.
     ///
     /// The witness stores the thread's packed `(row, col)` coordinates, not a
-    /// flat index. Flattening here against `slice`'s pitch would bake the
+    /// flat index. Flattening here against `slice`'s row width would bake the
     /// MINTING slice's grid into the witness; a second slice with a different
-    /// pitch could then be addressed through it, and two threads' "unique"
+    /// width could then be addressed through it, and two threads' "unique"
     /// indices would land on one element. The addressed slice resolves the
-    /// coordinates against its own pitch instead, so `Some` means only "this
+    /// coordinates against its own width instead, so `Some` means only "this
     /// thread owns a cell in `slice`'s grid".
     #[inline(always)]
     pub fn index_2d_runtime<'kernel, T>(
         scope: &'kernel LaunchContext<'kernel, impl LaunchDomain, impl Sized>,
         slice: &crate::disjoint::DisjointSlice<'_, T, Runtime2DIndex>,
     ) -> Option<ThreadIndex<'kernel, Runtime2DIndex>> {
-        let row_stride = slice.row_pitch() as usize;
+        let row_stride = slice.row_width() as usize;
         if row_stride == 0 {
             return None;
         }
@@ -926,12 +926,12 @@ pub fn index_2d<'kernel, const ROW_STRIDE: usize>()
 ///
 /// The witness stores the thread's raw `(row, col)` coordinates. Whichever
 /// `DisjointSlice<T, Runtime2DIndex>` it is handed to resolves them against
-/// that slice's own host-bound pitch at the access site, so handing a witness
+/// that slice's own host-bound row width at the access site, so handing a witness
 /// minted from one slice to another slice cannot smuggle the first slice's
 /// grid along with it. `Some` here means only that this thread owns a cell of
-/// `slice`'s grid (`col < slice.row_pitch()`).
+/// `slice`'s grid (`col < slice.row_width()`).
 ///
-/// `None` when the launch uses more than two dimensions, when the pitch is
+/// `None` when the launch uses more than two dimensions, when the row width is
 /// zero, or when a coordinate does not fit the packed 32-bit-per-axis
 /// representation (unreachable for real launch shapes).
 ///

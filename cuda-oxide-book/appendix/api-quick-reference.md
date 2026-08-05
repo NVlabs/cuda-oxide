@@ -205,7 +205,7 @@ let idx     = thread::index_1d();                            // ThreadIndex<'_, 
 let idx2d   = thread::index_2d::<128>();                     // Option<ThreadIndex<'_, Index2D<128>>>
 let idx2d_r = thread::index_2d_runtime(&out);                // Option<ThreadIndex<'_, Runtime2DIndex>>
 //            `out` is the DisjointSlice<T, Runtime2DIndex> the index will address;
-//            its row pitch was bound once by the host via cuda_host::Pitched.
+//            its row width was bound once by the host via cuda_host::RowWidth.
 let idx32   = thread::index_1d_u32(launch_context);          // ThreadIndex32<'_>
 let pos32   = thread::coord_2d_u32(launch_context);          // ThreadCoord2D32<'_>
 
@@ -218,7 +218,7 @@ let bdim_x = thread::blockDim_x();     // u32
 |:--------------------------------------------|:-------------------------------------------------|:-----------------------------------------------------------|
 | `thread::index_1d()`                        | `ThreadIndex<'_, Index1D>`                       | Unique linear index (1D grids)                             |
 | `thread::index_2d::<S>()`                   | `Option<ThreadIndex<'_, Index2D<S>>>`            | Const-stride 2D index; mismatched strides are a type error |
-| `thread::index_2d_runtime(&slice)`          | `Option<ThreadIndex<'_, Runtime2DIndex>>`        | Runtime-pitch 2D index; pitch read from the slice          |
+| `thread::index_2d_runtime(&slice)`          | `Option<ThreadIndex<'_, Runtime2DIndex>>`        | Runtime-width 2D index; row width read from the slice      |
 | `thread::index_1d_u32(launch_context)`      | `ThreadIndex32<'_>`                              | 1-D index as `u32`; requires checked `u32` coordinates     |
 | `thread::coord_2d_u32(launch_context)`      | `ThreadCoord2D32<'_>`                            | 2-D row/column as `u32`; requires checked `u32` coordinates|
 | `thread::index_2d_row()`                    | `usize`                                          | 2D row index                                               |
@@ -238,11 +238,11 @@ Z. A matching `PreparedLaunch<K>` proves this without device checks. Otherwise,
 the device rejects the wrong rank: `index_1d` creates an invalid witness and
 2D helpers return `None`. A raw launch remains unsafe because its other memory
 and launch obligations are unchecked. `index_2d_runtime` covers launches whose
-stride is only known at runtime: the pitch travels inside the slice, written
-once by the host into the launch packet (`cuda_host::Pitched`), so there is no
+stride is only known at runtime: the row width travels inside the slice, written
+once by the host into the launch packet (`cuda_host::RowWidth`), so there is no
 `unsafe` and no per-call stride for threads to disagree about. The witness
 stores the thread's `(row, col)` coordinates and the addressed slice resolves
-them against its own pitch. Full
+them against its own row width. Full
 discussion in [The Safety Model](../gpu-safety/the-safety-model.md).
 
 ---
@@ -272,12 +272,12 @@ pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
 `Index1D` and `Index2D<S>`). For `Runtime2DIndex` slices, use the
 explicit `thread::index_2d_runtime(&slice)` + `get_mut(idx)` pair; the
 slice resolves the witness's coordinates against its own host-bound
-pitch (`slice.row_pitch()`).
+row width (`slice.row_width()`).
 
 For fixed-size tiles, use `DisjointSlice<T, LinearTiles<N>>::tile_thread32`
 or `DisjointSlice<T, RowMajorTiles<R, C, S>>::tile_2d32`. Each method checks a
 complete tile once, then `at_const` accesses known positions without another
-runtime bounds check. `S` is the caller-declared logical row pitch and must
+runtime bounds check. `S` is the caller-declared logical row width and must
 match the buffer layout. See {ref}`Check a tile once <check-a-tile-once>`.
 
 ---

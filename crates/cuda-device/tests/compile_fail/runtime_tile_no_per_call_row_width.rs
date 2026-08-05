@@ -3,19 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! The pitch belongs to the slice, so there is no per-call pitch to disagree
-//! about. This is the case that made the earlier design unsound: two call sites
+//! The row width belongs to the slice, so there is no per-call width to
+//! disagree about. This is the case that made the earlier design unsound: two call sites
 //! on one slice could pass different launch-uniform values, or one call site
 //! could select between two of them under a thread-varying condition, and two
 //! threads would then resolve the same element through "disjoint" tiles.
 //!
 //! Both spellings below are rejected: `tile_2d32_rt` takes only the thread
-//! coordinate, and a slice built for one pitch cannot be rebuilt for another.
+//! coordinate, and a slice built for one row width cannot be rebuilt for
+//! another.
 
 use cuda_device::thread::{LaunchContextRef, __internal};
 use cuda_device::{DisjointSlice, RuntimeRowMajorTiles, Uniform};
 
-fn cannot_pass_a_pitch_per_call<'kernel>(
+fn cannot_pass_a_row_width_per_call<'kernel>(
     launch_context: LaunchContextRef<'kernel, __internal::Domain2, __internal::U32Coordinates>,
     mut c: DisjointSlice<'_, f32, RuntimeRowMajorTiles<1, 1>>,
     thread_varying: bool,

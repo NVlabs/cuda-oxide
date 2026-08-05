@@ -800,9 +800,9 @@ enum CudaModuleParamMarshal {
     WritableDeviceBuffer {
         elem_ty: TokenStream2,
     },
-    /// A writable buffer whose index space carries a runtime row pitch, so the
-    /// host supplies the pitch and the packet gains a third slot.
-    PitchedDeviceBuffer {
+    /// A writable buffer whose index space carries a runtime row width, so
+    /// the host supplies the width and the packet gains a third slot.
+    RowWidthDeviceBuffer {
         elem_ty: TokenStream2,
     },
 }
@@ -2121,7 +2121,7 @@ fn requires_grammar_help(params: &[CudaModuleParam]) -> String {
             }
             CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. }
             | CudaModuleParamMarshal::WritableDeviceBuffer { .. }
-            | CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+            | CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
                 names.push(format!("`{name}.len()`"));
             }
         }
@@ -2230,7 +2230,7 @@ fn validate_requires_operand(expr: &Expr, params: &[CudaModuleParam]) -> syn::Re
             match param.marshal {
                 CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. }
                 | CudaModuleParamMarshal::WritableDeviceBuffer { .. }
-                | CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+                | CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
                     Err(syn::Error::new_spanned(
                         path,
                         format!(
@@ -2304,7 +2304,7 @@ fn validate_requires_operand(expr: &Expr, params: &[CudaModuleParam]) -> syn::Re
             match param.marshal {
                 CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. }
                 | CudaModuleParamMarshal::WritableDeviceBuffer { .. }
-                | CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => Ok(()),
+                | CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => Ok(()),
                 CudaModuleParamMarshal::Scalar => Err(syn::Error::new_spanned(
                     call,
                     format!(
@@ -2633,11 +2633,11 @@ fn cuda_module_host_type(
     }
 
     if let Some(elem_ty) = cuda_module_disjoint_slice_elem(ty) {
-        if cuda_module_disjoint_slice_is_pitched(ty) {
+        if cuda_module_disjoint_slice_has_row_width(ty) {
             return Ok((
-                quote! { ::cuda_host::Pitched<'_, #elem_ty> },
-                quote! { ::cuda_host::Pitched<#async_lifetime, #elem_ty> },
-                CudaModuleParamMarshal::PitchedDeviceBuffer {
+                quote! { ::cuda_host::RowWidth<'_, #elem_ty> },
+                quote! { ::cuda_host::RowWidth<#async_lifetime, #elem_ty> },
+                CudaModuleParamMarshal::RowWidthDeviceBuffer {
                     elem_ty: quote! { #elem_ty },
                 },
             ));
@@ -2712,14 +2712,14 @@ fn cuda_module_uniform_scalar(ty: &Type) -> Option<TokenStream2> {
     Some(quote! { #scalar })
 }
 
-/// True when a `DisjointSlice`'s index space carries a runtime row pitch.
+/// True when a `DisjointSlice`'s index space carries a runtime row width.
 ///
 /// Matched on the spelling of the index-space argument, exactly as the element
 /// type is. The spelling only selects the host ABI; `SpaceLayout` is what
-/// decides whether the device type really carries the pitch, and a mismatch
+/// decides whether the device type really carries the width, and a mismatch
 /// between the two is a type error at the generated call rather than a silent
 /// packet-shape difference.
-fn cuda_module_disjoint_slice_is_pitched(ty: &Type) -> bool {
+fn cuda_module_disjoint_slice_has_row_width(ty: &Type) -> bool {
     let Type::Path(type_path) = ty else {
         return false;
     };
@@ -2797,14 +2797,14 @@ fn add_cuda_module_disjoint_contract_bounds(
 /// Requires every `DisjointSlice` parameter's resolved type to carry exactly
 /// the launch-packet shape the macro chose for it.
 ///
-/// The macro picks the two-word `(ptr, len)` or three-word `(ptr, len, pitch)`
+/// The macro picks the two-word `(ptr, len)` or three-word `(ptr, len, width)`
 /// host marshalling from the index space's spelling, which type aliases can
-/// defeat: `type Rt = RuntimeRowMajorTiles<1, 1>;` spells an unpitched slice
-/// over a pitched space, and the launch would then push two kernel parameters
+/// defeat: `type Rt = RuntimeRowMajorTiles<1, 1>;` spells a flat slice over a
+/// runtime-width space, and the launch would then push two kernel parameters
 /// for a three-parameter kernel, making the driver read past the argument
 /// array. The sealed `__LaunchContractDisjointSliceAbi` trait is the semantic
 /// authority: only the genuine `DisjointSlice` whose index space really has
-/// (`true`) or really lacks (`false`) a runtime pitch satisfies the bound, so
+/// (`true`) or really lacks (`false`) a runtime row width satisfies the bound, so
 /// a spelling/semantics mismatch is a compile error instead of a malformed
 /// launch packet.
 fn add_cuda_module_disjoint_abi_bounds(generics: &mut syn::Generics, params: &[CudaModuleParam]) {
@@ -2814,14 +2814,14 @@ fn add_cuda_module_disjoint_abi_bounds(generics: &mut syn::Generics, params: &[C
         else {
             continue;
         };
-        let pitched = matches!(
+        let has_row_width = matches!(
             param.marshal,
-            CudaModuleParamMarshal::PitchedDeviceBuffer { .. }
+            CudaModuleParamMarshal::RowWidthDeviceBuffer { .. }
         );
         let (device_ty, bound_lifetime) = cuda_module_disjoint_bound_type(device_ty);
         generics.make_where_clause().predicates.push(parse_quote! {
             for<#bound_lifetime> #device_ty:
-                ::cuda_device::__LaunchContractDisjointSliceAbi<#element_ty, #pitched>
+                ::cuda_device::__LaunchContractDisjointSliceAbi<#element_ty, #has_row_width>
         });
     }
 }
@@ -3422,11 +3422,11 @@ fn generate_cuda_module_legacy_owned_async_launch_method(
                 let resource_ty = cuda_module_owned_resource_type(index);
                 quote! { mut #name: #resource_ty }
             }
-            // The owned resource carries the buffer; `PitchedOwned` adds the
+            // The owned resource carries the buffer; `RowWidthOwned` adds the
             // row width the kernel will index it by.
-            CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+            CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
                 let resource_ty = cuda_module_owned_resource_type(index);
-                quote! { mut #name: ::cuda_host::PitchedOwned<#resource_ty> }
+                quote! { mut #name: ::cuda_host::RowWidthOwned<#resource_ty> }
             }
         }
     });
@@ -3519,11 +3519,11 @@ fn generate_cuda_module_prepared_owned_async_launch_method(
                     let resource_ty = cuda_module_owned_resource_type(index);
                     quote! { mut #name: #resource_ty }
                 }
-                // The owned resource carries the buffer; `PitchedOwned` adds
+                // The owned resource carries the buffer; `RowWidthOwned` adds
                 // the row width the kernel will index it by.
-                CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+                CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
                     let resource_ty = cuda_module_owned_resource_type(index);
-                    quote! { mut #name: ::cuda_host::PitchedOwned<#resource_ty> }
+                    quote! { mut #name: ::cuda_host::RowWidthOwned<#resource_ty> }
                 }
             }
         })
@@ -3739,9 +3739,9 @@ fn cuda_module_owned_resource_params(
             CudaModuleParamMarshal::WritableDeviceBuffer { elem_ty } => {
                 Some((index, param.name.clone(), elem_ty.clone(), true, false))
             }
-            // A pitched slice still owns a buffer resource; the pitch rides
-            // beside it in `PitchedOwned`.
-            CudaModuleParamMarshal::PitchedDeviceBuffer { elem_ty } => {
+            // A row-width slice still owns a buffer resource; the width
+            // rides beside it in `RowWidthOwned`.
+            CudaModuleParamMarshal::RowWidthDeviceBuffer { elem_ty } => {
                 Some((index, param.name.clone(), elem_ty.clone(), true, true))
             }
         })
@@ -3758,10 +3758,10 @@ fn cuda_module_owned_resources_ty(
     if resources.is_empty() {
         quote! { () }
     } else {
-        let resource_tys = resources.iter().map(|(index, _, _, _, pitched)| {
+        let resource_tys = resources.iter().map(|(index, _, _, _, has_row_width)| {
             let resource_ty = cuda_module_owned_resource_type(*index);
-            if *pitched {
-                quote! { ::cuda_host::PitchedOwned<#resource_ty> }
+            if *has_row_width {
+                quote! { ::cuda_host::RowWidthOwned<#resource_ty> }
             } else {
                 quote! { #resource_ty }
             }
@@ -3807,18 +3807,18 @@ fn cuda_module_arg_marshalling(index: usize, param: &CudaModuleParam) -> TokenSt
                 );
             }
         }
-        CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
             let ptr_name = internal_ident(&format!("__cuda_oxide_arg_{index}_ptr"));
             let len_name = internal_ident(&format!("__cuda_oxide_arg_{index}_len"));
-            let pitch_name = internal_ident(&format!("__cuda_oxide_arg_{index}_pitch"));
+            let width_name = internal_ident(&format!("__cuda_oxide_arg_{index}_row_width"));
             quote! {
-                let (mut #ptr_name, mut #len_name, mut #pitch_name) =
-                    ::cuda_host::pitched_device_buffer_arg(#name);
-                ::cuda_host::push_kernel_pitched_device_slice(
+                let (mut #ptr_name, mut #len_name, mut #width_name) =
+                    ::cuda_host::row_width_device_buffer_arg(#name);
+                ::cuda_host::push_kernel_row_width_device_slice(
                     &mut #args,
                     &mut #ptr_name,
                     &mut #len_name,
-                    &mut #pitch_name,
+                    &mut #width_name,
                 );
             }
         }
@@ -3844,9 +3844,9 @@ fn cuda_module_owned_async_arg_marshalling(param: &CudaModuleParam) -> TokenStre
                 ::cuda_host::push_async_writable_device_slice(&mut #launch, &mut #name);
             }
         }
-        CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
             quote! {
-                ::cuda_host::push_async_owned_pitched_device_slice(&mut #launch, &mut #name);
+                ::cuda_host::push_async_owned_row_width_device_slice(&mut #launch, &mut #name);
             }
         }
     }
@@ -3871,9 +3871,9 @@ fn cuda_module_async_arg_marshalling(param: &CudaModuleParam) -> TokenStream2 {
                 ::cuda_host::push_async_writable_device_slice(&mut #launch, #name);
             }
         }
-        CudaModuleParamMarshal::PitchedDeviceBuffer { .. } => {
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
             quote! {
-                ::cuda_host::push_async_pitched_device_slice(&mut #launch, #name);
+                ::cuda_host::push_async_row_width_device_slice(&mut #launch, #name);
             }
         }
     }
@@ -9449,16 +9449,16 @@ mod tests {
 
     #[test]
     fn disjoint_slice_packet_shape_is_bound_to_the_resolved_type() {
-        // The spelling `Rt` hides a runtime pitch, so the macro selects the
-        // two-word host ABI. The generated launch methods must carry the
-        // semantic `PITCHED = false` bound for Rust to reject at the call
-        // site once `Rt` resolves to a pitched index space.
+        // The spelling `Rt` hides a runtime row width, so the macro selects
+        // the two-word host ABI. The generated launch methods must carry the
+        // semantic `HAS_ROW_WIDTH = false` bound for Rust to reject at the call
+        // site once `Rt` resolves to a runtime-width index space.
         let module: ItemMod = parse_quote! {
             mod kernels {
                 type Rt = RuntimeRowMajorTiles<1, 1>;
 
                 #[kernel]
-                pub fn alias_hides_pitch(mut out: DisjointSlice<f32, Rt>) {}
+                pub fn alias_hides_row_width(mut out: DisjointSlice<f32, Rt>) {}
             }
         };
         let expanded = expand_to_compact_string(module);
@@ -9467,15 +9467,15 @@ mod tests {
                 "for<'__cuda_oxide_disjoint>DisjointSlice<'__cuda_oxide_disjoint,f32,Rt>:\
                  ::cuda_device::__LaunchContractDisjointSliceAbi<f32,false>"
             ),
-            "unpitched spelling must bind PITCHED = false: {expanded}"
+            "flat spelling must bind HAS_ROW_WIDTH = false: {expanded}"
         );
 
         // The direct spelling selects the three-word ABI and must bind
-        // `PITCHED = true`.
+        // `HAS_ROW_WIDTH = true`.
         let module: ItemMod = parse_quote! {
             mod kernels {
                 #[kernel]
-                pub fn really_pitched(mut out: DisjointSlice<f32, Runtime2DIndex>) {}
+                pub fn really_has_row_width(mut out: DisjointSlice<f32, Runtime2DIndex>) {}
             }
         };
         let expanded = expand_to_compact_string(module);
@@ -9484,7 +9484,7 @@ mod tests {
                 "for<'__cuda_oxide_disjoint>DisjointSlice<'__cuda_oxide_disjoint,f32,\
                  Runtime2DIndex>:::cuda_device::__LaunchContractDisjointSliceAbi<f32,true>"
             ),
-            "pitched spelling must bind PITCHED = true: {expanded}"
+            "runtime-width spelling must bind HAS_ROW_WIDTH = true: {expanded}"
         );
     }
 

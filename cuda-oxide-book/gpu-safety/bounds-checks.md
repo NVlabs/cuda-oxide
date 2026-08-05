@@ -155,7 +155,7 @@ The safe way to *write* is still `DisjointSlice`, as described in
 for output matrices whose size isn't known at compile time:
 
 ```rust
-// `c` carries its own row pitch, bound on the host to this same `n`,
+// `c` carries its own row width, bound on the host to this same `n`,
 // so the call is safe: no per-thread width crosses the call.
 if let Some(mut cell) = c.tile_2d32_rt(coord) {
     let previous = cell.at_const::<0, 0>().read();
@@ -173,9 +173,9 @@ index `1*5 + 0 = 5`, and thread `(0, 5)` with width 100 resolves
 
 An earlier design took the width as an `unsafe` per-call argument, but no
 call-site obligation can close that hole: safe code can select between two
-"uniform" widths under a thread-varying condition. So the pitch lives in
-the slice instead. The host binds it once for the launch through
-`cuda_host::Pitched`, device code cannot choose it, and every thread that
+"uniform" widths under a thread-varying condition. So the row width lives
+in the slice instead. The host binds it once for the launch through
+`cuda_host::RowWidth`, device code cannot choose it, and every thread that
 addresses `c` reads the same width by construction. When the width *is*
 known at compile time, use `tile_2d32` instead and a mismatch becomes a
 type error.

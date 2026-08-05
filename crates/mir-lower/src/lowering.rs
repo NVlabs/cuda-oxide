@@ -581,7 +581,7 @@ fn classify_argument_type(
 ///
 /// Generates: `undef → insertvalue ptr[0] → insertvalue len[1]`, then one
 /// `insertvalue` per index-space layout field at slot `2 + i`. Leaving those
-/// slots undef would give every thread a garbage row pitch, so the count here
+/// slots undef would give every thread a garbage row width, so the count here
 /// has to match what `convert_function_type` put in the signature.
 ///
 /// Returns the final reconstructed value and the last inserted operation.

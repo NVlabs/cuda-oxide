@@ -335,7 +335,7 @@ impl Verify for MirSliceType {
 /// A disjoint slice is `{ ptr, len }` followed by whatever runtime layout its
 /// index space carries. An index space whose geometry is fixed in its type
 /// carries none, so `space_tys` is empty and the slice keeps its two-field
-/// shape and kernel ABI. A space with a runtime row pitch contributes one `u32`
+/// shape and kernel ABI. A space with a runtime row width contributes one `u32`
 /// field, which the host writes into the launch packet beside the pointer and
 /// length.
 ///

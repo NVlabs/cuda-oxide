@@ -103,7 +103,7 @@ pub fn tiled_sgemm(
         t += 1;
     }
 
-    // The pitch comes from `c`, bound on the host to this same `n`.
+    // The row width comes from `c`, bound on the host to this same `n`.
     if let Some(c_idx) = thread::index_2d_runtime(&c) {
         if let Some(c_elem) = c.get_mut(c_idx) {
             *c_elem = sum;

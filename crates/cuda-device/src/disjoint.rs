@@ -21,7 +21,7 @@
 //!    the index space so mixing const strides is rejected at compile
 //!    time. A `Runtime2DIndex` witness instead carries the raw
 //!    `(row, col)` coordinates, and the addressed slice resolves them
-//!    against its own host-bound pitch at the access site.
+//!    against its own host-bound row width at the access site.
 //!
 //! 2. **`get_mut(idx)`**: Bounds-checked access via an explicit
 //!    `ThreadIndex`. Returns `Option<&mut T>` — `None` for out-of-bounds
@@ -54,21 +54,21 @@ mod space_layout_sealed {
 ///
 /// An index space that fixes its geometry in the type needs nothing here, so
 /// [`Data`](Self::Data) is `()` and the slice keeps its `{ ptr, len }` layout.
-/// A space whose row pitch is a runtime value sets `Data = u32`, and the host
-/// marshals that pitch into the launch packet beside the pointer and length.
+/// A space whose row width is a runtime value sets `Data = u32`, and the host
+/// marshals that width into the launch packet beside the pointer and length.
 ///
-/// # Why the pitch belongs here and not at the access site
+/// # Why the row width belongs here and not at the access site
 ///
-/// Tile disjointness needs one pitch per slice for the slice's whole lifetime.
-/// A pitch supplied per call cannot give that, even when each candidate value
-/// is itself launch-uniform: safe code can select between two [`Uniform<u32>`]
-/// values under a thread-varying condition, and the selected pitch then differs
-/// between threads. Two threads that disagree about the row width describe two
-/// grids over one buffer, and their "disjoint" tiles collide. With 1x1 tiles,
-/// thread `(1, 0)` at pitch 5 and thread `(0, 5)` at pitch 100 both resolve
-/// flat index 5.
+/// Tile disjointness needs one row width per slice for the slice's whole
+/// lifetime. A width supplied per call cannot give that, even when each
+/// candidate value is itself launch-uniform: safe code can select between two
+/// [`Uniform<u32>`] values under a thread-varying condition, and the selected
+/// width then differs between threads. Two threads that disagree about the row
+/// width describe two grids over one buffer, and their "disjoint" tiles
+/// collide. With 1x1 tiles, thread `(1, 0)` at width 5 and thread `(0, 5)` at
+/// width 100 both resolve flat index 5.
 ///
-/// Binding the pitch at the host boundary removes the choice. The host writes
+/// Binding the row width at the host boundary removes the choice. The host writes
 /// one value into the launch packet, every thread reads that word, and device
 /// code has no step at which it could substitute another.
 ///
@@ -184,7 +184,7 @@ pub struct DisjointSlice<'a, T, IndexSpace: SpaceLayout = Index1D> {
 /// The `space` field must not disturb the kernel ABI of any index space that
 /// carries no runtime layout. `()` is zero-sized, so a `#[repr(C)]` slice over
 /// a static space stays exactly `{ ptr, len }` and every existing kernel keeps
-/// its two-word parameter lowering. A runtime pitch adds one word.
+/// its two-word parameter lowering. A runtime row width adds one word.
 const _: () = {
     assert!(
         size_of::<DisjointSlice<'static, f32, Index1D>>()
@@ -266,23 +266,23 @@ impl<'a, T> __LaunchContractDisjointSlice<T, 2>
 /// the host ABI `#[cuda_module]` chose for it.
 ///
 /// The macro selects between the two-word `(ptr, len)` and three-word
-/// `(ptr, len, pitch)` host marshalling from the *spelling* of the index
+/// `(ptr, len, width)` host marshalling from the *spelling* of the index
 /// space, because a proc macro cannot resolve types. Spelling alone is
-/// forgeable: `type Rt = RuntimeRowMajorTiles<1, 1>;` names a pitched space
-/// without saying so, and a host launch that pushed two parameters for a
+/// forgeable: `type Rt = RuntimeRowMajorTiles<1, 1>;` names a runtime-width
+/// space without saying so, and a host launch that pushed two parameters for a
 /// three-parameter kernel would make the driver read past the argument array.
 ///
 /// This sealed trait is the semantic authority behind that fast path. The
-/// macro bounds every `DisjointSlice` parameter by the pitched-ness it chose
-/// (`PITCHED = true` or `false`), and only the genuine `DisjointSlice` whose
+/// macro bounds every `DisjointSlice` parameter by the packet shape it chose
+/// (`HAS_ROW_WIDTH = true` or `false`), and only the genuine `DisjointSlice` whose
 /// [`SpaceLayout::Data`] actually matches that packet shape implements the
-/// corresponding instantiation. An alias that hides a runtime pitch, or a
+/// corresponding instantiation. An alias that hides a runtime row width, or a
 /// look-alike space that fakes one, fails the bound before any launch code is
 /// generated. If a future index space carries layout data of another shape,
 /// it implements neither instantiation and every kernel using it fails
 /// closed until the host marshalling learns the new shape.
 #[doc(hidden)]
-pub trait __LaunchContractDisjointSliceAbi<Element, const PITCHED: bool>:
+pub trait __LaunchContractDisjointSliceAbi<Element, const HAS_ROW_WIDTH: bool>:
     launch_contract_sealed::Sealed
 {
 }
@@ -481,7 +481,7 @@ impl<'a, T, const ROWS: usize, const COLS: usize>
     /// launch reads the same value. That is what lets
     /// [`tile_2d32_rt`](Self::tile_2d32_rt) be safe.
     #[inline(always)]
-    pub fn row_pitch(&self) -> u32 {
+    pub fn row_width(&self) -> u32 {
         self.space
     }
 }
@@ -492,7 +492,7 @@ impl<'a, T> DisjointSlice<'a, T, Runtime2DIndex> {
     /// Written once by the host into the launch packet, so every thread of the
     /// launch reads the same value.
     #[inline(always)]
-    pub fn row_pitch(&self) -> u32 {
+    pub fn row_width(&self) -> u32 {
         self.space
     }
 
@@ -503,22 +503,23 @@ impl<'a, T> DisjointSlice<'a, T, Runtime2DIndex> {
     ///
     /// A [`Runtime2DIndex`] witness stores the thread's raw `(row, col)`
     /// coordinates, and this method resolves them against **this** slice's
-    /// own host-bound pitch (`row * pitch + col`, requiring `col < pitch`).
-    /// That per-slice resolution is what makes the method safe:
+    /// own host-bound row width (`row * width + col`, requiring
+    /// `col < width`). That per-slice resolution is what makes the method
+    /// safe:
     ///
-    /// 1. **Bounds checked**: `col < pitch` and `flat < len` both return
+    /// 1. **Bounds checked**: `col < width` and `flat < len` both return
     ///    `None` on failure.
     ///
-    /// 2. **Injective per slice**: with one pitch for the whole launch
-    ///    (written once by the host) and `col < pitch`, distinct `(row, col)`
+    /// 2. **Injective per slice**: with one row width for the whole launch
+    ///    (written once by the host) and `col < width`, distinct `(row, col)`
     ///    pairs resolve to distinct flat indices. Distinct threads hold
     ///    distinct hardware coordinates, so no two threads reach the same
     ///    element through this slice.
     ///
     /// 3. **No witness mixing**: a witness minted from a slice with a
-    ///    different pitch carries only its coordinates, never the minting
-    ///    slice's grid. Resolving here uses this slice's pitch, so handing
-    ///    witnesses across differently pitched slices cannot alias two
+    ///    different row width carries only its coordinates, never the minting
+    ///    slice's grid. Resolving here uses this slice's width, so handing
+    ///    witnesses across slices of different widths cannot alias two
     ///    `&mut` onto one element the way flat-index witnesses could.
     #[inline]
     pub fn get_mut<'kernel>(
@@ -530,20 +531,20 @@ impl<'a, T> DisjointSlice<'a, T, Runtime2DIndex> {
         }
         let row = idx.row();
         let col = idx.col();
-        let pitch = self.space as usize;
-        // `col < pitch` keeps the coordinate inside one logical row, which is
-        // what makes `row * pitch + col` injective; it also rejects a zero
-        // pitch. `row` and `col` each fit 32 bits (packed representation) and
-        // `pitch <= u32::MAX`, so the flat index cannot wrap 64-bit `usize`.
-        if col >= pitch {
+        let width = self.space as usize;
+        // `col < width` keeps the coordinate inside one logical row, which is
+        // what makes `row * width + col` injective; it also rejects a zero
+        // width. `row` and `col` each fit 32 bits (packed representation) and
+        // `width <= u32::MAX`, so the flat index cannot wrap 64-bit `usize`.
+        if col >= width {
             return None;
         }
-        let i = row * pitch + col;
+        let i = row * width + col;
         if i < self.len {
             // SAFETY:
             // - Bounds check passed above.
             // - The per-slice resolution argument in the doc comment: one
-            //   host-bound pitch per launch plus `col < pitch` makes the
+            //   host-bound row width per launch plus `col < width` makes the
             //   coordinate-to-offset map injective across threads.
             // - The DisjointSlice was constructed with valid memory
             //   (from_raw_parts_with_space safety).
@@ -648,9 +649,9 @@ mod tests {
     //! Host-side proofs of the `Runtime2DIndex` resolution semantics.
     //!
     //! The witness carries `(row, col)` and the ADDRESSED slice resolves it
-    //! against its own pitch. These tests replay the exact scenario that made
-    //! flat-index witnesses unsound: witnesses minted for pitches 5 and 100
-    //! both flattened to element 5 (from `(1, 0)` and `(0, 5)`), so two
+    //! against its own row width. These tests replay the exact scenario that
+    //! made flat-index witnesses unsound: witnesses minted for row widths 5
+    //! and 100 both flattened to element 5 (from `(1, 0)` and `(0, 5)`), so two
     //! threads held `&mut` to one element. Per-slice resolution has to make
     //! those resolutions distinct for every slice they could be handed to.
 
@@ -661,16 +662,16 @@ mod tests {
     /// element index it lands on, via pointer arithmetic on a real buffer.
     fn resolved_flat_index(
         buffer: &mut [f32],
-        pitch: u32,
+        width: u32,
         row: usize,
         col: usize,
     ) -> Option<usize> {
         let base = buffer.as_mut_ptr();
         let len = buffer.len();
-        // SAFETY: `buffer` is exclusively borrowed for the call and `pitch`
+        // SAFETY: `buffer` is exclusively borrowed for the call and `width`
         // describes the grid the assertions below expect.
         let mut slice: DisjointSlice<'_, f32, Runtime2DIndex> =
-            unsafe { DisjointSlice::from_raw_parts_with_space(base, len, pitch) };
+            unsafe { DisjointSlice::from_raw_parts_with_space(base, len, width) };
         let witness = ThreadIndex::<Runtime2DIndex>::for_test(pack_runtime_2d_coords(row, col));
         slice
             .get_mut(witness)
@@ -678,18 +679,18 @@ mod tests {
     }
 
     #[test]
-    fn witnesses_from_two_pitches_cannot_alias_one_element() {
+    fn witnesses_from_two_row_widths_cannot_alias_one_element() {
         let mut buffer = [0.0f32; 512];
 
-        // The historical collision: flat witnesses gave (1, 0)@pitch5 -> 5
-        // and (0, 5)@pitch100 -> 5, one element for two threads. Resolved
+        // The historical collision: flat witnesses gave (1, 0)@width5 -> 5
+        // and (0, 5)@width100 -> 5, one element for two threads. Resolved
         // against the addressed slice instead, the two coordinate pairs must
         // never land on the same element of any one slice.
         //
-        // Addressed at pitch 5: (0, 5) has col >= pitch, no cell at all.
+        // Addressed at row width 5: (0, 5) has col >= width, no cell at all.
         assert_eq!(resolved_flat_index(&mut buffer, 5, 1, 0), Some(5));
         assert_eq!(resolved_flat_index(&mut buffer, 5, 0, 5), None);
-        // Addressed at pitch 100: distinct elements.
+        // Addressed at row width 100: distinct elements.
         assert_eq!(resolved_flat_index(&mut buffer, 100, 1, 0), Some(100));
         assert_eq!(resolved_flat_index(&mut buffer, 100, 0, 5), Some(5));
     }
@@ -697,15 +698,15 @@ mod tests {
     #[test]
     fn resolution_is_injective_per_slice() {
         let mut buffer = [0.0f32; 1024];
-        for pitch in [1u32, 3, 7, 64] {
+        for width in [1u32, 3, 7, 64] {
             let mut seen = [false; 1024];
             for row in 0..8usize {
                 for col in 0..8usize {
-                    if let Some(flat) = resolved_flat_index(&mut buffer, pitch, row, col) {
-                        assert!(col < pitch as usize, "resolved a cell outside the row");
+                    if let Some(flat) = resolved_flat_index(&mut buffer, width, row, col) {
+                        assert!(col < width as usize, "resolved a cell outside the row");
                         assert!(
                             !seen[flat],
-                            "coordinates ({row}, {col}) aliased element {flat} at pitch {pitch}"
+                            "coordinates ({row}, {col}) aliased element {flat} at row width {width}"
                         );
                         seen[flat] = true;
                     }
@@ -715,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_pitch_resolves_nothing() {
+    fn zero_row_width_resolves_nothing() {
         let mut buffer = [0.0f32; 16];
         assert_eq!(resolved_flat_index(&mut buffer, 0, 0, 0), None);
     }
@@ -723,7 +724,7 @@ mod tests {
     #[test]
     fn out_of_len_coordinates_resolve_to_none() {
         let mut buffer = [0.0f32; 10];
-        // Row 3 at pitch 4 starts at element 12, past len 10.
+        // Row 3 at row width 4 starts at element 12, past len 10.
         assert_eq!(resolved_flat_index(&mut buffer, 4, 3, 0), None);
         // Last in-bounds cell still resolves.
         assert_eq!(resolved_flat_index(&mut buffer, 4, 2, 1), Some(9));

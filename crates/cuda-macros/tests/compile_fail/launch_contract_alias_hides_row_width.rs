@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `#[cuda_module]` picks the launch packet's shape (two words or three) from
-//! the index space's spelling. An alias can hide a runtime pitch behind an
-//! innocent name: `Rt` below is `RuntimeRowMajorTiles<1, 1>`, whose slice is
-//! `(ptr, len, pitch)` on the device, but the spelling selects the two-word
+//! the index space's spelling. An alias can hide a runtime row width behind
+//! an innocent name: `Rt` below is `RuntimeRowMajorTiles<1, 1>`, whose slice
+//! is `(ptr, len, width)` on the device, but the spelling selects the two-word
 //! host ABI. Pushing two kernel parameters for a three-parameter kernel makes
 //! the driver read past the argument array. The sealed
 //! `__LaunchContractDisjointSliceAbi` bound is the semantic authority that
@@ -19,7 +19,7 @@ mod kernels {
     use super::*;
 
     #[kernel]
-    pub fn alias_hides_pitch(mut out: DisjointSlice<f32, Rt>) {
+    pub fn alias_hides_row_width(mut out: DisjointSlice<f32, Rt>) {
         let _ = &mut out;
     }
 }
@@ -37,7 +37,7 @@ fn launch(
         block_dim: (64, 1, 1),
         shared_mem_bytes: 0,
     };
-    let _ = unsafe { module.alias_hides_pitch(stream, cfg, out) };
+    let _ = unsafe { module.alias_hides_row_width(stream, cfg, out) };
 }
 
 fn main() {}

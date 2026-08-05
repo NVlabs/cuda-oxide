@@ -112,7 +112,7 @@ pub fn sgemm_naive(
     let row = thread::index_2d_row();
     let col = thread::index_2d_col();
 
-    // The pitch comes from `c`, bound on the host to this same `n`.
+    // The row width comes from `c`, bound on the host to this same `n`.
     if let Some(c_idx) = thread::index_2d_runtime(&c) {
         // col < n guaranteed by `Some` -- no manual check needed
         if row < m as usize {
@@ -134,7 +134,7 @@ pub fn sgemm_naive(
 
 Each thread computes one element of the output matrix. The 2D thread index
 maps directly to the (row, col) position. `DisjointSlice` checks bounds and
-requires the matching index-space type. `c`'s row pitch is not a per-call
+requires the matching index-space type. `c`'s row width is not a per-call
 argument: the host binds it into the slice once at launch, and
 `index_2d_runtime(&c)` reads it back, so every thread resolves against the
 same row width by construction. The remaining proof is explicit: Z is
@@ -353,10 +353,10 @@ This is where the magic lives. For each batch, we build a four-stage chain:
                 w0.cu_deviceptr(), w0.len() as u64,
                 0.0f32,
                 hidden.cu_deviceptr(), hidden.len() as u64,
-                DIM as u32,  // hidden's row pitch: the third packet word a
-                             // pitched DisjointSlice<_, Runtime2DIndex> takes
+                DIM as u32,  // hidden's row width: the third packet word a
+                             // DisjointSlice<_, Runtime2DIndex> takes
             ));
-            // SAFETY: packet/config match sgemm_naive (including the pitch
+            // SAFETY: packet/config match sgemm_naive (including the width
             // word for `c`), the scheduler uses the module's context, and the
             // owned wrapper retains its allocations.
             let launch = unsafe { builder.finalize_unchecked(gemm_cfg) };
@@ -429,8 +429,8 @@ at the same index, this is safe — no thread reads another's write.
 the raw packet and geometry become runnable, so each call has a local safety
 proof. `OwnedAsyncKernelLaunch` keeps its buffers alive. Prefer generated
 owned-async methods with `PreparedLaunch<K>` when the kernel declares a launch
-contract; for a pitched output like `c`, the generated method takes
-`cuda_host::PitchedOwned::new(buffer, pitch)` and marshals the third packet
+contract; for a runtime-width output like `c`, the generated method takes
+`cuda_host::RowWidthOwned::new(buffer, width)` and marshals the third packet
 word for you.
 
 ### Step 4: Spawn and collect

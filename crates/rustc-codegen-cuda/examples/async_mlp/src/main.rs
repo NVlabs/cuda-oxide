@@ -71,7 +71,7 @@ mod kernels {
         let row = thread::index_2d_row();
         let col = thread::index_2d_col();
 
-        // The pitch comes from `c`, bound on the host to this same `n`.
+        // The row width comes from `c`, bound on the host to this same `n`.
         if let Some(c_idx) = thread::index_2d_runtime(&c) {
             // col < n guaranteed by index_2d_runtime returning Some
             if row < m as usize {
@@ -278,7 +278,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             w0,
                             0.0f32,
                             // C's row width, bound to the buffer for this launch.
-                            cuda_host::PitchedOwned::new(hidden, DIM as u32),
+                            cuda_host::RowWidthOwned::new(hidden, DIM as u32),
                         )
                     }
                     .expect("Failed to build sgemm_naive launch");

@@ -31,7 +31,7 @@ error[E0277]: the trait bound `for<'__cuda_oxide_disjoint> cuda_device::Disjoint
    |                    ^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
    = help: the trait `for<'__cuda_oxide_disjoint> cuda_device::__LaunchContractDisjointSliceAbi<cuda_device::Index1D, false>` is not implemented for `cuda_device::DisjointSlice<'__cuda_oxide_disjoint, u64>`
-help: `cuda_device::DisjointSlice<'_, T, IndexSpace>` implements trait `cuda_device::__LaunchContractDisjointSliceAbi<Element, PITCHED>`
+help: `cuda_device::DisjointSlice<'_, T, IndexSpace>` implements trait `cuda_device::__LaunchContractDisjointSliceAbi<Element, HAS_ROW_WIDTH>`
   --> $WORKSPACE/crates/cuda-device/src/disjoint.rs
    |
    | / impl<'a, T, IndexSpace: SpaceLayout<Data = ()>> __LaunchContractDisjointSliceAbi<T, false>

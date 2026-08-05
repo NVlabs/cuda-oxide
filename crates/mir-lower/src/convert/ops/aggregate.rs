@@ -132,9 +132,9 @@ fn resolve_aggregate_slots(
 
     // No conversion history at all (e.g. a slice reconstructed in the entry
     // prologue, which is born as an LLVM struct). Identity is still fine if
-    // the current type is a slice fat pointer or an LLVM array. A pitched
-    // disjoint slice is the same case one word longer: every runtime index
-    // space today carries a single `u32` pitch, and the struct the type
+    // the current type is a slice fat pointer or an LLVM array. A disjoint
+    // slice with a runtime row width is the same case one word longer: every
+    // runtime index space today carries a single `u32` row width, and the struct the type
     // converter builds for it (`make_disjoint_slice_struct`) is
     // index-preserving by construction, exactly like the two-field fat
     // pointer. Both shape checks share the two-field caveat that an unnamed
@@ -144,20 +144,21 @@ fn resolve_aggregate_slots(
     // lowered shape differs (padding slots, reordering, other field types).
     let aggregate_ty = aggregate.get_type(ctx);
     let slice_struct_ty = make_slice_struct(ctx);
-    let pitched_slice_struct_ty = {
+    let row_width_slice_struct_ty = {
         // The one runtime layout current `SpaceLayout` impls produce: a
-        // single u32 row pitch. Built through the real constructor so this
+        // single u32 row width. Built through the real constructor so this
         // check cannot drift from the lowered shape. A future space with a
         // different `Data` shape is not listed here and thus fails closed
         // into the refuse-to-guess error until this site learns it.
-        let pitch_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
-        crate::convert::types::make_disjoint_slice_struct(ctx, &[pitch_ty])
+        let width_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        crate::convert::types::make_disjoint_slice_struct(ctx, &[width_ty])
             .map_err(anyhow_to_pliron)?
     };
     let is_llvm_array = aggregate_ty
         .deref(ctx)
         .is::<llvm_export::types::ArrayType>();
-    if aggregate_ty == slice_struct_ty || aggregate_ty == pitched_slice_struct_ty || is_llvm_array {
+    if aggregate_ty == slice_struct_ty || aggregate_ty == row_width_slice_struct_ty || is_llvm_array
+    {
         return Ok(AggregateSlots::Identity);
     }
 
@@ -166,7 +167,7 @@ fn resolve_aggregate_slots(
         "Cannot map field indices for aggregate of type {ty_disp}: no struct/tuple \
          conversion history was recorded for this operand, and identity indexing is \
          only sound for arrays and slice fat pointers (with or without the runtime \
-         row-pitch word). Refusing to guess a field mapping (issue #128)."
+         row-width word). Refusing to guess a field mapping (issue #128)."
     )
 }
 
@@ -3100,53 +3101,53 @@ mod tests {
         }
     }
 
-    /// The pitched arm of [`resolve_aggregate_slots`]' no-history fallback is
-    /// defensive symmetry: no current lowering path produces a pitched slice
-    /// value with an empty conversion history, so no end-to-end pipeline test
-    /// can reach it. This exercises the fallback directly: a value born as
-    /// the lowered `{ ptr, i64, i32 }` pitched shape (a block argument, which
+    /// The row-width arm of [`resolve_aggregate_slots`]' no-history fallback
+    /// is defensive symmetry: no current lowering path produces a runtime-width
+    /// slice value with an empty conversion history, so no end-to-end pipeline
+    /// test can reach it. This exercises the fallback directly: a value born as
+    /// the lowered `{ ptr, i64, i32 }` row-width shape (a block argument, which
     /// carries no history) must resolve to identity indexing exactly like the
     /// two-field `{ ptr, i64 }` fat pointer, and any other unrecognized
     /// no-history shape must keep failing closed into the refuse-to-guess
     /// error (issue #128).
     #[test]
-    fn no_history_fallback_resolves_pitched_slice_shape_and_stays_closed_otherwise() {
+    fn no_history_fallback_resolves_row_width_slice_shape_and_stays_closed_otherwise() {
         let mut ctx = make_ctx();
 
-        // The exact struct the type converter lowers a pitched disjoint
-        // slice to, built through the same constructor the fallback uses so
-        // the test cannot drift from the lowered shape.
-        let pitch_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
-        let pitched_ty = crate::convert::types::make_disjoint_slice_struct(&mut ctx, &[pitch_ty])
-            .expect("building the pitched slice struct must succeed");
+        // The exact struct the type converter lowers a runtime-width
+        // disjoint slice to, built through the same constructor the fallback
+        // uses so the test cannot drift from the lowered shape.
+        let width_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let row_width_ty = crate::convert::types::make_disjoint_slice_struct(&mut ctx, &[width_ty])
+            .expect("building the row-width slice struct must succeed");
 
-        // A three-field control shape that is NOT the pitched slice: i64
-        // where the u32 pitch word belongs.
+        // A three-field control shape that is NOT the row-width slice: i64
+        // where the u32 row-width word belongs.
         use llvm_export::types::PointerTypeExt;
         let ptr_ty: TypeHandle = llvm_types::PointerType::get_generic(&mut ctx).into();
         let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let foreign_ty: TypeHandle =
             llvm_types::StructType::get_unnamed(&mut ctx, vec![ptr_ty, i64_ty, i64_ty]).into();
 
-        let (_module, block) = build_kernel(&mut ctx, vec![pitched_ty, foreign_ty], vec![]);
-        let pitched_value = block.deref(&ctx).get_argument(0);
+        let (_module, block) = build_kernel(&mut ctx, vec![row_width_ty, foreign_ty], vec![]);
+        let row_width_value = block.deref(&ctx).get_argument(0);
         let foreign_value = block.deref(&ctx).get_argument(1);
 
         // Block arguments have no recorded conversion history at all.
         let no_history = OperandsInfo::default();
 
-        let resolved = resolve_aggregate_slots(&mut ctx, &no_history, pitched_value)
-            .expect("the pitched slice shape with no history must resolve");
+        let resolved = resolve_aggregate_slots(&mut ctx, &no_history, row_width_value)
+            .expect("the row-width slice shape with no history must resolve");
         assert!(
             matches!(resolved, AggregateSlots::Identity),
-            "the pitched {{ ptr, i64, u32 }} shape is index-preserving and must map identically"
+            "the row-width {{ ptr, i64, u32 }} shape is index-preserving and must map identically"
         );
 
         let refused = resolve_aggregate_slots(&mut ctx, &no_history, foreign_value);
         assert!(
             refused.is_err(),
-            "a no-history shape that is not a slice fat pointer (pitched or unpitched) \
-             must fail closed"
+            "a no-history shape that is not a slice fat pointer (with or without \
+             the row-width word) must fail closed"
         );
     }
 }

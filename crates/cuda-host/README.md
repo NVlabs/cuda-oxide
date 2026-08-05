@@ -81,11 +81,11 @@ what makes the value uniform: one marshalled value reaches every thread of the
 launch. The device side receives the witness, which is what device APIs needing
 a launch-uniform scalar require in place of an `unsafe` assertion.
 
-A slice whose index space carries a runtime row width takes `Pitched<T>`, which
-binds the pitch to that slice for the launch. The same reasoning applies and for
-the same reason, one step earlier: the pitch reaches the device as one word the
+A slice whose index space carries a runtime row width takes `RowWidth<T>`, which
+binds the width to that slice for the launch. The same reasoning applies and for
+the same reason, one step earlier: the row width reaches the device as one word the
 host wrote, so `DisjointSlice::tile_2d32_rt` needs neither a stride argument nor
-an `unsafe` assertion. The owned async launches take `PitchedOwned<B>`.
+an `unsafe` assertion. The owned async launches take `RowWidthOwned<B>`.
 
 Because the launches are ordinary methods, rust-analyzer and rustc can complete
 kernel names, show argument names, and type-check arguments before the program

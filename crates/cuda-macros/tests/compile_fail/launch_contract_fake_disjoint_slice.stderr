@@ -39,7 +39,7 @@ help: the trait `for<'__cuda_oxide_disjoint> cuda_device::__LaunchContractDisjoi
    |
  9 | pub struct DisjointSlice<'a, T, IndexSpace = Index1D> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-help: `cuda_device::DisjointSlice<'a, T, IndexSpace>` implements trait `cuda_device::__LaunchContractDisjointSliceAbi<Element, PITCHED>`
+help: `cuda_device::DisjointSlice<'a, T, IndexSpace>` implements trait `cuda_device::__LaunchContractDisjointSliceAbi<Element, HAS_ROW_WIDTH>`
   --> $WORKSPACE/crates/cuda-device/src/disjoint.rs
    |
    | / impl<'a, T, IndexSpace: SpaceLayout<Data = ()>> __LaunchContractDisjointSliceAbi<T, false>

@@ -55,7 +55,7 @@
 - `thread::index_1d()` -- unique only for a fully 1-D launch: grid and block
   Y/Z dimensions must all be `1`.
 - `thread::index_2d::<S>()` -- const-stride 2D index. The witness type carries `S`, so a `DisjointSlice<T, Index2D<S>>` rejects mismatched strides at compile time.
-- `thread::index_2d_runtime(&slice)` -- runtime row strides, taken from the slice the index will address, where the host bound the pitch once for the launch.
+- `thread::index_2d_runtime(&slice)` -- runtime row strides, taken from the slice the index will address, where the host bound the row width once for the launch.
 
 The witness is `!Send + !Sync + !Copy + !Clone` and `'kernel`-scoped, so threads can't launder it through shared memory and it can't outlive the kernel body. `DisjointSlice<T, IndexSpace>` accepts only a `ThreadIndex` whose `IndexSpace` matches its own.
 

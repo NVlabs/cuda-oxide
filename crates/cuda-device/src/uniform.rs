@@ -32,7 +32,7 @@
 //! thread-varying condition yields a value that differs between threads.
 //!
 //! So a fact that has to hold across a whole slice, rather than at one call,
-//! cannot be carried here. A row pitch is the example: it belongs to the
+//! cannot be carried here. A row width is the example: it belongs to the
 //! slice's index space, bound by the host, and
 //! [`crate::DisjointSlice::tile_2d32_rt`] reads it from there rather than
 //! taking it as an argument.

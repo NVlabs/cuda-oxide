@@ -31,7 +31,7 @@ pub fn sgemm_naive(
     let row = thread::index_2d_row();    // blockIdx.y * blockDim.y + threadIdx.y
     let col = thread::index_2d_col();    // blockIdx.x * blockDim.x + threadIdx.x
 
-    // The pitch comes from `c`, bound on the host to this same `n`.
+    // The row width comes from `c`, bound on the host to this same `n`.
     if let Some(c_idx) = thread::index_2d_runtime(&c) {
         // col < n_sz guaranteed by `Some` -- no manual check needed
         if row < m as usize {

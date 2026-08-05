@@ -18,7 +18,7 @@
 //! | `index_1d()`               | Normal function call    | Global 1D thread index                               |
 //! | `index_2d_row/col()`       | Normal function call    | 2D row/column indices                                |
 //! | `index_2d::<S>()`          | Normal function call    | Const-stride 2D index (returns `Option<ThreadIndex>`)|
-//! | `index_2d_runtime(&slice)` | Normal function call    | Runtime-stride 2D index (pitch read from the slice)  |
+//! | `index_2d_runtime(&slice)` | Normal function call    | Runtime-stride 2D index (row width read from slice)  |
 //! | `get_thread_local()`       | `MirPtrOffsetOp`        | DisjointSlice element ptr                            |
 //! | `len()`                    | `MirExtractFieldOp`     | Slice length extraction                              |
 //!
@@ -30,7 +30,7 @@
 //! - `index_2d::<S>() = if col < S { Some(row * S + col) } else { None }`
 //! - `index_2d_runtime(&slice)`: normal function call into `cuda_device`;
 //!   the witness packs `(row, col)` and the addressed slice resolves them
-//!   against its own host-bound pitch at the access site
+//!   against its own host-bound row width at the access site
 
 use super::super::helpers::{emit_store_result_and_goto, set_generated_intrinsic_marker};
 use crate::error::{TranslationErr, TranslationResult};
@@ -76,7 +76,7 @@ fn generated_sreg_op(
 /// Where `row = index_2d_row()` and `col = index_2d_col()`. Note that
 /// `index_2d_runtime` must never be lowered through a flat expansion like
 /// this one: its witness packs the raw `(row, col)` coordinates and the
-/// addressed slice resolves them against its own host-bound pitch.
+/// addressed slice resolves them against its own host-bound row width.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_index_2d(
     ctx: &mut Context,
