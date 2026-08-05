@@ -99,8 +99,8 @@ pub use kernel_family::{
     NoKernelSelectionCache, SelectedVariant, SelectionMode, SelectionSource,
 };
 pub use launch::{
-    CudaKernel, GenericCudaKernel, HasLength, KernelScalar, Pitched, PitchedOwned, ReadOnly, Scalar,
-    WriteOnly, pitched_device_buffer_arg, push_kernel_device_slice,
+    CudaKernel, GenericCudaKernel, HasLength, KernelScalar, Pitched, PitchedOwned, ReadOnly,
+    Scalar, WriteOnly, pitched_device_buffer_arg, push_kernel_device_slice,
     push_kernel_pitched_device_slice, push_kernel_scalar, read_only_device_buffer_arg,
     writable_device_buffer_arg,
 };

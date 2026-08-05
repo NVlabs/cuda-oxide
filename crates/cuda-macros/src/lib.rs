@@ -794,11 +794,17 @@ struct CudaModuleParam {
 
 enum CudaModuleParamMarshal {
     Scalar,
-    ReadOnlyDeviceBuffer { elem_ty: TokenStream2 },
-    WritableDeviceBuffer { elem_ty: TokenStream2 },
+    ReadOnlyDeviceBuffer {
+        elem_ty: TokenStream2,
+    },
+    WritableDeviceBuffer {
+        elem_ty: TokenStream2,
+    },
     /// A writable buffer whose index space carries a runtime row pitch, so the
     /// host supplies the pitch and the packet gains a third slot.
-    PitchedDeviceBuffer { elem_ty: TokenStream2 },
+    PitchedDeviceBuffer {
+        elem_ty: TokenStream2,
+    },
 }
 
 /// Integer classification of a kernel scalar parameter as declared in source.
@@ -3752,16 +3758,14 @@ fn cuda_module_owned_resources_ty(
     if resources.is_empty() {
         quote! { () }
     } else {
-        let resource_tys = resources
-            .iter()
-            .map(|(index, _, _, _, pitched)| {
-                let resource_ty = cuda_module_owned_resource_type(*index);
-                if *pitched {
-                    quote! { ::cuda_host::PitchedOwned<#resource_ty> }
-                } else {
-                    quote! { #resource_ty }
-                }
-            });
+        let resource_tys = resources.iter().map(|(index, _, _, _, pitched)| {
+            let resource_ty = cuda_module_owned_resource_type(*index);
+            if *pitched {
+                quote! { ::cuda_host::PitchedOwned<#resource_ty> }
+            } else {
+                quote! { #resource_ty }
+            }
+        });
         quote! { (#(#resource_tys),*) }
     }
 }

@@ -613,7 +613,8 @@ fn reconstruct_slice(
     let mut last_op = insert_len_op;
     let mut current_val = insert_len_op.deref(ctx).get_result(0);
     for (i, &space_val) in space_vals.iter().enumerate() {
-        let insert_space = llvm::InsertValueOp::new(ctx, current_val, space_val, vec![2 + i as u32]);
+        let insert_space =
+            llvm::InsertValueOp::new(ctx, current_val, space_val, vec![2 + i as u32]);
         let insert_space_op = insert_space.get_operation();
         insert_space_op.insert_after(ctx, last_op);
         current_val = insert_space_op.deref(ctx).get_result(0);

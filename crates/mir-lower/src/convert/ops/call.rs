@@ -1530,8 +1530,12 @@ fn flatten_arguments(
         enum FlattenKind {
             /// `(ptr, len)`, then one argument per index-space layout field
             /// (empty for `&[T]` and for slices over type-fixed spaces).
-            Slice { space_tys: Vec<TypeHandle> },
-            Struct { layout: StructLayoutInfo },
+            Slice {
+                space_tys: Vec<TypeHandle>,
+            },
+            Struct {
+                layout: StructLayoutInfo,
+            },
             None,
         }
 

@@ -659,7 +659,12 @@ mod tests {
 
     /// Resolve a witness against a freshly built slice and return the flat
     /// element index it lands on, via pointer arithmetic on a real buffer.
-    fn resolved_flat_index(buffer: &mut [f32], pitch: u32, row: usize, col: usize) -> Option<usize> {
+    fn resolved_flat_index(
+        buffer: &mut [f32],
+        pitch: u32,
+        row: usize,
+        col: usize,
+    ) -> Option<usize> {
         let base = buffer.as_mut_ptr();
         let len = buffer.len();
         // SAFETY: `buffer` is exclusively borrowed for the call and `pitch`

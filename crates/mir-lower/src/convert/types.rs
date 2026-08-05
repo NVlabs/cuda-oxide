@@ -310,7 +310,9 @@ pub fn convert_function_type(
         // Extract all info first, then drop the borrow
         enum FlattenKind {
             /// `{ ptr, len }`, then one parameter per index-space layout field.
-            Slice { space_tys: Vec<TypeHandle> },
+            Slice {
+                space_tys: Vec<TypeHandle>,
+            },
             Struct {
                 field_types: Vec<TypeHandle>,
                 mem_to_decl: Vec<usize>,
