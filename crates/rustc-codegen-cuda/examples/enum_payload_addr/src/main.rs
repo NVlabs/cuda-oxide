@@ -67,6 +67,7 @@ mod kernels {
     /// around the bool has to carry the `f32` through untouched.
     pub enum Pair {
         Both(bool, f32),
+        #[allow(dead_code)]
         Neither,
     }
 
