@@ -2331,13 +2331,22 @@ mod tests {
             2,
             "construction should reload the enum and extraction should load the tuple payload"
         );
+        // The niche carrier claims the pointer at byte 8, and the 8 bytes below
+        // it are 8-aligned inside an 8-aligned enum, so they lower to one `i64`
+        // filler. That makes the enum's physical storage `{i64, ptr}` -- the
+        // *same interned type* as the lowered payload tuple. So all three stores
+        // counted above (two enum spills plus the payload write) now carry
+        // `lowered_tuple`, and a type filter can no longer tell them apart;
+        // before the filler was widened only the payload write did. The property
+        // that matters -- whole-aggregate moves, never field-by-field -- stays
+        // pinned by the total store/load counts asserted above.
         assert_eq!(
             find_all::<llvm::StoreOp>(&ctx, &body)
                 .iter()
                 .filter(|store| store.get_operand_value(&ctx).get_type(&ctx) == lowered_tuple)
                 .count(),
-            1,
-            "the complete {{i64, ptr}} payload must be written into the enum storage"
+            3,
+            "every whole-aggregate store here must move a complete {{i64, ptr}}"
         );
         assert_eq!(
             find_all::<llvm::LoadOp>(&ctx, &body)
@@ -2350,8 +2359,8 @@ mod tests {
                         == lowered_tuple
                 })
                 .count(),
-            1,
-            "payload extraction must read the complete {{i64, ptr}} tuple back"
+            2,
+            "the enum reload and the payload extraction must both read a complete {{i64, ptr}}"
         );
     }
 

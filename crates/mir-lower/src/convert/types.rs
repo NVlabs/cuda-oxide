@@ -590,6 +590,45 @@ fn make_padding_type(ctx: &mut Context, size: u64) -> TypeHandle {
     llvm_types::ArrayType::get(ctx, i8_ty.into(), size).into()
 }
 
+/// Storage for `size` bytes of enum filler at byte `offset`: bytes the payload
+/// occupies that no typed slot claims.
+///
+/// `[N x i8]` is byte-exact but costs one leaf *per byte* everywhere a payload
+/// value is built, merged, or taken apart. `Option<&[T]>` is the shape that
+/// shows it: the niche carrier claims the pointer, the length is left to an
+/// 8-byte filler, and building the value then decomposes that length into
+/// eight `i8` `insertvalue`s, every block merge carries eight `phi i8`, and
+/// reading it back is a chain of `prmt` byte permutes with the aggregate
+/// spilled to `.local` in between. Measured on sm_86, it costs the *pointer*
+/// too: it rides through the same byte soup, `InferAddressSpaces` can no
+/// longer follow it, and the access lands in the generic window (`ld.v2.b64`)
+/// instead of `ld.global.v2.b64`.
+///
+/// One integer of the same width is the same bytes in one leaf. It is only
+/// legal where it moves nothing:
+///
+/// - the width is 2, 4 or 8 bytes, so the integer is byte-faithful (a multiple
+///   of 8 bits, hence no padding of its own). 16 is deliberately excluded:
+///   `i128` is legal LLVM but lowers to register pairs on NVPTX, so widening
+///   that far trades one win for another cost and wants its own measurement;
+/// - `offset` is a multiple of the width, so LLVM inserts no gap ahead of the
+///   field and every later field keeps its byte offset;
+/// - the width does not exceed the enum's alignment, or the struct's natural
+///   alignment would rise above rustc's.
+///
+/// Anything else keeps the byte array. The filler is a *vehicle*, not a claim:
+/// nothing reads it field-wise, because a payload that has no typed slot
+/// round-trips through memory as a whole aggregate, and both ends of that
+/// round trip are byte-exact. `build_enum_slot_map`'s own size and alignment
+/// assertions — hard errors, not debug checks — backstop all three conditions.
+fn make_enum_filler_type(ctx: &mut Context, offset: u64, size: u64, abi_align: u64) -> TypeHandle {
+    if matches!(size, 2 | 4 | 8) && offset.is_multiple_of(size) && size <= abi_align.max(1) {
+        let width = u32::try_from(size * 8).expect("size is at most 8, so width is at most 64");
+        return IntegerType::get(ctx, width, Signedness::Signless).into();
+    }
+    make_padding_type(ctx, size)
+}
+
 /// Build byte-exact LLVM storage for a Rust union.
 ///
 /// A union cannot be represented as an LLVM struct containing every declared
@@ -1661,7 +1700,8 @@ pub(crate) fn build_enum_slot_map(
     }
 
     // Phase 2: lay the slots down in byte order, filling every gap (and
-    // the tail) with [N x i8] so the struct's size is exactly rustc's.
+    // the tail) so the struct's size is exactly rustc's. One integer per gap
+    // where that is layout-neutral, else [N x i8]; see `make_enum_filler_type`.
     let mut emit_order: Vec<usize> = (0..claims.len()).collect();
     emit_order.sort_by_key(|&ci| claims[ci].0);
     let mut llvm_fields: Vec<TypeHandle> = Vec::new();
@@ -1670,7 +1710,9 @@ pub(crate) fn build_enum_slot_map(
     for &ci in &emit_order {
         let (offset, size, llvm_ty) = claims[ci];
         if current_offset < offset {
-            llvm_fields.push(make_padding_type(ctx, offset - current_offset));
+            let filler =
+                make_enum_filler_type(ctx, current_offset, offset - current_offset, abi_align);
+            llvm_fields.push(filler);
             current_offset = offset;
         }
         slot_of_claim[ci] = llvm_fields.len() as u32;
@@ -1678,7 +1720,9 @@ pub(crate) fn build_enum_slot_map(
         current_offset += size;
     }
     if current_offset < total_size {
-        llvm_fields.push(make_padding_type(ctx, total_size - current_offset));
+        let filler =
+            make_enum_filler_type(ctx, current_offset, total_size - current_offset, abi_align);
+        llvm_fields.push(filler);
     }
 
     // Sanity: the struct we just built must be exactly rustc's size.
@@ -2823,14 +2867,16 @@ mod tests {
         .into();
         // The pointer at byte 0 never shares bytes with the integer niche
         // carrier at byte 8, so it is representable: it gets its own `ptr` slot
-        // and the carrier stays an integer slot. `{ptr@0, i32@8, pad}`.
+        // and the carrier stays an integer slot. `{ptr@0, i32@8, i32 filler}`
+        // -- the trailing 4 bytes are 4-aligned inside an 8-aligned enum, so
+        // they lower to one `i32` rather than `[4 x i8]`.
         let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
         assert_eq!(map.field_slots, vec![None]);
         let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
         let carrier: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
-            vec![lowered_pointer, carrier, pad(&mut ctx, 4)]
+            vec![lowered_pointer, carrier, llvm_int(&mut ctx, 32)]
         );
         assert_eq!(
             llvm_type_size_align(&ctx, map.llvm_struct_ty),
@@ -2922,11 +2968,13 @@ mod tests {
                 Some((16, 8))
             );
             let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
-            let padding = pad(&mut ctx, 8);
+            // The 8 bytes the pointer slot does not claim are 8-aligned inside
+            // an 8-aligned enum, so they lower to one `i64`, not `[8 x i8]`.
+            let filler = llvm_int(&mut ctx, 64);
             let expected = if pointer_first {
-                vec![lowered_pointer, padding]
+                vec![lowered_pointer, filler]
             } else {
-                vec![padding, lowered_pointer]
+                vec![filler, lowered_pointer]
             };
             assert_eq!(struct_fields(&ctx, map.llvm_struct_ty), expected);
         }
@@ -3043,14 +3091,15 @@ mod tests {
         let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
         assert_eq!(map.field_slots, vec![None]);
         let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
+        // Each slice's length sits in the 8 bytes after its pointer, 8-aligned
+        // inside an 8-aligned enum, so both lower to one `i64`. This is the
+        // `split_at_mut_checked` shape, and the whole point of the widening:
+        // `{ptr, i64, ptr, i64}` moves two lengths as two values, where
+        // `{ptr, [8 x i8], ptr, [8 x i8]}` moved them as sixteen separate bytes.
+        let filler = llvm_int(&mut ctx, 64);
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
-            vec![
-                lowered_pointer,
-                pad(&mut ctx, 8),
-                lowered_pointer,
-                pad(&mut ctx, 8),
-            ]
+            vec![lowered_pointer, filler, lowered_pointer, filler]
         );
         assert_eq!(
             llvm_type_size_align(&ctx, map.llvm_struct_ty),
