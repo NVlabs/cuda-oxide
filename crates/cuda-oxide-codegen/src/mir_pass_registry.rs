@@ -64,7 +64,7 @@ pub enum MirPassPipelineError {
     #[error("unknown MIR pass \"{name}\"; available passes: {available}")]
     UnknownName { name: String, available: String },
     #[error("MIR pass \"{name}\" selected more than once in pipeline")]
-    DuplicateName { name: String },
+    Duplicate { name: String },
 }
 
 /// The cuda-oxide-owned registry of staged optional MIR passes.
@@ -100,7 +100,7 @@ impl MirPassRegistry {
                 .iter()
                 .any(|seen| seen.name == entry.name)
             {
-                return Err(MirPassPipelineError::DuplicateName {
+                return Err(MirPassPipelineError::Duplicate {
                     name: entry.name.to_owned(),
                 });
             }
@@ -283,7 +283,7 @@ mod tests {
     fn duplicate_pass_name_is_rejected() {
         assert!(matches!(
             registry_with_test_passes().select("first,second,first"),
-            Err(MirPassPipelineError::DuplicateName { name }) if name == "first"
+            Err(MirPassPipelineError::Duplicate { name }) if name == "first"
         ));
     }
 
