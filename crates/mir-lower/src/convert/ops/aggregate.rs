@@ -2497,36 +2497,68 @@ mod tests {
             2,
             "construction should reload the enum and extraction should load the tuple payload"
         );
-        // The niche carrier claims the pointer at byte 8, and the 8 bytes below
-        // it are 8-aligned inside an 8-aligned enum, so they lower to one `i64`
-        // filler. That makes the enum's physical storage `{i64, ptr}` -- the
-        // *same interned type* as the lowered payload tuple. So all three stores
-        // counted above (two enum spills plus the payload write) now carry
-        // `lowered_tuple`, and a type filter can no longer tell them apart;
-        // before the filler was widened only the payload write did. The property
-        // that matters -- whole-aggregate moves, never field-by-field -- stays
-        // pinned by the total store/load counts asserted above.
-        assert_eq!(
-            find_all::<llvm::StoreOp>(&ctx, &body)
-                .iter()
-                .filter(|store| store.get_operand_value(&ctx).get_type(&ctx) == lowered_tuple)
-                .count(),
-            3,
-            "every whole-aggregate store here must move a complete {{i64, ptr}}"
+        // What this test is about is that the payload moves as one unit, never
+        // field by field. Assert that property directly instead of counting
+        // whole-aggregate accesses.
+        //
+        // Counting was the fragile form. The enum's physical storage here is
+        // `{i64, ptr}` -- the *same interned type* as the lowered payload tuple,
+        // since the niche carrier claims the pointer at byte 8 and the 8 bytes
+        // below it become one `i64` filler. So a count of `lowered_tuple`-typed
+        // accesses cannot separate the payload write from the enum spill, and
+        // the expected numbers move whenever that coincidence appears or
+        // disappears -- which has nothing to do with the property under test.
+        //
+        // A lowering that decomposed the payload is recognisable by what it
+        // emits instead: traffic in the tuple's *field* types. Look for that,
+        // and the assertion holds whatever the enum storage type happens to be.
+        let field_tys: Vec<TypeHandle> = lowered_tuple
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("the lowered tuple is an LLVM struct")
+            .fields()
+            .collect();
+
+        let store_tys: Vec<TypeHandle> = find_all::<llvm::StoreOp>(&ctx, &body)
+            .iter()
+            .map(|store| store.get_operand_value(&ctx).get_type(&ctx))
+            .collect();
+        let load_tys: Vec<TypeHandle> = find_all::<llvm::LoadOp>(&ctx, &body)
+            .iter()
+            .map(|load| {
+                load.get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx)
+            })
+            .collect();
+
+        let describe = |tys: &[TypeHandle]| -> Vec<String> {
+            tys.iter()
+                .filter(|ty| field_tys.contains(ty))
+                .map(|ty| ty.deref(&ctx).disp(&ctx).to_string())
+                .collect()
+        };
+        assert!(
+            describe(&store_tys).is_empty(),
+            "the payload must be stored whole, but these field-typed stores appear: {:?}",
+            describe(&store_tys)
         );
-        assert_eq!(
-            find_all::<llvm::LoadOp>(&ctx, &body)
-                .iter()
-                .filter(|load| {
-                    load.get_operation()
-                        .deref(&ctx)
-                        .get_result(0)
-                        .get_type(&ctx)
-                        == lowered_tuple
-                })
-                .count(),
-            2,
-            "the enum reload and the payload extraction must both read a complete {{i64, ptr}}"
+        assert!(
+            describe(&load_tys).is_empty(),
+            "the payload must be read whole, but these field-typed loads appear: {:?}",
+            describe(&load_tys)
+        );
+
+        // And it must actually be moved: without this the checks above would
+        // also pass a lowering that emitted no payload traffic at all.
+        assert!(
+            store_tys.contains(&lowered_tuple),
+            "at least one store must move the complete {{i64, ptr}} payload"
+        );
+        assert!(
+            load_tys.contains(&lowered_tuple),
+            "at least one load must read the complete {{i64, ptr}} payload"
         );
     }
 
