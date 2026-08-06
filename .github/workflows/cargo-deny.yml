@@ -5,12 +5,15 @@ name: cargo-deny
 # push/pull_request, plus a standalone weekly security scan via schedule.
 # Concurrency for the CI path is governed by CI's own group.
 #
-# Two halves of the same concern. `check` enforces the license *policy* over
+# Three parts of the same concern. `check` enforces the license *policy* over
 # the whole resolved graph from deny.toml. `license-manifest` enforces that
 # the human-readable inventory in dependency-licenses.csv still lists what the
 # workspace declares, which nothing checked before: CONTRIBUTING asks
 # contributors to update that file by hand, and it had fallen behind by eight
 # direct third-party dependencies and thirteen workspace members.
+# `example-policy` extends the first over the example workspaces, which the
+# root `cargo deny check` cannot reach because each example sets its own
+# `[workspace]` -- 131 crates that no policy governed (#663).
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -45,3 +48,20 @@ jobs:
       # running build scripts, so this needs no CUDA toolkit and no LLVM.
       - name: Verify the license inventory covers the workspace
         run: bash scripts/check-dependency-licenses.sh
+
+  example-policy:
+    name: deny.toml governs the example workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      # Resolves each example workspace's own graph, so it needs the network but
+      # no CUDA toolkit and no LLVM. One run per distinct dependency set rather
+      # than per example: 27 runs instead of 187, covering the same crates.
+      - name: Run cargo-deny over the example workspaces
+        run: bash scripts/check-example-license-policy.sh
