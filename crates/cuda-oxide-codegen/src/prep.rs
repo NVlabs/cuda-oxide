@@ -60,7 +60,6 @@ pub fn prepare_mir_module(
         MirPassStage::PrePreparation,
         &mut analyses,
     )?;
-    verify_operation(ctx, module, "module post-preparation-formation-passes")?;
 
     // A by-value aggregate argument initially lives in a MIR alloca. Read-only
     // field/index projections make that alloca non-promotable even though the
@@ -95,7 +94,6 @@ pub fn prepare_mir_module(
         MirPassStage::PostMem2Reg,
         &mut analyses,
     )?;
-    verify_operation(ctx, module, "module post-mem2reg-formation-passes")?;
 
     // An immutable aggregate pointer argument in an always-inline helper can
     // still retain dynamic field/array pointer chains after mem2reg. Recover
@@ -139,6 +137,12 @@ fn run_optional_mir_passes(
     stage: MirPassStage,
     analyses: &mut pliron::pass::AnalysisManager,
 ) -> Result<(), PipelineError> {
+    // Nothing selected for this stage: skip the pass-manager run and the extra
+    // module verification so a default build pays nothing for the hooks.
+    if !selected.has_stage(stage) {
+        return Ok(());
+    }
+
     let mut passes = crate::mir_pass_registry::registry().build_stage_pipeline(selected, stage);
 
     <pliron::pass::Passes as pliron::pass::PassManager>::run_pass(

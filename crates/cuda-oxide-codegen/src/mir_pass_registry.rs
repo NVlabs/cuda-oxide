@@ -32,18 +32,13 @@ pub enum MirPassStage {
     /// Runs after scalar promotion, while loop structure is still intact.
     PostMem2Reg,
     PostPreparation,
-    /// A late backend transformation over generated PTX. It is selected and
-    /// validated together with MIR passes, but has no dialect-MIR instance.
-    /// No in-tree pass currently registers at this stage.
-    #[allow(dead_code)]
-    PostPtx,
 }
 
 #[derive(Clone, Copy)]
 struct OptEntry {
     name: &'static str,
     stage: MirPassStage,
-    build: Option<OptCtor>,
+    build: OptCtor,
 }
 
 /// A fully validated optional pass selection.
@@ -52,6 +47,15 @@ struct OptEntry {
 /// then request the pipeline for each stage in compiler order.
 pub struct SelectedMirPasses(Vec<OptEntry>);
 
+impl SelectedMirPasses {
+    /// Whether any selected pass is declared for `stage`. Lets the driver skip
+    /// a stage entirely (no pass-manager run, no extra module verification)
+    /// when nothing was selected for it.
+    pub fn has_stage(&self, stage: MirPassStage) -> bool {
+        self.0.iter().any(|entry| entry.stage == stage)
+    }
+}
+
 /// Errors from selecting a MIR pass pipeline.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum MirPassPipelineError {
@@ -59,6 +63,8 @@ pub enum MirPassPipelineError {
     EmptyName,
     #[error("unknown MIR pass \"{name}\"; available passes: {available}")]
     UnknownName { name: String, available: String },
+    #[error("MIR pass \"{name}\" selected more than once in pipeline")]
+    DuplicateName { name: String },
 }
 
 /// The cuda-oxide-owned registry of staged optional MIR passes.
@@ -87,6 +93,19 @@ impl MirPassRegistry {
             .map(|name| self.lookup(name))
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
+        // A pass name may appear at most once. Running the same pass twice is
+        // never what the user meant; reject the spec instead of guessing.
+        for (position, entry) in entries.iter().enumerate() {
+            if entries[..position]
+                .iter()
+                .any(|seen| seen.name == entry.name)
+            {
+                return Err(MirPassPipelineError::DuplicateName {
+                    name: entry.name.to_owned(),
+                });
+            }
+        }
+
         Ok(SelectedMirPasses(entries))
     }
 
@@ -98,9 +117,7 @@ impl MirPassRegistry {
     ) -> Passes {
         let mut passes = Passes::default();
         for entry in selected.0.iter().filter(|entry| entry.stage == stage) {
-            if let Some(build) = entry.build {
-                passes.add_pass(BoxedPass(build()));
-            }
+            passes.add_pass(BoxedPass((entry.build)()));
         }
         passes
     }
@@ -209,22 +226,22 @@ mod tests {
                 OptEntry {
                     name: "first",
                     stage: MirPassStage::PostPreparation,
-                    build: Some(first),
+                    build: first,
                 },
                 OptEntry {
                     name: "second",
                     stage: MirPassStage::PostPreparation,
-                    build: Some(second),
+                    build: second,
                 },
                 OptEntry {
                     name: "early",
                     stage: MirPassStage::PrePreparation,
-                    build: Some(early),
+                    build: early,
                 },
                 OptEntry {
                     name: "middle",
                     stage: MirPassStage::PostMem2Reg,
-                    build: Some(middle),
+                    build: middle,
                 },
             ],
         }
@@ -260,6 +277,23 @@ mod tests {
             Err(MirPassPipelineError::EmptyName)
         ));
         assert!(RUNS.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn duplicate_pass_name_is_rejected() {
+        assert!(matches!(
+            registry_with_test_passes().select("first,second,first"),
+            Err(MirPassPipelineError::DuplicateName { name }) if name == "first"
+        ));
+    }
+
+    #[test]
+    fn has_stage_reports_only_selected_stages() {
+        let registry = registry_with_test_passes();
+        let selected = registry.select("first,middle").unwrap();
+        assert!(selected.has_stage(MirPassStage::PostPreparation));
+        assert!(selected.has_stage(MirPassStage::PostMem2Reg));
+        assert!(!selected.has_stage(MirPassStage::PrePreparation));
     }
 
     #[test]
