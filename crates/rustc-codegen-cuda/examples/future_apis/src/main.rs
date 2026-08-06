@@ -244,10 +244,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = CudaContext::new(0)?;
 
-    // The mbarrier APIs exercised below require sm_80 (Ampere) or later.
+    // The mbarrier APIs themselves are sm_80, but the PTX generated for them is
+    // not: `ManagedBarrier::init` pairs every `mbarrier.init` with a
+    // `fence.proxy.async.shared::cta`, and `ptxas` rejects that `.async`
+    // modifier below sm_90 ("Modifier '.async' requires .target sm_90 or
+    // higher"). Gating on the API floor let sm_80..sm_89 devices through to a
+    // `DriverError(218)` from the PTX JIT, before any kernel ran. Gate on the
+    // floor of the code we actually emit.
     let (major, minor) = ctx.compute_capability()?;
-    if major < 8 {
-        println!("skipping: mbarrier requires sm_80+ (device is sm_{major}{minor})");
+    if major < 9 {
+        println!(
+            "skipping: ManagedBarrier emits fence.proxy.async, which requires \
+             sm_90+ (device is sm_{major}{minor})"
+        );
         return Ok(());
     }
 
