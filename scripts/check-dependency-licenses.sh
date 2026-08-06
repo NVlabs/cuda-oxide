@@ -107,8 +107,11 @@ echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared
 # scripts/smoketest.sh without any license gate seeing it.
 #
 # Presence only, as above.  Lock files are parsed directly rather than through
-# `cargo metadata`: resolving 178 separate workspaces would be slow and would
-# need the network, and the lock files already record the resolved graph.
+# `cargo metadata`: resolving every example workspace separately would be slow
+# and would need the network, and the lock files already record the resolved
+# graph.  The search is recursive so a lockfile in a nested sub-workspace
+# (e.g. cutile_inter_kernel/simt) is inventoried under its top-level example
+# instead of escaping the guard.
 #
 # A package counts as covered when it is in the root graph, has a CSV row, or
 # carries no `source` field.  That last case is a path dependency, which is
@@ -148,11 +151,16 @@ with open("dependency-licenses.csv", newline="") as handle:
     next(handle, None)
     covered |= {line.split(",")[0].strip().strip("\r") for line in handle if line.strip()}
 
-locks = sorted(glob.glob("crates/rustc-codegen-cuda/examples/*/Cargo.lock"))
+examples_root = "crates/rustc-codegen-cuda/examples"
+locks = sorted(glob.glob(os.path.join(examples_root, "**", "Cargo.lock"), recursive=True))
 if len(locks) < 20:
     sys.exit("parse self-test failed: found %d example lock files" % len(locks))
 
-present = {os.path.basename(os.path.dirname(lock)) for lock in locks}
+def example_of(lock):
+    """Top-level example directory a lockfile belongs to, however deep it sits."""
+    return os.path.relpath(lock, examples_root).split(os.sep)[0]
+
+present = {example_of(lock) for lock in locks}
 exempt = set(sys.argv[1:])
 unknown = sorted(exempt - present)
 if unknown:
@@ -161,7 +169,7 @@ if unknown:
 seen = 0
 findings = []
 for lock in locks:
-    example = os.path.basename(os.path.dirname(lock))
+    example = example_of(lock)
     entries = packages(lock)
     seen += len(entries)
     if example in exempt:
