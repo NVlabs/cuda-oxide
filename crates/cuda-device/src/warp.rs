@@ -1550,11 +1550,10 @@ mod tests {
             // 1 + 2 + ... + live
             let expected = (live * (live + 1) / 2) as f64;
             let (lanes, _) = fold_model(&values, live);
-            for lane in 0..live as usize {
+            for (lane, &value) in lanes.iter().enumerate().take(live as usize) {
                 assert_eq!(
-                    lanes[lane], expected,
-                    "lane {lane} of {live} live lanes holds {}, expected the total {expected}",
-                    lanes[lane]
+                    value, expected,
+                    "lane {lane} of {live} live lanes holds {value}, expected the total {expected}"
                 );
             }
         }
