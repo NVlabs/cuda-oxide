@@ -244,17 +244,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = CudaContext::new(0)?;
 
-    // sm_100, not sm_80. The mbarrier calls here would run on Ampere, but the
-    // kernels also construct `ManagedBarrier<_, TmaBarrier>`, and the backend
-    // detects that as a TMA feature: building for anything lower is refused
-    // with "CUDA target sm_86 cannot lower detected feature Tma + Sm80;
-    // cuda-oxide requires a target compatible with sm_100 for this module".
-    // Under an auto-detected target the build instead succeeds at sm_100 and
-    // the module then fails to load, so a lower floor here reads as
-    // DriverError(218) on every pre-Blackwell device.
+    // sm_90, not sm_80. `ManagedBarrier::init_by` emits `fence.proxy.async`
+    // for every barrier kind (the TmaBarrier typestate parameter is inert
+    // PhantomData and detects nothing), and per the PTX ISA that fence needs
+    // sm_90 or newer: ptxas rejects it below that with "Modifier '.async'
+    // requires .target sm_90 or higher". The backend's feature scan classifies
+    // the fence as Tma; with a device hint the target resolves to the device
+    // (a Hopper box builds and runs this example at sm_90), while a hint-less
+    // cross-compile defaults the module to sm_100 and a pre-Hopper device then
+    // fails to load it with DriverError(218). Skip below sm_90 so the example
+    // exercises real hardware everywhere it can actually run.
     let (major, minor) = ctx.compute_capability()?;
-    if major < 10 {
-        println!("skipping: TMA-typed barriers require sm_100+ (device is sm_{major}{minor})");
+    if major < 9 {
+        println!(
+            "skipping: fence.proxy.async (emitted by ManagedBarrier::init_by) requires sm_90+ (device is sm_{major}{minor})"
+        );
         return Ok(());
     }
 
