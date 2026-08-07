@@ -45,6 +45,7 @@
 //! | Block      | `"block"`          | `.cta`    |
 //! | System     | (default)          | `.sys`    |
 
+use crate::convert::intrinsics::common;
 use crate::convert::types::convert_type;
 
 use dialect_nvvm::ops::atomic::{
@@ -108,77 +109,6 @@ fn map_rmw_kind(kind: &NvvmRmwKind) -> LlvmAtomicRmwKind {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-/// Emit a memory fence as inline PTX.
-///
-/// libNVVM rejects the LLVM `fence` instruction outright:
-///
-/// ```text
-/// context:   fence syncscope("block") release
-///   Illegal instruction: fence
-/// ```
-///
-/// which made every AcqRel or SeqCst atomic unbuildable under
-/// `--materialize-cubin`, including the ones in the shipped `atomics` example.
-/// PTX has had `fence.acq_rel.{cta,gpu,sys}` and `fence.sc.{...}` since sm_70,
-/// so the fence is emitted directly.
-///
-/// PTX has no separate acquire and release fences; `fence.acq_rel` is the
-/// primitive both lower to, which is what CUDA C++'s `__threadfence()` family
-/// emits as well.
-fn emit_fence(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    ordering: LlvmAtomicOrdering,
-    syncscope: LlvmSyncScope,
-) {
-    let sem = match ordering {
-        LlvmAtomicOrdering::SeqCst => "sc",
-        // Acquire, Release and AcqRel all lower to the same PTX fence.
-        _ => "acq_rel",
-    };
-    let scope = match syncscope {
-        LlvmSyncScope::Device => "gpu",
-        LlvmSyncScope::Block => "cta",
-        LlvmSyncScope::System => "sys",
-    };
-    let void_ty = llvm_types::VoidType::get(ctx);
-    let asm = llvm::InlineAsmOp::build(
-        ctx,
-        void_ty.into(),
-        vec![],
-        &format!("fence.{sem}.{scope};"),
-        "~{memory}",
-        AsmKind::SideEffect,
-    );
-    rewriter.insert_operation(ctx, asm.get_operation());
-}
-
-// =============================================================================
-// Scoped load/store via inline PTX
-// =============================================================================
-//
-// libNVVM rejects IR-level atomic loads and stores outright:
-//
-//     Function `...' Basic Block `bb5':
-//       context:   %v48 = load atomic i32, ptr %v47 syncscope("device") monotonic
-//       Atomic loads/stores are not supported
-//
-// so lowering `NvvmAtomicLoadOp` / `NvvmAtomicStoreOp` to `llvm::AtomicLoadOp` /
-// `llvm::AtomicStoreOp` produces IR that no `--materialize-cubin` build can
-// consume. Every call to `DeviceAtomic*::load` or `::store` failed at the
-// verifier, which made a documented part of the public API unusable and pushed
-// callers onto `read_volatile`, whose Rust semantics lower to a SYSTEM-scope
-// strongly-ordered access even when the data is device-local.
-//
-// The *instructions* exist; only the IR-level form is unsupported. PTX has had
-// `ld.relaxed.gpu` / `st.release.gpu` and friends since sm_70, so these lower
-// to inline PTX instead, exactly as the packed atomic add below already does.
-//
-// Ordering is restricted to what a plain load or store can express: acquire is
-// load-only, release is store-only, and `SeqCst` is rejected rather than
-// silently approximated, because emitting `relaxed` where `seq_cst` was asked
-// for would be a correctness bug that no test would catch.
 
 /// PTX type suffix and register constraint class for an operand type.
 fn ptx_type_and_reg(
@@ -262,6 +192,80 @@ fn ptx_store_sem(ord: &NvvmOrdering) -> Result<&'static str> {
             other
         ),
     }
+}
+
+/// Emit a memory fence.
+///
+/// libNVVM rejects the LLVM `fence` instruction outright:
+///
+/// ```text
+/// context:   fence syncscope("block") release
+///   Illegal instruction: fence
+/// ```
+///
+/// so every AcqRel or SeqCst atomic was unbuildable under `--materialize-cubin`,
+/// including the ones in the shipped `atomics` example.
+///
+/// Two routes, chosen by what the ordering actually needs.
+///
+/// **SeqCst goes through the typed NVVM intrinsic.** PTX defines `membar.level`
+/// as a synonym for `fence.sc.level`, so `llvm.nvvm.membar.{cta,gl,sys}` is an
+/// exact match, and it is the route the rest of this crate already uses for
+/// fences: `cuda_device::fence::threadfence` is documented as lowering to
+/// `llvm.nvvm.membar.gl`. Going through the intrinsic keeps the fence
+/// something LLVM can reason about rather than opaque assembly.
+///
+/// **Acquire, Release and AcqRel go through inline PTX**, because no intrinsic
+/// for them exists. The catalog carries only the three `membar` scopes plus the
+/// special-purpose `fence.proxy` and `fence.mbarrier_init` forms. Emitting
+/// `membar` for an AcqRel fence would be correct but would silently upgrade the
+/// caller's request to sequential consistency, so `fence.acq_rel.{scope}` is
+/// emitted directly instead. PTX has no separate acquire or release fence;
+/// `fence.acq_rel` is the primitive both lower to.
+fn emit_fence(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    ordering: LlvmAtomicOrdering,
+    syncscope: LlvmSyncScope,
+) -> Result<()> {
+    let scope = match syncscope {
+        LlvmSyncScope::Device => "gl",
+        LlvmSyncScope::Block => "cta",
+        LlvmSyncScope::System => "sys",
+    };
+
+    if matches!(ordering, LlvmAtomicOrdering::SeqCst) {
+        let void_ty = llvm_types::VoidType::get(ctx);
+        let func_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![], false);
+        common::call_intrinsic(
+            ctx,
+            rewriter,
+            op,
+            &format!("llvm_nvvm_membar_{scope}"),
+            func_ty,
+            vec![],
+        )?;
+        return Ok(());
+    }
+
+    // Acquire, Release and AcqRel all lower to the same PTX fence.
+    let ptx_scope = match syncscope {
+        LlvmSyncScope::Device => "gpu",
+        LlvmSyncScope::Block => "cta",
+        LlvmSyncScope::System => "sys",
+    };
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let asm = llvm::InlineAsmOp::build(
+        ctx,
+        void_ty.into(),
+        vec![],
+        &format!("fence.acq_rel.{ptx_scope};"),
+        "~{memory}",
+        AsmKind::SideEffect,
+    );
+    rewriter.insert_operation(ctx, asm.get_operation());
+    Ok(())
 }
 
 // =============================================================================
@@ -384,10 +388,10 @@ pub(crate) fn convert_atomic_rmw(
     // Pre-fence (if needed)
     match nvvm_ordering {
         NvvmOrdering::Release | NvvmOrdering::AcqRel => {
-            emit_fence(ctx, rewriter, LlvmAtomicOrdering::Release, syncscope);
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::Release, syncscope)?;
         }
         NvvmOrdering::SeqCst => {
-            emit_fence(ctx, rewriter, LlvmAtomicOrdering::SeqCst, syncscope);
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::SeqCst, syncscope)?;
         }
         NvvmOrdering::Relaxed | NvvmOrdering::Acquire => {}
     }
@@ -406,10 +410,10 @@ pub(crate) fn convert_atomic_rmw(
     // Post-fence (if needed)
     match nvvm_ordering {
         NvvmOrdering::Acquire | NvvmOrdering::AcqRel => {
-            emit_fence(ctx, rewriter, LlvmAtomicOrdering::Acquire, syncscope);
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::Acquire, syncscope)?;
         }
         NvvmOrdering::SeqCst => {
-            emit_fence(ctx, rewriter, LlvmAtomicOrdering::SeqCst, syncscope);
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::SeqCst, syncscope)?;
         }
         NvvmOrdering::Relaxed | NvvmOrdering::Release => {}
     }

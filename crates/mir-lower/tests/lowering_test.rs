@@ -9281,3 +9281,79 @@ fn test_scoped_atomic_rejects_inexpressible_orderings() -> Result<(), anyhow::Er
     }
     Ok(())
 }
+
+/// A SeqCst fence must go through the typed NVVM intrinsic, and a weaker one
+/// through inline PTX.
+///
+/// PTX defines `membar.level` as a synonym for `fence.sc.level`, so
+/// `llvm.nvvm.membar.{cta,gl,sys}` is an exact match for SeqCst and is the route
+/// the rest of the crate already uses for fences. No intrinsic exists for a
+/// weaker fence, and emitting `membar` for AcqRel would silently upgrade the
+/// caller's request to sequential consistency, so that case emits
+/// `fence.acq_rel.{scope}` directly.
+#[test]
+fn test_fence_uses_membar_intrinsic_only_for_seqcst() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomicRmwOp};
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for (ordering, want_intrinsic, want_asm) in [
+        (AtomicOrdering::SeqCst, Some("llvm_nvvm_membar_gl"), None),
+        (AtomicOrdering::AcqRel, None, Some("fence.acq_rel.gpu;")),
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let addend = entry.deref(&ctx).get_argument(1);
+
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            address,
+            addend,
+            u32_ty.into(),
+            AtomicRmwKind::Add,
+            ordering.clone(),
+            AtomicScope::Device,
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut saw_intrinsic = false;
+        let mut saw_asm = None;
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+                && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+                && callee.to_string().contains("membar")
+            {
+                saw_intrinsic = true;
+            }
+            if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let t = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|v| String::from((*v).clone()))
+                    .unwrap_or_default();
+                if t.starts_with("fence.") {
+                    saw_asm = Some(t);
+                }
+            }
+        }
+        assert_eq!(
+            saw_intrinsic,
+            want_intrinsic.is_some(),
+            "{ordering:?}: membar intrinsic presence"
+        );
+        assert_eq!(saw_asm.as_deref(), want_asm, "{ordering:?}: inline fence");
+        // A SeqCst fence must never also emit `membar` as assembly: that would
+        // mean both routes fired.
+        if want_intrinsic.is_some() {
+            assert!(saw_asm.is_none(), "{ordering:?}: emitted both routes");
+        }
+    }
+    Ok(())
+}
