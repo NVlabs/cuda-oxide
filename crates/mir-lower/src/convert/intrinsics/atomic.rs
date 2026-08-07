@@ -55,8 +55,9 @@ use dialect_nvvm::ops::atomic::{
 use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
 use llvm_export::ops as llvm;
 use llvm_export::ops::{AsmKind, InlineAsmOpExt};
+use llvm_export::types as llvm_types;
 
-use pliron::builtin::types::{IntegerType, Signedness};
+use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
@@ -108,14 +109,139 @@ fn map_rmw_kind(kind: &NvvmRmwKind) -> LlvmAtomicRmwKind {
 // Helpers
 // =============================================================================
 
+/// Emit a memory fence as inline PTX.
+///
+/// libNVVM rejects the LLVM `fence` instruction outright:
+///
+/// ```text
+/// context:   fence syncscope("block") release
+///   Illegal instruction: fence
+/// ```
+///
+/// which made every AcqRel or SeqCst atomic unbuildable under
+/// `--materialize-cubin`, including the ones in the shipped `atomics` example.
+/// PTX has had `fence.acq_rel.{cta,gpu,sys}` and `fence.sc.{...}` since sm_70,
+/// so the fence is emitted directly.
+///
+/// PTX has no separate acquire and release fences; `fence.acq_rel` is the
+/// primitive both lower to, which is what CUDA C++'s `__threadfence()` family
+/// emits as well.
 fn emit_fence(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     ordering: LlvmAtomicOrdering,
     syncscope: LlvmSyncScope,
 ) {
-    let fence = llvm::FenceOp::new(ctx, ordering, syncscope.to_pliron());
-    rewriter.insert_operation(ctx, fence.get_operation());
+    let sem = match ordering {
+        LlvmAtomicOrdering::SeqCst => "sc",
+        // Acquire, Release and AcqRel all lower to the same PTX fence.
+        _ => "acq_rel",
+    };
+    let scope = match syncscope {
+        LlvmSyncScope::Device => "gpu",
+        LlvmSyncScope::Block => "cta",
+        LlvmSyncScope::System => "sys",
+    };
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let asm = llvm::InlineAsmOp::build(
+        ctx,
+        void_ty.into(),
+        vec![],
+        &format!("fence.{sem}.{scope};"),
+        "~{memory}",
+        AsmKind::SideEffect,
+    );
+    rewriter.insert_operation(ctx, asm.get_operation());
+}
+
+// =============================================================================
+// Scoped load/store via inline PTX
+// =============================================================================
+//
+// libNVVM rejects IR-level atomic loads and stores outright:
+//
+//     Function `...' Basic Block `bb5':
+//       context:   %v48 = load atomic i32, ptr %v47 syncscope("device") monotonic
+//       Atomic loads/stores are not supported
+//
+// so lowering `NvvmAtomicLoadOp` / `NvvmAtomicStoreOp` to `llvm::AtomicLoadOp` /
+// `llvm::AtomicStoreOp` produces IR that no `--materialize-cubin` build can
+// consume. Every call to `DeviceAtomic*::load` or `::store` failed at the
+// verifier, which made a documented part of the public API unusable and pushed
+// callers onto `read_volatile`, whose Rust semantics lower to a SYSTEM-scope
+// strongly-ordered access even when the data is device-local.
+//
+// The *instructions* exist; only the IR-level form is unsupported. PTX has had
+// `ld.relaxed.gpu` / `st.release.gpu` and friends since sm_70, so these lower
+// to inline PTX instead, exactly as the packed atomic add below already does.
+//
+// Ordering is restricted to what a plain load or store can express: acquire is
+// load-only, release is store-only, and `SeqCst` is rejected rather than
+// silently approximated, because emitting `relaxed` where `seq_cst` was asked
+// for would be a correctness bug that no test would catch.
+
+/// PTX type suffix and register constraint class for an operand type.
+fn ptx_type_and_reg(
+    ctx: &Context,
+    ty: pliron::r#type::TypeHandle,
+) -> Option<(&'static str, &'static str)> {
+    let ty_ref = ty.deref(ctx);
+    if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+        return match int_ty.width() {
+            16 => Some(("b16", "h")),
+            32 => Some(("b32", "r")),
+            64 => Some(("b64", "l")),
+            _ => None,
+        };
+    }
+    if ty_ref.downcast_ref::<FP32Type>().is_some() {
+        return Some(("b32", "r"));
+    }
+    if ty_ref.downcast_ref::<FP64Type>().is_some() {
+        return Some(("b64", "l"));
+    }
+    None
+}
+
+/// PTX scope qualifier.
+fn ptx_scope(scope: &NvvmScope) -> &'static str {
+    match scope {
+        NvvmScope::Device => "gpu",
+        NvvmScope::Block => "cta",
+        NvvmScope::System => "sys",
+    }
+}
+
+/// PTX memory-ordering qualifier for a load.
+fn ptx_load_sem(ord: &NvvmOrdering) -> Result<&'static str> {
+    match ord {
+        NvvmOrdering::Relaxed => Ok("relaxed"),
+        NvvmOrdering::Acquire => Ok("acquire"),
+        NvvmOrdering::SeqCst => pliron::input_err_noloc!(
+            "atomic load with SeqCst ordering is not supported on this target; \
+             use Acquire, or an explicit fence plus an Acquire load"
+        ),
+        other => pliron::input_err_noloc!(
+            "atomic load cannot have {:?} ordering; use Relaxed or Acquire",
+            other
+        ),
+    }
+}
+
+/// PTX memory-ordering qualifier for a store.
+fn ptx_store_sem(ord: &NvvmOrdering) -> Result<&'static str> {
+    match ord {
+        NvvmOrdering::Relaxed => Ok("relaxed"),
+        NvvmOrdering::Release => Ok("release"),
+        NvvmOrdering::SeqCst => pliron::input_err_noloc!(
+            "atomic store with SeqCst ordering is not supported on this target; \
+             use Release, or a Release store preceded by an explicit fence"
+        ),
+        other => pliron::input_err_noloc!(
+            "atomic store cannot have {:?} ordering; use Relaxed or Release",
+            other
+        ),
+    }
 }
 
 // =============================================================================
@@ -129,8 +255,8 @@ pub(crate) fn convert_atomic_load(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let nvvm_op = NvvmAtomicLoadOp::new(op);
-    let ordering = map_ordering(&nvvm_op.ordering(ctx));
-    let syncscope = map_scope(&nvvm_op.scope(ctx));
+    let sem = ptx_load_sem(&nvvm_op.ordering(ctx))?;
+    let scope = ptx_scope(&nvvm_op.scope(ctx));
 
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let ptr = operands[0];
@@ -138,9 +264,24 @@ pub(crate) fn convert_atomic_load(
     let result_ty =
         convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error_noloc!("{}", e))?;
 
-    let llvm_load = llvm::AtomicLoadOp::new(ctx, ptr, result_ty, ordering, syncscope.to_pliron());
-    rewriter.insert_operation(ctx, llvm_load.get_operation());
-    rewriter.replace_operation(ctx, op, llvm_load.get_operation());
+    let (ptx_ty, reg) = ptx_type_and_reg(ctx, result_ty)
+        .ok_or_else(|| pliron::input_error_noloc!("atomic load of unsupported operand type"))?;
+
+    // SideEffect plus a memory clobber, deliberately. A scoped atomic load is
+    // usually a spin on another thread's publication, so it must be re-issued
+    // every iteration rather than hoisted out of the loop.
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        result_ty,
+        vec![ptr],
+        &format!("ld.{sem}.{scope}.{ptx_ty} $0, [$1];"),
+        &format!("={reg},l,~{{memory}}"),
+        AsmKind::SideEffect,
+    );
+
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
+    rewriter.replace_operation(ctx, op, asm_op);
 
     Ok(())
 }
@@ -156,15 +297,31 @@ pub(crate) fn convert_atomic_store(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let nvvm_op = NvvmAtomicStoreOp::new(op);
-    let ordering = map_ordering(&nvvm_op.ordering(ctx));
-    let syncscope = map_scope(&nvvm_op.scope(ctx));
+    let sem = ptx_store_sem(&nvvm_op.ordering(ctx))?;
+    let scope = ptx_scope(&nvvm_op.scope(ctx));
 
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let val = operands[0];
     let ptr = operands[1];
 
-    let llvm_store = llvm::AtomicStoreOp::new(ctx, val, ptr, ordering, syncscope.to_pliron());
-    rewriter.insert_operation(ctx, llvm_store.get_operation());
+    let val_ty = val.get_type(ctx);
+    let (ptx_ty, reg) = ptx_type_and_reg(ctx, val_ty)
+        .ok_or_else(|| pliron::input_error_noloc!("atomic store of unsupported operand type"))?;
+
+    // No result: a store produces nothing. Operand order matches the template,
+    // address first then value, which is the reverse of the NVVM op's operands.
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        void_ty.into(),
+        vec![ptr, val],
+        &format!("st.{sem}.{scope}.{ptx_ty} [$0], $1;"),
+        &format!("l,{reg},~{{memory}}"),
+        AsmKind::SideEffect,
+    );
+
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
     rewriter.erase_operation(ctx, op);
 
     Ok(())

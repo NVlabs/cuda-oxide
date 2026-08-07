@@ -9059,3 +9059,220 @@ fn test_deferred_wgmma_nested_fence_is_rejected() -> Result<(), anyhow::Error> {
     );
     Ok(())
 }
+
+/// Scoped atomic loads and stores must lower to inline PTX, not to
+/// `load atomic` / `store atomic`.
+///
+/// libNVVM rejects the IR-level form outright ("Atomic loads/stores are not
+/// supported"), so lowering to `llvm::AtomicLoadOp` / `llvm::AtomicStoreOp`
+/// produced modules that no `--materialize-cubin` build could consume, making
+/// every `DeviceAtomic*::load` and `::store` call a build failure. The PTX
+/// instructions themselves have existed since sm_70, so the ops lower through
+/// inline assembly instead.
+///
+/// This asserts the exact template, constraints and asm kind, because all
+/// three are load-bearing: the scope qualifier is the whole point of the
+/// feature, the constraint register class must match the operand width, and
+/// `SideEffect` plus the memory clobber is what stops a publication spin being
+/// hoisted out of its loop.
+#[test]
+fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into(), u64_ty.into()]);
+    let address = entry.deref(&ctx).get_argument(0);
+    let val32 = entry.deref(&ctx).get_argument(1);
+    let val64 = entry.deref(&ctx).get_argument(2);
+
+    // One per scope, so a regression that hardcodes a scope is caught rather
+    // than passing on the Device case alone.
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        u32_ty.into(),
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        u32_ty.into(),
+        AtomicOrdering::Acquire,
+        AtomicScope::Block,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        u64_ty.into(),
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        val32,
+        address,
+        AtomicOrdering::Release,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        val64,
+        address,
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut lowered = Vec::new();
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(function) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if function.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let body = function.get_operation().deref(&ctx).get_region(0);
+        for block in body.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                // The IR-level forms are what libNVVM rejects; neither may survive.
+                assert!(
+                    Operation::get_op::<llvm::AtomicLoadOp>(body_op, &ctx).is_none(),
+                    "scoped atomic load must not lower to `load atomic`: libNVVM rejects it"
+                );
+                assert!(
+                    Operation::get_op::<llvm::AtomicStoreOp>(body_op, &ctx).is_none(),
+                    "scoped atomic store must not lower to `store atomic`: libNVVM rejects it"
+                );
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if !template.starts_with("ld.") && !template.starts_with("st.") {
+                    continue;
+                }
+                lowered.push((
+                    template,
+                    asm.get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .unwrap_or_default(),
+                    llvm::asm_kind(&ctx, &asm),
+                ));
+            }
+        }
+    }
+
+    let expected = [
+        ("ld.relaxed.gpu.b32 $0, [$1];", "=r,l,~{memory}"),
+        ("ld.acquire.cta.b32 $0, [$1];", "=r,l,~{memory}"),
+        ("ld.relaxed.sys.b64 $0, [$1];", "=l,l,~{memory}"),
+        ("st.release.gpu.b32 [$0], $1;", "l,r,~{memory}"),
+        ("st.relaxed.gpu.b64 [$0], $1;", "l,l,~{memory}"),
+    ];
+    assert_eq!(
+        lowered.len(),
+        expected.len(),
+        "expected one inline-asm op per scoped atomic load/store, got {lowered:?}"
+    );
+    for (template, constraints) in expected {
+        let found = lowered
+            .iter()
+            .find(|(t, _, _)| t == template)
+            .unwrap_or_else(|| panic!("missing lowering for {template}; got {lowered:?}"));
+        assert_eq!(found.1, constraints, "constraints for {template}");
+        // Not Convergent: these are per-thread accesses, not warp-synchronous.
+        // SideEffect with the memory clobber is what keeps a spin re-reading.
+        assert_eq!(
+            found.2,
+            llvm::AsmKind::SideEffect,
+            "asm kind for {template}"
+        );
+    }
+    Ok(())
+}
+
+/// Orderings a plain PTX load or store cannot express must be rejected, not
+/// silently weakened.
+///
+/// `SeqCst` needs a `fence.sc`; emitting `relaxed` instead would be a
+/// correctness bug that no runtime test would catch, because the wrong answer
+/// only appears under contention on hardware that reorders.
+#[test]
+fn test_scoped_atomic_rejects_inexpressible_orderings() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for (is_load, ordering) in [
+        (true, AtomicOrdering::SeqCst),
+        (true, AtomicOrdering::Release), // release is store-only
+        (false, AtomicOrdering::SeqCst),
+        (false, AtomicOrdering::Acquire), // acquire is load-only
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        if is_load {
+            NvvmAtomicLoadOp::build(
+                &mut ctx,
+                address,
+                u32_ty.into(),
+                ordering.clone(),
+                AtomicScope::Device,
+            )
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        } else {
+            NvvmAtomicStoreOp::build(
+                &mut ctx,
+                val,
+                address,
+                ordering.clone(),
+                AtomicScope::Device,
+            )
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        }
+        append_return(&mut ctx, entry);
+
+        let result = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr);
+        assert!(
+            result.is_err(),
+            "{} with {ordering:?} ordering must be rejected, not approximated",
+            if is_load { "load" } else { "store" }
+        );
+    }
+    Ok(())
+}
