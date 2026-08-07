@@ -8,10 +8,10 @@ use dialect_mir::{
     ops::{
         MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
         MirCondBranchOp, MirConstantOp, MirConstructDisjointSliceOp, MirConstructEnumOp,
-        MirConstructSliceOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractFieldOp, MirFuncOp,
-        MirGeOp, MirGetDiscriminantOp, MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp,
-        MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp,
-        MirSetDiscriminantOp, MirStoreOp, MirSubOp,
+        MirConstructSliceOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractFieldOp,
+        MirFieldAddrOp, MirFuncOp, MirGeOp, MirGetDiscriminantOp, MirGlobalAllocOp, MirGotoOp,
+        MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
+        MirPtrOffsetOp, MirRemOp, MirReturnOp, MirSetDiscriminantOp, MirStoreOp, MirSubOp,
     },
     types::{
         EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirTupleType,
@@ -1552,4 +1552,98 @@ fn test_uninhabited_enum_construct_and_discriminant_fail_verification() {
     );
     let get_discriminant = MirGetDiscriminantOp::new(get_discriminant);
     assert!(get_discriminant.verify(&ctx).is_err());
+}
+
+#[test]
+fn test_mir_field_addr_tuple_pointee_verify() {
+    // `(u8, u32)` laid out the way rustc actually places it: the u32 field
+    // first in memory for alignment, so declaration index 0 (`u8`) lands at
+    // byte offset 4 and declaration index 1 (`u32`) lands at byte offset 0.
+    // `field_addr`'s `field_index` attribute is a DECLARATION index (it names
+    // `.0`/`.1` as written), so this test only passes if the op resolves the
+    // field's type through `MirTupleType::get_types()` (declaration order)
+    // rather than assuming identity with memory order.
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+
+    let tuple_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![u8_ty.into(), u32_ty.into()],
+        vec![1, 0],
+        vec![4, 0],
+        8,
+        4,
+    );
+
+    let tuple_ptr_ty = MirPtrType::get_generic(&mut ctx, tuple_ty.into(), false);
+    let blk = BasicBlock::new(&mut ctx, None, vec![tuple_ptr_ty.into()]);
+    let tuple_ptr = blk.deref(&ctx).get_argument(0);
+
+    let u8_ptr_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let op_field0 = Operation::new(
+        &mut ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![u8_ptr_ty.into()],
+        vec![tuple_ptr],
+        vec![],
+        0,
+    );
+    let field0 = MirFieldAddrOp::new(op_field0);
+    field0.set_attr_field_index(&ctx, FieldIndexAttr(0));
+    assert!(
+        field0.verify(&ctx).is_ok(),
+        "tuple field 0 (u8) address accepted"
+    );
+
+    let u32_ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), false);
+    let op_field1 = Operation::new(
+        &mut ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![u32_ptr_ty.into()],
+        vec![tuple_ptr],
+        vec![],
+        0,
+    );
+    let field1 = MirFieldAddrOp::new(op_field1);
+    field1.set_attr_field_index(&ctx, FieldIndexAttr(1));
+    assert!(
+        field1.verify(&ctx).is_ok(),
+        "tuple field 1 (u32) address accepted"
+    );
+
+    // Result pointee type must match the DECLARED field type, not whatever
+    // sits at that byte offset: pointing field 0's result at u32 (field 1's
+    // type) must be rejected even though both are in-bounds indices.
+    let op_wrong_result_ty = Operation::new(
+        &mut ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![u32_ptr_ty.into()],
+        vec![tuple_ptr],
+        vec![],
+        0,
+    );
+    let wrong_result_ty = MirFieldAddrOp::new(op_wrong_result_ty);
+    wrong_result_ty.set_attr_field_index(&ctx, FieldIndexAttr(0));
+    assert!(
+        wrong_result_ty.verify(&ctx).is_err(),
+        "result pointee type mismatch rejected"
+    );
+
+    let op_out_of_bounds = Operation::new(
+        &mut ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![u8_ptr_ty.into()],
+        vec![tuple_ptr],
+        vec![],
+        0,
+    );
+    let out_of_bounds = MirFieldAddrOp::new(op_out_of_bounds);
+    out_of_bounds.set_attr_field_index(&ctx, FieldIndexAttr(2));
+    assert!(
+        out_of_bounds.verify(&ctx).is_err(),
+        "out-of-bounds tuple field index rejected"
+    );
 }

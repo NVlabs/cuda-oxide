@@ -1744,14 +1744,15 @@ pub(crate) fn convert_field_addr(
 
     let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
-        match pointee_ref.downcast_ref::<MirStructType>() {
-            Some(struct_ty) => StructLayoutInfo::of_struct(struct_ty),
-            None => {
-                return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to a struct, union or enum type, got {}",
-                    mir_ptr_pointee.deref(ctx).disp(ctx)
-                );
-            }
+        if let Some(struct_ty) = pointee_ref.downcast_ref::<MirStructType>() {
+            StructLayoutInfo::of_struct(struct_ty)
+        } else if let Some(tuple_ty) = pointee_ref.downcast_ref::<MirTupleType>() {
+            StructLayoutInfo::of_tuple(tuple_ty)
+        } else {
+            return pliron::input_err_noloc!(
+                "MirFieldAddrOp pointer must point to a struct, tuple, union or enum type, got {}",
+                mir_ptr_pointee.deref(ctx).disp(ctx)
+            );
         }
     };
 
@@ -2314,6 +2315,102 @@ mod tests {
             acc_geps.len(),
             1,
             "the non-ZST field address must index the struct's layout slot"
+        );
+    }
+
+    /// `mir.field_addr` on a TUPLE pointee (the `#693` shape: `let (a, b) =
+    /// TABLE[i];`) must resolve the GEP index through the tuple's memory-order
+    /// layout, exactly like the struct path above, not through the
+    /// declaration index directly.
+    ///
+    /// `(u8, u32)` is rustc's own layout for this pair: the `u32` field is
+    /// placed FIRST in memory for alignment, so declaration field 0 (`u8`,
+    /// `.0`) lives at memory slot 1 and declaration field 1 (`u32`, `.1`)
+    /// lives at memory slot 0. A GEP index equal to the declaration index
+    /// would silently address the WRONG field's bytes.
+    #[test]
+    fn field_addr_tuple_pointee_resolves_memory_order_gep_index() {
+        use llvm_export::ops::GepIndex;
+
+        let mut ctx = make_ctx();
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // decl order [u8, u32]; memory order [u32, u8] (mem_to_decl = [1, 0]).
+        let tuple_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![u8_ty, u32_ty],
+            vec![1, 0],
+            vec![4, 0],
+            8,
+            4,
+        )
+        .into();
+
+        let tuple_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, tuple_ty, false).into();
+        let u8_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let u32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![tuple_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+
+        // Declaration field 0 (`.0`, u8) first, then declaration field 1
+        // (`.1`, u32) -- source order, not memory order.
+        for (field_index, result_ty) in [(0u32, u8_ptr_ty), (1, u32_ptr_ty)] {
+            let op = Operation::new(
+                &mut ctx,
+                MirFieldAddrOp::get_concrete_op_info(),
+                vec![result_ty],
+                vec![base],
+                vec![],
+                0,
+            );
+            MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+            op.insert_at_back(block, &ctx);
+        }
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 2, "each field_addr must lower to its own GEP");
+        assert!(
+            geps.iter().all(|gep| gep.verify(&ctx).is_ok()),
+            "every field-address GEP must satisfy LLVM dialect verification"
+        );
+
+        // `.0` (u8, declared first) must land at MEMORY slot 1.
+        let field0_geps: Vec<_> = geps
+            .iter()
+            .filter(|gep| {
+                matches!(
+                    gep.indices(&ctx).as_slice(),
+                    [GepIndex::Constant(0), GepIndex::Constant(1)]
+                )
+            })
+            .collect();
+        assert_eq!(
+            field0_geps.len(),
+            1,
+            "declaration field 0 (u8) must resolve to its memory slot 1, not slot 0"
+        );
+
+        // `.1` (u32, declared second) must land at MEMORY slot 0.
+        let field1_geps: Vec<_> = geps
+            .iter()
+            .filter(|gep| {
+                matches!(
+                    gep.indices(&ctx).as_slice(),
+                    [GepIndex::Constant(0), GepIndex::Constant(0)]
+                )
+            })
+            .collect();
+        assert_eq!(
+            field1_geps.len(),
+            1,
+            "declaration field 1 (u32) must resolve to its memory slot 0, not slot 1"
         );
     }
 

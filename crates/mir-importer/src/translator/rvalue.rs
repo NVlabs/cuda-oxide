@@ -2965,10 +2965,13 @@ fn classify_place_read_strategy(
                 let Some(pointee) = mir_ptr_pointee(ctx, current_ptr_ty) else {
                     return Ok(PlaceReadStrategy::ValueFallback);
                 };
-                if !pointee.deref(ctx).is::<dialect_mir::types::MirStructType>() {
-                    // `mir.field_addr` currently verifies only struct
-                    // pointees. Tuple field reads stay on the value path,
-                    // where `mir.extract_field` supports tuple values.
+                let is_struct_or_tuple =
+                    pointee.deref(ctx).is::<dialect_mir::types::MirStructType>()
+                        || pointee.deref(ctx).is::<dialect_mir::types::MirTupleType>();
+                if !is_struct_or_tuple {
+                    // `mir.field_addr` verifies struct, tuple, union and enum
+                    // pointees; anything else stays on the value path, where
+                    // `mir.extract_field` supports it instead.
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
 
