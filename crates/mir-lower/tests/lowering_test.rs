@@ -8070,6 +8070,39 @@ fn append_wgmma_wait_group_constant(
     nvvm::WgmmaWaitGroupSyncAlignedOp::build(ctx, value).insert_at_back(block, ctx);
 }
 
+fn append_mir_unsigned_constant(
+    ctx: &mut Context,
+    block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    ty: pliron::r#type::TypedHandle<pliron::builtin::types::IntegerType>,
+    value: u64,
+) -> pliron::value::Value {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let width = usize::try_from(ty.deref(ctx).width()).expect("integer width must fit usize");
+    let constant = Operation::new(
+        ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(constant).set_attr_value(
+        ctx,
+        IntegerAttr::new(
+            ty,
+            APInt::from_u64(
+                value,
+                NonZeroUsize::new(width).expect("nonzero integer width"),
+            ),
+        ),
+    );
+    constant.insert_at_back(block, ctx);
+    constant.deref(ctx).get_result(0)
+}
+
 fn assert_wgmma_lowering_rejected(
     ctx: &mut Context,
     module_ptr: pliron::context::Ptr<Operation>,
@@ -9121,6 +9154,283 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
             .count(),
         ACCUMULATOR_LEN,
         "all WGMMA accumulator results must be recovered as scalar SSA values"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::{MirArrayType, MirPtrType};
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::op_interfaces::OperandSegmentInterface;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    const ACCUMULATOR_LEN: usize = 32;
+    const LOOP_CONTROL_COUNT: usize = 5;
+    const TRIP_COUNT: u64 = 4;
+    const DESC_A_STEP: u64 = 16;
+    const DESC_B_STEP: u64 = 32;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let row_ty = MirArrayType::get(&mut ctx, f32_ty.into(), 8);
+    let accumulator_ty = MirArrayType::get(&mut ctx, row_ty.into(), 4);
+    let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, accumulator_ty.into(), true);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+
+    let (module_ptr, preheader) = build_test_kernel(
+        &mut ctx,
+        vec![accumulator_ptr_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    let accumulator = preheader.deref(&ctx).get_argument(0);
+    let desc_a_base = preheader.deref(&ctx).get_argument(1);
+    let desc_b_base = preheader.deref(&ctx).get_argument(2);
+
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let function = module_block.deref(&ctx).iter(&ctx).next().unwrap();
+    let function_region = function.deref(&ctx).get_region(0);
+
+    let header = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![u32_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    header.insert_at_back(function_region, &ctx);
+    let latch = BasicBlock::new(&mut ctx, None, vec![]);
+    latch.insert_at_back(function_region, &ctx);
+    let exit = BasicBlock::new(&mut ctx, None, vec![]);
+    exit.insert_at_back(function_region, &ctx);
+
+    // preheader: fence; i0 = 0; goto header(i0, desc_a_base, desc_b_base)
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(preheader, &ctx);
+    let i0 = append_mir_unsigned_constant(&mut ctx, preheader, u32_ty, 0);
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![i0, desc_a_base, desc_b_base],
+        vec![header],
+        0,
+    )
+    .insert_at_back(preheader, &ctx);
+
+    // header(i, desc_a, desc_b): if !(i < 4) exit else latch.
+    let i = header.deref(&ctx).get_argument(0);
+    let desc_a = header.deref(&ctx).get_argument(1);
+    let desc_b = header.deref(&ctx).get_argument(2);
+    let bound = append_mir_unsigned_constant(&mut ctx, header, u32_ty, TRIP_COUNT);
+    let lt = Operation::new(
+        &mut ctx,
+        mir::MirLtOp::get_concrete_op_info(),
+        vec![i1_ty.into()],
+        vec![i, bound],
+        vec![],
+        0,
+    );
+    lt.insert_at_back(header, &ctx);
+    let lt_value = lt.deref(&ctx).get_result(0);
+    let not_lt = Operation::new(
+        &mut ctx,
+        mir::MirNotOp::get_concrete_op_info(),
+        vec![i1_ty.into()],
+        vec![lt_value],
+        vec![],
+        0,
+    );
+    not_lt.insert_at_back(header, &ctx);
+    let not_lt_value = not_lt.deref(&ctx).get_result(0);
+    let (branch_operands, segment_sizes) =
+        mir::MirCondBranchOp::compute_segment_sizes(vec![vec![not_lt_value], vec![], vec![]]);
+    let branch = Operation::new(
+        &mut ctx,
+        mir::MirCondBranchOp::get_concrete_op_info(),
+        vec![],
+        branch_operands,
+        vec![exit, latch],
+        0,
+    );
+    Operation::get_op::<mir::MirCondBranchOp>(branch, &ctx)
+        .expect("MirCondBranchOp")
+        .set_operand_segment_sizes(&ctx, segment_sizes);
+    branch.insert_at_back(header, &ctx);
+
+    // latch: one WGMMA per K iteration and affine descriptor recurrences.
+    append_pointer_wgmma_mma(&mut ctx, latch, accumulator, desc_a, desc_b);
+
+    let one = append_mir_unsigned_constant(&mut ctx, latch, u32_ty, 1);
+    let i_next = Operation::new(
+        &mut ctx,
+        mir::MirAddOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![i, one],
+        vec![],
+        0,
+    );
+    i_next.insert_at_back(latch, &ctx);
+    let i_next = i_next.deref(&ctx).get_result(0);
+
+    let desc_a_step = append_mir_unsigned_constant(&mut ctx, latch, u64_ty, DESC_A_STEP);
+    let desc_a_next = Operation::new(
+        &mut ctx,
+        mir::MirAddOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![desc_a, desc_a_step],
+        vec![],
+        0,
+    );
+    desc_a_next.insert_at_back(latch, &ctx);
+    let desc_a_next = desc_a_next.deref(&ctx).get_result(0);
+
+    let desc_b_step = append_mir_unsigned_constant(&mut ctx, latch, u64_ty, DESC_B_STEP);
+    let desc_b_next = Operation::new(
+        &mut ctx,
+        mir::MirAddOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![desc_b, desc_b_step],
+        vec![],
+        0,
+    );
+    desc_b_next.insert_at_back(latch, &ctx);
+    let desc_b_next = desc_b_next.deref(&ctx).get_result(0);
+
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![i_next, desc_a_next, desc_b_next],
+        vec![header],
+        0,
+    )
+    .insert_at_back(latch, &ctx);
+
+    // exit: the only place where the asynchronous lifetime may become visible.
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(exit, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, exit, 0);
+    append_return(&mut ctx, exit);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| {
+            Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx)
+                .map(|inline_asm| (operation, inline_asm))
+        })
+        .filter(|(_, asm)| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("L__wgmma_loop_${:uid}:"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected one fused counted-loop WGMMA asm"
+    );
+
+    let (asm_operation, asm) = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("counted-loop WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(
+        template.matches("wgmma.mma_async").count(),
+        1,
+        "the PTX template contains one MMA instruction controlled by the internal K-loop"
+    );
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(template.contains("mov.u64 %desc_a, $64;"));
+    assert!(template.contains("mov.u64 %desc_b, $65;"));
+    assert!(template.contains("add.u64 %desc_a, %desc_a, $66;"));
+    assert!(template.contains("add.u64 %desc_b, %desc_b, $67;"));
+    assert!(template.contains("mov.u64 %remaining, $68;"));
+    assert!(template.contains("@%loop_more bra.uni L__wgmma_done_${:uid};"));
+    assert!(template.contains("@%loop_more bra.uni L__wgmma_loop_${:uid};"));
+    assert!(template.contains("L__wgmma_done_${:uid}:"));
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "counted-loop WGMMA must keep accumulator memory outside asm: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
+    expected_constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    expected_constraints.extend((0..LOOP_CONTROL_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+    assert_eq!(
+        asm_operation.deref(&ctx).get_num_operands(),
+        ACCUMULATOR_LEN + LOOP_CONTROL_COUNT
+    );
+
+    let asm_position = body
+        .iter()
+        .position(|operation| operation == asm_operation)
+        .expect("counted-loop WGMMA asm must be in the lowered kernel body");
+
+    let load_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::LoadOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        load_positions.len(),
+        ACCUMULATOR_LEN,
+        "K-loop accumulator must be loaded exactly once, not once per iteration"
+    );
+    assert!(load_positions.iter().all(|index| *index < asm_position));
+
+    let store_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::StoreOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        store_positions.len(),
+        ACCUMULATOR_LEN,
+        "K-loop accumulator must be stored exactly once after the final wait"
+    );
+    assert!(store_positions.iter().all(|index| *index > asm_position));
+
+    assert_eq!(
+        body.iter()
+            .filter(
+                |operation| Operation::get_op::<llvm::ExtractValueOp>(**operation, &ctx).is_some()
+            )
+            .count(),
+        ACCUMULATOR_LEN
     );
 
     Ok(())

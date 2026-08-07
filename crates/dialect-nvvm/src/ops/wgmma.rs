@@ -9,15 +9,16 @@
 //! (4 warps = 128 threads) for high-throughput matrix multiplication.
 //!
 //! The public importer first creates a pointer-form MMA operation. Before LLVM
-//! lowering, `mir-lower` recognizes a complete straight-line
-//! fence/MMA/commit/wait sequence and replaces it with a deferred group
-//! operation. The deferred group keeps all 32 per-thread accumulator values in
+//! lowering, `mir-lower` recognizes complete straight-line regions and a narrow
+//! canonical counted K-loop shape. Straight-line pointer-form sequences may use
+//! the deferred group, which keeps all 32 per-thread accumulator values in
 //! one inline-PTX scope until `wait_group<0>` completes.
 //!
 //! The internal value-form group represents those same 32 accumulator values
-//! explicitly as SSA operands/results. It is the register-resident carrier used
-//! by value-threaded WGMMA lowering; the pointer-form group remains available as
-//! the deferred fallback.
+//! explicitly as SSA operands/results. A counted-loop variant additionally owns
+//! the descriptor recurrences and loop control so the complete asynchronous
+//! lifetime remains inside one convergent inline-PTX region. The pointer-form
+//! group remains available as the deferred fallback.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
@@ -38,6 +39,7 @@ use pliron::{
 use pliron_derive::pliron_op;
 
 const WGMMA_M64N64_F32_ACCUMULATOR_COUNT: usize = 32;
+const WGMMA_COUNTED_LOOP_CONTROL_COUNT: usize = 5;
 
 // =============================================================================
 // Descriptor Operations
@@ -333,10 +335,125 @@ impl Verify for WgmmaMmaGroupValuesM64N64K16F32Bf16Op {
     }
 }
 
+/// Value-form BF16 WGMMA counted loop with 32 SSA accumulator values.
+///
+/// Operand layout:
+///
+/// ```text
+/// [
+///   acc_0, ..., acc_31,
+///   desc_a_base, desc_b_base,
+///   desc_a_step, desc_b_step,
+///   trip_count,
+/// ]
+/// ```
+///
+/// Result layout:
+///
+/// ```text
+/// [acc_0', ..., acc_31']
+/// ```
+///
+/// The operation owns one complete asynchronous WGMMA lifetime. It fences the
+/// accumulator registers, executes one MMA per counted-loop iteration while
+/// advancing both descriptors by their supplied descriptor deltas,
+/// commits the resulting group, and performs a final `wait_group<0>` before the
+/// 32 accumulator values become visible to LLVM again.
+#[pliron_op(name = "nvvm.wgmma_mma_loop_values_m64n64k16_f32_bf16", format)]
+pub struct WgmmaMmaLoopValuesM64N64K16F32Bf16Op;
+
+impl WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    /// Build a counted-loop group from 32 accumulators and loop-control values.
+    pub fn build(
+        ctx: &mut Context,
+        accumulators: Vec<Value>,
+        desc_a_base: Value,
+        desc_b_base: Value,
+        desc_a_step: Value,
+        desc_b_step: Value,
+        trip_count: Value,
+    ) -> Ptr<Operation> {
+        let f32_ty = FP32Type::get(ctx);
+        let mut operands =
+            Vec::with_capacity(accumulators.len() + WGMMA_COUNTED_LOOP_CONTROL_COUNT);
+        operands.extend(accumulators);
+        operands.extend([
+            desc_a_base,
+            desc_b_base,
+            desc_a_step,
+            desc_b_step,
+            trip_count,
+        ]);
+
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![f32_ty.into(); WGMMA_M64N64_F32_ACCUMULATOR_COUNT],
+            operands,
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let expected_operands =
+            WGMMA_M64N64_F32_ACCUMULATOR_COUNT + WGMMA_COUNTED_LOOP_CONTROL_COUNT;
+
+        if op.get_num_operands() != expected_operands {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_loop_values_m64n64k16_f32_bf16 requires 32 f32 accumulators and exactly five u64 loop-control operands"
+            );
+        }
+
+        if op.get_num_results() != WGMMA_M64N64_F32_ACCUMULATOR_COUNT {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_loop_values_m64n64k16_f32_bf16 requires exactly 32 f32 results"
+            );
+        }
+
+        for accumulator_index in 0..WGMMA_M64N64_F32_ACCUMULATOR_COUNT {
+            if !is_f32(ctx, op.get_operand(accumulator_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_loop_values_m64n64k16_f32_bf16 accumulator operands must be f32"
+                );
+            }
+            if !is_f32(ctx, op.get_result(accumulator_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_loop_values_m64n64k16_f32_bf16 results must be f32"
+                );
+            }
+        }
+
+        for control_index in WGMMA_M64N64_F32_ACCUMULATOR_COUNT..expected_operands {
+            if !is_u64(ctx, op.get_operand(control_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_loop_values_m64n64k16_f32_bf16 descriptor bases, descriptor steps, and trip count must be u64"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Register WGMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     WgmmaMakeSmemDescOp::register(ctx);
     WgmmaMmaM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op::register(ctx);
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op::register(ctx);
 }

@@ -878,6 +878,7 @@ dependencies = [
  "dialect-mir",
  "dialect-nvvm",
  "llvm-export",
+ "mir-transforms",
  "pliron",
  "pliron-derive",
  "reserved-oxide-symbols",

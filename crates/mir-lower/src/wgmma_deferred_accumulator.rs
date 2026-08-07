@@ -7,12 +7,12 @@
 //!
 //! The public MMA operation exposes its accumulator through a pointer, but PTX
 //! requires all 32 accumulator registers to remain inaccessible until the
-//! corresponding `wgmma.wait_group` completes. This pass recognizes a closed,
-//! straight-line sequence and adapts the canonical `[[f32; 8]; 4]` accumulator
-//! through 32 scalar SSA values. Unsupported accumulator shapes retain the
-//! existing deferred pointer-group fallback.
+//! corresponding `wgmma.wait_group` completes. This pass recognizes both closed
+//! straight-line regions and one deliberately narrow counted K-loop shape. The
+//! canonical `[[f32; 8]; 4]` accumulator is adapted through 32 scalar SSA values;
+//! unsupported accumulator shapes retain the existing deferred pointer fallback.
 //!
-//! The accepted initial form is deliberately narrow:
+//! Straight-line regions keep the existing shape:
 //!
 //! ```text
 //! wgmma.fence
@@ -21,44 +21,53 @@
 //! wgmma.wait_group<0>
 //! ```
 //!
-//! Compiler-generated integer constants, storage markers, and unconditional
-//! gotos may separate those operations. All other operations, branches, joins,
-//! partial waits, and accumulator changes are rejected. A sequence that
-//! crosses a loop back-edge is rejected through the nested-fence or
-//! control-flow-join checks; a complete sequence inside a loop body fuses.
+//! A counted K-loop may place the fence in the loop preheader, one pointer-form
+//! MMA in the unique latch, and the commit/final `wait_group<0>` in the unique
+//! exit. The loop must have a compile-time trip count and two `u64` descriptor
+//! block arguments whose back-edge values are either unchanged or `arg + const`.
+//! The complete asynchronous lifetime is then represented by one value-form loop
+//! operation so LLVM never sees an in-flight accumulator between iterations.
 
 use dialect_mir::{
     ops::{
-        MirArrayElementAddrOp, MirConstantOp, MirGotoOp, MirLoadOp, MirStorageDeadOp,
-        MirStorageLiveOp, MirStoreOp,
+        MirAddOp, MirArrayElementAddrOp, MirCondBranchOp, MirConstantOp, MirFuncOp, MirGeOp,
+        MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirNotOp, MirStorageDeadOp,
+        MirStorageLiveOp, MirStoreOp, MirSubOp,
     },
     types::{MirArrayType, MirPtrType, address_space},
 };
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
-    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
 };
+use mir_transforms::analyses::{induction, loop_info::LoopInfo};
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
         attributes::IntegerAttr,
+        op_interfaces::BranchOpInterface,
         ops::ConstantOp,
         types::{FP32Type, IntegerType, Signedness},
     },
     context::{Context, Ptr},
+    graph::dominance::DomInfo,
     irbuild::{
         listener::Recorder,
         rewriter::{IRRewriter, Rewriter},
     },
     linked_list::ContainsLinkedList,
     location::Located,
-    op::Op,
+    op::{Op, op_cast},
     operation::Operation,
+    opts::simplify_cfg::remove_blocks_inside_op,
+    region::Region,
     result::Result,
     r#type::{TypeHandle, Typed},
     utils::apint::APInt,
     value::Value,
 };
+use rustc_hash::FxHashSet;
 use std::num::NonZeroUsize;
 
 const ACCUMULATOR_ROWS: usize = 4;
@@ -72,6 +81,23 @@ struct FusionPlan {
     wait: Ptr<Operation>,
     accumulator: Value,
     descriptors: Vec<Value>,
+}
+
+struct CountedLoopPlan {
+    fence: Ptr<Operation>,
+    preheader: Ptr<BasicBlock>,
+    preheader_terminator: Ptr<Operation>,
+    exit: Ptr<BasicBlock>,
+    commit: Ptr<Operation>,
+    wait: Ptr<Operation>,
+    accumulator: Value,
+    desc_a_base: Value,
+    desc_b_base: Value,
+    desc_a_step: u64,
+    desc_b_step: u64,
+    trip_count: u64,
+    row_type: TypeHandle,
+    element_type: TypeHandle,
 }
 
 fn collect_blocks(ctx: &Context, root: Ptr<Operation>) -> Vec<Ptr<BasicBlock>> {
@@ -92,6 +118,367 @@ fn collect_blocks(ctx: &Context, root: Ptr<Operation>) -> Vec<Ptr<BasicBlock>> {
     let mut blocks = Vec::new();
     visit(ctx, root, &mut blocks);
     blocks
+}
+
+fn collect_functions(ctx: &Context, root: Ptr<Operation>) -> Vec<Ptr<Operation>> {
+    fn visit(ctx: &Context, op: Ptr<Operation>, functions: &mut Vec<Ptr<Operation>>) {
+        if Operation::get_op::<MirFuncOp>(op, ctx).is_some() {
+            functions.push(op);
+            return;
+        }
+
+        let regions: Vec<_> = op.deref(ctx).regions().collect();
+        for region in regions {
+            let blocks: Vec<_> = region.deref(ctx).iter(ctx).collect();
+            for block in blocks {
+                let children: Vec<_> = block.deref(ctx).iter(ctx).collect();
+                for child in children {
+                    visit(ctx, child, functions);
+                }
+            }
+        }
+    }
+
+    let mut functions = Vec::new();
+    visit(ctx, root, &mut functions);
+    functions
+}
+
+fn is_u64_value(ctx: &Context, value: Value) -> bool {
+    let ty = value.get_type(ctx);
+    let ty = ty.deref(ctx);
+    ty.downcast_ref::<IntegerType>().is_some_and(|integer| {
+        integer.width() == 64 && integer.signedness() == Signedness::Unsigned
+    })
+}
+
+fn edge_operands(
+    ctx: &Context,
+    pred: Ptr<BasicBlock>,
+    succ: Ptr<BasicBlock>,
+) -> Option<Vec<Value>> {
+    let terminator = pred.deref(ctx).get_terminator(ctx)?;
+    let successors: Vec<_> = terminator.deref(ctx).successors().collect();
+    let successor_index = successors.iter().position(|candidate| *candidate == succ)?;
+    let operation = Operation::get_op_dyn(terminator, ctx);
+    let branch = op_cast::<dyn BranchOpInterface>(operation.as_ref())?;
+    Some(branch.successor_operands(ctx, successor_index))
+}
+
+fn value_has_outside_loop_use(
+    ctx: &Context,
+    value: Value,
+    loop_blocks: &FxHashSet<Ptr<BasicBlock>>,
+) -> bool {
+    value.uses(ctx).iter().any(|r#use| {
+        r#use
+            .user_op()
+            .deref(ctx)
+            .get_parent_block()
+            .is_none_or(|block| !loop_blocks.contains(&block))
+    })
+}
+
+fn loop_values_escape(ctx: &Context, loop_blocks: &FxHashSet<Ptr<BasicBlock>>) -> bool {
+    for &block in loop_blocks {
+        for argument in block.deref(ctx).arguments() {
+            if value_has_outside_loop_use(ctx, argument, loop_blocks) {
+                return true;
+            }
+        }
+        for operation in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+            for result in operation.deref(ctx).results() {
+                if value_has_outside_loop_use(ctx, result, loop_blocks) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn counted_loop_operation_is_supported(ctx: &Context, operation: Ptr<Operation>) -> bool {
+    Operation::get_op::<MirConstantOp>(operation, ctx).is_some()
+        || Operation::get_op::<ConstantOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirStorageLiveOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirStorageDeadOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirAddOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirSubOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirNotOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirLtOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirLeOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirGtOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirGeOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirCondBranchOp>(operation, ctx).is_some()
+        || Operation::get_op::<MirGotoOp>(operation, ctx).is_some()
+        || Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some()
+}
+
+fn find_preheader_fence(
+    ctx: &Context,
+    preheader: Ptr<BasicBlock>,
+) -> Result<Option<Ptr<Operation>>> {
+    let operations: Vec<_> = preheader.deref(ctx).iter(ctx).collect();
+    let fences = operations
+        .iter()
+        .copied()
+        .filter(|operation| Operation::get_op::<WgmmaFenceSyncAlignedOp>(*operation, ctx).is_some())
+        .collect::<Vec<_>>();
+    let [fence] = fences.as_slice() else {
+        return Ok(None);
+    };
+    require_nullary_control_op(ctx, *fence, "WGMMA fence")?;
+
+    let fence_index = operations
+        .iter()
+        .position(|operation| operation == fence)
+        .expect("fence came from preheader operation list");
+    for operation in operations.iter().copied().skip(fence_index + 1) {
+        if preheader.deref(ctx).get_terminator(ctx) == Some(operation)
+            || is_ignorable(ctx, operation)
+        {
+            continue;
+        }
+        return Ok(None);
+    }
+
+    Ok(Some(*fence))
+}
+
+fn find_exit_commit_wait(
+    ctx: &Context,
+    exit: Ptr<BasicBlock>,
+) -> Result<Option<(Ptr<Operation>, Ptr<Operation>)>> {
+    let mut commit = None;
+    for operation in exit.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+        if is_ignorable(ctx, operation) {
+            continue;
+        }
+
+        if commit.is_none() {
+            if Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_none() {
+                return Ok(None);
+            }
+            require_nullary_control_op(ctx, operation, "WGMMA commit_group")?;
+            commit = Some(operation);
+            continue;
+        }
+
+        if Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some() {
+            require_wait_shape(ctx, operation)?;
+            let wait_operand = operation.deref(ctx).get_operand(0);
+            if integer_constant_u64(ctx, wait_operand) != Some(0) {
+                return pliron::input_err_noloc!(
+                    "counted WGMMA loop requires a final wait_group<0>"
+                );
+            }
+            return Ok(Some((commit.expect("commit is set"), operation)));
+        }
+
+        return pliron::input_err_noloc!(
+            "unsupported operation between WGMMA commit_group and final wait_group<0>"
+        );
+    }
+
+    Ok(None)
+}
+
+fn affine_u64_step(ctx: &Context, argument: Value, next: Value) -> Option<u64> {
+    if !is_u64_value(ctx, argument) || !is_u64_value(ctx, next) {
+        return None;
+    }
+    if next == argument {
+        return Some(0);
+    }
+
+    let defining_op = next.defining_op()?;
+    if Operation::get_op::<MirAddOp>(defining_op, ctx).is_none() {
+        return None;
+    }
+
+    let operation = defining_op.deref(ctx);
+    if operation.get_num_operands() != 2 || operation.get_num_results() != 1 {
+        return None;
+    }
+    let lhs = operation.get_operand(0);
+    let rhs = operation.get_operand(1);
+    if lhs == argument {
+        integer_constant_u64(ctx, rhs)
+    } else if rhs == argument {
+        integer_constant_u64(ctx, lhs)
+    } else {
+        None
+    }
+}
+
+fn match_counted_loop(
+    ctx: &Context,
+    info: &LoopInfo,
+    region: Ptr<Region>,
+    loop_id: usize,
+) -> Result<Option<CountedLoopPlan>> {
+    let r#loop = &info.loops()[loop_id];
+    if !r#loop.children.is_empty() || r#loop.latches.len() != 1 {
+        return Ok(None);
+    }
+
+    let Some(preheader) = info.preheader(ctx, region, loop_id) else {
+        return Ok(None);
+    };
+    let Some(fence) = find_preheader_fence(ctx, preheader)? else {
+        return Ok(None);
+    };
+
+    let exiting_blocks = info.exiting_blocks(ctx, region, loop_id);
+    if exiting_blocks.len() != 1 || exiting_blocks[0] != r#loop.header {
+        return Ok(None);
+    }
+    let exit_blocks = info.exit_blocks(ctx, region, loop_id);
+    if exit_blocks.len() != 1 {
+        return Ok(None);
+    }
+    let exit = exit_blocks[0];
+    if exit.deref(ctx).get_num_arguments() != 0 {
+        return Ok(None);
+    }
+
+    let Some((commit, wait)) = find_exit_commit_wait(ctx, exit)? else {
+        return Ok(None);
+    };
+
+    let preheader_terminator = preheader
+        .deref(ctx)
+        .get_terminator(ctx)
+        .expect("counted loop preheader must have a terminator");
+    if Operation::get_op::<MirGotoOp>(preheader_terminator, ctx).is_none() {
+        return Ok(None);
+    }
+
+    let latch = r#loop.latches[0];
+    let latch_terminator = latch
+        .deref(ctx)
+        .get_terminator(ctx)
+        .expect("counted loop latch must have a terminator");
+    if Operation::get_op::<MirGotoOp>(latch_terminator, ctx).is_none() {
+        return Ok(None);
+    }
+
+    let header = r#loop.header;
+    let header_args = header.deref(ctx).arguments().collect::<Vec<_>>();
+    let Some(init_operands) = edge_operands(ctx, preheader, header) else {
+        return Ok(None);
+    };
+    let Some(recurrence_operands) = edge_operands(ctx, latch, header) else {
+        return Ok(None);
+    };
+    if init_operands.len() != header_args.len() || recurrence_operands.len() != header_args.len() {
+        return Ok(None);
+    }
+
+    let recurrences = induction::analyze(ctx, info, loop_id, preheader);
+    let Some(primary_iv) = recurrences.primary_iv else {
+        return Ok(None);
+    };
+    let Some(trip_count) = recurrences.trip_count else {
+        return Ok(None);
+    };
+    if trip_count == 0 || primary_iv >= header_args.len() {
+        return Ok(None);
+    }
+
+    let mut mmas = Vec::new();
+    for &block in &r#loop.blocks {
+        for operation in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+            if !counted_loop_operation_is_supported(ctx, operation) {
+                return Ok(None);
+            }
+            if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
+                mmas.push(operation);
+            }
+        }
+    }
+    let [mma] = mmas.as_slice() else {
+        return Ok(None);
+    };
+    if mma.deref(ctx).get_parent_block() != Some(latch) {
+        return Ok(None);
+    }
+    require_pointer_mma_shape(ctx, *mma)?;
+
+    let mma_ref = mma.deref(ctx);
+    let accumulator = mma_ref.get_operand(0);
+    require_supported_accumulator(ctx, accumulator)?;
+    let Some((row_type, element_type)) = value_accumulator_shape(ctx, accumulator) else {
+        return Ok(None);
+    };
+    if accumulator
+        .defining_block()
+        .is_some_and(|block| r#loop.blocks.contains(&block))
+        || accumulator
+            .defining_op()
+            .and_then(|operation| operation.deref(ctx).get_parent_block())
+            .is_some_and(|block| r#loop.blocks.contains(&block))
+    {
+        return Ok(None);
+    }
+
+    let desc_a = mma_ref.get_operand(1);
+    let desc_b = mma_ref.get_operand(2);
+    if !is_u64_value(ctx, desc_a) || !is_u64_value(ctx, desc_b) {
+        return Ok(None);
+    }
+
+    let Some(desc_a_index) = header_args.iter().position(|value| *value == desc_a) else {
+        return Ok(None);
+    };
+    let Some(desc_b_index) = header_args.iter().position(|value| *value == desc_b) else {
+        return Ok(None);
+    };
+    if desc_a_index == desc_b_index || desc_a_index == primary_iv || desc_b_index == primary_iv {
+        return Ok(None);
+    }
+
+    let desc_a_base = init_operands[desc_a_index];
+    let desc_b_base = init_operands[desc_b_index];
+    if !is_u64_value(ctx, desc_a_base) || !is_u64_value(ctx, desc_b_base) {
+        return Ok(None);
+    }
+
+    let Some(desc_a_step) = affine_u64_step(
+        ctx,
+        header_args[desc_a_index],
+        recurrence_operands[desc_a_index],
+    ) else {
+        return Ok(None);
+    };
+    let Some(desc_b_step) = affine_u64_step(
+        ctx,
+        header_args[desc_b_index],
+        recurrence_operands[desc_b_index],
+    ) else {
+        return Ok(None);
+    };
+
+    if loop_values_escape(ctx, &r#loop.blocks) {
+        return Ok(None);
+    }
+
+    Ok(Some(CountedLoopPlan {
+        fence,
+        preheader,
+        preheader_terminator,
+        exit,
+        commit,
+        wait,
+        accumulator,
+        desc_a_base,
+        desc_b_base,
+        desc_a_step,
+        desc_b_step,
+        trip_count,
+        row_type,
+        element_type,
+    }))
 }
 
 fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
@@ -245,27 +632,22 @@ fn erase_original_sequence(
     rewriter.erase_operation(ctx, wait);
 }
 
-fn apply_value_plan(
+fn load_accumulator_values_before(
     ctx: &mut Context,
-    fence: Ptr<Operation>,
-    mmas: Vec<Ptr<Operation>>,
-    commit: Ptr<Operation>,
-    wait: Ptr<Operation>,
+    before: Ptr<Operation>,
     accumulator: Value,
-    descriptors: Vec<Value>,
     row_type: TypeHandle,
     element_type: TypeHandle,
-) {
-    let loc = fence.deref(ctx).loc();
-
+    loc: pliron::location::Location,
+) -> (Vec<Value>, Vec<Value>) {
     let row_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, row_type, true).into();
     let element_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, element_type, true).into();
 
     let row_indices = (0..ACCUMULATOR_ROWS)
-        .map(|index| insert_u64_constant_before(ctx, index as u64, wait))
+        .map(|index| insert_u64_constant_before(ctx, index as u64, before))
         .collect::<Vec<_>>();
     let column_indices = (0..ACCUMULATOR_COLUMNS)
-        .map(|index| insert_u64_constant_before(ctx, index as u64, wait))
+        .map(|index| insert_u64_constant_before(ctx, index as u64, before))
         .collect::<Vec<_>>();
 
     let mut element_pointers = Vec::with_capacity(ACCUMULATOR_LEN);
@@ -281,7 +663,7 @@ fn apply_value_plan(
             0,
         );
         row_address.deref_mut(ctx).set_loc(loc.clone());
-        row_address.insert_before(ctx, wait);
+        row_address.insert_before(ctx, before);
         let row_pointer = row_address.deref(ctx).get_result(0);
 
         for column in 0..ACCUMULATOR_COLUMNS {
@@ -294,7 +676,7 @@ fn apply_value_plan(
                 0,
             );
             element_address.deref_mut(ctx).set_loc(loc.clone());
-            element_address.insert_before(ctx, wait);
+            element_address.insert_before(ctx, before);
             let element_pointer = element_address.deref(ctx).get_result(0);
 
             let load = Operation::new(
@@ -306,20 +688,23 @@ fn apply_value_plan(
                 0,
             );
             load.deref_mut(ctx).set_loc(loc.clone());
-            load.insert_before(ctx, wait);
+            load.insert_before(ctx, before);
 
             element_pointers.push(element_pointer);
             accumulator_values.push(load.deref(ctx).get_result(0));
         }
     }
 
-    let group = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(ctx, accumulator_values, descriptors);
-    group.deref_mut(ctx).set_loc(loc.clone());
-    let accumulator_results = (0..ACCUMULATOR_LEN)
-        .map(|index| group.deref(ctx).get_result(index))
-        .collect::<Vec<_>>();
-    group.insert_before(ctx, wait);
+    (element_pointers, accumulator_values)
+}
 
+fn store_accumulator_values_before(
+    ctx: &mut Context,
+    before: Ptr<Operation>,
+    element_pointers: Vec<Value>,
+    accumulator_results: Vec<Value>,
+    loc: pliron::location::Location,
+) {
     for (element_pointer, result) in element_pointers
         .into_iter()
         .zip(accumulator_results.into_iter())
@@ -333,10 +718,120 @@ fn apply_value_plan(
             0,
         );
         store.deref_mut(ctx).set_loc(loc.clone());
-        store.insert_before(ctx, wait);
+        store.insert_before(ctx, before);
     }
+}
+
+fn apply_value_plan(
+    ctx: &mut Context,
+    fence: Ptr<Operation>,
+    mmas: Vec<Ptr<Operation>>,
+    commit: Ptr<Operation>,
+    wait: Ptr<Operation>,
+    accumulator: Value,
+    descriptors: Vec<Value>,
+    row_type: TypeHandle,
+    element_type: TypeHandle,
+) {
+    let loc = fence.deref(ctx).loc();
+    let (element_pointers, accumulator_values) =
+        load_accumulator_values_before(ctx, wait, accumulator, row_type, element_type, loc.clone());
+
+    let group = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(ctx, accumulator_values, descriptors);
+    group.deref_mut(ctx).set_loc(loc.clone());
+    let accumulator_results = (0..ACCUMULATOR_LEN)
+        .map(|index| group.deref(ctx).get_result(index))
+        .collect::<Vec<_>>();
+    group.insert_before(ctx, wait);
+
+    store_accumulator_values_before(ctx, wait, element_pointers, accumulator_results, loc);
 
     erase_original_sequence(ctx, fence, mmas, commit, wait);
+}
+
+fn rewire_goto(
+    ctx: &mut Context,
+    terminator: Ptr<Operation>,
+    successor: Ptr<BasicBlock>,
+    operands: &[Value],
+) {
+    Operation::replace_successor(terminator, ctx, 0, successor);
+    let operand_count = terminator.deref(ctx).get_num_operands();
+    for _ in 0..operand_count {
+        Operation::remove_operand(terminator, ctx, 0);
+    }
+    for &operand in operands {
+        Operation::push_operand(terminator, ctx, operand);
+    }
+}
+
+fn apply_counted_loop_plan(ctx: &mut Context, plan: CountedLoopPlan) {
+    let CountedLoopPlan {
+        fence,
+        preheader,
+        preheader_terminator,
+        exit,
+        commit,
+        wait,
+        accumulator,
+        desc_a_base,
+        desc_b_base,
+        desc_a_step,
+        desc_b_step,
+        trip_count,
+        row_type,
+        element_type,
+    } = plan;
+
+    debug_assert_eq!(
+        preheader.deref(ctx).get_terminator(ctx),
+        Some(preheader_terminator)
+    );
+    debug_assert_eq!(exit.deref(ctx).get_num_arguments(), 0);
+
+    let loc = fence.deref(ctx).loc();
+    let (element_pointers, accumulator_values) = load_accumulator_values_before(
+        ctx,
+        preheader_terminator,
+        accumulator,
+        row_type,
+        element_type,
+        loc.clone(),
+    );
+
+    let desc_a_step = insert_u64_constant_before(ctx, desc_a_step, preheader_terminator);
+    let desc_b_step = insert_u64_constant_before(ctx, desc_b_step, preheader_terminator);
+    let trip_count = insert_u64_constant_before(ctx, trip_count, preheader_terminator);
+
+    let group = WgmmaMmaLoopValuesM64N64K16F32Bf16Op::build(
+        ctx,
+        accumulator_values,
+        desc_a_base,
+        desc_b_base,
+        desc_a_step,
+        desc_b_step,
+        trip_count,
+    );
+    group.deref_mut(ctx).set_loc(loc.clone());
+    let accumulator_results = (0..ACCUMULATOR_LEN)
+        .map(|index| group.deref(ctx).get_result(index))
+        .collect::<Vec<_>>();
+    group.insert_before(ctx, preheader_terminator);
+
+    store_accumulator_values_before(
+        ctx,
+        preheader_terminator,
+        element_pointers,
+        accumulator_results,
+        loc,
+    );
+
+    let mut rewriter = IRRewriter::<Recorder>::default();
+    rewriter.erase_operation(ctx, fence);
+    rewriter.erase_operation(ctx, commit);
+    rewriter.erase_operation(ctx, wait);
+
+    rewire_goto(ctx, preheader_terminator, exit, &[]);
 }
 
 fn apply_pointer_fallback(
@@ -548,15 +1043,90 @@ fn apply_plan(ctx: &mut Context, plan: FusionPlan) {
     }
 }
 
+/// Return whether every block in `region` is reachable from its entry.
+///
+/// Pliron's dominator tree intentionally contains only reachable blocks.  Some
+/// malformed/negative-test MIR regions can still contain detached blocks, and
+/// asking `LoopInfo` to inspect such a region would query dominance for blocks
+/// absent from that tree.  Counted-loop fusion is an optimization, so fail
+/// closed here and leave those regions to the existing straight-line WGMMA
+/// validation path.
+fn region_is_fully_reachable(ctx: &Context, region: Ptr<Region>) -> bool {
+    let Some(entry) = region.deref(ctx).get_head() else {
+        return true;
+    };
+
+    let all_blocks: FxHashSet<_> = region.deref(ctx).iter(ctx).collect();
+    let mut reachable = FxHashSet::default();
+    let mut worklist = vec![entry];
+
+    while let Some(block) = worklist.pop() {
+        if !reachable.insert(block) {
+            continue;
+        }
+
+        let Some(terminator) = block.deref(ctx).get_terminator(ctx) else {
+            continue;
+        };
+
+        for successor in terminator.deref(ctx).successors() {
+            if all_blocks.contains(&successor) && !reachable.contains(&successor) {
+                worklist.push(successor);
+            }
+        }
+    }
+
+    reachable.len() == all_blocks.len()
+}
+
 /// Adapt every supported pointer-form BF16 WGMMA sequence in `module_op`.
 ///
-/// Canonical `[[f32; 8]; 4]` accumulators are loaded into 32 scalar values,
-/// threaded through the value-form WGMMA group, and stored back only after
-/// `wait_group<0>`. Other supported pointer shapes keep the deferred fallback.
+/// Canonical counted loops are handled first because their fence and final wait
+/// live in different CFG blocks. Each successful loop rewrite bypasses the old
+/// loop and immediately removes the now-unreachable loop blocks so no stale
+/// pointer-form MMA reaches final lowering. Remaining straight-line regions use
+/// the deferred pointer fallback.
 pub(crate) fn fuse_deferred_accumulators(
     ctx: &mut Context,
     module_op: Ptr<Operation>,
 ) -> Result<()> {
+    loop {
+        let mut counted_plan = None;
+
+        'functions: for function in collect_functions(ctx, module_op) {
+            let region = function.deref(ctx).get_region(0);
+
+            // `DomInfo` does not assign dominance nodes to unreachable blocks.
+            // Skip loop analysis for such regions so malformed MIR continues to
+            // receive the established straight-line WGMMA diagnostics instead
+            // of panicking inside dominance lookup.
+            if !region_is_fully_reachable(ctx, region) {
+                continue;
+            }
+
+            let mut dom_info = DomInfo::default();
+            let info = {
+                let dom_tree = dom_info.get_dom_tree(ctx, region);
+                LoopInfo::compute(ctx, region, dom_tree)
+            };
+
+            for loop_id in 0..info.loops().len() {
+                if let Some(plan) = match_counted_loop(ctx, &info, region, loop_id)? {
+                    counted_plan = Some((function, plan));
+                    break 'functions;
+                }
+            }
+        }
+
+        let Some((function, plan)) = counted_plan else {
+            break;
+        };
+
+        apply_counted_loop_plan(ctx, plan);
+        let mut rewriter = IRRewriter::<Recorder>::default();
+        remove_blocks_inside_op(function, ctx, &mut rewriter);
+    }
+
     let fences: Vec<_> = collect_blocks(ctx, module_op)
         .into_iter()
         .flat_map(|block| block.deref(ctx).iter(ctx).collect::<Vec<_>>())
