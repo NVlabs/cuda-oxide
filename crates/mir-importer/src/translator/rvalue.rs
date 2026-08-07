@@ -10999,4 +10999,80 @@ mod checked_binary_op_tests {
 
         assert_eq!(error, "CheckedBinaryOp Div not yet implemented");
     }
+
+    #[test]
+    fn promoted_immutable_globals_are_marked_and_dedup_by_type_and_bytes() {
+        use dialect_mir::types::MirArrayType;
+        use pliron::builtin::ops::ModuleOp;
+        use pliron::linked_list::ContainsLinkedList;
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let module = ModuleOp::new(&mut ctx, "promoted_globals".try_into().unwrap());
+        let module_region = module.get_operation().deref(&ctx).get_region(0);
+        let block = {
+            let existing = module_region.deref(&ctx).iter(&ctx).next();
+            match existing {
+                Some(block) => block,
+                None => {
+                    let block = BasicBlock::new(&mut ctx, None, vec![]);
+                    block.insert_at_back(module_region, &ctx);
+                    block
+                }
+            }
+        };
+
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let table_ty: TypeHandle = MirArrayType::get(&mut ctx, f32_ty, 2).into();
+        let bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x40]; // [1.0f32, 2.0f32]
+
+        let first = emit_promoted_immutable_global(
+            &mut ctx,
+            table_ty,
+            &bytes,
+            4,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        // The marker is the point: without it the exporter writes `global` and
+        // `opt` may not delete the per-thread copy this path exists to remove.
+        assert!(
+            first.is_immutable(&ctx),
+            "promoted global must be immutable"
+        );
+        let first_key = String::from(first.get_attr_global_key(&ctx).expect("dedup key").clone());
+
+        // The same table reached again — another function, another spelling —
+        // must produce the same key, which is what convert_global_alloc_dc
+        // collapses into a single emitted global.
+        let again = emit_promoted_immutable_global(
+            &mut ctx,
+            table_ty,
+            &bytes,
+            4,
+            block,
+            None,
+            Location::Unknown,
+        );
+        let again_key = String::from(again.get_attr_global_key(&ctx).expect("dedup key").clone());
+        assert_eq!(first_key, again_key, "same (type, bytes) must share a key");
+
+        // A different byte image must not alias: a short or lossy key would
+        // silently hand two different Rust constants one device global.
+        let other_bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x80, 0x3f];
+        let other = emit_promoted_immutable_global(
+            &mut ctx,
+            table_ty,
+            &other_bytes,
+            4,
+            block,
+            None,
+            Location::Unknown,
+        );
+        let other_key = String::from(other.get_attr_global_key(&ctx).expect("dedup key").clone());
+        assert_ne!(first_key, other_key, "distinct bytes must not share a key");
+    }
 }

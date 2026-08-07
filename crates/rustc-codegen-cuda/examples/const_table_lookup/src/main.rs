@@ -8,11 +8,12 @@
 //! Every kernel reads the *same table* with the *same divergent index* and does
 //! the same arithmetic. Only the spelling differs:
 //!
-//! | kernel          | table spelling                 |
-//! |-----------------|--------------------------------|
-//! | `lutN_value`    | `const T: [f32; N]`            |
-//! | `lutN_ref`      | `const T: &[f32; N]`           |
-//! | `lutN_constant` | `ConstantMemory<[f32; N]>`     |
+//! | kernel             | table spelling                  |
+//! |--------------------|---------------------------------|
+//! | `lutN_value`       | `const T: [f32; N]`             |
+//! | `lutN_ref`         | `const T: &[f32; N]`            |
+//! | `lutN_constant`    | `ConstantMemory<[f32; N]>`      |
+//! | `lut256_mut_copy`  | `let mut t = T; t[j] = x;`      |
 //!
 //! `lutN_ref` is the reference: a promoted array constant behind a reference has
 //! always been materialized as one immutable device global, read with a single
@@ -31,6 +32,12 @@
 //! [`ConstantMemory::get`] returns `T` by value, so a `ConstantMemory<[f32; N]>`
 //! reads all N entries out of `.const` and writes them into a local depot. It
 //! stays far off the other two, and a lookup table cannot use `.const` today.
+//!
+//! `lut256_mut_copy` covers the other side of the write-once guard: it writes
+//! its copy of the table before reading it, so the memcpy-from-immutable-global
+//! lowering must not fire. Each thread overwrites a different entry with a
+//! thread-unique value, so its bit-exact check proves the copy stays private to
+//! the thread; its timing is expected to look like the old `lut256_value`.
 //!
 //! Each thread performs `ROUNDS` lookups against a per-thread LCG, so the index
 //! is unpredictable and lane-divergent and the kernel is lookup-bound rather
@@ -214,11 +221,46 @@ mod kernels {
             *o = acc;
         }
     }
+
+    /// The write-once guard's other half: this kernel *writes* its copy of the
+    /// table before reading it, so the memcpy-from-immutable-global lowering
+    /// must not fire and the per-thread materialization must survive. Its row
+    /// is about the `correct` column, not the timing one: thread `i` overwrites
+    /// entry `i & (N - 1)` with a thread-unique value, so if the lowering ever
+    /// handed every thread one shared table, threads would observe each other's
+    /// writes and the bit-exact check would fail.
+    #[kernel]
+    pub fn lut256_mut_copy(input: &[u32], mut output: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+        let mut t = T256;
+        t[i & (super::N256 - 1)] = input[i] as f32;
+        let mut h = input[i];
+        let mut acc = 0.0_f32;
+        for _ in 0..super::ROUNDS {
+            h = step(h);
+            acc += t[(h >> 24) as usize & (super::N256 - 1)];
+        }
+        if let Some(o) = output.get_mut(idx) {
+            *o = acc;
+        }
+    }
 }
 
 /// Host-side seed for thread `i`.
 fn seed(i: usize) -> u32 {
     (i as u32).wrapping_mul(2_654_435_761).wrapping_add(12_345)
+}
+
+/// Reference for `lut256_mut_copy`: thread `i` first overwrites one entry of
+/// its private copy, so every thread's table differs by one element.
+fn expected_mut(i: usize) -> f32 {
+    let mut table = TABLE256;
+    table[i & (N256 - 1)] = seed(i) as f32;
+    expected(i, &table)
 }
 
 /// The host reference: the same LCG, the same table, the same add order, so a
@@ -281,6 +323,7 @@ fn main() {
     let cfg = LaunchConfig::for_num_elems(ELEMS as u32);
     let ref16: Vec<f32> = (0..ELEMS).map(|i| expected(i, &TABLE16)).collect();
     let ref256: Vec<f32> = (0..ELEMS).map(|i| expected(i, &TABLE256)).collect();
+    let refmut: Vec<f32> = (0..ELEMS).map(expected_mut).collect();
 
     let mut rows: Vec<Row> = Vec::new();
 
@@ -330,6 +373,15 @@ fn main() {
         "ConstantMem",
         lut256_constant,
         &ref256
+    );
+    // Correctness coverage for the write-once guard's fallback, not a timing
+    // contest: a written copy must stay per-thread and element-materialized.
+    measure!(
+        "lut256_mut_copy",
+        N256,
+        "mut copy",
+        lut256_mut_copy,
+        &refmut
     );
 
     println!();
