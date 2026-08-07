@@ -45,6 +45,18 @@ use super::{
     },
 };
 
+/// Flatten a descriptive string so it cannot escape a single `;` comment line.
+///
+/// An LLVM comment runs to end of line, so an embedded newline would turn the
+/// remainder of the text into IR the parser has to accept. Control characters
+/// become spaces; nothing else is altered, which keeps ordinary Rust paths
+/// (`::`, generics, `<impl …>`) readable verbatim.
+fn sanitize_comment(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 impl<'a> ModuleExportState<'a> {
     /// Export a global variable (typically shared memory for GPU kernels).
     pub(super) fn export_global(
@@ -65,6 +77,23 @@ impl<'a> ModuleExportState<'a> {
             return Err(format!(
                 "NVVM global `@{name}` uses unsupported address space {address_space}; expected generic (0), global (1), shared (3), or constant (4)"
             ));
+        }
+
+        // Lowering names every static shared allocation `__shared_mem_N`, so
+        // the emitted symbol carries no hint of which Rust `static` it came
+        // from. Anyone attributing a kernel's shared-memory footprint back to
+        // source has only the exported IR to work from, so record the Rust
+        // path as a comment on the line above the definition. It is a comment
+        // rather than a symbol rename because the generated names are matched
+        // literally elsewhere, and because a source path is not a legal LLVM
+        // identifier in general.
+        if let Some(source_name) = global.shared_source_name(self.ctx) {
+            writeln!(
+                output,
+                "; shared source: {}",
+                sanitize_comment(&source_name)
+            )
+            .unwrap();
         }
 
         // Check for external linkage (dynamic shared memory)

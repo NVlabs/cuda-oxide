@@ -828,8 +828,17 @@ impl Verify for MirPtrOffsetOp {
 /// | `elem_type`     | TypeAttr    | Element type of the array          |
 /// | `size`          | IntegerAttr | Number of elements                 |
 /// | `alloc_key`     | StringAttr  | Unique key for deduplication       |
+/// | `source_name`   | StringAttr  | Optional Rust path of the originating `static` |
 /// | `mir_alignment` | IntegerAttr | Optional alignment (natural if not set) |
 /// ```
+///
+/// `source_name` is diagnostic only. Lowering mints an anonymous
+/// `__shared_mem_N` symbol for every shared allocation, which leaves a
+/// consumer inspecting the generated PTX unable to tell which Rust
+/// `SharedArray` or `Barrier` static accounts for which block of shared
+/// memory. Carrying the Rust path alongside the deduplication key lets
+/// lowering stamp it onto the emitted LLVM global without perturbing the
+/// symbol name itself. Nothing in code generation reads it.
 ///
 /// # Results
 ///
@@ -851,6 +860,7 @@ impl Verify for MirPtrOffsetOp {
         elem_type: pliron::builtin::attributes::TypeAttr,
         size: IntegerAttr,
         alloc_key: pliron::builtin::attributes::StringAttr,
+        source_name: pliron::builtin::attributes::StringAttr,
         mir_alignment: IntegerAttr
     )
 )]

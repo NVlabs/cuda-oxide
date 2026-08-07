@@ -1945,6 +1945,14 @@ pub fn translate_operand(
                 let alloc_key = format!("{:?}", constant.const_);
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
 
+                // Record which Rust `static` this is. The alloc key above is
+                // opaque and lowering mints an anonymous `__shared_mem_N`
+                // symbol, so without this the generated shared-memory blocks
+                // cannot be attributed back to source.
+                if let Some(source_name) = shared_static_source_name(constant) {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
+                }
+
                 // Set alignment if specified (non-zero)
                 if alignment > 0 {
                     shared_alloc.set_alignment_value(ctx, alignment as u64);
@@ -2007,6 +2015,12 @@ pub fn translate_operand(
                 // Store the alloc key so lowering can deduplicate
                 let alloc_key = format!("{:?}", constant.const_);
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
+
+                // A `Barrier` static occupies shared memory too, so name it
+                // for the same attribution reason as `SharedArray` above.
+                if let Some(source_name) = shared_static_source_name(constant) {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
+                }
 
                 if let Some(prev) = prev_op {
                     shared_alloc.get_operation().insert_after(ctx, prev);
@@ -8052,6 +8066,29 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
             }
         }
         _ => false,
+    }
+}
+
+/// Best-effort Rust path of the `static` a shared-memory constant refers to.
+///
+/// Used only to label the generated `__shared_mem_N` global, so this is
+/// deliberately infallible: an unexpected constant shape yields `None` and the
+/// allocation stays unlabelled rather than failing a translation that would
+/// otherwise have succeeded. That is why it does not reuse
+/// [`static_target_from_constant`], which rejects multi-relocation constants —
+/// a diagnostic label must never be able to turn into a hard error. It also
+/// has no use for the byte addend: a `SharedArray` or `Barrier` constant always
+/// points at the whole static.
+fn shared_static_source_name(constant: &mir::ConstOperand) -> Option<String> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let ConstantKind::Allocated(allocation) = constant.const_.kind() else {
+        return None;
+    };
+    let &(_, provenance) = allocation.provenance.ptrs.first()?;
+    match GlobalAlloc::from(provenance.0) {
+        GlobalAlloc::Static(static_def) => Some(static_def.name()),
+        _ => None,
     }
 }
 

@@ -281,6 +281,14 @@ pub mod ops {
     /// Versioned, length-prefixed pointer-relocation metadata for an initialized
     /// Rust static.
     const GLOBAL_INITIALIZER_RELOCATIONS_KEY: &str = "cuda_oxide_global_initializer_relocations";
+    /// Rust path of the shared-memory `static` a generated `__shared_mem_N`
+    /// global came from.
+    ///
+    /// Distinct from [`GLOBAL_SOURCE_KEY`], which is a *relocation identity*:
+    /// the exporter indexes it, requires it to be unique across globals, and
+    /// resolves initializer pointers through it. This key is purely
+    /// descriptive, is never indexed, and carries no uniqueness requirement.
+    const GLOBAL_SHARED_SOURCE_NAME_KEY: &str = "cuda_oxide_global_shared_source_name";
 
     /// One pointer-width relocation inside an evaluated Rust static initializer.
     ///
@@ -1169,6 +1177,13 @@ pub mod ops {
         fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str);
         /// Read serialized initializer relocation metadata.
         fn initializer_relocations(&self, ctx: &Context) -> Option<String>;
+        /// Attach the Rust path of the shared-memory `static` this global came from.
+        ///
+        /// Descriptive only: the exporter renders it as a comment above the
+        /// global and nothing in code generation consumes it.
+        fn set_shared_source_name(&self, ctx: &mut Context, source_name: &str);
+        /// Read the Rust path of the shared-memory `static` this global came from.
+        fn shared_source_name(&self, ctx: &Context) -> Option<String>;
     }
 
     impl GlobalOpExt for GlobalOp {
@@ -1245,6 +1260,25 @@ pub mod ops {
 
         fn initializer_relocations(&self, ctx: &Context) -> Option<String> {
             let key = Identifier::try_new(GLOBAL_INITIALIZER_RELOCATIONS_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn set_shared_source_name(&self, ctx: &mut Context, source_name: &str) {
+            let key = Identifier::try_new(GLOBAL_SHARED_SOURCE_NAME_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(source_name.to_string()));
+        }
+
+        fn shared_source_name(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_SHARED_SOURCE_NAME_KEY.to_string())
                 .expect("valid identifier");
             self.get_operation()
                 .deref(ctx)

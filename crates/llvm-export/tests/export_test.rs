@@ -1587,6 +1587,76 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     assert_no_undefined_temporaries(&legacy);
 }
 
+/// Export a module holding one shared global, optionally labelled with the
+/// Rust path of the `static` it came from.
+fn export_shared_global_with_source_name(source_name: Option<&str>) -> String {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let array_ty = ArrayType::get(&ctx, i32_ty.to_handle(), 64);
+    let global = GlobalOp::new(
+        &mut ctx,
+        "__shared_mem_7".try_into().unwrap(),
+        array_ty.to_handle(),
+    );
+    global.set_address_space(&mut ctx, 3);
+    if let Some(source_name) = source_name {
+        global.set_shared_source_name(&mut ctx, source_name);
+    }
+    global.get_operation().insert_at_back(module_block, &ctx);
+
+    export_module_to_string(&ctx, &module).expect("export succeeds")
+}
+
+#[test]
+fn shared_global_source_name_is_exported_as_a_comment_above_the_definition() {
+    let ir = export_shared_global_with_source_name(Some("my_kernel::TILE"));
+
+    let definition_index = ir
+        .find("@__shared_mem_7 = addrspace(3) global")
+        .expect("module must declare the shared global");
+    let comment_index = ir
+        .find("; shared source: my_kernel::TILE")
+        .unwrap_or_else(|| panic!("shared global must name its Rust source:\n{ir}"));
+    assert!(
+        comment_index < definition_index,
+        "the source comment must precede the definition it describes:\n{ir}"
+    );
+}
+
+#[test]
+fn shared_global_without_a_source_name_exports_no_comment() {
+    let ir = export_shared_global_with_source_name(None);
+
+    assert!(
+        ir.contains("@__shared_mem_7 = addrspace(3) global"),
+        "module must declare the shared global:\n{ir}"
+    );
+    assert!(
+        !ir.contains("; shared source:"),
+        "an unlabelled global must not gain a comment:\n{ir}"
+    );
+}
+
+#[test]
+fn shared_global_source_name_cannot_escape_its_comment_line() {
+    // A newline in the label would end the comment and leave the remainder to
+    // be parsed as IR. Nothing in the current pipeline produces such a name,
+    // so this pins the exporter's own guarantee rather than a live bug.
+    let ir = export_shared_global_with_source_name(Some("EVIL\n@injected = addrspace(3) global"));
+
+    assert!(
+        ir.lines().all(|line| !line.starts_with("@injected")),
+        "a control character in the label must not open a new IR line:\n{ir}"
+    );
+    assert!(
+        ir.contains("; shared source: EVIL @injected = addrspace(3) global"),
+        "the label must survive on one line with controls flattened:\n{ir}"
+    );
+}
+
 #[test]
 fn nvvm_export_rejects_invalid_global_address_spaces() {
     let mut ctx = Context::new();
