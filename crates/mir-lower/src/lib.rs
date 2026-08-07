@@ -356,8 +356,11 @@ pub fn lower_mir_to_llvm_with_options(
 ) -> Result<()> {
     context::set_lowering_options(ctx, options);
     // WGMMA pointer-form MMA operations are only sound when their complete
-    // fence/MMA/commit/wait<0> region can be fused into one deferred group.
-    // Run this while MIR control flow and unsigned constants are still intact.
+    // fence/MMA/commit/wait<0> region can be closed before LLVM sees pending
+    // accumulator state. Canonical [[f32; 8]; 4] accumulators are adapted
+    // through 32 scalar values; unsupported pointer shapes retain the deferred
+    // pointer-group fallback. Run this while MIR control flow and unsigned
+    // constants are still intact.
     wgmma_deferred_accumulator::fuse_deferred_accumulators(ctx, module_op)?;
     // Dynamic shared-memory operations may live in device helpers. Compute
     // every kernel-to-helper requirement while the complete MIR call graph is

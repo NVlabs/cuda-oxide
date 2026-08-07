@@ -8,7 +8,9 @@
 //! The public MMA operation exposes its accumulator through a pointer, but PTX
 //! requires all 32 accumulator registers to remain inaccessible until the
 //! corresponding `wgmma.wait_group` completes. This pass recognizes a closed,
-//! straight-line sequence and replaces it with one deferred group operation.
+//! straight-line sequence and adapts the canonical `[[f32; 8]; 4]` accumulator
+//! through 32 scalar SSA values. Unsupported accumulator shapes retain the
+//! existing deferred pointer-group fallback.
 //!
 //! The accepted initial form is deliberately narrow:
 //!
@@ -26,19 +28,22 @@
 //! control-flow-join checks; a complete sequence inside a loop body fuses.
 
 use dialect_mir::{
-    ops::{MirConstantOp, MirGotoOp, MirStorageDeadOp, MirStorageLiveOp},
-    types::{MirPtrType, address_space},
+    ops::{
+        MirArrayElementAddrOp, MirConstantOp, MirGotoOp, MirLoadOp, MirStorageDeadOp,
+        MirStorageLiveOp, MirStoreOp,
+    },
+    types::{MirArrayType, MirPtrType, address_space},
 };
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
 };
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
         attributes::IntegerAttr,
         ops::ConstantOp,
-        types::{IntegerType, Signedness},
+        types::{FP32Type, IntegerType, Signedness},
     },
     context::{Context, Ptr},
     irbuild::{
@@ -47,11 +52,18 @@ use pliron::{
     },
     linked_list::ContainsLinkedList,
     location::Located,
+    op::Op,
     operation::Operation,
     result::Result,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
+    utils::apint::APInt,
     value::Value,
 };
+use std::num::NonZeroUsize;
+
+const ACCUMULATOR_ROWS: usize = 4;
+const ACCUMULATOR_COLUMNS: usize = 8;
+const ACCUMULATOR_LEN: usize = ACCUMULATOR_ROWS * ACCUMULATOR_COLUMNS;
 
 struct FusionPlan {
     fence: Ptr<Operation>,
@@ -164,6 +176,182 @@ fn require_supported_accumulator(ctx: &Context, accumulator: Value) -> Result<()
         );
     }
     Ok(())
+}
+
+fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHandle, TypeHandle)> {
+    let accumulator_type = accumulator.get_type(ctx);
+    let accumulator_type_ref = accumulator_type.deref(ctx);
+    let pointer_type = accumulator_type_ref.downcast_ref::<MirPtrType>()?;
+    if !pointer_type.is_mutable() || pointer_type.address_space() != address_space::GENERIC {
+        return None;
+    }
+
+    let outer_type = pointer_type.pointee;
+    let outer_type_ref = outer_type.deref(ctx);
+    let outer_array = outer_type_ref.downcast_ref::<MirArrayType>()?;
+    if outer_array.size() != ACCUMULATOR_ROWS as u64 {
+        return None;
+    }
+
+    let row_type = outer_array.element_type();
+    let row_type_ref = row_type.deref(ctx);
+    let row_array = row_type_ref.downcast_ref::<MirArrayType>()?;
+    if row_array.size() != ACCUMULATOR_COLUMNS as u64 {
+        return None;
+    }
+
+    let element_type = row_array.element_type();
+    if element_type.deref(ctx).downcast_ref::<FP32Type>().is_none() {
+        return None;
+    }
+
+    Some((row_type, element_type))
+}
+
+fn insert_u64_constant_before(ctx: &mut Context, value: u64, before: Ptr<Operation>) -> Value {
+    let u64_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let constant = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![u64_type.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    MirConstantOp::new(constant).set_attr_value(
+        ctx,
+        IntegerAttr::new(
+            u64_type,
+            APInt::from_u64(value, NonZeroUsize::new(64).unwrap()),
+        ),
+    );
+    constant.insert_before(ctx, before);
+    constant.deref(ctx).get_result(0)
+}
+
+fn erase_original_sequence(
+    ctx: &mut Context,
+    fence: Ptr<Operation>,
+    mmas: Vec<Ptr<Operation>>,
+    commit: Ptr<Operation>,
+    wait: Ptr<Operation>,
+) {
+    let mut rewriter = IRRewriter::<Recorder>::default();
+    rewriter.erase_operation(ctx, fence);
+    for mma in mmas {
+        rewriter.erase_operation(ctx, mma);
+    }
+    rewriter.erase_operation(ctx, commit);
+    rewriter.erase_operation(ctx, wait);
+}
+
+fn apply_value_plan(
+    ctx: &mut Context,
+    fence: Ptr<Operation>,
+    mmas: Vec<Ptr<Operation>>,
+    commit: Ptr<Operation>,
+    wait: Ptr<Operation>,
+    accumulator: Value,
+    descriptors: Vec<Value>,
+    row_type: TypeHandle,
+    element_type: TypeHandle,
+) {
+    let loc = fence.deref(ctx).loc();
+
+    let row_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, row_type, true).into();
+    let element_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, element_type, true).into();
+
+    let row_indices = (0..ACCUMULATOR_ROWS)
+        .map(|index| insert_u64_constant_before(ctx, index as u64, wait))
+        .collect::<Vec<_>>();
+    let column_indices = (0..ACCUMULATOR_COLUMNS)
+        .map(|index| insert_u64_constant_before(ctx, index as u64, wait))
+        .collect::<Vec<_>>();
+
+    let mut element_pointers = Vec::with_capacity(ACCUMULATOR_LEN);
+    let mut accumulator_values = Vec::with_capacity(ACCUMULATOR_LEN);
+
+    for row in 0..ACCUMULATOR_ROWS {
+        let row_address = Operation::new(
+            ctx,
+            MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![row_pointer_type],
+            vec![accumulator, row_indices[row]],
+            vec![],
+            0,
+        );
+        row_address.deref_mut(ctx).set_loc(loc.clone());
+        row_address.insert_before(ctx, wait);
+        let row_pointer = row_address.deref(ctx).get_result(0);
+
+        for column in 0..ACCUMULATOR_COLUMNS {
+            let element_address = Operation::new(
+                ctx,
+                MirArrayElementAddrOp::get_concrete_op_info(),
+                vec![element_pointer_type],
+                vec![row_pointer, column_indices[column]],
+                vec![],
+                0,
+            );
+            element_address.deref_mut(ctx).set_loc(loc.clone());
+            element_address.insert_before(ctx, wait);
+            let element_pointer = element_address.deref(ctx).get_result(0);
+
+            let load = Operation::new(
+                ctx,
+                MirLoadOp::get_concrete_op_info(),
+                vec![element_type],
+                vec![element_pointer],
+                vec![],
+                0,
+            );
+            load.deref_mut(ctx).set_loc(loc.clone());
+            load.insert_before(ctx, wait);
+
+            element_pointers.push(element_pointer);
+            accumulator_values.push(load.deref(ctx).get_result(0));
+        }
+    }
+
+    let group = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(ctx, accumulator_values, descriptors);
+    group.deref_mut(ctx).set_loc(loc.clone());
+    let accumulator_results = (0..ACCUMULATOR_LEN)
+        .map(|index| group.deref(ctx).get_result(index))
+        .collect::<Vec<_>>();
+    group.insert_before(ctx, wait);
+
+    for (element_pointer, result) in element_pointers
+        .into_iter()
+        .zip(accumulator_results.into_iter())
+    {
+        let store = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![element_pointer, result],
+            vec![],
+            0,
+        );
+        store.deref_mut(ctx).set_loc(loc.clone());
+        store.insert_before(ctx, wait);
+    }
+
+    erase_original_sequence(ctx, fence, mmas, commit, wait);
+}
+
+fn apply_pointer_fallback(
+    ctx: &mut Context,
+    fence: Ptr<Operation>,
+    mmas: Vec<Ptr<Operation>>,
+    commit: Ptr<Operation>,
+    wait: Ptr<Operation>,
+    accumulator: Value,
+    descriptors: Vec<Value>,
+) {
+    let group = WgmmaMmaGroupM64N64K16F32Bf16Op::build(ctx, accumulator, descriptors);
+    group.deref_mut(ctx).set_loc(fence.deref(ctx).loc());
+    group.insert_before(ctx, wait);
+    erase_original_sequence(ctx, fence, mmas, commit, wait);
 }
 
 fn is_ignorable(ctx: &Context, op: Ptr<Operation>) -> bool {
@@ -334,20 +522,37 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
 }
 
 fn apply_plan(ctx: &mut Context, plan: FusionPlan) {
-    let group = WgmmaMmaGroupM64N64K16F32Bf16Op::build(ctx, plan.accumulator, plan.descriptors);
-    group.deref_mut(ctx).set_loc(plan.fence.deref(ctx).loc());
-    group.insert_before(ctx, plan.wait);
+    let FusionPlan {
+        fence,
+        mmas,
+        commit,
+        wait,
+        accumulator,
+        descriptors,
+    } = plan;
 
-    let mut rewriter = IRRewriter::<Recorder>::default();
-    rewriter.erase_operation(ctx, plan.fence);
-    for mma in plan.mmas {
-        rewriter.erase_operation(ctx, mma);
+    if let Some((row_type, element_type)) = value_accumulator_shape(ctx, accumulator) {
+        apply_value_plan(
+            ctx,
+            fence,
+            mmas,
+            commit,
+            wait,
+            accumulator,
+            descriptors,
+            row_type,
+            element_type,
+        );
+    } else {
+        apply_pointer_fallback(ctx, fence, mmas, commit, wait, accumulator, descriptors);
     }
-    rewriter.erase_operation(ctx, plan.commit);
-    rewriter.erase_operation(ctx, plan.wait);
 }
 
-/// Fuse every supported pointer-form BF16 WGMMA sequence in `module_op`.
+/// Adapt every supported pointer-form BF16 WGMMA sequence in `module_op`.
+///
+/// Canonical `[[f32; 8]; 4]` accumulators are loaded into 32 scalar values,
+/// threaded through the value-form WGMMA group, and stored back only after
+/// `wait_group<0>`. Other supported pointer shapes keep the deferred fallback.
 pub(crate) fn fuse_deferred_accumulators(
     ctx: &mut Context,
     module_op: Ptr<Operation>,
