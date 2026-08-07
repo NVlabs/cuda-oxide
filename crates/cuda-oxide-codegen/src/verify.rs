@@ -41,32 +41,198 @@ pub fn verify_operation(
     Ok(())
 }
 
-/// Recursively finds the innermost operation that failed verification.
+/// Finds the innermost operation that failed verification.
 ///
 /// Helps produce better error messages by pointing to the specific failing
 /// operation rather than just the containing module/function.
+///
+/// Iterative, not recursive: recursion depth here tracks REGION nesting
+/// (`MirFuncOp` is the only region-bearing op across every dialect this
+/// pipeline lowers through, so today that depth stays around 3 -- module,
+/// function, block -- regardless of how large a module gets). Nothing about
+/// this function enforces that stays true, and there is no reason a compile
+/// error, of all things, should depend on an unstated depth bound to avoid
+/// becoming a stack overflow instead.
+///
+/// Two passes over an explicit stack, not one: `to_visit` drains in the
+/// tree's natural (root-to-leaf, left-to-right) order, which is exactly
+/// backwards from what finding an INNERMOST failure needs. Collecting into
+/// `post_order` first and draining THAT reverses it back to
+/// children-before-parent, matching the original recursive function's
+/// contract (which checked every descendant of an operation before
+/// checking the operation itself) exactly.
 fn find_inner_verification_error(
     ctx: &Context,
     op_ptr: Ptr<Operation>,
 ) -> Option<(Ptr<Operation>, String)> {
-    let op = op_ptr.deref(ctx);
-
-    for region in op.regions() {
-        let region_ref = region.deref(ctx);
-        for block in region_ref.iter(ctx) {
-            let block_ref = block.deref(ctx);
-            for child_op in block_ref.iter(ctx) {
-                if let Some(err) = find_inner_verification_error(ctx, child_op) {
-                    return Some(err);
-                }
+    let mut to_visit = vec![op_ptr];
+    let mut post_order = Vec::new();
+    while let Some(op) = to_visit.pop() {
+        post_order.push(op);
+        for region in op.deref(ctx).regions() {
+            let region_ref = region.deref(ctx);
+            for block in region_ref.iter(ctx) {
+                let block_ref = block.deref(ctx);
+                to_visit.extend(block_ref.iter(ctx));
             }
         }
     }
 
-    if let Err(e) = op.verify(ctx) {
-        // Use .disp(ctx) to get full error with location and backtrace
-        return Some((op_ptr, e.disp(ctx).to_string()));
+    while let Some(op) = post_order.pop() {
+        if let Err(e) = op.deref(ctx).verify(ctx) {
+            // Use .disp(ctx) to get full error with location and backtrace
+            return Some((op, e.disp(ctx).to_string()));
+        }
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dialect_mir::attributes::FieldIndexAttr;
+    use dialect_mir::ops::MirFieldAddrOp;
+    use dialect_mir::types::{MirPtrType, MirStructType};
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::op_interfaces::OneRegionInterface;
+    use pliron::builtin::ops::ModuleOp;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::op::Op;
+    use pliron::r#type::TypeHandle;
+
+    /// A `struct { a: u8, b: u32 }` type and its two field pointer types,
+    /// built exactly once per test: `MirFieldAddrOp::verify` compares the
+    /// declared result type against the struct type's OWN recorded field
+    /// type by `TypeHandle` identity, so two independently-constructed
+    /// `u32` types would not be interchangeable even though they describe
+    /// the same type. A struct rather than a tuple deliberately: struct
+    /// pointees are supported by `MirFieldAddrOp` on any revision of this
+    /// codebase, so this test does not depend on #709's tuple-pointee
+    /// support landing first.
+    struct StructTypes {
+        struct_ptr: TypeHandle,
+        field_ptr: [TypeHandle; 2],
+    }
+
+    fn struct_types(ctx: &mut Context) -> StructTypes {
+        let u8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        let struct_ty: TypeHandle = MirStructType::get(
+            ctx,
+            "S".to_string(),
+            vec!["a".to_string(), "b".to_string()],
+            vec![u8_ty, u32_ty],
+        )
+        .into();
+        StructTypes {
+            struct_ptr: MirPtrType::get_generic(ctx, struct_ty, false).into(),
+            field_ptr: [
+                MirPtrType::get_generic(ctx, u8_ty, false).into(),
+                MirPtrType::get_generic(ctx, u32_ty, false).into(),
+            ],
+        }
+    }
+
+    /// A `mir.field_addr` into a `struct { a: u8, b: u32 }` pointer (`block`'s
+    /// only argument) at `field_index`. A leaf op (no regions, no
+    /// successors), so its own verifier is the only thing that can make it
+    /// pass or fail: 0 or 1 are in bounds and get their real field pointer
+    /// type as the result type; anything else (2 here) is out of bounds and,
+    /// since no real field type exists to give it, keeps the struct's own
+    /// pointer type as a deliberately wrong result type -- MirFieldAddrOp::
+    /// verify must reject it on the bounds check before it would ever reach
+    /// a result pointee-type comparison.
+    fn struct_field_addr(
+        ctx: &mut Context,
+        types: &StructTypes,
+        block: Ptr<BasicBlock>,
+        field_index: u32,
+    ) -> Ptr<Operation> {
+        let result_ty = types
+            .field_ptr
+            .get(field_index as usize)
+            .copied()
+            .unwrap_or(types.struct_ptr);
+        let base = block.deref(ctx).get_argument(0);
+        let op = Operation::new(
+            ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(ctx, FieldIndexAttr(field_index));
+        op
+    }
+
+    /// A module whose single block takes one struct-pointer argument,
+    /// replacing `ModuleOp::new`'s own argument-less entry block.
+    fn module_with_one_block(
+        ctx: &mut Context,
+        types: &StructTypes,
+    ) -> (ModuleOp, Ptr<BasicBlock>) {
+        let module = ModuleOp::new(ctx, "m".try_into().unwrap());
+        let region = module.get_region(ctx);
+        let old_block = region
+            .deref(ctx)
+            .iter(ctx)
+            .next()
+            .expect("ModuleOp::new creates one block");
+        BasicBlock::erase(old_block, ctx);
+        let block = BasicBlock::new(ctx, None, vec![types.struct_ptr]);
+        block.insert_at_front(region, ctx);
+        (module, block)
+    }
+
+    #[test]
+    fn verify_operation_passes_through_a_fully_valid_tree() {
+        let mut ctx = Context::new();
+        let types = struct_types(&mut ctx);
+        let (module, block) = module_with_one_block(&mut ctx, &types);
+        struct_field_addr(&mut ctx, &types, block, 1).insert_at_back(block, &ctx);
+
+        assert!(verify_operation(&ctx, module.get_operation(), "m").is_ok());
+    }
+
+    #[test]
+    fn verify_operation_reports_a_direct_child_failure() {
+        let mut ctx = Context::new();
+        let types = struct_types(&mut ctx);
+        let (module, block) = module_with_one_block(&mut ctx, &types);
+        struct_field_addr(&mut ctx, &types, block, 2).insert_at_back(block, &ctx);
+
+        let err = verify_operation(&ctx, module.get_operation(), "m").unwrap_err();
+        let PipelineError::Verification { operation, .. } = err else {
+            panic!("expected a Verification error, got {err:?}");
+        };
+        assert!(
+            operation.unwrap().contains("mir.field_addr"),
+            "must name the failing mir.field_addr operation, not just the module"
+        );
+    }
+
+    #[test]
+    fn verify_operation_finds_the_innermost_failure_among_several_siblings() {
+        // Three siblings in one block: valid, INVALID, valid. The malformed
+        // middle one is what verify_operation must name, not the first
+        // sibling checked, not the module, and not silently the wrong one
+        // because a later valid sibling masked it.
+        let mut ctx = Context::new();
+        let types = struct_types(&mut ctx);
+        let (module, block) = module_with_one_block(&mut ctx, &types);
+
+        struct_field_addr(&mut ctx, &types, block, 0).insert_at_back(block, &ctx);
+        let bad_op = struct_field_addr(&mut ctx, &types, block, 2);
+        bad_op.insert_at_back(block, &ctx);
+        struct_field_addr(&mut ctx, &types, block, 1).insert_at_back(block, &ctx);
+
+        let (found_op, _) = find_inner_verification_error(&ctx, module.get_operation())
+            .expect("one of the three siblings is malformed");
+        assert_eq!(
+            found_op, bad_op,
+            "must return the specific malformed sibling, not any other operation"
+        );
+    }
 }
