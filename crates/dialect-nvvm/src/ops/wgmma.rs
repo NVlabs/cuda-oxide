@@ -16,30 +16,37 @@
 //!
 //! The internal value-form group represents those same 32 accumulator values
 //! explicitly as SSA operands/results. A counted-loop variant additionally owns
-//! the descriptor recurrences and loop control so the complete asynchronous
-//! lifetime remains inside one convergent inline-PTX region. The pointer-form
-//! group remains available as the deferred fallback.
+//! descriptor recurrences and loop control. A pipelined variant carries multiple
+//! independent 32-value accumulator slots so statically known `wait_group<N>`
+//! depths can keep committed groups in flight without exposing an in-flight
+//! accumulator to LLVM. The pointer-form group remains the deferred fallback.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
     builtin::{
+        attributes::IntegerAttr,
         op_interfaces::{NOpdsInterface, NResultsInterface},
         types::{FP32Type, IntegerType, Signedness},
     },
     common_traits::Verify,
     context::{Context, Ptr},
+    identifier::Identifier,
     location::Located,
     op::Op,
     operation::Operation,
     result::Error,
     r#type::Typed,
+    utils::apint::APInt,
     value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
+use std::num::NonZeroUsize;
 
 const WGMMA_M64N64_F32_ACCUMULATOR_COUNT: usize = 32;
 const WGMMA_COUNTED_LOOP_CONTROL_COUNT: usize = 5;
+const WGMMA_MAX_PENDING_GROUPS: u32 = 7;
+const WGMMA_PIPELINE_MAX_PENDING_ATTR: &str = "max_pending_groups";
 
 // =============================================================================
 // Descriptor Operations
@@ -449,6 +456,163 @@ impl Verify for WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
     }
 }
 
+/// Value-form BF16 WGMMA pipeline with multiple independent accumulator slots.
+///
+/// The operation carries `N + 1` independent 32-value accumulator slots when
+/// `max_pending_groups = N`. Groups are issued round-robin across those slots,
+/// committed individually, and throttled with `wait_group<N>` before a slot is
+/// reused. A final `wait_group<0>` completes every pending group before any
+/// accumulator result becomes visible to LLVM.
+///
+/// Operand layout:
+///
+/// ```text
+/// [
+///   slot0_acc_0, ..., slot0_acc_31,
+///   ...
+///   slotN_acc_0, ..., slotN_acc_31,
+///   desc_a_0, desc_b_0, ..., desc_a_g, desc_b_g,
+/// ]
+/// ```
+///
+/// Result layout mirrors the flattened accumulator inputs.
+#[pliron_op(name = "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16", format)]
+pub struct WgmmaMmaPipelineValuesM64N64K16F32Bf16Op;
+
+impl WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    fn max_pending_groups_key() -> Identifier {
+        Identifier::try_from(WGMMA_PIPELINE_MAX_PENDING_ATTR).unwrap()
+    }
+
+    /// Build a value-form WGMMA pipeline.
+    pub fn build(
+        ctx: &mut Context,
+        accumulators: Vec<Value>,
+        descriptors: Vec<Value>,
+        max_pending_groups: u32,
+    ) -> Ptr<Operation> {
+        let f32_ty = FP32Type::get(ctx);
+        let mut operands = Vec::with_capacity(accumulators.len() + descriptors.len());
+        let result_count = accumulators.len();
+        operands.extend(accumulators);
+        operands.extend(descriptors);
+
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![f32_ty.into(); result_count],
+            operands,
+            vec![],
+            0,
+        );
+        let attr_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        op.deref_mut(ctx).attributes.set(
+            Self::max_pending_groups_key(),
+            IntegerAttr::new(
+                attr_ty,
+                APInt::from_u64(
+                    u64::from(max_pending_groups),
+                    NonZeroUsize::new(32).unwrap(),
+                ),
+            ),
+        );
+        op
+    }
+
+    /// Return the statically known `wait_group<N>` bound.
+    pub fn max_pending_groups(&self, ctx: &Context) -> Option<u32> {
+        let operation = self.get_operation().deref(ctx);
+        let attribute: &IntegerAttr = operation.attributes.get(&Self::max_pending_groups_key())?;
+        let ty_handle = attribute.get_type();
+        let ty = ty_handle.deref(ctx);
+        if ty.width() != 32 || ty.signedness() != Signedness::Unsigned {
+            return None;
+        }
+        u32::try_from(attribute.value().to_u64()).ok()
+    }
+}
+
+impl Verify for WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let Some(max_pending_groups) = self.max_pending_groups(ctx) else {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires a u32 max_pending_groups attribute"
+            );
+        };
+        if !(1..=WGMMA_MAX_PENDING_GROUPS).contains(&max_pending_groups) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 max_pending_groups must be in 1..=7"
+            );
+        }
+
+        let result_count = op.get_num_results();
+        if result_count == 0 || !result_count.is_multiple_of(WGMMA_M64N64_F32_ACCUMULATOR_COUNT) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 results must contain whole 32-value accumulator slots"
+            );
+        }
+        let slot_count = result_count / WGMMA_M64N64_F32_ACCUMULATOR_COUNT;
+        if slot_count != max_pending_groups as usize + 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires exactly max_pending_groups + 1 accumulator slots"
+            );
+        }
+
+        let operand_count = op.get_num_operands();
+        if operand_count < result_count + slot_count * 2 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires at least one committed group per accumulator slot"
+            );
+        }
+        let descriptor_count = operand_count - result_count;
+        if !descriptor_count.is_multiple_of(2) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 descriptors must form pairs"
+            );
+        }
+        let group_count = descriptor_count / 2;
+        if group_count < slot_count {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires at least max_pending_groups + 1 committed groups"
+            );
+        }
+
+        for accumulator_index in 0..result_count {
+            if !is_f32(ctx, op.get_operand(accumulator_index).get_type(ctx))
+                || !is_f32(ctx, op.get_result(accumulator_index).get_type(ctx))
+            {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 accumulator operands and results must be f32"
+                );
+            }
+        }
+        for descriptor_index in result_count..operand_count {
+            if !is_u64(ctx, op.get_operand(descriptor_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 descriptors must be u64"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Register WGMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     WgmmaMakeSmemDescOp::register(ctx);
@@ -456,4 +620,5 @@ pub(super) fn register(ctx: &mut Context) {
     WgmmaMmaGroupM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaLoopValuesM64N64K16F32Bf16Op::register(ctx);
+    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::register(ctx);
 }

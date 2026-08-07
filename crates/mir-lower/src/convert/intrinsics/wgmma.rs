@@ -6,6 +6,7 @@
 //! WGMMA conversion for Hopper `sm_90a`.
 
 use crate::convert::intrinsics::common::*;
+use dialect_nvvm::ops::WgmmaMmaPipelineValuesM64N64K16F32Bf16Op;
 use llvm_export::ops as llvm;
 use llvm_export::types::{self as llvm_types, VoidType};
 use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -162,6 +163,49 @@ fn counted_loop_template() -> String {
     template.push_str("    wgmma.wait_group.sync.aligned 0;\n");
     template.push('}');
     template
+}
+
+fn pipeline_accumulator_operand_list(slot: usize) -> String {
+    let base = slot * VALUE_ACCUMULATOR_COUNT;
+    (base..base + VALUE_ACCUMULATOR_COUNT)
+        .map(|index| format!("${index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn pipeline_template(slot_count: usize, group_count: usize, max_pending_groups: u32) -> String {
+    let result_count = slot_count * VALUE_ACCUMULATOR_COUNT;
+    let descriptor_base = result_count * 2;
+    let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
+
+    for group_index in 0..group_count {
+        let slot = group_index % slot_count;
+        let accumulators = pipeline_accumulator_operand_list(slot);
+        let desc_a = descriptor_base + group_index * 2;
+        let desc_b = desc_a + 1;
+        template.push_str(&format!(
+            "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+             {{{accumulators}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
+        ));
+        template.push_str("    wgmma.commit_group.sync.aligned;\n");
+        if group_index + 1 >= slot_count {
+            template.push_str(&format!(
+                "    wgmma.wait_group.sync.aligned {max_pending_groups};\n"
+            ));
+        }
+    }
+
+    template.push_str("    wgmma.wait_group.sync.aligned 0;\n");
+    template.push('}');
+    template
+}
+
+fn pipeline_constraints(result_count: usize, descriptor_count: usize) -> String {
+    let mut constraints = vec!["=f".to_owned(); result_count];
+    constraints.extend((0..result_count).map(|index| index.to_string()));
+    constraints.extend((0..descriptor_count).map(|_| "l".to_owned()));
+    constraints.push("~{memory}".to_owned());
+    constraints.join(",")
 }
 
 fn counted_loop_constraints() -> String {
@@ -321,6 +365,79 @@ pub(crate) fn convert_mma_loop_values(
     Ok(())
 }
 
+/// Lower a multi-slot BF16 WGMMA pipeline to one convergent inline-PTX scope.
+///
+/// Each accumulator slot owns 32 tied `f32` registers. Groups are committed
+/// independently and issued round-robin across `N + 1` slots for
+/// `wait_group<N>`, ensuring a slot is not reused until its previous group has
+/// completed. A final `wait_group<0>` occurs before any result escapes to LLVM.
+pub(crate) fn convert_mma_pipeline_values(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    let result_count = op.deref(ctx).get_num_results();
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+
+    if result_count == 0 || !result_count.is_multiple_of(VALUE_ACCUMULATOR_COUNT) {
+        return pliron::input_err_noloc!(
+            "pipeline value-form WGMMA requires whole 32-value accumulator slots"
+        );
+    }
+    if operands.len() < result_count + 2 {
+        return pliron::input_err_noloc!(
+            "pipeline value-form WGMMA requires accumulator inputs and descriptor pairs"
+        );
+    }
+    let descriptor_count = operands.len() - result_count;
+    if !descriptor_count.is_multiple_of(2) {
+        return pliron::input_err_noloc!("pipeline WGMMA descriptors must form pairs");
+    }
+
+    let pipeline = Operation::get_op::<WgmmaMmaPipelineValuesM64N64K16F32Bf16Op>(op, ctx)
+        .expect("pipeline conversion must be invoked for the pipeline WGMMA op");
+    let Some(max_pending_groups) = pipeline.max_pending_groups(ctx) else {
+        return pliron::input_err_noloc!("pipeline WGMMA is missing max_pending_groups");
+    };
+    if !(1..=7).contains(&max_pending_groups) {
+        return pliron::input_err_noloc!("pipeline WGMMA max_pending_groups must be in 1..=7");
+    }
+    let slot_count = max_pending_groups as usize + 1;
+    if result_count != slot_count * VALUE_ACCUMULATOR_COUNT {
+        return pliron::input_err_noloc!(
+            "pipeline WGMMA requires max_pending_groups + 1 accumulator slots"
+        );
+    }
+    let group_count = descriptor_count / 2;
+    if group_count < slot_count {
+        return pliron::input_err_noloc!(
+            "pipeline WGMMA requires at least max_pending_groups + 1 committed groups"
+        );
+    }
+
+    let template = pipeline_template(slot_count, group_count, max_pending_groups);
+    let constraints = pipeline_constraints(result_count, descriptor_count);
+    let f32_ty = FP32Type::get(ctx);
+    let struct_ty: TypeHandle =
+        llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); result_count]).into();
+
+    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let aggregate = asm_op.deref(ctx).get_result(0);
+
+    let mut extracted_values = Vec::with_capacity(result_count);
+    for index in 0..result_count {
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
+            .map_err(|error| pliron::input_error!(loc.clone(), "{}", error))?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        extracted_values.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+
+    rewriter.replace_operation_with_values(ctx, op, extracted_values);
+    Ok(())
+}
+
 /// Reject an unfused pointer-form MMA operation.
 ///
 /// Reaching this converter means the pre-lowering adapter could not prove a
@@ -332,7 +449,7 @@ pub(crate) fn convert_mma(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     pliron::input_err_noloc!(
-        "WGMMA MMA reached lowering without deferred accumulator fusion; expected a supported linear fence -> BF16 MMA+ -> commit_group -> wait_group<0> region or a canonical counted K-loop"
+        "WGMMA MMA reached lowering without deferred accumulator fusion; expected a supported linear wait_group<0> region, a proven partial-wait pipeline, or a canonical counted K-loop"
     )
 }
 
@@ -340,7 +457,7 @@ pub(crate) fn convert_mma(
 mod tests {
     use super::{
         counted_loop_constraints, counted_loop_template, deferred_group_template,
-        value_group_constraints, value_group_template,
+        pipeline_constraints, pipeline_template, value_group_constraints, value_group_template,
     };
 
     #[test]
@@ -444,6 +561,43 @@ mod tests {
         assert_eq!(
             constraints.split(',').filter(|value| *value == "l").count(),
             5
+        );
+        assert!(constraints.ends_with("~{memory}"));
+    }
+
+    #[test]
+    fn pipeline_template_throttles_groups_and_finishes_with_wait_zero() {
+        let template = pipeline_template(2, 4, 1);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 4);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            4
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 1").count(),
+            3
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(template.contains("{$0, $1, $2"));
+        assert!(template.contains("{$32, $33, $34"));
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(!template.contains(".reg .f32"));
+
+        let constraints = pipeline_constraints(64, 8);
+        assert_eq!(
+            constraints
+                .split(',')
+                .filter(|value| *value == "=f")
+                .count(),
+            64
+        );
+        assert_eq!(
+            constraints.split(',').filter(|value| *value == "l").count(),
+            8
         );
         assert!(constraints.ends_with("~{memory}"));
     }

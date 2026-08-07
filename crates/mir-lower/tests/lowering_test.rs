@@ -8022,6 +8022,41 @@ fn build_wgmma_pointer_test_kernel(
     )
 }
 
+fn build_wgmma_canonical_pointer_test_kernel(
+    ctx: &mut Context,
+    accumulator_count: usize,
+    descriptor_count: usize,
+) -> (
+    pliron::context::Ptr<Operation>,
+    pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    Vec<pliron::value::Value>,
+    Vec<pliron::value::Value>,
+) {
+    use dialect_mir::types::{MirArrayType, MirPtrType};
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    let f32_ty = FP32Type::get(ctx);
+    let row_ty = MirArrayType::get(ctx, f32_ty.into(), 8);
+    let accumulator_ty = MirArrayType::get(ctx, row_ty.into(), 4);
+    let accumulator_ptr_ty = MirPtrType::get_generic(ctx, accumulator_ty.into(), true);
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+
+    let accumulator_arg_ty: pliron::r#type::TypeHandle = accumulator_ptr_ty.into();
+    let u64_arg_ty: pliron::r#type::TypeHandle = u64_ty.into();
+    let mut argument_types = vec![accumulator_arg_ty; accumulator_count];
+    argument_types.extend(vec![u64_arg_ty; descriptor_count]);
+    let (module_ptr, entry) = build_test_kernel(ctx, argument_types);
+
+    let accumulators = (0..accumulator_count)
+        .map(|index| entry.deref(ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let descriptors = (0..descriptor_count)
+        .map(|index| entry.deref(ctx).get_argument(accumulator_count + index))
+        .collect::<Vec<_>>();
+
+    (module_ptr, entry, accumulators, descriptors)
+}
+
 fn append_pointer_wgmma_mma(
     ctx: &mut Context,
     block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
@@ -9160,6 +9195,157 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
 }
 
 #[test]
+fn test_pointer_form_wgmma_partial_wait_pipeline_keeps_multiple_groups_in_flight()
+-> Result<(), anyhow::Error> {
+    const SLOT_COUNT: usize = 2;
+    const ACCUMULATOR_LEN: usize = 32;
+    const GROUP_COUNT: usize = 4;
+    const DESCRIPTOR_COUNT: usize = GROUP_COUNT * 2;
+    const MAX_PENDING_GROUPS: i64 = 1;
+    const RESULT_COUNT: usize = SLOT_COUNT * ACCUMULATOR_LEN;
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, SLOT_COUNT, DESCRIPTOR_COUNT);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    for group in 0..GROUP_COUNT {
+        append_pointer_wgmma_mma(
+            &mut ctx,
+            entry,
+            accumulators[group % SLOT_COUNT],
+            descriptors[group * 2],
+            descriptors[group * 2 + 1],
+        );
+        nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+        if group + 1 >= SLOT_COUNT {
+            append_wgmma_wait_group_constant(&mut ctx, entry, MAX_PENDING_GROUPS);
+        }
+    }
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| {
+            Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx)
+                .map(|inline_asm| (operation, inline_asm))
+        })
+        .filter(|(_, asm)| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| {
+                    template.contains("wgmma.mma_async")
+                        && template.contains("wgmma.wait_group.sync.aligned 1")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected one fused partial-wait WGMMA pipeline"
+    );
+
+    let (asm_operation, asm) = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("pipeline WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(template.matches("wgmma.mma_async").count(), GROUP_COUNT);
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        GROUP_COUNT
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 1").count(),
+        GROUP_COUNT - SLOT_COUNT + 1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(
+        template.contains("{$0, $1"),
+        "slot 0 must use the first accumulator tuple"
+    );
+    assert!(
+        template.contains("{$32, $33"),
+        "slot 1 must use the second accumulator tuple"
+    );
+    assert!(template.contains("$128, $129"));
+    assert!(template.contains("$134, $135"));
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "pipeline WGMMA must not materialize accumulator memory inside asm: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); RESULT_COUNT];
+    expected_constraints.extend((0..RESULT_COUNT).map(|index| index.to_string()));
+    expected_constraints.extend((0..DESCRIPTOR_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+    assert_eq!(
+        asm_operation.deref(&ctx).get_num_operands(),
+        RESULT_COUNT + DESCRIPTOR_COUNT
+    );
+    assert_eq!(asm_operation.deref(&ctx).get_num_results(), 1);
+
+    let asm_position = body
+        .iter()
+        .position(|operation| operation == asm_operation)
+        .expect("pipeline asm must be in the lowered kernel body");
+    let load_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::LoadOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(load_positions.len(), RESULT_COUNT);
+    assert!(load_positions.iter().all(|index| *index < asm_position));
+
+    let store_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::StoreOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(store_positions.len(), RESULT_COUNT);
+    assert!(store_positions.iter().all(|index| *index > asm_position));
+    assert_eq!(
+        body.iter()
+            .filter(|operation| {
+                Operation::get_op::<llvm::ExtractValueOp>(**operation, &ctx).is_some()
+            })
+            .count(),
+        RESULT_COUNT
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow::Error> {
     use dialect_mir::types::{MirArrayType, MirPtrType};
     use pliron::basic_block::BasicBlock;
@@ -9475,7 +9661,7 @@ fn test_deferred_wgmma_without_commit_is_rejected() -> Result<(), anyhow::Error>
 }
 
 #[test]
-fn test_deferred_wgmma_wait_group_one_is_rejected() -> Result<(), anyhow::Error> {
+fn test_wgmma_partial_wait_without_final_wait_zero_is_rejected() -> Result<(), anyhow::Error> {
     let mut ctx = make_test_ctx();
     let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
         build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
@@ -9489,7 +9675,63 @@ fn test_deferred_wgmma_wait_group_one_is_rejected() -> Result<(), anyhow::Error>
     assert_wgmma_lowering_rejected(
         &mut ctx,
         module_ptr,
-        "WGMMA deferred accumulator lowering requires wait_group<0>",
+        "WGMMA partial-wait pipeline requires a final wait_group<0>",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_wgmma_partial_wait_pipeline_rejects_unsafe_accumulator_reuse() -> Result<(), anyhow::Error>
+{
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 1, 4);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(
+        &mut ctx,
+        entry,
+        accumulators[0],
+        descriptors[0],
+        descriptors[1],
+    );
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(
+        &mut ctx,
+        entry,
+        accumulators[0],
+        descriptors[2],
+        descriptors[3],
+    );
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 1);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA partial-wait pipeline requires max_pending_groups + 1 distinct accumulator slots",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_wgmma_wait_group_eight_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 8);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA wait_group<N> immediate must be in 0..=7",
     );
     Ok(())
 }

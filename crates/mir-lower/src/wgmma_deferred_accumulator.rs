@@ -27,6 +27,12 @@
 //! block arguments whose back-edge values are either unchanged or `arg + const`.
 //! The complete asynchronous lifetime is then represented by one value-form loop
 //! operation so LLVM never sees an in-flight accumulator between iterations.
+//!
+//! Straight-line partial-wait pipelines are recognized separately. A static
+//! `wait_group<N>` with `N > 0` requires `N + 1` canonical accumulator slots.
+//! Groups are committed and the slots are reused round-robin only after the
+//! corresponding partial wait has made the oldest slot safe. Every accepted
+//! pipeline ends with `wait_group<0>` before any accumulator value escapes.
 
 use dialect_mir::{
     ops::{
@@ -39,7 +45,8 @@ use dialect_mir::{
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaWaitGroupSyncAlignedOp,
 };
 use mir_transforms::analyses::{induction, loop_info::LoopInfo};
 use pliron::{
@@ -81,6 +88,31 @@ struct FusionPlan {
     wait: Ptr<Operation>,
     accumulator: Value,
     descriptors: Vec<Value>,
+}
+
+struct PipelinePlan {
+    fence: Ptr<Operation>,
+    mmas: Vec<Ptr<Operation>>,
+    commits: Vec<Ptr<Operation>>,
+    waits: Vec<Ptr<Operation>>,
+    accumulators: Vec<Value>,
+    descriptors: Vec<Value>,
+    max_pending_groups: u32,
+}
+
+#[derive(Clone, Copy)]
+enum PipelineEvent {
+    Mma {
+        operation: Ptr<Operation>,
+        accumulator: Value,
+        desc_a: Value,
+        desc_b: Value,
+    },
+    Commit(Ptr<Operation>),
+    Wait {
+        operation: Ptr<Operation>,
+        max_pending: u64,
+    },
 }
 
 struct CountedLoopPlan {
@@ -722,6 +754,67 @@ fn store_accumulator_values_before(
     }
 }
 
+fn store_canonical_accumulator_values_before(
+    ctx: &mut Context,
+    before: Ptr<Operation>,
+    accumulator: Value,
+    row_type: TypeHandle,
+    element_type: TypeHandle,
+    accumulator_results: &[Value],
+    loc: pliron::location::Location,
+) {
+    debug_assert_eq!(accumulator_results.len(), ACCUMULATOR_LEN);
+
+    let row_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, row_type, true).into();
+    let element_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, element_type, true).into();
+    let row_indices = (0..ACCUMULATOR_ROWS)
+        .map(|index| insert_u64_constant_before(ctx, index as u64, before))
+        .collect::<Vec<_>>();
+    let column_indices = (0..ACCUMULATOR_COLUMNS)
+        .map(|index| insert_u64_constant_before(ctx, index as u64, before))
+        .collect::<Vec<_>>();
+
+    for row in 0..ACCUMULATOR_ROWS {
+        let row_address = Operation::new(
+            ctx,
+            MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![row_pointer_type],
+            vec![accumulator, row_indices[row]],
+            vec![],
+            0,
+        );
+        row_address.deref_mut(ctx).set_loc(loc.clone());
+        row_address.insert_before(ctx, before);
+        let row_pointer = row_address.deref(ctx).get_result(0);
+
+        for column in 0..ACCUMULATOR_COLUMNS {
+            let element_address = Operation::new(
+                ctx,
+                MirArrayElementAddrOp::get_concrete_op_info(),
+                vec![element_pointer_type],
+                vec![row_pointer, column_indices[column]],
+                vec![],
+                0,
+            );
+            element_address.deref_mut(ctx).set_loc(loc.clone());
+            element_address.insert_before(ctx, before);
+            let element_pointer = element_address.deref(ctx).get_result(0);
+            let result = accumulator_results[row * ACCUMULATOR_COLUMNS + column];
+
+            let store = Operation::new(
+                ctx,
+                MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![element_pointer, result],
+                vec![],
+                0,
+            );
+            store.deref_mut(ctx).set_loc(loc.clone());
+            store.insert_before(ctx, before);
+        }
+    }
+}
+
 fn apply_value_plan(
     ctx: &mut Context,
     fence: Ptr<Operation>,
@@ -894,6 +987,278 @@ fn next_linear_block(
     Ok(Some(successor))
 }
 
+fn collect_pipeline_events(
+    ctx: &Context,
+    fence: Ptr<Operation>,
+) -> Result<Option<Vec<PipelineEvent>>> {
+    require_nullary_control_op(ctx, fence, "WGMMA fence")?;
+
+    let mut block = fence
+        .deref(ctx)
+        .get_parent_block()
+        .expect("WGMMA fence must be inside a basic block");
+    let mut start_index = block
+        .deref(ctx)
+        .iter(ctx)
+        .position(|operation| operation == fence)
+        .expect("WGMMA fence must occur in its parent block")
+        + 1;
+
+    let mut events = Vec::new();
+    let mut saw_partial_wait = false;
+
+    loop {
+        let operations: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        for operation in operations.iter().copied().skip(start_index) {
+            if is_ignorable(ctx, operation) {
+                continue;
+            }
+
+            if Operation::get_op::<WgmmaFenceSyncAlignedOp>(operation, ctx).is_some() {
+                require_nullary_control_op(ctx, operation, "WGMMA fence")?;
+                if !saw_partial_wait {
+                    return Ok(None);
+                }
+                return pliron::input_err_noloc!(
+                    "nested WGMMA fences are not supported in one pipelined accumulator region"
+                );
+            }
+
+            if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
+                require_pointer_mma_shape(ctx, operation)?;
+                let operation_ref = operation.deref(ctx);
+                let accumulator = operation_ref.get_operand(0);
+                require_supported_accumulator(ctx, accumulator)?;
+                events.push(PipelineEvent::Mma {
+                    operation,
+                    accumulator,
+                    desc_a: operation_ref.get_operand(1),
+                    desc_b: operation_ref.get_operand(2),
+                });
+                continue;
+            }
+
+            if Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some() {
+                require_nullary_control_op(ctx, operation, "WGMMA commit_group")?;
+                events.push(PipelineEvent::Commit(operation));
+                continue;
+            }
+
+            if Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some() {
+                require_wait_shape(ctx, operation)?;
+                let wait_operand = operation.deref(ctx).get_operand(0);
+                let Some(max_pending) = integer_constant_u64(ctx, wait_operand) else {
+                    return pliron::input_err_noloc!(
+                        "WGMMA pipelined lowering requires a statically known wait_group<N> immediate"
+                    );
+                };
+                if max_pending > 7 {
+                    return pliron::input_err_noloc!(
+                        "WGMMA wait_group<N> immediate must be in 0..=7"
+                    );
+                }
+
+                events.push(PipelineEvent::Wait {
+                    operation,
+                    max_pending,
+                });
+                if max_pending == 0 {
+                    return if saw_partial_wait {
+                        Ok(Some(events))
+                    } else {
+                        Ok(None)
+                    };
+                }
+                saw_partial_wait = true;
+                continue;
+            }
+
+            if !saw_partial_wait {
+                return Ok(None);
+            }
+            if block.deref(ctx).get_terminator(ctx) == Some(operation) {
+                return pliron::input_err_noloc!(
+                    "WGMMA partial-wait pipeline requires a final wait_group<0>"
+                );
+            }
+            return pliron::input_err_noloc!(
+                "unsupported operation inside WGMMA pipelined accumulator region: {}",
+                Operation::get_opid(operation, ctx)
+            );
+        }
+
+        let Some(successor) = next_linear_block(ctx, block, saw_partial_wait)? else {
+            if saw_partial_wait {
+                return pliron::input_err_noloc!(
+                    "WGMMA partial-wait pipeline requires a final wait_group<0>"
+                );
+            }
+            return Ok(None);
+        };
+        block = successor;
+        start_index = 0;
+    }
+}
+
+fn validate_pipeline_events(
+    ctx: &Context,
+    fence: Ptr<Operation>,
+    events: Vec<PipelineEvent>,
+) -> Result<PipelinePlan> {
+    let mut group_accumulators = Vec::new();
+    let mut descriptors = Vec::new();
+    let mut mmas = Vec::new();
+    let mut commits = Vec::new();
+    let mut waits = Vec::new();
+    let mut partial_wait_positions = Vec::new();
+    let mut partial_wait_value = None;
+    let mut index = 0usize;
+    let mut saw_final_wait = false;
+
+    while index < events.len() {
+        let PipelineEvent::Mma {
+            operation: mma,
+            accumulator,
+            desc_a,
+            desc_b,
+        } = events[index]
+        else {
+            return pliron::input_err_noloc!(
+                "WGMMA pipelined region requires exactly one MMA before each commit_group"
+            );
+        };
+        index += 1;
+
+        let Some(PipelineEvent::Commit(commit)) = events.get(index).copied() else {
+            return pliron::input_err_noloc!(
+                "WGMMA pipelined region requires commit_group immediately after each MMA"
+            );
+        };
+        index += 1;
+
+        group_accumulators.push(accumulator);
+        descriptors.extend([desc_a, desc_b]);
+        mmas.push(mma);
+        commits.push(commit);
+
+        if let Some(PipelineEvent::Wait {
+            operation,
+            max_pending,
+        }) = events.get(index).copied()
+        {
+            if max_pending == 0 {
+                waits.push(operation);
+                index += 1;
+                saw_final_wait = true;
+                if index != events.len() {
+                    return pliron::input_err_noloc!(
+                        "no WGMMA operation may follow the final wait_group<0>"
+                    );
+                }
+                break;
+            }
+
+            waits.push(operation);
+            index += 1;
+            match partial_wait_value {
+                Some(expected) if expected != max_pending => {
+                    return pliron::input_err_noloc!(
+                        "one WGMMA pipeline must use a single statically known wait_group<N> depth"
+                    );
+                }
+                None => partial_wait_value = Some(max_pending),
+                _ => {}
+            }
+            partial_wait_positions.push(group_accumulators.len());
+
+            // The final full drain is allowed immediately after the partial
+            // wait for the last committed group. It belongs to the same closed
+            // async lifetime, not to a new MMA/commit pair.
+            if let Some(PipelineEvent::Wait {
+                operation,
+                max_pending: 0,
+            }) = events.get(index).copied()
+            {
+                waits.push(operation);
+                index += 1;
+                saw_final_wait = true;
+                if index != events.len() {
+                    return pliron::input_err_noloc!(
+                        "no WGMMA operation may follow the final wait_group<0>"
+                    );
+                }
+                break;
+            }
+        }
+    }
+
+    if !saw_final_wait {
+        return pliron::input_err_noloc!(
+            "WGMMA partial-wait pipeline requires a final wait_group<0>"
+        );
+    }
+    let max_pending_groups = partial_wait_value.expect("pipeline collector saw a partial wait");
+    let slot_count =
+        usize::try_from(max_pending_groups + 1).expect("wait_group depth in 1..=7 must fit usize");
+    if group_accumulators.len() < slot_count {
+        return pliron::input_err_noloc!(
+            "WGMMA wait_group<{}> pipeline requires at least {} committed groups",
+            max_pending_groups,
+            slot_count
+        );
+    }
+
+    let expected_wait_positions = (slot_count..=group_accumulators.len()).collect::<Vec<_>>();
+    if partial_wait_positions != expected_wait_positions {
+        return pliron::input_err_noloc!(
+            "WGMMA partial waits must begin after max_pending_groups + 1 commits and occur after every later commit before accumulator-slot reuse"
+        );
+    }
+
+    let accumulators = group_accumulators[..slot_count].to_vec();
+    for left in 0..accumulators.len() {
+        if value_accumulator_shape(ctx, accumulators[left]).is_none() {
+            return pliron::input_err_noloc!(
+                "WGMMA partial-wait pipeline requires canonical [[f32; 8]; 4] accumulator slots"
+            );
+        }
+        for right in (left + 1)..accumulators.len() {
+            if accumulators[left] == accumulators[right] {
+                return pliron::input_err_noloc!(
+                    "WGMMA partial-wait pipeline requires max_pending_groups + 1 distinct accumulator slots"
+                );
+            }
+        }
+    }
+
+    for (group_index, accumulator) in group_accumulators.iter().copied().enumerate() {
+        let expected = accumulators[group_index % slot_count];
+        if accumulator != expected {
+            return pliron::input_err_noloc!(
+                "WGMMA partial-wait pipeline must reuse accumulator slots in round-robin order only after wait_group<N> makes the slot safe"
+            );
+        }
+    }
+
+    Ok(PipelinePlan {
+        fence,
+        mmas,
+        commits,
+        waits,
+        accumulators,
+        descriptors,
+        max_pending_groups: u32::try_from(max_pending_groups)
+            .expect("wait_group depth in 1..=7 must fit u32"),
+    })
+}
+
+fn match_pipeline_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<PipelinePlan>> {
+    let Some(events) = collect_pipeline_events(ctx, fence)? else {
+        return Ok(None);
+    };
+    validate_pipeline_events(ctx, fence, events).map(Some)
+}
+
 fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionPlan>> {
     require_nullary_control_op(ctx, fence, "WGMMA fence")?;
 
@@ -1016,6 +1381,80 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
     }
 }
 
+fn apply_pipeline_plan(ctx: &mut Context, plan: PipelinePlan) {
+    let PipelinePlan {
+        fence,
+        mmas,
+        commits,
+        waits,
+        accumulators,
+        descriptors,
+        max_pending_groups,
+    } = plan;
+
+    let final_wait = *waits
+        .last()
+        .expect("pipeline plan has a final wait_group<0>");
+    let loc = fence.deref(ctx).loc();
+    let mut slot_types = Vec::with_capacity(accumulators.len());
+    let mut all_accumulator_values = Vec::with_capacity(accumulators.len() * ACCUMULATOR_LEN);
+
+    for accumulator in accumulators.iter().copied() {
+        let (row_type, element_type) = value_accumulator_shape(ctx, accumulator)
+            .expect("pipeline validation requires canonical accumulator slots");
+        let (_element_pointers, accumulator_values) = load_accumulator_values_before(
+            ctx,
+            final_wait,
+            accumulator,
+            row_type,
+            element_type,
+            loc.clone(),
+        );
+        slot_types.push((row_type, element_type));
+        all_accumulator_values.extend(accumulator_values);
+    }
+
+    let pipeline = WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::build(
+        ctx,
+        all_accumulator_values,
+        descriptors,
+        max_pending_groups,
+    );
+    pipeline.deref_mut(ctx).set_loc(loc.clone());
+    let result_count = accumulators.len() * ACCUMULATOR_LEN;
+    let accumulator_results = (0..result_count)
+        .map(|index| pipeline.deref(ctx).get_result(index))
+        .collect::<Vec<_>>();
+    pipeline.insert_before(ctx, final_wait);
+
+    for (slot, accumulator) in accumulators.iter().copied().enumerate() {
+        let begin = slot * ACCUMULATOR_LEN;
+        let end = begin + ACCUMULATOR_LEN;
+        let (row_type, element_type) = slot_types[slot];
+        store_canonical_accumulator_values_before(
+            ctx,
+            final_wait,
+            accumulator,
+            row_type,
+            element_type,
+            &accumulator_results[begin..end],
+            loc.clone(),
+        );
+    }
+
+    let mut rewriter = IRRewriter::<Recorder>::default();
+    rewriter.erase_operation(ctx, fence);
+    for mma in mmas {
+        rewriter.erase_operation(ctx, mma);
+    }
+    for commit in commits {
+        rewriter.erase_operation(ctx, commit);
+    }
+    for wait in waits {
+        rewriter.erase_operation(ctx, wait);
+    }
+}
+
 fn apply_plan(ctx: &mut Context, plan: FusionPlan) {
     let FusionPlan {
         fence,
@@ -1084,8 +1523,9 @@ fn region_is_fully_reachable(ctx: &Context, region: Ptr<Region>) -> bool {
 /// Canonical counted loops are handled first because their fence and final wait
 /// live in different CFG blocks. Each successful loop rewrite bypasses the old
 /// loop and immediately removes the now-unreachable loop blocks so no stale
-/// pointer-form MMA reaches final lowering. Remaining straight-line regions use
-/// the deferred pointer fallback.
+/// pointer-form MMA reaches final lowering. Remaining straight-line regions
+/// first try the statically scheduled partial-wait pipeline and then fall back
+/// to the existing single-group linear adapter.
 pub(crate) fn fuse_deferred_accumulators(
     ctx: &mut Context,
     module_op: Ptr<Operation>,
@@ -1134,6 +1574,10 @@ pub(crate) fn fuse_deferred_accumulators(
         .collect();
 
     for fence in fences {
+        if let Some(plan) = match_pipeline_sequence(ctx, fence)? {
+            apply_pipeline_plan(ctx, plan);
+            continue;
+        }
         if let Some(plan) = match_sequence(ctx, fence)? {
             apply_plan(ctx, plan);
         }
