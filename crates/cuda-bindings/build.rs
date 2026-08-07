@@ -36,6 +36,9 @@ fn main() {
 /// directory, writing `bindings.rs` into `OUT_DIR`.
 fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=wrapper.h");
+    // Emitting any rerun-if-changed disables cargo's default "rerun on any
+    // package change", so the `include!`d selection table needs naming.
+    println!("cargo:rerun-if-changed=toolkit_target.rs");
     for var in TOOLKIT_ENV_VARS {
         println!("cargo:rerun-if-env-changed={var}");
     }
@@ -68,16 +71,20 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// CUDA toolkit `targets/` directory name for cargo's build `TARGET`, when
-/// the toolkit ships one for that architecture. CUDA names these layouts
-/// after the GPU platform, not the Rust triple: x86_64 hosts use
-/// `x86_64-linux` and aarch64 servers use `sbsa-linux`.
-fn toolkit_target_dir() -> Option<&'static str> {
-    let target = env::var("TARGET").ok()?;
-    match target.split('-').next()? {
-        "x86_64" => Some("x86_64-linux"),
-        "aarch64" => Some("sbsa-linux"),
-        _ => None,
+// The `targets/<dir>` selection table, shared verbatim with
+// `tests/toolkit_target.rs` so it can be unit tested.
+include!("toolkit_target.rs");
+
+/// [`toolkit_target_dirs`] for the target cargo is building for, read from
+/// `CARGO_CFG_TARGET_ARCH` / `CARGO_CFG_TARGET_OS`. Empty when either is
+/// unset, which keeps discovery on the plain `{toolkit}/include` layout
+/// rather than guessing.
+fn build_target_dirs() -> &'static [&'static str] {
+    let arch = env::var("CARGO_CFG_TARGET_ARCH");
+    let os = env::var("CARGO_CFG_TARGET_OS");
+    match (&arch, &os) {
+        (Ok(arch), Ok(os)) => toolkit_target_dirs(arch, os),
+        _ => &[],
     }
 }
 
@@ -85,22 +92,20 @@ fn toolkit_target_dir() -> Option<&'static str> {
 /// for standard installs, or `{toolkit}/targets/<dir>/include` for
 /// redistributable layouts that have no top-level `include/`.
 ///
-/// Only the single `targets/` directory matching cargo's build `TARGET` is
-/// probed. Globbing all of `targets/*` would let another architecture's
-/// headers and stubs shadow the right ones on multi-target installs
-/// (`sbsa-linux` sorts before `x86_64-linux`).
+/// Only the `targets/` directories [`toolkit_target_dirs`] lists for the
+/// build target's own architecture are probed, in order. Globbing all of
+/// `targets/*` would let another architecture's headers and stubs shadow the
+/// right ones on multi-target installs (`sbsa-linux` sorts before
+/// `x86_64-linux`).
 ///
 /// A missing `cuda.h` is a hard error here: bindgen cannot run without it,
 /// and failing now produces one clean message instead of raw clang
 /// diagnostics.
 fn find_cuda_include_dir(toolkit: &str) -> Result<PathBuf, String> {
     let base = Path::new(toolkit);
-    let mut candidates = vec![base.join("include")];
-    if let Some(target_dir) = toolkit_target_dir() {
-        candidates.push(base.join("targets").join(target_dir).join("include"));
-    }
+    let candidates = toolkit_include_candidates(base, build_target_dirs());
 
-    if let Some(dir) = candidates.iter().find(|dir| dir.join("cuda.h").is_file()) {
+    if let Some(dir) = select_include_dir(&candidates) {
         return Ok(dir.clone());
     }
 
@@ -149,11 +154,11 @@ fn probe_event_elapsed_time_v2(cuda_h: &Path) {
 
 /// Candidate directories for `rustc-link-search=native` when linking against the driver library.
 ///
-/// Adds `{toolkit}/lib64` and `{toolkit}/lib64/stubs` when `lib64` exists. If the build
-/// target's `{toolkit}/targets/<dir>/include/cuda.h` exists (redistributable / cross-layout
-/// install), also adds that target's `lib` and `lib/stubs`. Only the single `targets/`
-/// directory matching cargo's build `TARGET` is considered, never all of `targets/*`.
-/// Order is preserved; duplicates are not filtered.
+/// Adds `{toolkit}/lib64` and `{toolkit}/lib64/stubs` when `lib64` exists. For each
+/// `targets/<dir>` candidate whose `include/cuda.h` exists (redistributable / cross-layout
+/// install), also adds that target's `lib` and `lib/stubs`. Only the candidates
+/// [`toolkit_target_dirs`] lists for the build target's own architecture are considered,
+/// never all of `targets/*`. Order is preserved; duplicates are not filtered.
 fn collect_lib_paths(toolkit: &str) -> Vec<PathBuf> {
     let base = PathBuf::from(toolkit);
     let mut paths = vec![];
@@ -164,7 +169,7 @@ fn collect_lib_paths(toolkit: &str) -> Vec<PathBuf> {
         paths.push(lib64.join("stubs"));
     }
 
-    if let Some(target_dir) = toolkit_target_dir() {
+    for target_dir in build_target_dirs() {
         let target_root = base.join("targets").join(target_dir);
         if target_root.join("include/cuda.h").is_file() {
             paths.push(target_root.join("lib"));
