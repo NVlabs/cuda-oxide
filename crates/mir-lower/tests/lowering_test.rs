@@ -9188,12 +9188,17 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
         }
     }
 
+    // A `~{memory}` clobber appears only where the access carries ordering.
+    // Relaxed orders nothing, so clobbering all of memory around it is
+    // over-conservative: it forces every value LLVM was holding in a register to
+    // be spilled and reloaded across the access, which is exactly wrong for a
+    // relaxed load inside a spin loop.
     let expected = [
-        ("ld.relaxed.gpu.b32 $0, [$1];", "=r,l,~{memory}"),
+        ("ld.relaxed.gpu.b32 $0, [$1];", "=r,l"),
         ("ld.acquire.cta.b32 $0, [$1];", "=r,l,~{memory}"),
-        ("ld.relaxed.sys.b64 $0, [$1];", "=l,l,~{memory}"),
+        ("ld.relaxed.sys.b64 $0, [$1];", "=l,l"),
         ("st.release.gpu.b32 [$0], $1;", "l,r,~{memory}"),
-        ("st.relaxed.gpu.b64 [$0], $1;", "l,l,~{memory}"),
+        ("st.relaxed.gpu.b64 [$0], $1;", "l,l"),
     ];
     assert_eq!(
         lowered.len(),
