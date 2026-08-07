@@ -525,6 +525,7 @@ pub fn convert_shared_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     shared_globals: &mut SharedGlobalsMap,
+    next_shared_mem_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 
@@ -574,6 +575,7 @@ pub fn convert_shared_alloc_dc(
             ctx,
             op,
             shared_globals,
+            next_shared_mem_index,
             mir_elem_type,
             size,
             alignment,
@@ -600,10 +602,17 @@ pub fn convert_shared_alloc_dc(
 /// `alloc_key` is `Some`, the key is moved into `shared_globals` so that
 /// later allocations with the same key reuse this global (caller is
 /// expected to have already checked the cache for a hit).
+///
+/// `next_shared_mem_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a shared allocation earlier in the process (#706).
+#[allow(clippy::too_many_arguments)]
 fn create_shared_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     shared_globals: &mut SharedGlobalsMap,
+    next_shared_mem_index: &mut usize,
     mir_elem_type: TypeHandle,
     size: u64,
     alignment: u64,
@@ -612,8 +621,8 @@ fn create_shared_global(
     let llvm_elem_type = convert_type(ctx, mir_elem_type).map_err(anyhow_to_pliron)?;
     let array_type = ArrayType::get(ctx, llvm_elem_type, size);
 
-    static SHARED_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let counter = SHARED_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let counter = *next_shared_mem_index;
+    *next_shared_mem_index += 1;
     let name: pliron::identifier::Identifier =
         format!("__shared_mem_{counter}").try_into().unwrap();
 
@@ -2225,6 +2234,38 @@ mod tests {
         // Each of the three mir.shared_alloc ops becomes one addressof.
         let body = kernel_blocks(&ctx, module_ptr);
         assert_eq!(count_ops::<llvm::AddressOfOp>(&ctx, &body), 3);
+    }
+
+    /// A `__shared_mem_N` index must depend only on the module being
+    /// lowered, not on how many shared allocations any OTHER module has
+    /// already lowered in this process (#706). Before the fix, `N` came
+    /// from a `static AtomicUsize` shared across every call in the process,
+    /// so lowering the second of these two modules would have produced
+    /// `__shared_mem_1`, not `__shared_mem_0`.
+    #[test]
+    fn shared_mem_index_is_per_module_not_process_global() {
+        for _ in 0..2 {
+            let mut ctx = make_ctx();
+            let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+            append_shared_alloc(&mut ctx, block, "k", 64);
+            append_mir_return(&mut ctx, block, vec![]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+            let top = module_top_block(&ctx, module_ptr);
+            let global = top
+                .deref(&ctx)
+                .iter(&ctx)
+                .find_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+                .expect("expected an llvm.global for the shared allocation");
+            assert_eq!(
+                global.get_symbol_name(&ctx).to_string(),
+                "__shared_mem_0",
+                "a module with exactly one shared allocation must always name it \
+                 __shared_mem_0, regardless of how many other modules already lowered \
+                 one in this process"
+            );
+        }
     }
 
     fn append_global_alloc(
