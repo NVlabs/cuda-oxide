@@ -11,8 +11,15 @@ description = "Procedural macros for CUDA kernel development (#[kernel], #[devic
 proc-macro = true
 
 [features]
-default = []
+default = ["host"]
 async = []
+# Emit the host-side surface: the `#[cuda_module]` `LoadedModule` loader and
+# launchers, and the `CudaKernel` impl for non-generic `#[kernel]`s. All of it
+# names `::cuda_host` / `::cuda_core`, so a device-only kernel crate that never
+# loads or launches anything still has to depend on `cuda-host` -> `cuda-core`
+# -> `cuda-bindings` -> `cuda.h`. On by default; turn it off with
+# `default-features = false` in a crate that only compiles kernels.
+host = []
 
 [dependencies]
 quote = { workspace = true }
