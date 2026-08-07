@@ -105,29 +105,46 @@ unsafe {
 
 ### Current cuda-oxide WGMMA lowering
 
-The initial compiler implementation supports only
-`m64n64k16.f32.bf16.bf16`. It recognizes a statically linear sequence:
+The compiler currently supports
+`m64n64k16.f32.bf16.bf16` and selects among three conservative lowering
+shapes. In every case, the entire asynchronous accumulator lifetime stays
+inside one convergent inline-PTX statement so LLVM cannot insert a spill
+boundary while a WGMMA group is pending.
+
+**Linear full drain.** A canonical `[[f32; 8]; 4]` accumulator is loaded into
+32 SSA `f32` values before the WGMMA region and stored once after the final
+`wait_group<0>`. Unsupported full-drain pointer shapes retain the original
+deferred pointer-form lowering.
+
+**Canonical counted K-loop.** For a compile-time counted loop with one MMA per
+iteration and affine `u64` descriptor recurrences, cuda-oxide moves the loop
+control and descriptor arithmetic into the same convergent PTX region as the
+WGMMA instruction. The accumulator is therefore loaded once before the K-loop
+and stored once after its final wait rather than round-tripped every iteration.
+
+**Static partial-wait pipeline.** A `wait_group<N>` with `N > 0` uses
+`N + 1` independent accumulator slots. Groups are committed separately and
+slots are reused round-robin only after the partial wait has made the oldest
+slot safe. For example, two groups can remain overlapped with:
 
 ```text
 wgmma_fence
-one or more BF16 MMA calls using the same accumulator
-wgmma_commit_group
-wgmma_wait_group::<0>
+mma acc0
+commit_group
+mma acc1
+commit_group
+wait_group<1>
+wait_group<0>
 ```
 
-The lowering fuses the sequence into one convergent inline-PTX block. That
-block loads the 32 per-thread accumulator values, keeps them in PTX registers
-through every MMA and the commit, waits for zero pending groups, and only then
-stores the values back to the Rust accumulator. This prevents an early memory
-access to pending WGMMA accumulator registers.
+Longer pipelines repeat the slot schedule and partial wait before reusing an
+accumulator. A final `wait_group<0>` is mandatory before any accumulator value
+escapes the fused region.
 
-The first implementation is intentionally fail-closed. It rejects partial
-waits, branches, sequences spanning a loop boundary, multiple live
-accumulator objects, intervening work, and the F16 and TF32 public
-compatibility entry points. A complete fence-to-wait sequence inside a loop
-body fuses, but each iteration pays the accumulator load/store round-trip
-and a full wait, so hoist the sequence out of hot loops where the K-loop
-can accumulate in shared memory descriptors instead.
+Selection is intentionally fail-closed. Dynamic partial waits, unsupported
+control flow, malformed accumulator schedules, and the F16 and TF32 public
+compatibility entry points are rejected instead of exposing an in-flight
+accumulator to LLVM.
 
 :::{tip}
 WGMMA is often paired with a **multi-stage pipeline**: while the tensor
