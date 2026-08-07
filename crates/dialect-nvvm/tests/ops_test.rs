@@ -37,7 +37,7 @@ use dialect_nvvm::ops::{
     Tcgen05Ld16x32bx2X1RawOp, Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op, ThreadfenceBlockOp,
     ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
     VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -87,6 +87,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaGroupValuesM64N64K16F32Bf16Op"),
     ];
     expected.sort_unstable();
     found.sort_unstable();
@@ -4298,6 +4299,7 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let f32_ty = FP32Type::get(&ctx);
     let pointer_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
     let accumulator_pointer_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), true);
     let global_pointer_ty = MirPtrType::get_global(&mut ctx, u8_ty.into(), false);
@@ -4312,6 +4314,7 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
             mutable_global_pointer_ty.into(),
             u32_ty.into(),
             u64_ty.into(),
+            f32_ty.into(),
         ],
     );
     let pointer = block.deref(&ctx).get_argument(0);
@@ -4320,6 +4323,7 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     let mutable_global_pointer = block.deref(&ctx).get_argument(3);
     let u32_value = block.deref(&ctx).get_argument(4);
     let u64_value = block.deref(&ctx).get_argument(5);
+    let f32_value = block.deref(&ctx).get_argument(6);
 
     let vprintf = VprintfOp::build(&mut ctx, pointer, pointer);
     assert!(VprintfOp::new(vprintf).verify(&ctx).is_ok());
@@ -4518,6 +4522,118 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
                 .is_err()
         );
     }
+
+    let value_group = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 32],
+        vec![u64_value, u64_value, u64_value, u64_value],
+    );
+    {
+        let value_group_ref = value_group.deref(&ctx);
+        assert_eq!(value_group_ref.get_num_operands(), 36);
+        assert_eq!(value_group_ref.get_num_results(), 32);
+    }
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(value_group)
+            .verify(&ctx)
+            .is_ok()
+    );
+
+    let too_few_accumulators = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 31],
+        vec![u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(too_few_accumulators)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let missing_descriptors =
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(&mut ctx, vec![f32_value; 32], vec![]);
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(missing_descriptors)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let incomplete_descriptor_pair = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 32],
+        vec![u64_value, u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(incomplete_descriptor_pair)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut wrong_accumulator_operands = vec![f32_value; 32];
+    wrong_accumulator_operands[0] = u32_value;
+    wrong_accumulator_operands.extend([u64_value, u64_value]);
+    let wrong_accumulator = Operation::new(
+        &mut ctx,
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 32],
+        wrong_accumulator_operands,
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(wrong_accumulator)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut wrong_descriptor_operands = vec![f32_value; 32];
+    wrong_descriptor_operands.extend([u32_value, u64_value]);
+    let wrong_descriptor = Operation::new(
+        &mut ctx,
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 32],
+        wrong_descriptor_operands,
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(wrong_descriptor)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut valid_value_operands = vec![f32_value; 32];
+    valid_value_operands.extend([u64_value, u64_value]);
+
+    let wrong_result_count = Operation::new(
+        &mut ctx,
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 31],
+        valid_value_operands.clone(),
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(wrong_result_count)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut wrong_result_types = vec![f32_ty.into(); 32];
+    wrong_result_types[0] = u32_ty.into();
+    let wrong_result_type = Operation::new(
+        &mut ctx,
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        wrong_result_types,
+        valid_value_operands,
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(wrong_result_type)
+            .verify(&ctx)
+            .is_err()
+    );
 }
 
 #[test]

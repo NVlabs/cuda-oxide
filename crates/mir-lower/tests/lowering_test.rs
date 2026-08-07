@@ -8715,6 +8715,151 @@ fn test_deferred_wgmma_group_lowers_to_one_register_lifetime_scope() -> Result<(
 }
 
 #[test]
+fn test_value_form_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    const ACCUMULATOR_LEN: usize = 32;
+    const DESCRIPTOR_COUNT: usize = 4;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let argument_types = (0..ACCUMULATOR_LEN)
+        .map(|_| f32_ty.into())
+        .chain((0..DESCRIPTOR_COUNT).map(|_| u64_ty.into()))
+        .collect::<Vec<pliron::r#type::TypeHandle>>();
+
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+
+    let accumulators = (0..ACCUMULATOR_LEN)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let descriptors = (0..DESCRIPTOR_COUNT)
+        .map(|index| entry.deref(&ctx).get_argument(ACCUMULATOR_LEN + index))
+        .collect::<Vec<_>>();
+
+    nvvm::WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(&mut ctx, accumulators, descriptors)
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| {
+                    template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let asm_op = asm.get_operation();
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("value-form WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    for forbidden in [".reg .f32", "ld.f32", "st.f32"] {
+        assert!(
+            !template.contains(forbidden),
+            "value-form WGMMA must not materialize accumulator memory via {forbidden:?}: {template}"
+        );
+    }
+
+    let accumulator_operands = (0..ACCUMULATOR_LEN)
+        .map(|index| format!("${index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(
+        template.contains(&format!("{{{accumulator_operands}}}")),
+        "WGMMA must consume the 32 output operands as one accumulator tuple: {template}"
+    );
+    assert!(template.contains("$64, $65"), "{template}");
+    assert!(template.contains("$66, $67"), "{template}");
+
+    let mut expected_constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
+    expected_constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    expected_constraints.extend((0..DESCRIPTOR_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    let asm_ref = asm_op.deref(&ctx);
+    assert_eq!(
+        asm_ref.get_num_operands(),
+        ACCUMULATOR_LEN + DESCRIPTOR_COUNT
+    );
+    assert_eq!(
+        asm_ref.get_num_results(),
+        1,
+        "LLVM inline asm must return the 32 WGMMA accumulator values as one struct"
+    );
+
+    let aggregate = asm_ref.get_result(0);
+    let aggregate_ty = aggregate.get_type(&ctx);
+    let aggregate_ty = aggregate_ty.deref(&ctx);
+    let struct_ty = aggregate_ty
+        .downcast_ref::<llvm_types::StructType>()
+        .expect("value-form WGMMA inline asm must return an LLVM struct");
+    assert_eq!(struct_ty.num_fields(), ACCUMULATOR_LEN);
+    for index in 0..ACCUMULATOR_LEN {
+        assert!(
+            struct_ty
+                .field_type(index)
+                .deref(&ctx)
+                .downcast_ref::<FP32Type>()
+                .is_some(),
+            "WGMMA result field {index} must remain f32"
+        );
+    }
+
+    let extract_indices = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::ExtractValueOp>(operation, &ctx))
+        .filter_map(|extract| {
+            let extract_op = extract.get_operation().deref(&ctx);
+            (extract_op.get_operand(0) == aggregate).then(|| extract.indices(&ctx))
+        })
+        .collect::<Vec<_>>();
+
+    let expected_indices = (0..ACCUMULATOR_LEN)
+        .map(|index| vec![index as u32])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        extract_indices, expected_indices,
+        "all 32 value-form WGMMA results must be extracted in constraint order"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_pointer_form_wgmma_sequence_is_fused_before_lowering() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::IntegerAttr;
