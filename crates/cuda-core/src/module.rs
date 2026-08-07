@@ -481,6 +481,39 @@ impl CudaFunction {
         )
     }
 
+    /// Queries the number of registers each thread of this function uses.
+    ///
+    /// This is the `registers` figure `ptxas -v` prints at compile time, read
+    /// back from the loaded module instead. Register pressure is what caps
+    /// occupancy on most kernels, so this is the number to check first when a
+    /// launch runs at fewer blocks per SM than expected.
+    pub fn num_registers(&self) -> Result<u32, DriverError> {
+        self.attribute(cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_NUM_REGS)
+    }
+
+    /// Queries the local (per-thread stack and spill) memory this function
+    /// uses, in bytes.
+    ///
+    /// This is the `stack frame` plus spill figure from `ptxas -v`. It is the
+    /// per-thread quantity that
+    /// [`CudaContext::set_stack_size`](crate::context::CudaContext::set_stack_size)
+    /// budgets for: the driver reserves the stack limit for every resident
+    /// thread on the device, so a kernel with a large frame can reserve
+    /// device memory far in excess of anything it allocates explicitly.
+    pub fn local_size_bytes(&self) -> Result<u32, DriverError> {
+        self.attribute(cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES)
+    }
+
+    /// Queries the user-allocated constant memory this function requires, in
+    /// bytes.
+    ///
+    /// This is the `cmem[0]` figure from `ptxas -v`, and covers only constant
+    /// memory the kernel declares; it excludes the driver's own kernel
+    /// parameter and system constant banks.
+    pub fn const_size_bytes(&self) -> Result<u32, DriverError> {
+        self.attribute(cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_CONST_SIZE_BYTES)
+    }
+
     /// Queries a cluster shape compiled into this function, if present.
     ///
     /// CUDA requires the three required-cluster attributes to be either all

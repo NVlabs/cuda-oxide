@@ -344,6 +344,61 @@ impl CudaContext {
         )
     }
 
+    /// Returns the maximum number of threads resident on one streaming
+    /// multiprocessor.
+    ///
+    /// Together with [`multiprocessor_count`](Self::multiprocessor_count) this
+    /// gives the thread count that
+    /// [`set_stack_size`](Self::set_stack_size) multiplies against.
+    pub fn max_threads_per_multiprocessor(&self) -> Result<u32, DriverError> {
+        self.device_attribute(
+            cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR,
+        )
+    }
+
+    /// Queries the per-thread device stack size, in bytes.
+    ///
+    /// Wraps `cuCtxGetLimit(CU_LIMIT_STACK_SIZE, ..)`. The driver raises this
+    /// limit on its own whenever a launched kernel needs a larger frame, and
+    /// **does not lower it again afterwards**, so the value read here reflects
+    /// the high-water mark of everything launched in this context so far.
+    pub fn stack_size(&self) -> Result<usize, DriverError> {
+        self.bind_to_thread()?;
+        let mut value = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuCtxGetLimit(
+                value.as_mut_ptr(),
+                cuda_bindings::CUlimit_enum_CU_LIMIT_STACK_SIZE,
+            )
+            .result()?;
+            Ok(value.assume_init())
+        }
+    }
+
+    /// Sets the per-thread device stack size, in bytes.
+    ///
+    /// Wraps `cuCtxSetLimit(CU_LIMIT_STACK_SIZE, ..)`. The driver reserves
+    /// `bytes` for *every* thread that can be resident on the device, so the
+    /// reservation scales as roughly `bytes * mp_count * threads_per_mp`,
+    /// using [`multiprocessor_count`](Self::multiprocessor_count) and
+    /// [`max_threads_per_multiprocessor`](Self::max_threads_per_multiprocessor).
+    /// That reservation is invisible to allocation APIs: it simply reduces the
+    /// device memory a subsequent allocation can obtain. Lowering the limit
+    /// after a deep-frame kernel has raised it is the way to hand that memory
+    /// back.
+    ///
+    /// CUDA may clamp or round the request; call
+    /// [`stack_size`](Self::stack_size) afterwards to observe what the driver
+    /// actually applied. The call takes effect immediately and may block until
+    /// previously submitted work completes.
+    pub fn set_stack_size(&self, bytes: usize) -> Result<(), DriverError> {
+        self.bind_to_thread()?;
+        unsafe {
+            cuda_bindings::cuCtxSetLimit(cuda_bindings::CUlimit_enum_CU_LIMIT_STACK_SIZE, bytes)
+        }
+        .result()
+    }
+
     /// Atomically reads and clears the sticky error state.
     ///
     /// Returns `Ok(())` if no error was recorded, or the stored
