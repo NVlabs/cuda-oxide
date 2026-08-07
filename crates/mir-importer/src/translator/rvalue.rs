@@ -5340,40 +5340,20 @@ fn translate_ptr_to_array_constant(
         );
     }
 
-    use dialect_mir::types::MirPtrType;
-    use pliron::builtin::attributes::{StringAttr, TypeAttr};
-
     validate_ptr_to_array_constant_type(ctx, array_ty, loc.clone())?;
     let expected_size = rust_type_layout_size(rust_array_ty, loc.clone())?;
     let (bytes, alignment) =
         promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
-    let initializer_hex = bytes_to_hex(&bytes);
-    let global_key = promoted_constant_dedup_key(ctx, array_ty, &bytes);
-    let global_ptr_ty = MirPtrType::get_global(ctx, array_ty, false);
 
-    let global_op = Operation::new(
+    let global_alloc = emit_promoted_immutable_global(
         ctx,
-        MirGlobalAllocOp::get_concrete_op_info(),
-        vec![global_ptr_ty.into()],
-        vec![],
-        vec![],
-        0,
+        array_ty,
+        &bytes,
+        alignment,
+        block_ptr,
+        prev_op,
+        loc.clone(),
     );
-    global_op.deref_mut(ctx).set_loc(loc.clone());
-
-    let global_alloc = MirGlobalAllocOp::new(global_op);
-    global_alloc.set_attr_global_type(ctx, TypeAttr::new(array_ty));
-    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
-    set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
-    if alignment > 0 {
-        global_alloc.set_alignment_value(ctx, alignment);
-    }
-
-    if let Some(prev) = prev_op {
-        global_alloc.get_operation().insert_after(ctx, prev);
-    } else {
-        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
-    }
 
     let global_ptr = global_alloc.get_operation().deref(ctx).get_result(0);
     let (ptr_val, last_op) = cast_to_generic_addrspace_if_needed(
@@ -5385,6 +5365,236 @@ fn translate_ptr_to_array_constant(
         loc,
     );
     Ok((ptr_val, last_op))
+}
+
+/// Materialize `bytes` as an immutable device global holding a `value_ty`.
+///
+/// Deduplicated by (type, bytes), so the same table spelled several ways — or
+/// reached from several functions — is emitted once.
+///
+/// The global is marked immutable, which is what makes it useful beyond simply
+/// having an address: the exporter writes LLVM `constant`, so `opt` may treat
+/// reads of it as invariant. That is what lets a copy of the data into a stack
+/// slot be deleted (`isOnlyCopiedFromConstantMemory`) and what makes `llc`
+/// select `ld.global.nc`. The claim is sound here and only here: the bytes are
+/// an evaluated Rust constant, the name is compiler-generated so no host setter
+/// can reach it, and nothing is handed a mutable path to the storage.
+pub(crate) fn emit_promoted_immutable_global(
+    ctx: &mut Context,
+    value_ty: TypeHandle,
+    bytes: &[u8],
+    alignment: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> MirGlobalAllocOp {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::attributes::{StringAttr, TypeAttr};
+
+    let initializer_hex = bytes_to_hex(bytes);
+    let global_key = promoted_constant_dedup_key(ctx, value_ty, bytes);
+    let global_ptr_ty = MirPtrType::get_global(ctx, value_ty, false);
+
+    let global_op = Operation::new(
+        ctx,
+        MirGlobalAllocOp::get_concrete_op_info(),
+        vec![global_ptr_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    global_op.deref_mut(ctx).set_loc(loc);
+
+    let global_alloc = MirGlobalAllocOp::new(global_op);
+    global_alloc.set_attr_global_type(ctx, TypeAttr::new(value_ty));
+    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
+    set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
+    if alignment > 0 {
+        global_alloc.set_alignment_value(ctx, alignment);
+    }
+    global_alloc.mark_immutable(ctx);
+
+    if let Some(prev) = prev_op {
+        global_alloc.get_operation().insert_after(ctx, prev);
+    } else {
+        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
+    }
+
+    global_alloc
+}
+
+/// Whether `local` is written exactly once — by the assignment being translated
+/// — and never has an address handed out.
+///
+/// This chooses *which of two correct lowerings* to use, never correctness: both
+/// give the local a private copy of the constant, and whether that copy is later
+/// deleted is `opt`'s own sound decision. So an unrecognised write form here only
+/// costs performance, which is why the statement match ends in a catch-all rather
+/// than an error.
+///
+/// It has to exist because the two lowerings fail in opposite directions. When
+/// the local really is read-only the copy disappears; when it is written the
+/// copy survives, and NVPTX expands a surviving `memcpy` into a *byte* loop —
+/// measurably worse than the element-wise stores it replaced. Rejecting every
+/// borrow, not just mutable ones, keeps this on the shape that motivates it
+/// (`TABLE[i]`, which projects a place and borrows nothing).
+fn constant_local_is_written_once(body: &mir::Body, local: mir::Local) -> bool {
+    let mut assignments = 0usize;
+    for block in body.blocks.iter() {
+        for statement in block.statements.iter() {
+            match &statement.kind {
+                mir::StatementKind::Assign(place, rvalue) => {
+                    if place.local == local {
+                        // A projected write is a write to part of the local.
+                        if !place.projection.is_empty() {
+                            return false;
+                        }
+                        assignments += 1;
+                    }
+                    // Any borrow or raw pointer, of either mutability, is a
+                    // path this scan cannot follow.
+                    match rvalue {
+                        mir::Rvalue::Ref(_, _, source) if source.local == local => return false,
+                        mir::Rvalue::AddressOf(_, source) if source.local == local => return false,
+                        _ => {}
+                    }
+                }
+                mir::StatementKind::SetDiscriminant { place, .. } if place.local == local => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        // A call writes its destination.
+        if let mir::TerminatorKind::Call { destination, .. } = &block.terminator.kind
+            && destination.local == local
+        {
+            return false;
+        }
+    }
+    assignments == 1
+}
+
+/// Fill an addressable local from a fully-constant array by copying an immutable
+/// device global into it, instead of building the array in registers first.
+///
+/// `Ok(None)` means "not this shape" and the caller keeps the ordinary path.
+///
+/// # Why a copy and not just the global's address
+///
+/// The local is ordinary mutable storage — `let mut t = TABLE; t[0] = x;` is
+/// legal — so handing out the global's address would be wrong in general. A
+/// `memcpy` from `constant` storage is unconditionally correct instead, and
+/// `opt` supplies the proof that removes it: `isOnlyCopiedFromConstantMemory`
+/// deletes the copy and rewrites the reads to the global wherever the local is
+/// never written.
+///
+/// [`constant_local_is_written_once`] gates the path on the same property, so
+/// the two agree. It is not redundant: a copy that survives is *worse* than what
+/// it replaced, because NVPTX expands a surviving `memcpy` into a byte loop.
+///
+/// # Why this is worth doing at all
+///
+/// The value form cannot reach the global no matter how it is spelled: LLVM
+/// splits every first-class-aggregate load, so a whole-array load from the
+/// global is folded straight back into one store per element. Only a `memcpy`
+/// survives to the point where the proof can run.
+///
+/// What this replaces, for `TABLE[i]` with a runtime `i`, is one `st.local` per
+/// element in *every thread* — a per-thread copy of data the module image
+/// already carries — followed by `ld.local` reads of thread-private memory.
+pub(crate) fn translate_array_constant_into_alloca(
+    ctx: &mut Context,
+    body: &mir::Body,
+    dest_place: &mir::Place,
+    constant: &mir::ConstOperand,
+    value_map: &ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<Ptr<Operation>>> {
+    use pliron::builtin::attributes::IntegerAttr;
+
+    // Whole-local assignment only. With a projection the copy would have to land
+    // at an offset, which the ordinary element-wise path already handles.
+    if !dest_place.projection.is_empty() {
+        return Ok(None);
+    }
+    let Some(dest_addr) = value_map.get_slot(dest_place.local) else {
+        return Ok(None);
+    };
+    if !constant_local_is_written_once(body, dest_place.local) {
+        return Ok(None);
+    }
+
+    let rust_ty = constant.const_.ty();
+    let Ok(value_ty) = types::translate_type(ctx, &rust_ty) else {
+        return Ok(None);
+    };
+    if !value_ty.deref(ctx).is::<dialect_mir::types::MirArrayType>() {
+        return Ok(None);
+    }
+    // Hold to the element boundary the `&[T; N]` global path already proves out:
+    // primitive scalars, or nested arrays of them. Anything else keeps its
+    // element-wise materialization rather than trusting a raw byte image whose
+    // LLVM storage type might not agree with rustc's layout byte for byte.
+    if validate_ptr_to_array_constant_type(ctx, value_ty, loc.clone()).is_err() {
+        return Ok(None);
+    }
+    let Ok(expected_size) = rust_type_layout_size(rust_ty, loc.clone()) else {
+        return Ok(None);
+    };
+    // Rejects pointer relocations, and any byte image that is not exactly the
+    // Rust size — so the global cannot disagree with the local it fills.
+    let Ok((bytes, alignment)) =
+        promoted_array_initializer(constant, expected_size, "array", loc.clone())
+    else {
+        return Ok(None);
+    };
+
+    // Past every bail-out: nothing below can fail, so no half-built global is
+    // left behind in the block.
+    let global_alloc = emit_promoted_immutable_global(
+        ctx,
+        value_ty,
+        &bytes,
+        alignment,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    );
+    let src = global_alloc.get_operation().deref(ctx).get_result(0);
+
+    // `mir.memcpy`'s count is in destination-pointee elements, and the
+    // destination slot points at the whole array, so one element is the whole
+    // table.
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+    let count_attr = IntegerAttr::new(i64_ty, APInt::from_i64(1, NonZeroUsize::new(64).unwrap()));
+    let count_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![i64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    count_op.deref_mut(ctx).set_loc(loc.clone());
+    MirConstantOp::new(count_op).set_attr_value(ctx, count_attr);
+    count_op.insert_after(ctx, global_alloc.get_operation());
+    let count = count_op.deref(ctx).get_result(0);
+
+    let memcpy_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirMemcpyOp::get_concrete_op_info(),
+        vec![],
+        vec![dest_addr, src, count],
+        vec![],
+        0,
+    );
+    memcpy_op.deref_mut(ctx).set_loc(loc);
+    memcpy_op.insert_after(ctx, count_op);
+
+    Ok(Some(memcpy_op))
 }
 
 /// Preserve the established pointer-to-array constant boundary: only primitive
