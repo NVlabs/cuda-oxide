@@ -67,7 +67,11 @@ nvvm-transforms = { path = "crates/nvvm-transforms" }
 cuda-device = { path = "crates/cuda-device" }
 cuda-artifact-finalizer = { path = "crates/cuda-artifact-finalizer" }
 cuda-host = { path = "crates/cuda-host" }
-cuda-macros = { path = "crates/cuda-macros" }
+# No default features: `host` is opt-in per member, so that depending on
+# cuda-device does not unify the host surface back on for kernel-only crates.
+# `cuda-host` names `features = ["host"]`, so anything that loads or launches a
+# module still gets it.
+cuda-macros = { path = "crates/cuda-macros", default-features = false }
 cuda-bindings = { path = "crates/cuda-bindings" }
 cuda-core = { path = "crates/cuda-core" }
 cuda-async = { path = "crates/cuda-async" }

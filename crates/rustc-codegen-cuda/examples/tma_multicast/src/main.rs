@@ -13,8 +13,9 @@
 //! the shared memory of ALL CTAs in a thread block cluster.
 //!
 //! Requirements:
-//! - Blackwell datacenter GPU (sm_100a): B100, B200, GB200
-//! - NOT supported on consumer Blackwell (sm_120) or Hopper (sm_90)
+//! - Blackwell (sm_100a or later): datacenter B100/B200/GB200, and reported to
+//!   load and run on consumer sm_120 as well
+//! - Not supported on Hopper (sm_90) or earlier
 //!
 //! Build and run with:
 //!   cargo oxide run tma_multicast
@@ -183,8 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // example can verify off-hopper datacenter.
             println!("\nskipping: TMA multicast requires sm_100a");
             println!("  driver reported: {}", e);
-            println!("  TMA multicast requires sm_100a (Blackwell datacenter: B100/B200/GB200).");
-            println!("  Consumer Blackwell (sm_120) does NOT support multicast.");
+            println!("  TMA multicast requires sm_100a or later (B100/B200/GB200, and sm_120).");
             println!("  For basic TMA tests, use: cargo oxide run tma_copy");
         }
     }

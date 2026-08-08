@@ -109,7 +109,24 @@ impl<'a> ModuleExportState<'a> {
             self.public_globals.push(name.to_string());
             // Defined static storage in the global's address space. The LLVM
             // definition retains external linkage for host-side symbol lookup.
-            write!(output, "@{name} = addrspace({address_space}) global ").unwrap();
+            //
+            // `constant` rather than `global` when the storage is marked
+            // never-written (see `GLOBAL_IMMUTABLE_KEY`). That keyword is what
+            // lets `opt` treat a read of this storage as invariant: it both
+            // enables `isOnlyCopiedFromConstantMemory` to delete a copy of the
+            // data into a stack slot, and makes `llc` select `ld.global.nc`
+            // (the read-only data cache) for the load. External linkage is
+            // retained either way; `constant` constrains writes, not visibility.
+            let storage_keyword = if global.is_immutable(self.ctx) {
+                "constant"
+            } else {
+                "global"
+            };
+            write!(
+                output,
+                "@{name} = addrspace({address_space}) {storage_keyword} "
+            )
+            .unwrap();
             self.export_type(ty, output)?;
             if let Some(encoded) = global.initializer_relocations(self.ctx) {
                 let hex = global.initializer_hex(self.ctx).ok_or_else(|| {

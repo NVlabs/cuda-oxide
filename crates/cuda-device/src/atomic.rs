@@ -53,6 +53,30 @@
 //! }
 //! ```
 //!
+//! # Performance: a scoped atomic load cannot be served from L1
+//!
+//! `load` and `store` here are *coherent* at their scope. An L1 cache is not
+//! coherent across SMs, so a device- or system-scoped atomic access bypasses L1
+//! by construction, on every call, however weak its ordering. Relaxed does not
+//! make it cheap; relaxed only removes ordering, not coherence.
+//!
+//! That matters when the access is on a hot path and the algorithm does not
+//! actually need coherence. A common shape is a hash table where a thread
+//! publishes a key and then an index, and readers must not observe the first
+//! without the second. Reading the index with `load` on every lookup pays an
+//! uncached access every time, when the index is almost always already
+//! published. Reading it plainly first and falling back to `load` only while
+//! genuinely waiting keeps the common path in L1.
+//!
+//! Measured on such a probe loop: doing it the first way took the L1 sector hit
+//! rate from 54% to 29%, pushed 1.7x the sectors through to L2, and made the
+//! kernel 24% slower, with the entire difference showing up as
+//! `long_scoreboard` warp stalls. No instruction count changes; only where the
+//! data is allowed to live.
+//!
+//! Use these types where you need cross-thread visibility. Do not reach for
+//! them by reflex just because a location is shared.
+//!
 //! # Naming and overlap with `core::sync::atomic`
 //!
 //! Device-scope types are named **`DeviceAtomic*`** (e.g. `DeviceAtomicU32`) so they

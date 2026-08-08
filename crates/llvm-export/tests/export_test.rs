@@ -1667,6 +1667,61 @@ fn initialized_globals_export_exact_bytes() {
 }
 
 #[test]
+fn immutable_globals_export_the_constant_keyword() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "constant_keyword".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let table_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+
+    // The compiler's own promoted table: marked never-written, so it must
+    // export as `constant`. That keyword is the whole point of the marker:
+    // it is what lets `opt` treat reads as invariant (deleting a copy into a
+    // stack slot) and what makes `llc` select `ld.global.nc`.
+    let promoted = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "promoted_table".try_into().unwrap(),
+        table_ty.into(),
+        4,
+    );
+    promoted.set_address_space(&mut ctx, 1);
+    promoted.set_initializer_hex(&mut ctx, "01020304");
+    promoted.mark_immutable(&mut ctx);
+    promoted.get_operation().insert_at_back(module_block, &ctx);
+
+    // An identically shaped global without the marker: the host may still
+    // write such storage by symbol, so it must keep `global`. Immutability is
+    // opt-in per global, never inferred from the shape of the initializer.
+    let plain = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "plain_static".try_into().unwrap(),
+        table_ty.into(),
+        4,
+    );
+    plain.set_address_space(&mut ctx, 1);
+    plain.set_initializer_hex(&mut ctx, "01020304");
+    plain.get_operation().insert_at_back(module_block, &ctx);
+
+    for config in [
+        NvvmExportConfig::new(NvvmIrDialect::Modern),
+        NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    ] {
+        let ir = export_module_to_string_with_config(&ctx, &module, &config)
+            .expect("immutable global export succeeds");
+        assert!(
+            ir.contains(
+                r#"@promoted_table = addrspace(1) constant [4 x i8] c"\01\02\03\04", align 4"#
+            ),
+            "promoted global lost the constant keyword:\n{ir}"
+        );
+        assert!(
+            ir.contains(r#"@plain_static = addrspace(1) global [4 x i8] c"\01\02\03\04", align 4"#),
+            "unmarked global must not become constant:\n{ir}"
+        );
+    }
+}
+
+#[test]
 fn initialized_global_exports_static_pointer_relocation() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "static_relocation".try_into().unwrap());

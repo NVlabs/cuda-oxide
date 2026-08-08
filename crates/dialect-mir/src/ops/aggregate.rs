@@ -767,6 +767,163 @@ impl Verify for MirConstructSliceOp {
 }
 
 // ============================================================================
+// MirConstructDisjointSliceOp
+// ============================================================================
+
+/// MIR construct disjoint slice operation.
+///
+/// Builds a `DisjointSlice` value from its data pointer, element count and the
+/// runtime layout words its index space carries. `mir.construct_slice` cannot
+/// serve here: its result is a `MirSliceType` and its arity is fixed at two,
+/// while an index space with a runtime row width adds a word after `{ ptr,
+/// len }`.
+///
+/// A kernel reaches this op by constructing a slice in device code, which
+/// `DisjointSlice::from_raw_parts` does. The construction usually folds away
+/// before import; it survives when the slice crosses a call the optimiser
+/// keeps, such as a `#[device]` helper taking `&mut DisjointSlice`.
+///
+/// # Example
+///
+/// ```text
+/// Rust:         let view = unsafe { DisjointSlice::from_raw_parts(ptr, len) };
+/// dialect-mir:  %view = mir.construct_disjoint_slice (%ptr, %len)
+///                     : mir.disjoint_slice<f32>
+/// ```
+///
+/// # Operands
+///
+/// ```text
+/// | Index | Name    | Type                 | Description                   |
+/// |-------|---------|----------------------|-------------------------------|
+/// | 0     | `ptr`   | MirPtrType<T>        | Data pointer                  |
+/// | 1     | `len`   | Integer type (usize) | Number of elements            |
+/// | 2..   | `space` | Per the index space  | Runtime layout, in order      |
+/// ```
+///
+/// # Results
+///
+/// ```text
+/// | Name  | Type                    |
+/// |-------|-------------------------|
+/// | `res` | MirDisjointSliceType<T> |
+/// ```
+///
+/// # LLVM Lowering
+///
+/// The same insert chain as `mir.construct_slice`, one field longer per
+/// runtime layout word:
+/// ```text
+/// %u  = llvm.undef : { ptr, i64, i32 }
+/// %t  = llvm.insertvalue %u, %ptr, [0]
+/// %s  = llvm.insertvalue %t, %len, [1]
+/// %r  = llvm.insertvalue %s, %width, [2]
+/// ```
+///
+/// # Verification
+///
+/// - Result type must be a disjoint slice type.
+/// - Operand 0 must be a pointer whose pointee is the slice element type.
+/// - Operand 1 must be an integer type.
+/// - The remaining operands must match the index space's layout types, in
+///   order and in number. A space word of the wrong type or a missing one is
+///   a field written to the wrong slot, so both are rejected here rather than
+///   left to produce a slice whose row width reads back as something else.
+#[pliron_op(
+    name = "mir.construct_disjoint_slice",
+    format,
+    interfaces = [NResultsInterface<1>, OneResultInterface]
+)]
+pub struct MirConstructDisjointSliceOp;
+
+impl MirConstructDisjointSliceOp {
+    /// Create a new MirConstructDisjointSliceOp wrapper.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MirConstructDisjointSliceOp { op }
+    }
+}
+
+impl Verify for MirConstructDisjointSliceOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = &*self.get_operation().deref(ctx);
+
+        let result_ty = op.get_result(0).get_type(ctx);
+        let result_ty_obj = result_ty.deref(ctx);
+        let slice_ty = match result_ty_obj.downcast_ref::<MirDisjointSliceType>() {
+            Some(st) => st,
+            None => {
+                return verify_err!(
+                    op.loc(),
+                    "MirConstructDisjointSliceOp result must be a disjoint slice type, got: {}",
+                    result_ty.disp(ctx)
+                );
+            }
+        };
+        let element_ty = slice_ty.element_type();
+        let space_tys: Vec<_> = slice_ty.space_types().to_vec();
+
+        let expected_operands = 2 + space_tys.len();
+        if op.get_num_operands() != expected_operands {
+            return verify_err!(
+                op.loc(),
+                "MirConstructDisjointSliceOp expects {} operands for {}, got {}",
+                expected_operands,
+                result_ty.disp(ctx),
+                op.get_num_operands()
+            );
+        }
+
+        let ptr_ty = op.get_operand(0).get_type(ctx);
+        let ptr_ty_obj = ptr_ty.deref(ctx);
+        match ptr_ty_obj.downcast_ref::<MirPtrType>() {
+            Some(ptr_ty_ref) => {
+                if ptr_ty_ref.pointee != element_ty {
+                    return verify_err!(
+                        op.loc(),
+                        "MirConstructDisjointSliceOp data pointer pointee mismatch. \
+                         Expected: {}, Actual: {}",
+                        element_ty.disp(ctx),
+                        ptr_ty_ref.pointee.disp(ctx)
+                    );
+                }
+            }
+            None => {
+                return verify_err!(
+                    op.loc(),
+                    "MirConstructDisjointSliceOp operand 0 must be a pointer type, got: {}",
+                    ptr_ty.disp(ctx)
+                );
+            }
+        }
+
+        let len_ty = op.get_operand(1).get_type(ctx);
+        if len_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
+            return verify_err!(
+                op.loc(),
+                "MirConstructDisjointSliceOp operand 1 (length) must be an integer type, got: {}",
+                len_ty.disp(ctx)
+            );
+        }
+
+        for (offset, space_ty) in space_tys.iter().enumerate() {
+            let operand_ty = op.get_operand(2 + offset).get_type(ctx);
+            if operand_ty != *space_ty {
+                return verify_err!(
+                    op.loc(),
+                    "MirConstructDisjointSliceOp index-space operand {} type mismatch. \
+                     Expected: {}, Actual: {}",
+                    offset,
+                    space_ty.disp(ctx),
+                    operand_ty.disp(ctx)
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
 // MirConstructArrayOp
 // ============================================================================
 
@@ -1101,7 +1258,7 @@ impl Verify for MirFieldAddrOp {
             }
         };
 
-        // Pointee must be a struct or union type.
+        // Pointee must be a struct, tuple, union or enum type.
         let pointee_ty = ptr_type.pointee;
         let pointee_ty_obj = pointee_ty.deref(ctx);
 
@@ -1112,6 +1269,8 @@ impl Verify for MirFieldAddrOp {
 
         let field_types = if let Some(struct_ty) = pointee_ty_obj.downcast_ref::<MirStructType>() {
             struct_ty.field_types()
+        } else if let Some(tuple_ty) = pointee_ty_obj.downcast_ref::<MirTupleType>() {
+            tuple_ty.get_types()
         } else if let Some(union_ty) = pointee_ty_obj.downcast_ref::<MirUnionType>() {
             union_ty.field_types()
         } else if let Some(enum_ty) = pointee_ty_obj.downcast_ref::<MirEnumType>() {
@@ -1126,7 +1285,7 @@ impl Verify for MirFieldAddrOp {
         } else {
             return verify_err!(
                 op.loc(),
-                "MirFieldAddrOp pointer must point to a struct, union or enum type, got: {}",
+                "MirFieldAddrOp pointer must point to a struct, tuple, union or enum type, got: {}",
                 pointee_ty.disp(ctx)
             );
         };
@@ -1322,6 +1481,7 @@ pub fn register(ctx: &mut Context) {
     MirConstructStructOp::register(ctx);
     MirConstructTupleOp::register(ctx);
     MirConstructSliceOp::register(ctx);
+    MirConstructDisjointSliceOp::register(ctx);
     MirConstructArrayOp::register(ctx);
     MirExtractArrayElementOp::register(ctx);
     MirFieldAddrOp::register(ctx);

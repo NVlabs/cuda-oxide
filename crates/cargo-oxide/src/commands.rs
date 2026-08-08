@@ -3931,7 +3931,13 @@ pub fn doctor(ctx: &Context) {
     // cuda-bindings' build script (issue #87).
     print!("CUDA headers (cuda.h)... ");
     let toolkit = cuda_toolkit_root(|var| std::env::var(var).ok());
-    let header_candidates = cuda_header_candidates(&toolkit, std::env::consts::ARCH);
+    let target_dir_override = std::env::var("CUDA_TOOLKIT_TARGET_DIR").ok();
+    let header_candidates = cuda_header_candidates(
+        &toolkit,
+        target_dir_override.as_deref(),
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    );
     match header_candidates.iter().find(|path| path.is_file()) {
         Some(found) => println!("✓ {}", found.display()),
         None => {
@@ -4232,9 +4238,9 @@ pub fn doctor(ctx: &Context) {
 /// variable among `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, else `/usr/local/cuda`.
 ///
 /// Kept in lockstep BY HAND with `crates/cuda-bindings/build.rs`
-/// (`cuda_toolkit_dir` / `find_cuda_include_dir` / `toolkit_target_dir`):
-/// doctor cannot import that probe because build.rs logic is not a library.
-/// If the build.rs discovery changes, mirror it here.
+/// (`cuda_toolkit_dir` / `find_cuda_include_dir`): doctor cannot import that
+/// probe because build.rs logic is not a library. If the build.rs discovery
+/// changes, mirror it here.
 fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>) -> String {
     ["CUDA_TOOLKIT_PATH", "CUDA_HOME"]
         .iter()
@@ -4244,21 +4250,39 @@ fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>) -> String 
 
 /// Candidate `cuda.h` paths under `toolkit`, in probe order: the standard
 /// `include/` layout first, then the redistributable `targets/<dir>/include`
-/// layout. CUDA names the target dirs after the GPU platform, not the Rust
-/// triple: x86_64 hosts use `x86_64-linux`, aarch64 servers use `sbsa-linux`.
+/// layouts. CUDA names the target dirs after the GPU platform, not the Rust
+/// triple: x86_64 Linux hosts use `x86_64-linux`; aarch64 Linux is ambiguous
+/// between servers (`sbsa-linux`) and Tegra (`aarch64-linux`), so both are
+/// probed in that order. A non-blank `target_dir_override` (the
+/// `CUDA_TOOLKIT_TARGET_DIR` variable, like nvcc's `-target-dir`) replaces
+/// the table with that single directory.
 ///
-/// `arch` is the host CPU architecture; the caller passes
-/// `std::env::consts::ARCH` (doctor runs at runtime, so there is no cargo
-/// `TARGET` to consult). Injected as a parameter for unit tests.
-fn cuda_header_candidates(toolkit: &str, arch: &str) -> Vec<PathBuf> {
+/// Kept in lockstep BY HAND with the selection table in
+/// `crates/cuda-bindings/toolkit_target.rs` (`resolve_toolkit_target_dirs`):
+/// doctor cannot import it because build-script sources are not a library.
+/// If the selection there changes, mirror it here.
+///
+/// `arch` and `os` are the host CPU architecture and OS; the caller passes
+/// `std::env::consts::ARCH` / `std::env::consts::OS` (doctor runs at
+/// runtime, so there are no cargo target cfgs to consult). Injected as
+/// parameters for unit tests.
+fn cuda_header_candidates(
+    toolkit: &str,
+    target_dir_override: Option<&str>,
+    arch: &str,
+    os: &str,
+) -> Vec<PathBuf> {
     let base = Path::new(toolkit);
     let mut candidates = vec![base.join("include/cuda.h")];
-    let target_dir = match arch {
-        "x86_64" => Some("x86_64-linux"),
-        "aarch64" => Some("sbsa-linux"),
-        _ => None,
+    let target_dirs: Vec<&str> = match target_dir_override.filter(|dir| !dir.trim().is_empty()) {
+        Some(dir) => vec![dir],
+        None => match (arch, os) {
+            ("x86_64", "linux") => vec!["x86_64-linux"],
+            ("aarch64", "linux") => vec!["sbsa-linux", "aarch64-linux"],
+            _ => vec![],
+        },
     };
-    if let Some(dir) = target_dir {
+    for dir in target_dirs {
         candidates.push(base.join("targets").join(dir).join("include/cuda.h"));
     }
     candidates
@@ -8833,24 +8857,46 @@ device-owner = { path = "../device-owner" }
     fn cuda_header_candidates_cover_standard_and_redistributable_layouts() {
         // Standard install layout first, then the matching targets/ layout.
         assert_eq!(
-            cuda_header_candidates("/usr/local/cuda", "x86_64"),
+            cuda_header_candidates("/usr/local/cuda", None, "x86_64", "linux"),
             vec![
                 PathBuf::from("/usr/local/cuda/include/cuda.h"),
                 PathBuf::from("/usr/local/cuda/targets/x86_64-linux/include/cuda.h"),
             ]
         );
-        // aarch64 servers use the sbsa-linux target dir.
+        // aarch64 Linux is ambiguous between servers (sbsa-linux) and Tegra
+        // (aarch64-linux), so both are probed, servers first.
         assert_eq!(
-            cuda_header_candidates("/opt/ctk", "aarch64"),
+            cuda_header_candidates("/opt/ctk", None, "aarch64", "linux"),
             vec![
                 PathBuf::from("/opt/ctk/include/cuda.h"),
                 PathBuf::from("/opt/ctk/targets/sbsa-linux/include/cuda.h"),
+                PathBuf::from("/opt/ctk/targets/aarch64-linux/include/cuda.h"),
             ]
         );
-        // Unknown host arch: only the standard layout is probed.
+        // Unknown host arch or non-Linux OS: only the standard layout.
         assert_eq!(
-            cuda_header_candidates("/opt/ctk", "riscv64"),
+            cuda_header_candidates("/opt/ctk", None, "riscv64", "linux"),
             vec![PathBuf::from("/opt/ctk/include/cuda.h")]
+        );
+        assert_eq!(
+            cuda_header_candidates("/opt/ctk", None, "aarch64", "macos"),
+            vec![PathBuf::from("/opt/ctk/include/cuda.h")]
+        );
+        // CUDA_TOOLKIT_TARGET_DIR replaces the table with one directory;
+        // a blank value means "unset".
+        assert_eq!(
+            cuda_header_candidates("/opt/ctk", Some("aarch64-linux"), "aarch64", "linux"),
+            vec![
+                PathBuf::from("/opt/ctk/include/cuda.h"),
+                PathBuf::from("/opt/ctk/targets/aarch64-linux/include/cuda.h"),
+            ]
+        );
+        assert_eq!(
+            cuda_header_candidates("/opt/ctk", Some("  "), "x86_64", "linux"),
+            vec![
+                PathBuf::from("/opt/ctk/include/cuda.h"),
+                PathBuf::from("/opt/ctk/targets/x86_64-linux/include/cuda.h"),
+            ]
         );
     }
 
