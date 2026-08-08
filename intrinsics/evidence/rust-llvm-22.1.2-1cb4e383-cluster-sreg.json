@@ -37,7 +37,7 @@
           "mechanism": "typed_nvvm",
           "outcome": "succeeded",
           "detail": "Pinned llc lowered the 18-record audit fixture, including all 14 admitted records, to exact PTX (SHA-256 f432e117b592bf39cf1f570a64dae4cc1441ecb28067b58a5dc4cd6beec5bef6). sm_80 rejected selection and PTX 7.7 rejected the sm_90 target floor.",
-          "tool_path": "/home/nihalp/.rustup/toolchains/nightly-2026-04-03-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc",
+          "tool_path": "llc",
           "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
           "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
         },

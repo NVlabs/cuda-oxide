@@ -747,6 +747,9 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.family == "elect" {
         validate_register_and_immediate_forms(&record.expected_ptx, 1, "-1", ptx)?;
     }
+    if record.family == "counted_barrier" {
+        validate_two_register_and_immediate_forms(&record.expected_ptx, 0, "1", 1, "32", ptx)?;
+    }
     if record.warp_barrier.is_some() {
         validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
     }
@@ -1276,14 +1279,28 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
         }
     }
 
-    let memory = canonical_memory_attribute(
-        no_memory,
-        argument_memory_only,
-        inaccessible_memory_only,
-        reads_memory,
-        writes_memory,
-    )?;
-    if has_side_effects {
+    // TableGen's `IntrHasSideEffects` deliberately suppresses the otherwise
+    // inferred `memory(none)` attribute: the instruction has an observable
+    // non-memory effect and must not become removable as a readnone call.
+    // Other imported memory effects still have to canonicalize exactly.
+    let sideeffect_only = has_side_effects
+        && no_memory
+        && !argument_memory_only
+        && !inaccessible_memory_only
+        && !reads_memory
+        && !writes_memory;
+    let memory = if sideeffect_only {
+        None
+    } else {
+        canonical_memory_attribute(
+            no_memory,
+            argument_memory_only,
+            inaccessible_memory_only,
+            reads_memory,
+            writes_memory,
+        )?
+    };
+    if has_side_effects && !sideeffect_only {
         let memory = memory.as_deref().with_context(|| {
             format!(
                 "@{symbol} IntrHasSideEffects requires a concrete non-`memory(none)` canonical memory effect"
@@ -1513,12 +1530,11 @@ fn assemble_probe_ptx(
                 .find(|stage| stage.stage == EvidenceStageKind::PtxAssembly)
         })
         .context("selected LLVM evidence has no PTX-assembly stage")?;
-    let tool = PathBuf::from(
-        stage
-            .tool_path
-            .as_deref()
-            .context("PTX-assembly stage has no tool path")?,
-    );
+    let recorded_tool = stage
+        .tool_path
+        .as_deref()
+        .context("PTX-assembly stage has no tool path")?;
+    let tool = resolve_evidence_tool(recorded_tool)?;
     let expected_sha256 = stage
         .tool_sha256
         .as_deref()
@@ -1547,6 +1563,39 @@ fn assemble_probe_ptx(
         architecture
     );
     Ok(())
+}
+
+fn resolve_evidence_tool(recorded: &str) -> Result<PathBuf> {
+    resolve_evidence_tool_with_path(recorded, std::env::var_os("PATH").as_deref())
+}
+
+fn resolve_evidence_tool_with_path(
+    recorded: &str,
+    search_path: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf> {
+    let recorded = PathBuf::from(recorded);
+    let has_directory = recorded
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty());
+    if recorded.is_absolute() || has_directory {
+        ensure!(
+            recorded.is_file(),
+            "recorded evidence tool does not exist: {}",
+            recorded.display()
+        );
+        return Ok(recorded);
+    }
+
+    let search_path = search_path.context("PATH is unset; cannot resolve evidence tool")?;
+    std::env::split_paths(search_path)
+        .map(|directory| directory.join(&recorded))
+        .find(|candidate| candidate.is_file())
+        .with_context(|| {
+            format!(
+                "evidence tool {:?} was not found on PATH",
+                recorded.as_os_str()
+            )
+        })
 }
 
 fn llc_identity(llc: &Path) -> Result<LlcIdentity> {
@@ -2173,7 +2222,7 @@ attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwri
     }
 
     #[test]
-    fn side_effects_without_a_concrete_memory_effect_fail_closed() {
+    fn side_effects_require_memory_unless_tablegen_marks_them_no_memory() {
         let llvm = llvm_facts(
             "llvm.nvvm.activemask",
             None,
@@ -2199,10 +2248,9 @@ attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwri
         );
         let canonical = r#"
 declare i32 @llvm.nvvm.activemask() #0
-attributes #0 = { nounwind memory(none) }
+attributes #0 = { nounwind }
 "#;
-        let error = assert_canonical_intrinsic_declaration(canonical, &no_memory).unwrap_err();
-        assert!(error.to_string().contains("concrete non-`memory(none)`"));
+        assert_canonical_intrinsic_declaration(canonical, &no_memory).unwrap();
     }
 
     #[test]
@@ -2503,6 +2551,20 @@ attributes #0 = { speculatable memory(none) }
         for invalid in ["", "../evidence", "thread.idx.x", "ThreadIdxX"] {
             assert!(candidate_artifact_stem(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn portable_evidence_tool_names_resolve_through_path() {
+        let temp = candidate_tool_test_dir();
+        let expected = write_fake_tool(&temp.0, "ptxas", "#!/bin/sh\nexit 0\n");
+        let search_path = std::env::join_paths([&temp.0]).unwrap();
+
+        assert_eq!(
+            resolve_evidence_tool_with_path("ptxas", Some(&search_path)).unwrap(),
+            expected
+        );
+        assert!(resolve_evidence_tool_with_path("missing-tool", Some(&search_path)).is_err());
     }
 
     #[test]

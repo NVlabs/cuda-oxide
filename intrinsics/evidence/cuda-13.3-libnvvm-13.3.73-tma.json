@@ -1,0 +1,255 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.73-tma",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA 13.3 libNVVM package 13.3.73; libNVVM API 2.0",
+  "backend_sha256": "5317a9fb3c8b719198e89e27fd60e2b59f2702fe6b1eab357167c920b52be9cc",
+  "build_id_prefix": "88b802",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "tma_inline_sm90",
+      "coverage_count": 14,
+      "stages": [
+        {
+          "targets": ["compute_90", "ptx93"],
+          "representation": "14 per-operation NVVM IR 2.0 modules covering the non-CTA-pair inline-PTX forms",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained every exact instruction with no extern calls. SHA-256 over the sorted per-operation ID/hash lists is 0b5d1f4be62738f2ec3f7c2d58a78bf4a984c225f07190229a422d2befcb71ce for source IR, fbb3c6200d5aab32ef48e87fe38ef428e0d44a8d1c99190ad4291a0a3a4f9797 for LTOIR, and 0f8b2b96f9dc634cb2e8c4ffdebff62f8bcebfe00ae08ba7ab2f975ad5ee382f for linked PTX."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "14 linked cubins covering the non-CTA-pair TMA instructions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced valid CUDA ELF cubins; SHA-256 over the sorted per-operation ID/cubin-hash list is ea355e5985a293b10266691d71302aad755879854308203a8f9a3f3bd0ce1303.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    },
+    {
+      "id": "tma_inline_sm100a",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": ["compute_100a", "ptx93"],
+          "representation": "one NVVM IR 2.0 module containing the exact CTA-pair inline-PTX form",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained the exact cta_group::2 instruction with no extern call. The source IR SHA-256 is be32e3ad9cf01c97078b9a6799a994afc5e1c1264fd0ad0831b2e98f6f2275ca, LTOIR SHA-256 is ebc556f17c97cd4da6eb87512373c3d93bd44ba3faf68db41206f934a22a60ac, and linked PTX SHA-256 is 8b48f700abf6f55e3dc13443bf1ffe7a45f639cd16f683443cfbf5c84feacc38."
+        },
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "linked cubin retaining the CTA-pair TMA instruction",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a valid sm_100a CUDA ELF cubin with SHA-256 07a9b441996fc5ba0b8a05aebf0ce67218f0ea8e75f45e4c652a0778207a5343.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_1d_g2s"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_1d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.1d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "1d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i16", "i64", "i1", "i1", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_2d_g2s"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "2d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i32", "i16", "i64", "i1", "i1", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_2d_g2s_multicast"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "2d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes", "multicast::cluster"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i32", "i16", "i64", "i1", "i1", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_2d_g2s_multicast_cg2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm100a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "2d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes", "multicast::cluster", "cta_group::2"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i32", "i16", "i64", "i1", "i1", "i32"], "gpu_target": "compute_100a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_3d_g2s"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_3d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.3d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "3d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i32", "i32", "i16", "i64", "i1", "i1", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_4d_g2s"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_4d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.4d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "4d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i32", "i32", "i32", "i16", "i64", "i1", "i1", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_5d_g2s"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_5d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.5d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "5d", "shared::cluster", "global", "tile", "mbarrier::complete_tx::bytes"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_cluster_ptr", "shared_ptr", "ptr", "i32", "i32", "i32", "i32", "i32", "i16", "i64", "i1", "i1", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_1d_s2g"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_1d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.1d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "1d", "global", "shared::cta", "tile", "bulk_group"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_ptr", "ptr", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_2d_s2g"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "2d", "global", "shared::cta", "tile", "bulk_group"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_ptr", "ptr", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_3d_s2g"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_3d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.3d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "3d", "global", "shared::cta", "tile", "bulk_group"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_ptr", "ptr", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_4d_s2g"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_4d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.4d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "4d", "global", "shared::cta", "tile", "bulk_group"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_ptr", "ptr", "i32", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_tensor_5d_s2g"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_5d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.5d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "tensor", "5d", "global", "shared::cta", "tile", "bulk_group"], "operands": [{"kind": "address"}, {"kind": "address"}]},
+        "facts": {"llvm_arguments": ["shared_ptr", "ptr", "i32", "i32", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_commit_group"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_commit_group",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.commit.group",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "commit_group"], "operands": []},
+        "facts": {"llvm_arguments": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_wait_group"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_wait_group",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.wait.group",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "wait_group"], "operands": [{"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_wait_group_read"]}],
+      "product_count": 1,
+      "fixtures": ["tma_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_wait_group_read",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.wait.group.read",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "wait_group", "read"], "operands": [{"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["i32"]}
+      }
+    }
+  ]
+}

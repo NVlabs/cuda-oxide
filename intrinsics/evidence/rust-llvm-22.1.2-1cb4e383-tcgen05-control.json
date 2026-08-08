@@ -29,7 +29,7 @@
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
           "detail": "Pinned LLVM 22 retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
-          "tool_path": "/home/nihalp/.rustup/toolchains/nightly-2026-04-03-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc",
+          "tool_path": "llc",
           "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
           "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
         },

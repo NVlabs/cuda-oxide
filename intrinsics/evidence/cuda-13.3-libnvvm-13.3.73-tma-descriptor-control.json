@@ -1,0 +1,477 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.73-tma",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA 13.3 libNVVM package 13.3.73; libNVVM API 2.0",
+  "backend_sha256": "5317a9fb3c8b719198e89e27fd60e2b59f2702fe6b1eab357167c920b52be9cc",
+  "build_id_prefix": "88b802",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "tma_prefetch_inline_sm90",
+      "coverage_count": 11,
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "11 per-operation NVVM IR 2.0 inline-PTX TMA prefetch modules",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained every exact instruction. SHA-256 over sorted per-operation ID/hash lists is bc9032cec56c22c29dfe509c5525129b9c9bc93d8ae1b476faa31fae766e24fc for source IR, a046fa221b8a2aecb62d154de8e73d937c87398b5b0da91929fe8dce837af4c9 for LTOIR, and 400058b1c886ea9a2b68870c57ff1beed7290291cb6f74aed83372e4eafb6630 for linked PTX."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "11 linked TMA descriptor and tile-prefetch cubins",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced valid CUDA ELF cubins; the sorted per-operation ID/cubin-hash list has SHA-256 aa75eebb5ce7527516063375ce098561ea5ce2f9dc481cfca20eb9f7518d0f1a.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    },
+    {
+      "id": "tma_prefetch_inline_sm100a",
+      "coverage_count": 2,
+      "stages": [
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "two per-operation NVVM IR 2.0 inline-PTX gather4 TMA prefetch modules",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained both exact instructions. SHA-256 over sorted per-operation ID/hash lists is 106b4563b36b19517cb93a490eec8e614b0287952853f048bd4f9ab51f4ab7b6 for source IR, 67725376d1aaa95a86251a28b2158603b25a066847a56b78dbef90737af753a8 for LTOIR, and e869be13d42d49b7c1569fcdf208b58f5009d36c99c8f6658680b39554e61b43 for linked PTX."
+        },
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "two linked gather4 TMA prefetch cubins",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced valid CUDA ELF cubins; the sorted per-operation ID/cubin-hash list has SHA-256 423d18d77ff708bea6b9f7d19f9628ceff7b0e12dae651b012889ac19a86bc5a.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    },
+    {
+      "id": "tma_fence_inline_sm90",
+      "coverage_count": 8,
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "eight per-operation NVVM IR 2.0 inline-PTX tensor-map fence modules",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained every exact instruction. SHA-256 over sorted per-operation ID/hash lists is a5c34eb855405098b2c46729f2b4ed6e9c0e4dbb348900a2fb7161b06e34af1d for source IR, 5112b46e3a6e47e6ba4bef5b5330973f1c0621b04b63d3f0d670db0c55da724a for LTOIR, and 81662318dd9dace3a3522010e8555402e42dbcc1b48ec3c7d8650d28a11cdbe7 for linked PTX."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "eight linked tensor-map proxy-fence cubins",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced valid CUDA ELF cubins; the sorted per-operation ID/cubin-hash list has SHA-256 e8ae2d8892057e1f7895023d878daf75101d77896c304557d87decafa135e23a.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    },
+    {
+      "id": "tma_replace_inline_sm90a",
+      "coverage_count": 10,
+      "stages": [
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "ten per-operation NVVM IR 2.0 inline-PTX tensor-map replacement modules",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained every exact instruction. SHA-256 over sorted per-operation ID/hash lists is e2fc2d11cb77ceac70ba08c26b914df1b0de4de38235f819941486ad1c9d9a73 for source IR, 0874909a45a8726ef5f8eb53835e57049511be19732706f6162ef60b49a08255 for LTOIR, and fa4efe247f38547bcd0ca3a85b988d12868499c426af9129c862963949bc5f04 for linked PTX."
+        },
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "ten linked tensor-map replacement cubins",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced valid CUDA ELF cubins; the sorted per-operation ID/cubin-hash list has SHA-256 25167392d8f71be485b001b3f2d17c1d081188b8a4e8f0cb122a465d011046f9.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    },
+    {
+      "id": "tma_replace_inline_sm100a",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "NVVM IR 2.0 inline-PTX tensor-map swizzle-atomicity replacement module",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3.73 libNVVM retained the exact instruction. The source IR SHA-256 is 5c89ab7501c8bcf0af4dff26a5d3b0d3da1e5174955e14a54368c4898885394b, LTOIR SHA-256 is 567f2aacbdb7c5161f9a06121a97afc9c5bcff8091dc605b37646bd3d9cd0ce5, and linked PTX SHA-256 is f94d624b6cee55a630f4bb7fefcfcf4a71e6536332fcbe7decde2017e4c1973c."
+        },
+        {
+          "targets": ["sm_100a", "ptx93"],
+          "representation": "linked tensor-map swizzle-atomicity replacement cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a valid CUDA ELF cubin with SHA-256 45549b6566d359c474e2765940fb4143e182d8db51b7318317b076670a041b5a.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["prefetch_tma_descriptor"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_prefetch_tensormap",
+        "llvm_symbol": "llvm.nvvm.prefetch.tensormap",
+        "expected_ptx": {"mnemonic": "prefetch", "modifiers": ["tensormap"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["anyptr"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_1d_l2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_1d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.1d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "1d", "L2", "global", "tile"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_2d_l2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "2d", "L2", "global", "tile"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_3d_l2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_3d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.3d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "3d", "L2", "global", "tile"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_4d_l2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_4d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.4d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "4d", "L2", "global", "tile"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_5d_l2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_5d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.5d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "5d", "L2", "global", "tile"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_1d_l2_cache_hint"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_1d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.1d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "1d", "L2", "global", "tile", "L2::cache_hint"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_2d_l2_cache_hint"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "2d", "L2", "global", "tile", "L2::cache_hint"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_3d_l2_cache_hint"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_3d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.3d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "3d", "L2", "global", "tile", "L2::cache_hint"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_4d_l2_cache_hint"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_4d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.4d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "4d", "L2", "global", "tile", "L2::cache_hint"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_5d_l2_cache_hint"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_5d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.5d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "5d", "L2", "global", "tile", "L2::cache_hint"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i32", "i32", "i64", "i1"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_gather4_2d_l2"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm100a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_gather4_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.gather4.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "2d", "L2", "global", "tile::gather4"], "operands": [{"kind": "address"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i32", "i32", "i64", "i1"], "gpu_target": "compute_100a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint"]}],
+      "product_count": 1,
+      "fixtures": ["tma_prefetch_inline_sm100a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_cp_async_bulk_tensor_prefetch_tile_gather4_2d",
+        "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.gather4.2d",
+        "expected_ptx": {"mnemonic": "cp", "modifiers": ["async", "bulk", "prefetch", "tensor", "2d", "L2", "global", "tile::gather4", "L2::cache_hint"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32", "i32", "i32", "i32", "i32", "i64", "i1"], "gpu_target": "compute_100a"}
+      }
+    },
+    {
+      "axes": [{"name": "kind", "values": ["box", "global"]}],
+      "product_count": 2,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "tensormap_replace_${kind}_dim",
+        "source_record": "int_nvvm_tensormap_replace_${kind}_dim",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.${kind}.dim",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "${kind}_dim", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_element_stride"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_element_stride",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.element.stride",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "element_stride", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_global_stride"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_global_stride",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.global.stride",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "global_stride", "global", "b1024", "b64"], "operands": [{"kind": "address"}, {"kind": "immediate"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i64"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_element_type"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_elemtype",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.elemtype",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "elemtype", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_fill_mode"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_fill_mode",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.fill.mode",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "fill_mode", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_global_address"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_global_address",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.global.address",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "global_address", "global", "b1024", "b64"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i64"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_interleave_layout"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_interleave_layout",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.interleave.layout",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "interleave_layout", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_rank"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_rank",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.rank",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "rank", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "register"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_swizzle_mode"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm90a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_swizzle_mode",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.swizzle.mode",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "swizzle_mode", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32"], "gpu_target": "compute_90a"}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["tensormap_replace_swizzle_atomicity"]}],
+      "product_count": 1,
+      "fixtures": ["tma_replace_inline_sm100a"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_tensormap_replace_swizzle_atomicity",
+        "llvm_symbol": "llvm.nvvm.tensormap.replace.swizzle.atomicity",
+        "expected_ptx": {"mnemonic": "tensormap", "modifiers": ["replace", "tile", "swizzle_atomicity", "global", "b1024", "b32"], "operands": [{"kind": "address"}, {"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32"], "gpu_target": "compute_100a"}
+      }
+    },
+    {
+      "axes": [{"name": "scope", "values": ["cluster", "cta", "gpu"]}],
+      "product_count": 3,
+      "fixtures": ["tma_fence_inline_sm90"],
+      "template": {
+        "id": "fence_proxy_tensormap_generic_acquire_${scope}",
+        "source_record": "int_nvvm_fence_proxy_tensormap_generic_acquire_${scope}",
+        "llvm_symbol": "llvm.nvvm.fence.proxy.tensormap_generic.acquire.${scope}",
+        "expected_ptx": {"mnemonic": "fence", "modifiers": ["proxy", "tensormap::generic", "acquire", "${scope}"], "operands": [{"kind": "address"}, {"kind": "exact", "value": "128"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["fence_proxy_tensormap_generic_acquire_system"]}],
+      "product_count": 1,
+      "fixtures": ["tma_fence_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fence_proxy_tensormap_generic_acquire_sys",
+        "llvm_symbol": "llvm.nvvm.fence.proxy.tensormap_generic.acquire.sys",
+        "expected_ptx": {"mnemonic": "fence", "modifiers": ["proxy", "tensormap::generic", "acquire", "sys"], "operands": [{"kind": "address"}, {"kind": "exact", "value": "128"}]},
+        "facts": {"llvm_arguments": ["ptr", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "scope", "values": ["cluster", "cta", "gpu"]}],
+      "product_count": 3,
+      "fixtures": ["tma_fence_inline_sm90"],
+      "template": {
+        "id": "fence_proxy_tensormap_generic_release_${scope}",
+        "source_record": "int_nvvm_fence_proxy_tensormap_generic_release_${scope}",
+        "llvm_symbol": "llvm.nvvm.fence.proxy.tensormap_generic.release.${scope}",
+        "expected_ptx": {"mnemonic": "fence", "modifiers": ["proxy", "tensormap::generic", "release", "${scope}"], "operands": []},
+        "facts": {"llvm_arguments": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["fence_proxy_tensormap_generic_release_system"]}],
+      "product_count": 1,
+      "fixtures": ["tma_fence_inline_sm90"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_fence_proxy_tensormap_generic_release_sys",
+        "llvm_symbol": "llvm.nvvm.fence.proxy.tensormap_generic.release.sys",
+        "expected_ptx": {"mnemonic": "fence", "modifiers": ["proxy", "tensormap::generic", "release", "sys"], "operands": []},
+        "facts": {"llvm_arguments": []}
+      }
+    }
+  ]
+}

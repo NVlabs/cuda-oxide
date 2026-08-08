@@ -52,6 +52,7 @@ use crate::atomic::{AtomicOrdering, DeviceAtomicU32};
 use crate::thread;
 
 include!("generated/grid_sreg.rs");
+include!("generated/grid_dependency.rs");
 
 /// Layout of the per-launch grid workspace populated by the CUDA driver.
 ///

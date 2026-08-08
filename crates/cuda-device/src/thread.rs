@@ -1065,6 +1065,7 @@ pub fn index_2d_col() -> usize {
 // =============================================================================
 
 include!("generated/sreg.rs");
+include!("generated/register_control.rs");
 
 // =============================================================================
 // Synchronization Intrinsics

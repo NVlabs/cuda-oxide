@@ -5970,3 +5970,457 @@ status = "active"
 catalog_id = "fma_ftz_relu_f16x2"
 operation_key = "packed.alu.f16x2.fma.ftz.relu"
 raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0858"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m1_e2m1"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m1.e2m1.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0859"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m1_e2m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m1.e2m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0860"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m1_e3m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m1.e3m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0861"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m1_e4m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m1.e4m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0862"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m1_e5m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m1.e5m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0863"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m3_e2m1"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m3.e2m1.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0864"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m3_e2m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m3.e2m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0865"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m3_e3m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m3.e3m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0866"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m3_e4m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m3.e4m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0867"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e2m3_e5m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e2m3.e5m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0868"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e3m2_e2m1"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e3m2.e2m1.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0869"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e3m2_e2m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e3m2.e2m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0870"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e3m2_e3m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e3m2.e3m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0871"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e3m2_e4m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e3m2.e4m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0872"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e3m2_e5m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e3m2.e5m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0873"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e4m3_e2m1"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e4m3.e2m1.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0874"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e4m3_e2m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e4m3.e2m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0875"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e4m3_e3m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e4m3.e3m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0876"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e4m3_e4m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e4m3.e4m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0877"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e4m3_e5m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e4m3.e5m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0878"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e5m2_e2m1"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e5m2.e2m1.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0879"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e5m2_e2m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e5m2.e2m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0880"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e5m2_e3m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e5m2.e3m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0881"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e5m2_e4m3"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e5m2.e4m3.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0882"
+status = "active"
+catalog_id = "mma_m16n8k32_mxf8f6f4_f32_e5m2_e5m2"
+operation_key = "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.e5m2.e5m2.f32.ue8m0"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16"], result = "[f32; 4]" }
+[[entry]]
+abi_id = "i0883"
+status = "active"
+catalog_id = "barrier_cta_sync"
+operation_key = "synchronization.cta.barrier.count"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0884"
+status = "active"
+catalog_id = "barrier_cta_sync_aligned"
+operation_key = "synchronization.cta.bar.aligned.count"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0885"
+status = "active"
+catalog_id = "barrier_cta_arrive"
+operation_key = "synchronization.cta.barrier.arrive.count"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0886"
+status = "active"
+catalog_id = "barrier_cta_arrive_aligned"
+operation_key = "synchronization.cta.bar.arrive.aligned.count"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0887"
+status = "active"
+catalog_id = "prefetch_tma_descriptor"
+operation_key = "memory.prefetch.tensor_map"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "()" }
+
+[[entry]]
+abi_id = "i0888"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_1d_l2"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.1d.l2"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0889"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_2d_l2"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.2d.l2"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0890"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_3d_l2"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.3d.l2"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0891"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_4d_l2"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.4d.l2"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0892"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_5d_l2"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.5d.l2"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0893"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_gather4_2d_l2"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.gather4.2d.l2"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0894"
+status = "active"
+catalog_id = "tensormap_replace_box_dim"
+operation_key = "memory.tensor_map.replace.box_dim"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0895"
+status = "active"
+catalog_id = "tensormap_replace_element_stride"
+operation_key = "memory.tensor_map.replace.element_stride"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0896"
+status = "active"
+catalog_id = "tensormap_replace_element_type"
+operation_key = "memory.tensor_map.replace.element_type"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0897"
+status = "active"
+catalog_id = "tensormap_replace_fill_mode"
+operation_key = "memory.tensor_map.replace.fill_mode"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0898"
+status = "active"
+catalog_id = "tensormap_replace_global_address"
+operation_key = "memory.tensor_map.replace.global_address"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*const u8"], result = "()" }
+
+[[entry]]
+abi_id = "i0899"
+status = "active"
+catalog_id = "tensormap_replace_global_dim"
+operation_key = "memory.tensor_map.replace.global_dim"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0900"
+status = "active"
+catalog_id = "tensormap_replace_global_stride"
+operation_key = "memory.tensor_map.replace.global_stride"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0901"
+status = "active"
+catalog_id = "tensormap_replace_interleave_layout"
+operation_key = "memory.tensor_map.replace.interleave_layout"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0902"
+status = "active"
+catalog_id = "tensormap_replace_rank"
+operation_key = "memory.tensor_map.replace.rank"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0903"
+status = "active"
+catalog_id = "tensormap_replace_swizzle_atomicity"
+operation_key = "memory.tensor_map.replace.swizzle_atomicity"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0904"
+status = "active"
+catalog_id = "tensormap_replace_swizzle_mode"
+operation_key = "memory.tensor_map.replace.swizzle_mode"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0905"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_acquire_cluster"
+operation_key = "memory.fence.proxy.tensor_map.generic.acquire.cluster"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "()" }
+
+[[entry]]
+abi_id = "i0906"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_acquire_cta"
+operation_key = "memory.fence.proxy.tensor_map.generic.acquire.cta"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "()" }
+
+[[entry]]
+abi_id = "i0907"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_acquire_gpu"
+operation_key = "memory.fence.proxy.tensor_map.generic.acquire.gpu"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "()" }
+
+[[entry]]
+abi_id = "i0908"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_acquire_system"
+operation_key = "memory.fence.proxy.tensor_map.generic.acquire.system"
+raw_rust_signature = { safe = false, arguments = ["*const u8"], result = "()" }
+
+[[entry]]
+abi_id = "i0909"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_release_cluster"
+operation_key = "memory.fence.proxy.tensor_map.generic.release.cluster"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0910"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_release_cta"
+operation_key = "memory.fence.proxy.tensor_map.generic.release.cta"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0911"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_release_gpu"
+operation_key = "memory.fence.proxy.tensor_map.generic.release.gpu"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0912"
+status = "active"
+catalog_id = "fence_proxy_tensormap_generic_release_system"
+operation_key = "memory.fence.proxy.tensor_map.generic.release.system"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0913"
+status = "active"
+catalog_id = "grid_dependency_launch_dependents"
+operation_key = "synchronization.grid.dependency.launch_dependents"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0914"
+status = "active"
+catalog_id = "grid_dependency_wait"
+operation_key = "synchronization.grid.dependency.wait"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0915"
+status = "active"
+catalog_id = "setmaxnreg_inc"
+operation_key = "register_control.warpgroup.setmaxnreg.increment"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0916"
+status = "active"
+catalog_id = "setmaxnreg_dec"
+operation_key = "register_control.warpgroup.setmaxnreg.decrement"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0917"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_1d_l2_cache_hint"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.1d.l2.cache_hint"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0918"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_2d_l2_cache_hint"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.2d.l2.cache_hint"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0919"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_3d_l2_cache_hint"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.3d.l2.cache_hint"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0920"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_4d_l2_cache_hint"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.4d.l2.cache_hint"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0921"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_5d_l2_cache_hint"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.5d.l2.cache_hint"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32", "i32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0922"
+status = "active"
+catalog_id = "cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint"
+operation_key = "memory.prefetch.async.bulk.tensor.global.tile.gather4.2d.l2.cache_hint"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32", "i32", "u64"], result = "()" }
