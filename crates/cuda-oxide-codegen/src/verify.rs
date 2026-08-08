@@ -14,8 +14,11 @@ use pliron::printable::Printable;
 ///
 /// On failure, attempts to find the innermost failing operation for better
 /// error messages.
-// cuda-oxide-codegen's own standalone pipeline plumbing (prep.rs,
-// pipeline.rs); not part of the frontend contract.
+// Verification gate shared by this crate's own pipeline stages (prep.rs,
+// pipeline.rs) and, through the `__private` re-export in lib.rs, by
+// mir-importer's per-function post-translation check. That cross-crate hook
+// is why this is `pub` + `#[doc(hidden)]`; it is not part of the
+// experimental standalone frontend contract.
 #[doc(hidden)]
 pub fn verify_operation(
     ctx: &Context,
