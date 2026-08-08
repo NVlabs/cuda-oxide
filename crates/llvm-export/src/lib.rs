@@ -304,6 +304,10 @@ pub mod ops {
     /// resolves initializer pointers through it. This key is purely
     /// descriptive, is never indexed, and carries no uniqueness requirement.
     const GLOBAL_SHARED_SOURCE_NAME_KEY: &str = "cuda_oxide_global_shared_source_name";
+    /// Marks a `GlobalOp` as externally consumed even when device code does not
+    /// reference it. The exporter adds marked globals to `@llvm.used`, keeping
+    /// profiler metadata alive through libNVVM and nvJitLink materialization.
+    const GLOBAL_RETAINED_KEY: &str = "cuda_oxide_global_retained";
 
     /// One pointer-width relocation inside an evaluated Rust static initializer.
     ///
@@ -1209,6 +1213,10 @@ pub mod ops {
         fn set_shared_source_name(&self, ctx: &mut Context, source_name: &str);
         /// Read the Rust path of the shared-memory `static` this global came from.
         fn shared_source_name(&self, ctx: &Context) -> Option<String>;
+        /// Keep this global alive through LLVM/NVVM internalization and linking.
+        fn mark_retained(&self, ctx: &mut Context);
+        /// Whether this global was explicitly marked as externally consumed.
+        fn is_retained(&self, ctx: &Context) -> bool;
     }
 
     impl GlobalOpExt for GlobalOp {
@@ -1329,6 +1337,25 @@ pub mod ops {
                 .attributes
                 .get::<StringAttr>(&key)
                 .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn mark_retained(&self, ctx: &mut Context) {
+            let key =
+                Identifier::try_new(GLOBAL_RETAINED_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, pliron::builtin::attributes::UnitAttr);
+        }
+
+        fn is_retained(&self, ctx: &Context) -> bool {
+            let key =
+                Identifier::try_new(GLOBAL_RETAINED_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<pliron::builtin::attributes::UnitAttr>(&key)
+                .is_some()
         }
     }
 

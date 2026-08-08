@@ -589,6 +589,7 @@ fn emit_metadata(
         let global = GlobalOp::new_with_alignment(ctx, symbol, array_type.into(), object.alignment);
         global.set_address_space(ctx, address_space::GLOBAL);
         global.set_initializer_hex(ctx, &hex_bytes(&object.bytes));
+        global.mark_retained(ctx);
         global.get_operation().insert_at_front(module_block, ctx);
     }
     Ok(())
@@ -704,6 +705,7 @@ mod tests {
             .unwrap();
         let bytes = meta.initializer_hex(&ctx).unwrap();
         assert!(bytes.starts_with("300000000000000007000000ff0f0000"));
+        assert!(meta.is_retained(&ctx));
     }
 
     #[test]
