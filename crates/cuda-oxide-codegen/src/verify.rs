@@ -46,13 +46,13 @@ pub fn verify_operation(
 /// Helps produce better error messages by pointing to the specific failing
 /// operation rather than just the containing module/function.
 ///
-/// Iterative, not recursive: recursion depth here tracks REGION nesting
-/// (`MirFuncOp` is the only region-bearing op across every dialect this
-/// pipeline lowers through, so today that depth stays around 3 -- module,
-/// function, block -- regardless of how large a module gets). Nothing about
-/// this function enforces that stays true, and there is no reason a compile
-/// error, of all things, should depend on an unstated depth bound to avoid
-/// becoming a stack overflow instead.
+/// Iterative, not recursive: recursion depth here would track REGION
+/// nesting, and this walk assumes nothing about it at all. The gate runs
+/// on more than one shape of tree (the `dialect-mir` module before
+/// lowering and the LLVM dialect module after it, where `mir.func` and
+/// `llvm.func` each carry a region), and there is no reason a compile
+/// error, of all things, should depend on an unstated depth bound to
+/// avoid becoming a stack overflow instead.
 ///
 /// Two passes over an explicit stack, not one: `to_visit` drains in the
 /// tree's natural (root-to-leaf, left-to-right) order, which is exactly
@@ -92,24 +92,26 @@ fn find_inner_verification_error(
 mod tests {
     use super::*;
     use dialect_mir::attributes::FieldIndexAttr;
-    use dialect_mir::ops::MirFieldAddrOp;
+    use dialect_mir::ops::{MirFieldAddrOp, MirFuncOp};
     use dialect_mir::types::{MirPtrType, MirStructType};
     use pliron::basic_block::BasicBlock;
-    use pliron::builtin::op_interfaces::OneRegionInterface;
+    use pliron::builtin::attributes::TypeAttr;
+    use pliron::builtin::op_interfaces::{OneRegionInterface, SymbolOpInterface};
     use pliron::builtin::ops::ModuleOp;
-    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
     use pliron::op::Op;
     use pliron::r#type::TypeHandle;
 
     /// A `struct { a: u8, b: u32 }` type and its two field pointer types,
-    /// built exactly once per test: `MirFieldAddrOp::verify` compares the
-    /// declared result type against the struct type's OWN recorded field
-    /// type by `TypeHandle` identity, so two independently-constructed
-    /// `u32` types would not be interchangeable even though they describe
-    /// the same type. A struct rather than a tuple deliberately: struct
-    /// pointees are supported by `MirFieldAddrOp` on any revision of this
-    /// codebase, so this test does not depend on #709's tuple-pointee
-    /// support landing first.
+    /// precomputed so `struct_field_addr` can hand an in-bounds op exactly
+    /// the result type `MirFieldAddrOp::verify` expects: a pointer whose
+    /// pointee is the struct's recorded field type. Bundling them is
+    /// convenience, not an identity requirement; pliron uniques types
+    /// globally, so constructing the same `u32` twice yields the same
+    /// `TypeHandle` anyway. A struct rather than a tuple deliberately:
+    /// struct pointees are supported by `MirFieldAddrOp` on any revision
+    /// of this codebase, so this test does not depend on #709's
+    /// tuple-pointee support landing first.
     struct StructTypes {
         struct_ptr: TypeHandle,
         field_ptr: [TypeHandle; 2],
@@ -233,6 +235,75 @@ mod tests {
         assert_eq!(
             found_op, bad_op,
             "must return the specific malformed sibling, not any other operation"
+        );
+    }
+
+    #[test]
+    fn verify_operation_reports_a_failure_several_region_levels_below_the_root() {
+        // Module -> mir.func -> entry block -> malformed mir.field_addr:
+        // the failure sits two region levels below the root passed to
+        // verify_operation. `Operation::verify` recurses into regions, so
+        // the module AND the function both fail their own verify calls;
+        // the innermost contract requires naming the leaf, not the first
+        // region-bearing ancestor that happens to fail.
+        let mut ctx = Context::new();
+        let types = struct_types(&mut ctx);
+        let module = ModuleOp::new(&mut ctx, "m".try_into().unwrap());
+        let module_block = module
+            .get_region(&ctx)
+            .deref(&ctx)
+            .iter(&ctx)
+            .next()
+            .expect("ModuleOp::new creates one block");
+
+        let func_ty = FunctionType::get(&ctx, vec![types.struct_ptr], vec![]);
+        let func_op = Operation::new(
+            &mut ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let func = MirFuncOp::new(&mut ctx, func_op, TypeAttr::new(func_ty.into()));
+        func.set_symbol_name(&mut ctx, "f".try_into().unwrap());
+        func_op.insert_at_back(module_block, &ctx);
+
+        let func_region = func.get_region(&ctx);
+        let entry = BasicBlock::new(&mut ctx, None, vec![types.struct_ptr]);
+        entry.insert_at_front(func_region, &ctx);
+        let bad_op = struct_field_addr(&mut ctx, &types, entry, 2);
+        bad_op.insert_at_back(entry, &ctx);
+
+        let (found_op, _) = find_inner_verification_error(&ctx, module.get_operation())
+            .expect("the nested mir.field_addr is malformed");
+        assert_eq!(
+            found_op, bad_op,
+            "must name the malformed leaf, not the enclosing function or module"
+        );
+    }
+
+    #[test]
+    fn verify_operation_reports_the_leftmost_of_two_malformed_siblings() {
+        // Two malformed siblings in one block. The recursive contract
+        // checked siblings in block order, so the FIRST one is what a
+        // diagnostic must name; a traversal that flipped sibling order
+        // would still "find an error", which is why this asserts on the
+        // specific op rather than on finding any op at all.
+        let mut ctx = Context::new();
+        let types = struct_types(&mut ctx);
+        let (module, block) = module_with_one_block(&mut ctx, &types);
+
+        let first_bad = struct_field_addr(&mut ctx, &types, block, 2);
+        first_bad.insert_at_back(block, &ctx);
+        let second_bad = struct_field_addr(&mut ctx, &types, block, 3);
+        second_bad.insert_at_back(block, &ctx);
+
+        let (found_op, _) = find_inner_verification_error(&ctx, module.get_operation())
+            .expect("both siblings are malformed");
+        assert_eq!(
+            found_op, first_bad,
+            "must report the leftmost malformed sibling, not the later one"
         );
     }
 }
