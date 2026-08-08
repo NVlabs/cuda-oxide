@@ -23,6 +23,7 @@ mod generated;
 mod generated_intrinsic_targets;
 mod llvm_tools;
 mod lower;
+mod mir_pass_registry;
 mod options;
 mod pipeline;
 mod prep;

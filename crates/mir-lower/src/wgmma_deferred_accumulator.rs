@@ -97,7 +97,7 @@ struct PipelinePlan {
     waits: Vec<Ptr<Operation>>,
     accumulators: Vec<Value>,
     descriptors: Vec<Value>,
-    max_pending_groups: u32,
+    max_pending_groups: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -1241,8 +1241,8 @@ fn validate_pipeline_events(
         waits,
         accumulators,
         descriptors,
-        max_pending_groups: u32::try_from(max_pending_groups)
-            .expect("wait_group depth in 1..=7 must fit u32"),
+        max_pending_groups: u8::try_from(max_pending_groups)
+            .expect("wait_group depth in 1..=7 must fit u8"),
     })
 }
 

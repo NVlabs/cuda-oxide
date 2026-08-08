@@ -34,6 +34,12 @@ pub struct BackendOptions {
     pub llc_override: Option<PathBuf>,
     /// Explicit `opt` binary (was `CUDA_OXIDE_OPT`).
     pub opt_override: Option<PathBuf>,
+    /// Optional staged dialect-mir pass pipeline (`CUDA_OXIDE_MIR_PASSES`).
+    ///
+    /// Empty or `None` preserves the default pipeline. The available names
+    /// are defined by the cuda-oxide-owned optimization registry. Each entry
+    /// declares whether it runs before or after standard MIR preparation.
+    pub mir_pass_pipeline: Option<String>,
 }
 
 impl Default for BackendOptions {
@@ -47,6 +53,7 @@ impl Default for BackendOptions {
             verbose: false,
             llc_override: None,
             opt_override: None,
+            mir_pass_pipeline: None,
         }
     }
 }
@@ -66,6 +73,7 @@ impl BackendOptions {
             verbose: std::env::var("CUDA_OXIDE_VERBOSE").is_ok(),
             llc_override: std::env::var("CUDA_OXIDE_LLC").ok().map(PathBuf::from),
             opt_override: std::env::var("CUDA_OXIDE_OPT").ok().map(PathBuf::from),
+            mir_pass_pipeline: std::env::var("CUDA_OXIDE_MIR_PASSES").ok(),
         }
     }
 }

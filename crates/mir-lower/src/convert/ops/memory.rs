@@ -525,15 +525,22 @@ pub fn convert_shared_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     shared_globals: &mut SharedGlobalsMap,
+    next_shared_mem_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 
-    let (alloc_key, mir_elem_type, size, alignment) = {
+    let (alloc_key, source_name, mir_elem_type, size, alignment) = {
         let shared_alloc_op = dialect_mir::ops::MirSharedAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
         let alloc_key: Option<String> = shared_alloc_op
             .get_attr_alloc_key(ctx)
+            .map(|s| String::from((*s).clone()));
+
+        // Optional and diagnostic: the Rust path of the originating `static`,
+        // carried through so the emitted global can name its source.
+        let source_name: Option<String> = shared_alloc_op
+            .get_attr_source_name(ctx)
             .map(|s| String::from((*s).clone()));
 
         let elem_type_attr = op_ref
@@ -558,7 +565,7 @@ pub fn convert_shared_alloc_dc(
 
         let alignment = shared_alloc_op.get_alignment_value(ctx).unwrap_or(0);
 
-        (alloc_key, mir_elem_type, size, alignment)
+        (alloc_key, source_name, mir_elem_type, size, alignment)
     };
 
     // Cache hit only when the op carries a key AND that key is already in
@@ -574,10 +581,14 @@ pub fn convert_shared_alloc_dc(
             ctx,
             op,
             shared_globals,
-            mir_elem_type,
-            size,
-            alignment,
-            alloc_key,
+            next_shared_mem_index,
+            SharedAllocSpec {
+                mir_elem_type,
+                size,
+                alignment,
+                alloc_key,
+                source_name: source_name.as_deref(),
+            },
         )?
     };
 
@@ -586,6 +597,17 @@ pub fn convert_shared_alloc_dc(
     rewriter.replace_operation(ctx, op, address_of_op.get_operation());
 
     Ok(())
+}
+
+/// Everything `create_shared_global` needs about one `mir.shared_alloc`.
+///
+/// Mirrors [`DeviceGlobalSpec`] for the shared-memory path.
+struct SharedAllocSpec<'a> {
+    mir_elem_type: TypeHandle,
+    size: u64,
+    alignment: u64,
+    alloc_key: Option<String>,
+    source_name: Option<&'a str>,
 }
 
 /// Create a shared memory global variable in the module.
@@ -597,32 +619,47 @@ pub fn convert_shared_alloc_dc(
 /// - Unique generated name (`__shared_mem_N`)
 ///
 /// The global is inserted at the front of the module block. When
-/// `alloc_key` is `Some`, the key is moved into `shared_globals` so that
+/// `spec.alloc_key` is `Some`, the key is moved into `shared_globals` so that
 /// later allocations with the same key reuse this global (caller is
 /// expected to have already checked the cache for a hit).
+///
+/// `spec.source_name`, when present, is the Rust path of the `static` this
+/// allocation came from. The generated symbol stays anonymous; the name is
+/// recorded as an attribute on the global so the exporter can render it
+/// beside the definition. Only the allocation that *creates* the global
+/// contributes a name — a later allocation with the same `alloc_key` hits
+/// the cache and never reaches this function — which is consistent because
+/// the key and the name are both derived from the same constant.
+///
+/// `next_shared_mem_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a shared allocation earlier in the process (#706).
 fn create_shared_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     shared_globals: &mut SharedGlobalsMap,
-    mir_elem_type: TypeHandle,
-    size: u64,
-    alignment: u64,
-    alloc_key: Option<String>,
+    next_shared_mem_index: &mut usize,
+    spec: SharedAllocSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
-    let llvm_elem_type = convert_type(ctx, mir_elem_type).map_err(anyhow_to_pliron)?;
-    let array_type = ArrayType::get(ctx, llvm_elem_type, size);
+    let llvm_elem_type = convert_type(ctx, spec.mir_elem_type).map_err(anyhow_to_pliron)?;
+    let array_type = ArrayType::get(ctx, llvm_elem_type, spec.size);
 
-    static SHARED_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let counter = SHARED_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let counter = *next_shared_mem_index;
+    *next_shared_mem_index += 1;
     let name: pliron::identifier::Identifier =
         format!("__shared_mem_{counter}").try_into().unwrap();
 
-    let global_op = if alignment > 0 {
-        llvm::GlobalOp::new_with_alignment(ctx, name.clone(), array_type.into(), alignment)
+    let global_op = if spec.alignment > 0 {
+        llvm::GlobalOp::new_with_alignment(ctx, name.clone(), array_type.into(), spec.alignment)
     } else {
         llvm::GlobalOp::new(ctx, name.clone(), array_type.into())
     };
     global_op.set_address_space(ctx, llvm_export::types::address_space::SHARED);
+    if let Some(source_name) = spec.source_name {
+        use llvm_export::ops::GlobalOpExt;
+        global_op.set_shared_source_name(ctx, source_name);
+    }
 
     let parent_block = op
         .deref(ctx)
@@ -638,7 +675,7 @@ fn create_shared_global(
 
     global_op.get_operation().insert_at_front(module_block, ctx);
 
-    if let Some(key) = alloc_key {
+    if let Some(key) = spec.alloc_key {
         shared_globals.insert(key, name.clone());
     }
 
@@ -656,6 +693,7 @@ pub fn convert_global_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
@@ -666,6 +704,7 @@ pub fn convert_global_alloc_dc(
         addr_space,
         initializer_hex,
         initializer_relocations,
+        immutable,
     ) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
@@ -727,6 +766,7 @@ pub fn convert_global_alloc_dc(
             addr_space,
             initializer_hex,
             initializer_relocations,
+            global_op.is_immutable(ctx),
         )
     };
 
@@ -737,6 +777,7 @@ pub fn convert_global_alloc_dc(
             ctx,
             op,
             device_globals,
+            next_device_global_index,
             DeviceGlobalSpec {
                 key: &global_key,
                 mir_type: mir_global_type,
@@ -744,6 +785,7 @@ pub fn convert_global_alloc_dc(
                 addr_space,
                 initializer_hex: initializer_hex.as_deref(),
                 initializer_relocations: initializer_relocations.as_deref(),
+                immutable,
             },
         )?
     };
@@ -762,12 +804,20 @@ struct DeviceGlobalSpec<'a> {
     addr_space: u32,
     initializer_hex: Option<&'a str>,
     initializer_relocations: Option<&'a str>,
+    /// Nothing writes this storage, so it exports as LLVM `constant`. Set only
+    /// for the compiler's own promoted constants; see `MirGlobalAllocOp`.
+    immutable: bool,
 }
 
+/// `next_device_global_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a device global earlier in the process (#706).
 fn create_device_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
     spec: DeviceGlobalSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     // An explicit initializer is already the evaluated Rust allocation image.
@@ -815,9 +865,8 @@ fn create_device_global(
                 ))
             })?
         } else {
-            static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let counter = DEVICE_GLOBAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let counter = *next_device_global_index;
+            *next_device_global_index += 1;
             format!("__device_global_{counter}").try_into().unwrap()
         };
 
@@ -833,6 +882,9 @@ fn create_device_global(
     }
     if let Some(initializer_relocations) = spec.initializer_relocations {
         global_op.set_initializer_relocations(ctx, initializer_relocations);
+    }
+    if spec.immutable {
+        global_op.mark_immutable(ctx);
     }
 
     let parent_block = op
@@ -2117,6 +2169,18 @@ mod tests {
     /// Build a `mir.shared_alloc` returning `MirPtrType<i32, addrspace=3>` of
     /// length `size`, with the given alloc_key, and append it to `block`.
     fn append_shared_alloc(ctx: &mut Context, block: Ptr<BasicBlock>, alloc_key: &str, size: u64) {
+        append_shared_alloc_named(ctx, block, alloc_key, size, None);
+    }
+
+    /// As [`append_shared_alloc`], additionally carrying the Rust path of the
+    /// `static` the allocation came from.
+    fn append_shared_alloc_named(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        alloc_key: &str,
+        size: u64,
+        source_name: Option<&str>,
+    ) {
         use pliron::builtin::attributes::IntegerAttr;
         use pliron::utils::apint::APInt;
 
@@ -2138,6 +2202,9 @@ mod tests {
         );
         alloc.set_attr_size(ctx, size_attr);
         alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key.to_string()));
+        if let Some(source_name) = source_name {
+            alloc.set_attr_source_name(ctx, StringAttr::new(source_name.to_string()));
+        }
         op.insert_at_back(block, ctx);
     }
 
@@ -2218,6 +2285,157 @@ mod tests {
         assert_eq!(count_ops::<llvm::AddressOfOp>(&ctx, &body), 3);
     }
 
+    /// Collect `(symbol, source_name)` for every shared global in the module.
+    fn shared_global_source_names(
+        ctx: &Context,
+        module_ptr: Ptr<Operation>,
+    ) -> Vec<(String, Option<String>)> {
+        use llvm_export::ops::GlobalOpExt;
+
+        let top = module_top_block(ctx, module_ptr);
+        let mut named: Vec<_> = top
+            .deref(ctx)
+            .iter(ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, ctx))
+            .filter(|g| g.address_space(ctx) == llvm_addr::SHARED)
+            .map(|g| {
+                (
+                    g.get_symbol_name(ctx).to_string(),
+                    g.shared_source_name(ctx),
+                )
+            })
+            .collect();
+        // Globals are inserted at the front of the module block, so iteration
+        // order is the reverse of creation order. Sort for a stable assertion.
+        named.sort();
+        named
+    }
+
+    #[test]
+    fn shared_alloc_source_name_reaches_the_generated_global() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc_named(&mut ctx, block, "k1", 64, Some("my_kernel::TILE"));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let named = shared_global_source_names(&ctx, module_ptr);
+        assert_eq!(named.len(), 1, "expected exactly one shared global");
+        let (symbol, source_name) = &named[0];
+        // The symbol itself must stay anonymous: the whole point of the
+        // sidecar attribute is that it does not perturb the emitted name.
+        assert!(
+            symbol.starts_with("__shared_mem_"),
+            "the generated symbol must not be renamed, got `{symbol}`"
+        );
+        assert_eq!(source_name.as_deref(), Some("my_kernel::TILE"));
+    }
+
+    #[test]
+    fn shared_alloc_without_source_name_leaves_the_global_unlabelled() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc(&mut ctx, block, "k1", 64);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let named = shared_global_source_names(&ctx, module_ptr);
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].1, None, "an unnamed allocation must stay unnamed");
+    }
+
+    #[test]
+    fn shared_alloc_source_names_are_per_global_not_shared_across_them() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        // Two references to one static dedupe onto a single global, and a
+        // second static gets its own. Each global must carry its own name —
+        // the failure this guards is one name leaking onto every allocation.
+        append_shared_alloc_named(&mut ctx, block, "tile", 64, Some("my_kernel::TILE"));
+        append_shared_alloc_named(&mut ctx, block, "tile", 64, Some("my_kernel::TILE"));
+        append_shared_alloc_named(&mut ctx, block, "scratch", 32, Some("my_kernel::SCRATCH"));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let names: Vec<_> = shared_global_source_names(&ctx, module_ptr)
+            .into_iter()
+            .map(|(_, source_name)| source_name)
+            .collect();
+        assert_eq!(names.len(), 2, "the shared alloc_key must still dedupe");
+        let mut names: Vec<_> = names.into_iter().map(|n| n.expect("named")).collect();
+        names.sort();
+        assert_eq!(names, vec!["my_kernel::SCRATCH", "my_kernel::TILE"]);
+    }
+
+    #[test]
+    fn shared_alloc_source_name_reaches_the_exported_llvm_ir() {
+        // The end the feature exists for: a consumer holding only the emitted
+        // artifact can tell which Rust `static` a `__shared_mem_N` block is.
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc_named(&mut ctx, block, "tile", 64, Some("my_kernel::TILE"));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let module = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_ptr, &ctx)
+            .expect("lowered top-level op is a module");
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module).expect("export");
+
+        let comment_index = ir
+            .find("; shared source: my_kernel::TILE")
+            .unwrap_or_else(|| panic!("exported IR must name the shared source:\n{ir}"));
+        let definition_index = ir
+            .find("__shared_mem_")
+            .expect("exported IR must declare the shared global");
+        assert!(
+            comment_index < definition_index,
+            "the source comment must precede the global it describes:\n{ir}"
+        );
+    }
+
+    /// A `__shared_mem_N` or `__device_global_N` index must depend only on
+    /// the module being lowered, not on how many allocations any OTHER
+    /// module has already lowered in this process (#706). Before the fix,
+    /// each `N` came from a `static AtomicUsize` shared across every call in
+    /// the process, so lowering the second of these two modules would have
+    /// produced `__shared_mem_1` and `__device_global_1`, not the `_0` names.
+    #[test]
+    fn shared_and_device_global_indices_are_per_module_not_process_global() {
+        for _ in 0..2 {
+            let mut ctx = make_ctx();
+            let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+            append_shared_alloc(&mut ctx, block, "k", 64);
+            append_global_alloc(&mut ctx, block, "ordinary_static", false);
+            append_mir_return(&mut ctx, block, vec![]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+            let top = module_top_block(&ctx, module_ptr);
+            let names: Vec<String> = top
+                .deref(&ctx)
+                .iter(&ctx)
+                .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+                .map(|g| g.get_symbol_name(&ctx).to_string())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "__shared_mem_0"),
+                "a module with exactly one shared allocation must always name it \
+                 __shared_mem_0, regardless of how many other modules already lowered \
+                 one in this process (got {names:?})"
+            );
+            assert!(
+                names.iter().any(|n| n == "__device_global_0"),
+                "a module with exactly one ordinary device global must always name it \
+                 __device_global_0, regardless of how many other modules already \
+                 lowered one in this process (got {names:?})"
+            );
+        }
+    }
+
     fn append_global_alloc(
         ctx: &mut Context,
         block: Ptr<BasicBlock>,
@@ -2284,6 +2502,46 @@ mod tests {
                 .to_string()
                 .starts_with("__device_global_"),
             "ordinary device globals get the __device_global_ prefix"
+        );
+    }
+
+    #[test]
+    fn immutable_marking_survives_lowering_and_is_not_assumed() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        // Two ordinary addrspace(1) globals, distinguished by their source key.
+        // Only the promoted one claims immutability; the plain static must not
+        // acquire it, or the exporter would write `constant` for storage the
+        // host can still overwrite by symbol.
+        let promoted = append_global_alloc(&mut ctx, block, "promoted_table", false);
+        mir::MirGlobalAllocOp::new(promoted).mark_immutable(&mut ctx);
+        append_global_alloc(&mut ctx, block, "plain_static", false);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let globals: Vec<llvm::GlobalOp> = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .collect();
+        let by_key = |key: &str| -> llvm::GlobalOp {
+            *globals
+                .iter()
+                .find(|g| g.source_global_key(&ctx).as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("no lowered global carries source key {key}"))
+        };
+
+        assert!(
+            by_key("promoted_table").is_immutable(&ctx),
+            "a global marked immutable in MIR must stay immutable through lowering"
+        );
+        assert!(
+            !by_key("plain_static").is_immutable(&ctx),
+            "lowering must not infer immutability; only the promoted-constant \
+             sites may claim it"
         );
     }
 

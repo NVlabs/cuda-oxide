@@ -47,6 +47,7 @@ pub mod block;
 pub mod body;
 pub(crate) mod layout;
 pub(crate) mod location;
+pub(crate) mod payload_store;
 pub mod rvalue;
 pub mod statement;
 pub mod terminator;

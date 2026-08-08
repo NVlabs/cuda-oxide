@@ -54,11 +54,20 @@ LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test l
 LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 # Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
 NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
+
+# Examples whose `main` deliberately never launches a kernel: they exist to
+# prove the device code compiles, and say so in their module docs
+# ("compilation and PTX generation only. Do not launch this kernel."). They
+# still belong to the `standard` category because the build and the host
+# binary must both succeed, but reporting a bare `PASS` would make them
+# indistinguishable in the summary from an example that launched kernels and
+# verified results.
+NO_LAUNCH_EXAMPLES=(wgmma_mma_bf16)
 
 # Examples whose verify-code-shape.sh asserts on `#[inline(never)]` marker
 # symbols. Those markers are private, so once the middle end inlines them into
@@ -83,6 +92,14 @@ classify() {
 verify_nvvm_in_compile_only() {
     local ex="$1" candidate
     for candidate in "${NVVM_VERIFY_EXAMPLES[@]}"; do
+        [[ "$ex" == "$candidate" ]] && return 0
+    done
+    return 1
+}
+
+example_never_launches() {
+    local ex="$1" candidate
+    for candidate in "${NO_LAUNCH_EXAMPLES[@]}"; do
         [[ "$ex" == "$candidate" ]] && return 0
     done
     return 1
@@ -319,7 +336,7 @@ fi
 # They never run cargo themselves; that is the caller's job.
 
 verdict_standard() {
-    local log="$1" ec="$2"
+    local log="$1" ec="$2" ex="${3:-}"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
     if grep_failure_markers "${log}"; then
@@ -330,11 +347,28 @@ verdict_standard() {
     # pre-Hopper, mathdx_ffi_test with no MathDx SDK). Accept it as PASS so
     # standard-category examples can gate themselves on hardware/SDK presence
     # without having to fake a success marker.
-    if grep -qE '^[[:space:]]*skipping:' "${log}"; then
+    #
+    # This has to recognise the declaration in every spelling the examples
+    # use, because the success-marker check below matches `SUCCESS|PASS|
+    # Complete` anywhere in the log and skip messages routinely contain those
+    # words. Missing a skip here therefore does not merely lose the
+    # "(skipped)" annotation: it promotes the example to a full execution
+    # PASS, indistinguishable from one that launched kernels and checked
+    # results. That is how `Skipping: ... -- PASS (skipped)` used to report a
+    # clean PASS, and `generated_ldmatrix` still prints the
+    # `PASS (skipped): ...` form below sm_75.
+    if grep -qiE '^[[:space:]]*(skipping:|pass \(skipped\))' "${log}"; then
         echo "PASS (skipped)"
         return 0
     fi
-    if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS"; return 0; fi
+    if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then
+        if example_never_launches "${ex}"; then
+            echo "PASS (compiled, no launch)"
+        else
+            echo "PASS"
+        fi
+        return 0
+    fi
     echo "FAIL (no success marker)"
     return 1
 }
@@ -366,7 +400,7 @@ verdict_error() {
     case "${ex}" in
         error_enum_bool_payload_addr)
             if ! grep -Fq 'canonical storage type' "${log}" \
-                || ! grep -Fq 'in-place mutation of bool or shared-pointer enum payloads is not supported' "${log}"; then
+                || ! grep -Fq 'a borrow that escapes into a call keeps no such rewrite and is refused here' "${log}"; then
                 echo "FAIL (missing canonical-storage payload-address diagnostic)"
                 return 1
             fi
@@ -1526,7 +1560,7 @@ for ex in "${selected[@]}"; do
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
-            standard)    verdict="$(verdict_standard    "${log}" "${ec}")"        && status=0 || status=$? ;;
+            standard)    verdict="$(verdict_standard    "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;
         esac
     fi

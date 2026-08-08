@@ -584,6 +584,69 @@ pub(crate) fn convert_construct_slice(
     Ok(())
 }
 
+/// Convert `mir.construct_disjoint_slice` to a chain of `llvm.insertvalue`
+/// operations.
+///
+/// The same shape as [`convert_construct_slice`], one insert longer per
+/// runtime layout word the index space carries. The struct type comes from
+/// [`make_disjoint_slice_struct`], the same constructor the type converter
+/// uses, so the field order here cannot drift from the lowered layout that
+/// [`resolve_aggregate_slots`] indexes identically.
+pub(crate) fn convert_construct_disjoint_slice(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let (result_ty, operands) = {
+        let mir_op = op.deref(ctx);
+        let operands: Vec<_> = mir_op.operands().collect();
+        (mir_op.get_result(0).get_type(ctx), operands)
+    };
+
+    let space_tys = {
+        let ty_ref = result_ty.deref(ctx);
+        match ty_ref.downcast_ref::<MirDisjointSliceType>() {
+            Some(slice_ty) => slice_ty.space_types().to_vec(),
+            None => {
+                return pliron::input_err_noloc!(
+                    "MirConstructDisjointSliceOp result type must be MirDisjointSliceType"
+                );
+            }
+        }
+    };
+
+    // The verifier already pins the operand count to the result type. Check
+    // it here too: this pass runs on operations the verifier accepted, and a
+    // short operand list would otherwise index past the end below.
+    let expected_operands = 2 + space_tys.len();
+    if operands.len() != expected_operands {
+        return pliron::input_err_noloc!(
+            "MirConstructDisjointSliceOp expects {expected_operands} operands, got {}",
+            operands.len()
+        );
+    }
+
+    let slice_struct_ty = crate::convert::types::make_disjoint_slice_struct(ctx, &space_tys)
+        .map_err(anyhow_to_pliron)?;
+
+    let undef_op = llvm::UndefOp::new(ctx, slice_struct_ty);
+    rewriter.insert_operation(ctx, undef_op.get_operation());
+    let mut current = undef_op.get_operation().deref(ctx).get_result(0);
+    let mut last_insert = undef_op.get_operation();
+
+    for (slot, operand) in operands.into_iter().enumerate() {
+        let insert = llvm::InsertValueOp::new(ctx, current, operand, vec![slot as u32]);
+        rewriter.insert_operation(ctx, insert.get_operation());
+        current = insert.get_operation().deref(ctx).get_result(0);
+        last_insert = insert.get_operation();
+    }
+
+    rewriter.replace_operation(ctx, op, last_insert);
+
+    Ok(())
+}
+
 /// Convert `mir.construct_array` to a chain of `llvm.insertvalue` operations.
 ///
 /// Arrays are represented as LLVM arrays. Same construction pattern as structs:
@@ -1633,7 +1696,7 @@ pub(crate) fn convert_field_addr(
         let storage_ty = enum_payload_storage_type(ctx, semantic_ty).map_err(anyhow_to_pliron)?;
         if storage_ty != semantic_ty {
             return pliron::input_err_noloc!(
-                "field_addr: cannot hand out the in-place address of payload field {} of enum `{}`: its bytes use canonical storage type {} while its semantic type is {}, and loads or stores made through an escaped payload address are typed with the semantic type, which the canonical bytes cannot honor; shared reads of such payloads are compiled through a value copy automatically, and in-place mutation of bool or shared-pointer enum payloads is not supported",
+                "field_addr: cannot hand out the in-place address of payload field {} of enum `{}`: its bytes use canonical storage type {} while its semantic type is {}, and loads or stores made through an escaped payload address are typed with the semantic type, which the canonical bytes cannot honor; shared reads of such payloads are compiled through a value copy automatically, and a write that stays inside its function is compiled by rebuilding the enum around the new payload; a borrow that escapes into a call keeps no such rewrite and is refused here",
                 field_index,
                 enum_name,
                 storage_ty.deref(ctx).disp(ctx),
@@ -1681,14 +1744,15 @@ pub(crate) fn convert_field_addr(
 
     let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
-        match pointee_ref.downcast_ref::<MirStructType>() {
-            Some(struct_ty) => StructLayoutInfo::of_struct(struct_ty),
-            None => {
-                return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to a struct, union or enum type, got {}",
-                    mir_ptr_pointee.deref(ctx).disp(ctx)
-                );
-            }
+        if let Some(struct_ty) = pointee_ref.downcast_ref::<MirStructType>() {
+            StructLayoutInfo::of_struct(struct_ty)
+        } else if let Some(tuple_ty) = pointee_ref.downcast_ref::<MirTupleType>() {
+            StructLayoutInfo::of_tuple(tuple_ty)
+        } else {
+            return pliron::input_err_noloc!(
+                "MirFieldAddrOp pointer must point to a struct, tuple, union or enum type, got {}",
+                mir_ptr_pointee.deref(ctx).disp(ctx)
+            );
         }
     };
 
@@ -1902,6 +1966,109 @@ mod tests {
             count_ops::<llvm::UndefOp>(&ctx, &body),
             1,
             "slice construction should start from one undef aggregate"
+        );
+    }
+
+    /// `mir.construct_disjoint_slice` lowers to the same insert chain as the
+    /// fat pointer for an index space with no runtime layout.
+    #[test]
+    fn construct_disjoint_slice_lowers_to_ptr_len_insert_values() {
+        let mut ctx = make_ctx();
+
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let slice_ty: TypeHandle = MirDisjointSliceType::get(&mut ctx, f32_ty).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty], vec![]);
+        let data_ptr = block.deref(&ctx).get_argument(0);
+        let len = block.deref(&ctx).get_argument(1);
+
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirConstructDisjointSliceOp::get_concrete_op_info(),
+            vec![slice_ty],
+            vec![data_ptr, len],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1]],
+            "a space-free disjoint slice must insert pointer at slot 0 and length at slot 1"
+        );
+        assert_eq!(
+            inserts[0].get_operation().deref(&ctx).get_operand(1),
+            data_ptr,
+            "slot 0 must receive the original data pointer"
+        );
+        assert_eq!(
+            inserts[1].get_operation().deref(&ctx).get_operand(1),
+            len,
+            "slot 1 must receive the original length"
+        );
+        assert_eq!(
+            count_ops::<llvm::UndefOp>(&ctx, &body),
+            1,
+            "construction should start from one undef aggregate"
+        );
+    }
+
+    /// The runtime row width is the third operand and must land in slot 2.
+    /// Writing it into the length slot, or dropping it, gives a slice whose
+    /// row width reads back as something else at every access site.
+    #[test]
+    fn construct_disjoint_slice_places_the_row_width_after_ptr_and_len() {
+        let mut ctx = make_ctx();
+
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let width_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let slice_ty: TypeHandle =
+            MirDisjointSliceType::get_with_space(&mut ctx, f32_ty, vec![width_ty]).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty, width_ty], vec![]);
+        let data_ptr = block.deref(&ctx).get_argument(0);
+        let len = block.deref(&ctx).get_argument(1);
+        let width = block.deref(&ctx).get_argument(2);
+
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirConstructDisjointSliceOp::get_concrete_op_info(),
+            vec![slice_ty],
+            vec![data_ptr, len, width],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1], vec![2]],
+            "the row width must occupy slot 2, after the pointer and the length"
+        );
+        assert_eq!(
+            inserts[2].get_operation().deref(&ctx).get_operand(1),
+            width,
+            "slot 2 must receive the row width operand, not the length"
+        );
+        assert_eq!(
+            inserts[1].get_operation().deref(&ctx).get_operand(1),
+            len,
+            "slot 1 must still receive the length"
         );
     }
 
@@ -2151,6 +2318,102 @@ mod tests {
         );
     }
 
+    /// `mir.field_addr` on a TUPLE pointee (the `#693` shape: `let (a, b) =
+    /// TABLE[i];`) must resolve the GEP index through the tuple's memory-order
+    /// layout, exactly like the struct path above, not through the
+    /// declaration index directly.
+    ///
+    /// `(u8, u32)` is rustc's own layout for this pair: the `u32` field is
+    /// placed FIRST in memory for alignment, so declaration field 0 (`u8`,
+    /// `.0`) lives at memory slot 1 and declaration field 1 (`u32`, `.1`)
+    /// lives at memory slot 0. A GEP index equal to the declaration index
+    /// would silently address the WRONG field's bytes.
+    #[test]
+    fn field_addr_tuple_pointee_resolves_memory_order_gep_index() {
+        use llvm_export::ops::GepIndex;
+
+        let mut ctx = make_ctx();
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // decl order [u8, u32]; memory order [u32, u8] (mem_to_decl = [1, 0]).
+        let tuple_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![u8_ty, u32_ty],
+            vec![1, 0],
+            vec![4, 0],
+            8,
+            4,
+        )
+        .into();
+
+        let tuple_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, tuple_ty, false).into();
+        let u8_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let u32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![tuple_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+
+        // Declaration field 0 (`.0`, u8) first, then declaration field 1
+        // (`.1`, u32) -- source order, not memory order.
+        for (field_index, result_ty) in [(0u32, u8_ptr_ty), (1, u32_ptr_ty)] {
+            let op = Operation::new(
+                &mut ctx,
+                MirFieldAddrOp::get_concrete_op_info(),
+                vec![result_ty],
+                vec![base],
+                vec![],
+                0,
+            );
+            MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+            op.insert_at_back(block, &ctx);
+        }
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), 2, "each field_addr must lower to its own GEP");
+        assert!(
+            geps.iter().all(|gep| gep.verify(&ctx).is_ok()),
+            "every field-address GEP must satisfy LLVM dialect verification"
+        );
+
+        // `.0` (u8, declared first) must land at MEMORY slot 1.
+        let field0_geps: Vec<_> = geps
+            .iter()
+            .filter(|gep| {
+                matches!(
+                    gep.indices(&ctx).as_slice(),
+                    [GepIndex::Constant(0), GepIndex::Constant(1)]
+                )
+            })
+            .collect();
+        assert_eq!(
+            field0_geps.len(),
+            1,
+            "declaration field 0 (u8) must resolve to its memory slot 1, not slot 0"
+        );
+
+        // `.1` (u32, declared second) must land at MEMORY slot 0.
+        let field1_geps: Vec<_> = geps
+            .iter()
+            .filter(|gep| {
+                matches!(
+                    gep.indices(&ctx).as_slice(),
+                    [GepIndex::Constant(0), GepIndex::Constant(0)]
+                )
+            })
+            .collect();
+        assert_eq!(
+            field1_geps.len(),
+            1,
+            "declaration field 1 (u32) must resolve to its memory slot 0, not slot 1"
+        );
+    }
+
     /// Enum construction must store the declared discriminant value, not the
     /// variant index. This locks the `Ordering::Less = -1` style case as the
     /// i8 bit-pattern `255`.
@@ -2331,27 +2594,68 @@ mod tests {
             2,
             "construction should reload the enum and extraction should load the tuple payload"
         );
-        assert_eq!(
-            find_all::<llvm::StoreOp>(&ctx, &body)
-                .iter()
-                .filter(|store| store.get_operand_value(&ctx).get_type(&ctx) == lowered_tuple)
-                .count(),
-            1,
-            "the complete {{i64, ptr}} payload must be written into the enum storage"
+        // What this test is about is that the payload moves as one unit, never
+        // field by field. Assert that property directly instead of counting
+        // whole-aggregate accesses.
+        //
+        // Counting was the fragile form. The enum's physical storage here is
+        // `{i64, ptr}` -- the *same interned type* as the lowered payload tuple,
+        // since the niche carrier claims the pointer at byte 8 and the 8 bytes
+        // below it become one `i64` filler. So a count of `lowered_tuple`-typed
+        // accesses cannot separate the payload write from the enum spill, and
+        // the expected numbers move whenever that coincidence appears or
+        // disappears -- which has nothing to do with the property under test.
+        //
+        // A lowering that decomposed the payload is recognisable by what it
+        // emits instead: traffic in the tuple's *field* types. Look for that,
+        // and the assertion holds whatever the enum storage type happens to be.
+        let field_tys: Vec<TypeHandle> = lowered_tuple
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("the lowered tuple is an LLVM struct")
+            .fields()
+            .collect();
+
+        let store_tys: Vec<TypeHandle> = find_all::<llvm::StoreOp>(&ctx, &body)
+            .iter()
+            .map(|store| store.get_operand_value(&ctx).get_type(&ctx))
+            .collect();
+        let load_tys: Vec<TypeHandle> = find_all::<llvm::LoadOp>(&ctx, &body)
+            .iter()
+            .map(|load| {
+                load.get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx)
+            })
+            .collect();
+
+        let describe = |tys: &[TypeHandle]| -> Vec<String> {
+            tys.iter()
+                .filter(|ty| field_tys.contains(ty))
+                .map(|ty| ty.deref(&ctx).disp(&ctx).to_string())
+                .collect()
+        };
+        assert!(
+            describe(&store_tys).is_empty(),
+            "the payload must be stored whole, but these field-typed stores appear: {:?}",
+            describe(&store_tys)
         );
-        assert_eq!(
-            find_all::<llvm::LoadOp>(&ctx, &body)
-                .iter()
-                .filter(|load| {
-                    load.get_operation()
-                        .deref(&ctx)
-                        .get_result(0)
-                        .get_type(&ctx)
-                        == lowered_tuple
-                })
-                .count(),
-            1,
-            "payload extraction must read the complete {{i64, ptr}} tuple back"
+        assert!(
+            describe(&load_tys).is_empty(),
+            "the payload must be read whole, but these field-typed loads appear: {:?}",
+            describe(&load_tys)
+        );
+
+        // And it must actually be moved: without this the checks above would
+        // also pass a lowering that emitted no payload traffic at all.
+        assert!(
+            store_tys.contains(&lowered_tuple),
+            "at least one store must move the complete {{i64, ptr}} payload"
+        );
+        assert!(
+            load_tys.contains(&lowered_tuple),
+            "at least one load must read the complete {{i64, ptr}} payload"
         );
     }
 

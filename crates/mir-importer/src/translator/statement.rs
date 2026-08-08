@@ -37,6 +37,7 @@
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
+use crate::translator::payload_store;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::{
@@ -85,6 +86,24 @@ pub fn translate_statement(
                         return translate_array_agg_into_alloca(
                             ctx, body, place, operands, value_map, block_ptr, prev_op, loc,
                         );
+                    }
+                    // A fully-constant array: copy it in from an immutable
+                    // device global rather than storing it element by element in
+                    // every thread. Falls through when the constant is not a
+                    // shape that can be reduced to a byte image.
+                    mir::Rvalue::Use(mir::Operand::Constant(constant)) => {
+                        if let Some(last) = rvalue::translate_array_constant_into_alloca(
+                            ctx,
+                            body,
+                            place,
+                            constant,
+                            value_map,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        )? {
+                            return Ok(Some(last));
+                        }
                     }
                     mir::Rvalue::Repeat(operand, count) => {
                         let n = count.eval_target_usize().map_err(|e| {
@@ -1069,6 +1088,26 @@ fn store_through_place_address(
         current_prev = Some(rvalue_op);
     } else if let Some(prev) = last_inserted {
         current_prev = Some(prev);
+    }
+
+    // A payload whose bytes use canonical storage has no address to write
+    // through: bool payloads occupy a full byte and shared-memory pointers
+    // are stored generic, while a store through an escaped address carries
+    // the semantic type. Rebuild the enum around the new payload instead,
+    // which coerces on the way in exactly as a whole-enum assignment does.
+    if let Some(payload_store) = payload_store::classify(ctx, body, place)?
+        && let Some(result) = payload_store::rebuild_and_store(
+            ctx,
+            body,
+            value_map,
+            &payload_store,
+            result_value,
+            block_ptr,
+            current_prev,
+            loc.clone(),
+        )?
+    {
+        return Ok(result);
     }
 
     // The destination is written through, so request a mutable address.

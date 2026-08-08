@@ -23,30 +23,26 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
+    attribute::Attribute,
     builtin::{
-        attributes::IntegerAttr,
         op_interfaces::{NOpdsInterface, NResultsInterface},
         types::{FP32Type, IntegerType, Signedness},
     },
     common_traits::Verify,
     context::{Context, Ptr},
-    identifier::Identifier,
     location::Located,
     op::Op,
     operation::Operation,
     result::Error,
     r#type::Typed,
-    utils::apint::APInt,
     value::Value,
-    verify_err,
+    verify_err, verify_err_noloc,
 };
-use pliron_derive::pliron_op;
-use std::num::NonZeroUsize;
+use pliron_derive::{pliron_attr, pliron_op};
 
 const WGMMA_M64N64_F32_ACCUMULATOR_COUNT: usize = 32;
 const WGMMA_COUNTED_LOOP_CONTROL_COUNT: usize = 5;
-const WGMMA_MAX_PENDING_GROUPS: u32 = 7;
-const WGMMA_PIPELINE_MAX_PENDING_ATTR: &str = "max_pending_groups";
+const WGMMA_MAX_PENDING_GROUPS: u8 = 7;
 
 // =============================================================================
 // Descriptor Operations
@@ -456,6 +452,29 @@ impl Verify for WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
     }
 }
 
+/// The statically known `wait_group<N>` bound carried by a
+/// [`WgmmaMmaPipelineValuesM64N64K16F32Bf16Op`].
+///
+/// PTX `wgmma.wait_group.sync.aligned N;` throttles at most `N` pending
+/// groups, with `N` in `1..=7` for a partial wait. `0` is the full drain the
+/// non-pipelined group ops already model, and depths above 7 exceed the
+/// hardware's pending-group bound, so both are rejected here.
+#[pliron_attr(name = "nvvm.wgmma_max_pending_groups", format = "$0")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub struct WgmmaMaxPendingAttr(pub u8);
+
+impl Verify for WgmmaMaxPendingAttr {
+    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        if !(1..=WGMMA_MAX_PENDING_GROUPS).contains(&self.0) {
+            return verify_err_noloc!(
+                "nvvm.wgmma_max_pending_groups must be in 1..=7, got {}",
+                self.0
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Value-form BF16 WGMMA pipeline with multiple independent accumulator slots.
 ///
 /// The operation carries `N + 1` independent 32-value accumulator slots when
@@ -476,7 +495,11 @@ impl Verify for WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
 /// ```
 ///
 /// Result layout mirrors the flattened accumulator inputs.
-#[pliron_op(name = "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16", format)]
+#[pliron_op(
+    name = "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16",
+    format,
+    attributes = (max_pending_groups: WgmmaMaxPendingAttr)
+)]
 pub struct WgmmaMmaPipelineValuesM64N64K16F32Bf16Op;
 
 impl WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
@@ -485,16 +508,12 @@ impl WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
         Self { op }
     }
 
-    fn max_pending_groups_key() -> Identifier {
-        Identifier::try_from(WGMMA_PIPELINE_MAX_PENDING_ATTR).unwrap()
-    }
-
     /// Build a value-form WGMMA pipeline.
     pub fn build(
         ctx: &mut Context,
         accumulators: Vec<Value>,
         descriptors: Vec<Value>,
-        max_pending_groups: u32,
+        max_pending_groups: u8,
     ) -> Ptr<Operation> {
         let f32_ty = FP32Type::get(ctx);
         let mut operands = Vec::with_capacity(accumulators.len() + descriptors.len());
@@ -510,48 +529,29 @@ impl WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
             vec![],
             0,
         );
-        let attr_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
-        op.deref_mut(ctx).attributes.set(
-            Self::max_pending_groups_key(),
-            IntegerAttr::new(
-                attr_ty,
-                APInt::from_u64(
-                    u64::from(max_pending_groups),
-                    NonZeroUsize::new(32).unwrap(),
-                ),
-            ),
-        );
+        Self::new(op).set_attr_max_pending_groups(ctx, WgmmaMaxPendingAttr(max_pending_groups));
         op
     }
 
     /// Return the statically known `wait_group<N>` bound.
-    pub fn max_pending_groups(&self, ctx: &Context) -> Option<u32> {
-        let operation = self.get_operation().deref(ctx);
-        let attribute: &IntegerAttr = operation.attributes.get(&Self::max_pending_groups_key())?;
-        let ty_handle = attribute.get_type();
-        let ty = ty_handle.deref(ctx);
-        if ty.width() != 32 || ty.signedness() != Signedness::Unsigned {
-            return None;
-        }
-        u32::try_from(attribute.value().to_u64()).ok()
+    pub fn max_pending_groups(&self, ctx: &Context) -> Option<u8> {
+        self.get_attr_max_pending_groups(ctx)
+            .map(|attribute| attribute.0)
     }
 }
 
 impl Verify for WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
-        let Some(max_pending_groups) = self.max_pending_groups(ctx) else {
+        let Some(max_pending_attr) = self.get_attr_max_pending_groups(ctx) else {
             return verify_err!(
                 op.loc(),
-                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires a u32 max_pending_groups attribute"
+                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires an nvvm.wgmma_max_pending_groups attribute"
             );
         };
-        if !(1..=WGMMA_MAX_PENDING_GROUPS).contains(&max_pending_groups) {
-            return verify_err!(
-                op.loc(),
-                "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 max_pending_groups must be in 1..=7"
-            );
-        }
+        max_pending_attr.verify(ctx)?;
+        let max_pending_groups = max_pending_attr.0;
+        drop(max_pending_attr);
 
         let result_count = op.get_num_results();
         if result_count == 0 || !result_count.is_multiple_of(WGMMA_M64N64_F32_ACCUMULATOR_COUNT) {
@@ -561,7 +561,7 @@ impl Verify for WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
             );
         }
         let slot_count = result_count / WGMMA_M64N64_F32_ACCUMULATOR_COUNT;
-        if slot_count != max_pending_groups as usize + 1 {
+        if slot_count != usize::from(max_pending_groups) + 1 {
             return verify_err!(
                 op.loc(),
                 "nvvm.wgmma_mma_pipeline_values_m64n64k16_f32_bf16 requires exactly max_pending_groups + 1 accumulator slots"
@@ -615,6 +615,8 @@ impl Verify for WgmmaMmaPipelineValuesM64N64K16F32Bf16Op {
 
 /// Register WGMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
+    WgmmaMaxPendingAttr::register(ctx);
+
     WgmmaMakeSmemDescOp::register(ctx);
     WgmmaMmaM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupM64N64K16F32Bf16Op::register(ctx);
