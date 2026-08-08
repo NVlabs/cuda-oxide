@@ -2826,6 +2826,33 @@ pub fn translate_operand(
 ///
 /// `(value, last_inserted_op)` -- the pliron IR value for the place and the last
 /// operation inserted into the block (for op-ordering bookkeeping).
+/// Whether `tuple` has a field that occupies no bytes, at any depth.
+///
+/// Such a field can still raise the tuple's ABI alignment through
+/// `repr(align(N))` while contributing nothing to the LLVM storage type, so the
+/// recorded alignment cannot be recovered from that type alone. Nesting is
+/// walked because the field that does it may sit inside an inner tuple.
+fn tuple_has_zero_sized_field(ctx: &Context, tuple: &dialect_mir::types::MirTupleType) -> bool {
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
+
+    tuple.get_types().iter().any(|field| {
+        let field_ref = field.deref(ctx);
+        if let Some(inner) = field_ref.downcast_ref::<MirTupleType>() {
+            return inner.total_size() == 0 || tuple_has_zero_sized_field(ctx, inner);
+        }
+        if let Some(structure) = field_ref.downcast_ref::<MirStructType>() {
+            return structure.total_size() == 0;
+        }
+        if let Some(enumeration) = field_ref.downcast_ref::<MirEnumType>() {
+            return enumeration.total_size() == 0;
+        }
+        if let Some(array) = field_ref.downcast_ref::<MirArrayType>() {
+            return array.size() == 0;
+        }
+        false
+    })
+}
+
 pub fn translate_place(
     ctx: &mut Context,
     body: &mir::Body,
@@ -2965,10 +2992,31 @@ fn classify_place_read_strategy(
                 let Some(pointee) = mir_ptr_pointee(ctx, current_ptr_ty) else {
                     return Ok(PlaceReadStrategy::ValueFallback);
                 };
-                if !pointee.deref(ctx).is::<dialect_mir::types::MirStructType>() {
-                    // `mir.field_addr` currently verifies only struct
-                    // pointees. Tuple field reads stay on the value path,
-                    // where `mir.extract_field` supports tuple values.
+                let addressable_pointee = {
+                    let pointee_ref = pointee.deref(ctx);
+                    if pointee_ref.is::<dialect_mir::types::MirStructType>() {
+                        true
+                    } else if let Some(tuple) =
+                        pointee_ref.downcast_ref::<dialect_mir::types::MirTupleType>()
+                    {
+                        // A zero-sized field can still carry `repr(align(N))`,
+                        // which raises the tuple's ABI alignment above anything
+                        // its LLVM storage type expresses — `(Align32, u8)`
+                        // lowers to `{ i8, [31 x i8] }`, naturally align-1. The
+                        // address path states no alignment on its final load, so
+                        // lowering would fall back to the field's natural
+                        // alignment and quietly under-state the ABI. Keep those
+                        // on the value path, which moves the whole aggregate at
+                        // its recorded alignment.
+                        !tuple_has_zero_sized_field(ctx, tuple)
+                    } else {
+                        // Everything else — notably an enum payload, which needs
+                        // variant layout the walker resolves only for writes —
+                        // stays on the value path.
+                        false
+                    }
+                };
+                if !addressable_pointee {
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
 

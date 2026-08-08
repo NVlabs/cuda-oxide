@@ -1744,14 +1744,20 @@ pub(crate) fn convert_field_addr(
 
     let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
-        match pointee_ref.downcast_ref::<MirStructType>() {
-            Some(struct_ty) => StructLayoutInfo::of_struct(struct_ty),
-            None => {
-                return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to a struct, union or enum type, got {}",
-                    mir_ptr_pointee.deref(ctx).disp(ctx)
-                );
-            }
+        // A tuple is laid out from the same facts a struct is — declaration
+        // order, memory order, per-field offsets, total size — and
+        // `build_struct_slot_map` consumes them identically, so the field's LLVM
+        // slot comes out of the same walk that built the type. That is what lets
+        // a reordered tuple like `(u8, u32, u64)` address correctly.
+        if let Some(struct_ty) = pointee_ref.downcast_ref::<MirStructType>() {
+            StructLayoutInfo::of_struct(struct_ty)
+        } else if let Some(tuple_ty) = pointee_ref.downcast_ref::<MirTupleType>() {
+            StructLayoutInfo::of_tuple(tuple_ty)
+        } else {
+            return pliron::input_err_noloc!(
+                "MirFieldAddrOp pointer must point to a struct, tuple, union or enum type, got {}",
+                mir_ptr_pointee.deref(ctx).disp(ctx)
+            );
         }
     };
 

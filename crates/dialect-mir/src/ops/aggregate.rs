@@ -1169,9 +1169,10 @@ impl Verify for MirExtractArrayElementOp {
 
 /// MIR field address operation.
 ///
-/// Computes the address of a struct field from a pointer to the struct.
-/// This is the address-of-field operation needed for mutable references
-/// to nested struct fields.
+/// Computes the address of an aggregate's field from a pointer to the
+/// aggregate. This is the address-of-field operation needed for mutable
+/// references to nested fields, and for reading one field of an element without
+/// copying the element (or the array holding it) first.
 ///
 /// # Why This Exists
 ///
@@ -1269,6 +1270,12 @@ impl Verify for MirFieldAddrOp {
 
         let field_types = if let Some(struct_ty) = pointee_ty_obj.downcast_ref::<MirStructType>() {
             struct_ty.field_types()
+        } else if let Some(tuple_ty) = pointee_ty_obj.downcast_ref::<MirTupleType>() {
+            // A tuple carries the same layout facts a struct does — declaration
+            // order, memory order, per-field offsets and total size — and
+            // lowering consumes them through the same `StructLayoutInfo`. The
+            // field index is the declaration index either way.
+            tuple_ty.get_types()
         } else if let Some(union_ty) = pointee_ty_obj.downcast_ref::<MirUnionType>() {
             union_ty.field_types()
         } else if let Some(enum_ty) = pointee_ty_obj.downcast_ref::<MirEnumType>() {
@@ -1283,7 +1290,7 @@ impl Verify for MirFieldAddrOp {
         } else {
             return verify_err!(
                 op.loc(),
-                "MirFieldAddrOp pointer must point to a struct, union or enum type, got: {}",
+                "MirFieldAddrOp pointer must point to a struct, tuple, union or enum type, got: {}",
                 pointee_ty.disp(ctx)
             );
         };

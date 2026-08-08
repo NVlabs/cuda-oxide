@@ -13,8 +13,10 @@
 //!   payload extraction;
 //! - ZST local and ZST field reads, where emitting a final load would be
 //!   meaningless;
-//! - tuple field reads, because `mir.field_addr` currently verifies struct
-//!   pointees only while value-space `mir.extract_field` supports tuples.
+//! - tuple field reads *of an over-aligned tuple*: a zero-sized field can carry
+//!   `repr(align(N))`, raising the ABI alignment above anything the LLVM storage
+//!   type expresses, and the address path states no alignment on its final load.
+//!   Ordinary tuple fields now address in place.
 //!
 //! Run: cargo oxide run place_read_fallbacks
 
@@ -101,10 +103,12 @@ mod kernels {
         }
     }
 
-    /// Tuple fields intentionally remain on the value fallback path.
+    /// An ordinary tuple field now reads through its address.
     ///
-    /// `mir.field_addr` currently verifies `MirStructType` pointees only, so
-    /// forcing tuple fields through address lowering would fail verification.
+    /// `mir.field_addr` accepts tuple pointees, so this kernel no longer copies
+    /// the tuple to read one field. It stays here as the counterpart to the
+    /// cases that genuinely do fall back: what keeps a tuple on the value path
+    /// is over-alignment, not being a tuple.
     #[kernel]
     pub fn tuple_field_read(mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
