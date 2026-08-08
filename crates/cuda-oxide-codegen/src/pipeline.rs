@@ -19,6 +19,7 @@ use crate::generated::{
     GeneratedMarkerPolicy, collect_generated_intrinsic_requirements_for_backend,
 };
 use crate::generated_intrinsic_targets::GeneratedIntrinsicBackend;
+use crate::iket::{has_iket_operations, materialize as materialize_iket};
 use crate::llvm_tools::LlvmToolchain;
 use crate::lower::{add_device_extern_declarations, lower_to_llvm};
 use crate::options::BackendOptions;
@@ -182,6 +183,12 @@ pub fn compile_translated_module(
     }
 
     let promote_and_unroll = !request.debug_kind.variables_enabled();
+    if !promote_and_unroll && has_iket_operations(ctx, module) {
+        return Err(PipelineError::Lowering(
+            "IKET requires MIR preparation; full variable debug information is not supported for an instrumented kernel"
+                .to_owned(),
+        ));
+    }
     if request.trace.verbose {
         if promote_and_unroll {
             request
@@ -213,6 +220,17 @@ pub fn compile_translated_module(
             .trace
             .emit(format!("{}", module.deref(ctx).disp(ctx)));
     }
+
+    materialize_iket(
+        ctx,
+        module,
+        request
+            .backend
+            .target_arch
+            .as_deref()
+            .or(request.backend.device_arch_hint.as_deref()),
+        &request.backend.iket,
+    )?;
 
     // Calls need structured extern declarations before lowering so pointer
     // address spaces are preserved by the call converter.

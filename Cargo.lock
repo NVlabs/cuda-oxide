@@ -444,8 +444,10 @@ dependencies = [
 name = "cuda-oxide-codegen"
 version = "0.1.0"
 dependencies = [
+ "dialect-iket",
  "dialect-mir",
  "dialect-nvvm",
+ "iket-lower",
  "libnvvm-sys",
  "llvm-export",
  "mir-lower",
@@ -725,6 +727,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad02fc3cac722c3c44c3ed708f6653e7d149b7912f7342fc1e8530455f84f0eb"
 dependencies = [
  "wide",
+]
+
+[[package]]
+name = "iket-lower"
+version = "0.1.0"
+dependencies = [
+ "dialect-iket",
+ "pliron",
+ "thiserror",
 ]
 
 [[package]]
