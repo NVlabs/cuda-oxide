@@ -47,16 +47,20 @@ mod kernels {
     /// neighbour's with an acquire load.
     ///
     /// Exercises, in one kernel: `st.release.gpu.b32`, `ld.acquire.gpu.b32`,
-    /// `st.relaxed.gpu.b64`, `ld.relaxed.gpu.b64`, and the `fence.acq_rel.gpu`
-    /// pair the AcqRel fetch_add is bracketed with. None of these could be
-    /// compiled under `--materialize-cubin` before.
+    /// `st.relaxed.gpu.b64`, `ld.relaxed.gpu.b64`, and the fused-fence
+    /// SeqCst forms `fence.sc.gpu; st.release.gpu.b32` and `fence.sc.gpu;
+    /// ld.acquire.gpu.b32`. None of these could be compiled under
+    /// `--materialize-cubin` before. Everything here stays in the
+    /// load/store family, so the kernel also compiles through the legacy
+    /// (pre-Blackwell) NVVM path, which still rejects atomic
+    /// read-modify-write operations.
     #[kernel]
     pub fn publish_and_observe(
         flags: &[u32],
         wide: &[u64],
         mut observed: DisjointSlice<u32>,
         mut observed_wide: DisjointSlice<u64>,
-        mut rmw_ok: DisjointSlice<u32>,
+        mut fence_ok: DisjointSlice<u32>,
     ) {
         let tid = thread::threadIdx_x() as usize;
         if tid >= N {
@@ -67,8 +71,7 @@ mod kernels {
         // SAFETY: `tid` and `next` are both < N, the buffers have N elements,
         // and every access to them in this kernel is atomic.
         let mine = unsafe { DeviceAtomicU32::from_ptr((flags.as_ptr() as *mut u32).add(tid)) };
-        let mine_wide =
-            unsafe { DeviceAtomicU64::from_ptr((wide.as_ptr() as *mut u64).add(tid)) };
+        let mine_wide = unsafe { DeviceAtomicU64::from_ptr((wide.as_ptr() as *mut u64).add(tid)) };
         let neighbour =
             unsafe { DeviceAtomicU32::from_ptr((flags.as_ptr() as *mut u32).add(next)) };
         let neighbour_wide =
@@ -93,13 +96,18 @@ mod kernels {
             *out = seen_wide;
         }
 
-        // AcqRel fetch_add: the RMW fence-splitting lowering brackets the
-        // atom.add with `fence.acq_rel.gpu`, the fence libNVVM used to
-        // reject at the IR level. (A compare-exchange would not cover it:
-        // the cmpxchg lowering emits no fence.)
-        let prev = mine.fetch_add(0, AtomicOrdering::AcqRel);
-        if let Some(out) = rmw_ok.get_mut(thread::index_1d()) {
-            *out = u32::from(prev == tid as u32 + 1);
+        // SeqCst store and load: PTX has no sequentially consistent access,
+        // so these lower to the libcu++ mapping with the fence fused into
+        // one asm template: `fence.sc.gpu; st.release.gpu.b32` and
+        // `fence.sc.gpu; ld.acquire.gpu.b32`. That is this example's runtime
+        // fence coverage, and it stays in the load/store family, which is
+        // what keeps the kernel compiling through the legacy NVVM path too
+        // (RMW orderings are still rejected there, and source-level
+        // `core::sync::atomic::fence` does not translate yet).
+        mine.store(tid as u32 + 1, AtomicOrdering::SeqCst);
+        let reread = mine.load(AtomicOrdering::SeqCst);
+        if let Some(out) = fence_ok.get_mut(thread::index_1d()) {
+            *out = u32::from(reread == tid as u32 + 1);
         }
     }
 }
@@ -114,7 +122,7 @@ fn main() {
     let wide = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
     let mut observed = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
     let mut observed_wide = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
-    let mut rmw_ok = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    let mut fence_ok = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // SAFETY: one block of N threads, and every buffer has N elements.
@@ -130,14 +138,14 @@ fn main() {
             &wide,
             &mut observed,
             &mut observed_wide,
-            &mut rmw_ok,
+            &mut fence_ok,
         )
     }
     .expect("Kernel launch failed");
 
     let observed = observed.to_host_vec(&stream).unwrap();
     let observed_wide = observed_wide.to_host_vec(&stream).unwrap();
-    let rmw_ok = rmw_ok.to_host_vec(&stream).unwrap();
+    let fence_ok = fence_ok.to_host_vec(&stream).unwrap();
 
     let mut errors = 0;
     for i in 0..N {
@@ -146,7 +154,10 @@ fn main() {
         let want_wide = (next as u64 + 1) << 32;
         if observed[i] != want {
             if errors < 5 {
-                eprintln!("  acquire load: thread {i} saw {}, expected {want}", observed[i]);
+                eprintln!(
+                    "  acquire load: thread {i} saw {}, expected {want}",
+                    observed[i]
+                );
             }
             errors += 1;
         }
@@ -159,9 +170,9 @@ fn main() {
             }
             errors += 1;
         }
-        if rmw_ok[i] != 1 {
+        if fence_ok[i] != 1 {
             if errors < 5 {
-                eprintln!("  AcqRel fetch_add on thread {i} returned the wrong previous value");
+                eprintln!("  SeqCst store/load round trip failed on thread {i}");
             }
             errors += 1;
         }
@@ -169,7 +180,7 @@ fn main() {
 
     println!("  release store / acquire load   {} threads", N);
     println!("  relaxed 64-bit store / load    {} threads", N);
-    println!("  AcqRel fetch_add               {} threads", N);
+    println!("  SeqCst store / load (fence.sc)  {} threads", N);
 
     if errors == 0 {
         println!("\n=== SUCCESS: scoped atomic load/store and fences all correct ===");
