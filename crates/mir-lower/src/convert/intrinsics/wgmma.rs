@@ -173,7 +173,7 @@ fn pipeline_accumulator_operand_list(slot: usize) -> String {
         .join(", ")
 }
 
-fn pipeline_template(slot_count: usize, group_count: usize, max_pending_groups: u32) -> String {
+fn pipeline_template(slot_count: usize, group_count: usize, max_pending_groups: u8) -> String {
     let result_count = slot_count * VALUE_ACCUMULATOR_COUNT;
     let descriptor_base = result_count * 2;
     let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
@@ -404,7 +404,7 @@ pub(crate) fn convert_mma_pipeline_values(
     if !(1..=7).contains(&max_pending_groups) {
         return pliron::input_err_noloc!("pipeline WGMMA max_pending_groups must be in 1..=7");
     }
-    let slot_count = max_pending_groups as usize + 1;
+    let slot_count = usize::from(max_pending_groups) + 1;
     if result_count != slot_count * VALUE_ACCUMULATOR_COUNT {
         return pliron::input_err_noloc!(
             "pipeline WGMMA requires max_pending_groups + 1 accumulator slots"
