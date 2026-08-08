@@ -695,6 +695,7 @@ pub fn convert_global_alloc_dc(
         addr_space,
         initializer_hex,
         initializer_relocations,
+        immutable,
     ) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
@@ -756,6 +757,7 @@ pub fn convert_global_alloc_dc(
             addr_space,
             initializer_hex,
             initializer_relocations,
+            global_op.is_immutable(ctx),
         )
     };
 
@@ -773,6 +775,7 @@ pub fn convert_global_alloc_dc(
                 addr_space,
                 initializer_hex: initializer_hex.as_deref(),
                 initializer_relocations: initializer_relocations.as_deref(),
+                immutable,
             },
         )?
     };
@@ -791,6 +794,9 @@ struct DeviceGlobalSpec<'a> {
     addr_space: u32,
     initializer_hex: Option<&'a str>,
     initializer_relocations: Option<&'a str>,
+    /// Nothing writes this storage, so it exports as LLVM `constant`. Set only
+    /// for the compiler's own promoted constants; see `MirGlobalAllocOp`.
+    immutable: bool,
 }
 
 fn create_device_global(
@@ -862,6 +868,9 @@ fn create_device_global(
     }
     if let Some(initializer_relocations) = spec.initializer_relocations {
         global_op.set_initializer_relocations(ctx, initializer_relocations);
+    }
+    if spec.immutable {
+        global_op.mark_immutable(ctx);
     }
 
     let parent_block = op
@@ -2440,6 +2449,46 @@ mod tests {
                 .to_string()
                 .starts_with("__device_global_"),
             "ordinary device globals get the __device_global_ prefix"
+        );
+    }
+
+    #[test]
+    fn immutable_marking_survives_lowering_and_is_not_assumed() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        // Two ordinary addrspace(1) globals, distinguished by their source key.
+        // Only the promoted one claims immutability; the plain static must not
+        // acquire it, or the exporter would write `constant` for storage the
+        // host can still overwrite by symbol.
+        let promoted = append_global_alloc(&mut ctx, block, "promoted_table", false);
+        mir::MirGlobalAllocOp::new(promoted).mark_immutable(&mut ctx);
+        append_global_alloc(&mut ctx, block, "plain_static", false);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let globals: Vec<llvm::GlobalOp> = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .collect();
+        let by_key = |key: &str| -> llvm::GlobalOp {
+            *globals
+                .iter()
+                .find(|g| g.source_global_key(&ctx).as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("no lowered global carries source key {key}"))
+        };
+
+        assert!(
+            by_key("promoted_table").is_immutable(&ctx),
+            "a global marked immutable in MIR must stay immutable through lowering"
+        );
+        assert!(
+            !by_key("plain_static").is_immutable(&ctx),
+            "lowering must not infer immutability; only the promoted-constant \
+             sites may claim it"
         );
     }
 

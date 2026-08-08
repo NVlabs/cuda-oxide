@@ -2949,6 +2949,126 @@ fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Resu
 }
 
 #[test]
+fn test_inline_ptx_supports_thirty_two_tied_f32_results() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::FP32Type;
+    use pliron::r#type::Typed;
+
+    const ACCUMULATOR_LEN: usize = 32;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(); ACCUMULATOR_LEN]);
+
+    let inputs = (0..ACCUMULATOR_LEN)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+
+    let template = (0..ACCUMULATOR_LEN)
+        .map(|index| format!("mov.f32 ${index}, ${index};"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut constraints = vec!["=f".to_string(); ACCUMULATOR_LEN];
+    constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    let constraints = constraints.join(",");
+
+    let inline_ptx = nvvm::InlinePtxOp::build(
+        &mut ctx,
+        vec![f32_ty.into(); ACCUMULATOR_LEN],
+        inputs,
+        &template,
+        &constraints,
+        true,
+        true,
+    );
+    inline_ptx.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut asm_result = None;
+    let mut extract_indices = Vec::new();
+
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+            assert_eq!(
+                inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .as_deref(),
+                Some(template.as_str()),
+            );
+
+            assert_eq!(
+                inline_asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .as_deref(),
+                Some(constraints.as_str()),
+            );
+
+            let result = inline_asm.get_operation().deref(&ctx).get_result(0);
+            let result_ty = result.get_type(&ctx);
+            let result_ty = result_ty.deref(&ctx);
+
+            let struct_ty = result_ty
+                .downcast_ref::<llvm_types::StructType>()
+                .expect("32-output inline PTX must return an LLVM struct");
+
+            assert_eq!(
+                struct_ty.num_fields(),
+                ACCUMULATOR_LEN,
+                "inline PTX must return exactly 32 accumulator values",
+            );
+
+            for index in 0..ACCUMULATOR_LEN {
+                assert!(
+                    struct_ty
+                        .field_type(index)
+                        .deref(&ctx)
+                        .downcast_ref::<FP32Type>()
+                        .is_some(),
+                    "inline PTX result field {index} must remain f32",
+                );
+            }
+
+            assert!(
+                asm_result.replace(result).is_none(),
+                "expected exactly one inline PTX operation",
+            );
+        } else if let Some(extract) = Operation::get_op::<llvm::ExtractValueOp>(op, &ctx) {
+            let aggregate = extract.get_operation().deref(&ctx).get_operand(0);
+
+            assert_eq!(
+                Some(aggregate),
+                asm_result,
+                "extractvalue must consume the struct-returning asm result",
+            );
+
+            extract_indices.push(extract.indices(&ctx));
+        }
+    }
+
+    assert!(
+        asm_result.is_some(),
+        "expected a struct-returning inline PTX asm operation",
+    );
+
+    let expected_indices = (0..ACCUMULATOR_LEN)
+        .map(|index| vec![index as u32])
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        extract_indices, expected_indices,
+        "each accumulator output must be extracted exactly once and in constraint order",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 

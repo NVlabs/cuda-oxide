@@ -945,7 +945,15 @@ impl Verify for MirSharedAllocOp {
 /// | `global_type`   | TypeAttr    | Type stored in the global        |
 /// | `global_key`    | StringAttr  | Stable key for deduplication     |
 /// | `global_alignment` | IntegerAttr | Optional alignment            |
+/// | `global_immutable` | UnitAttr | Storage is never written         |
 /// ```
+///
+/// `global_immutable` is set only for storage this compiler materialises from an
+/// evaluated Rust constant, never for a user `static` / `static mut`. It travels
+/// to the LLVM global so the exporter can write `constant` instead of `global`.
+/// It describes the *storage*, not a pointer: a shared reference to a mutable
+/// static is an immutable pointer to mutable storage, and #413 records that
+/// `MirPtrType::is_mutable` must not be read as a promise about the pointee.
 ///
 /// # Results
 ///
@@ -961,7 +969,8 @@ impl Verify for MirSharedAllocOp {
     attributes = (
         global_type: pliron::builtin::attributes::TypeAttr,
         global_key: pliron::builtin::attributes::StringAttr,
-        global_alignment: IntegerAttr
+        global_alignment: IntegerAttr,
+        global_immutable: pliron::builtin::attributes::UnitAttr
     )
 )]
 pub struct MirGlobalAllocOp;
@@ -990,6 +999,19 @@ impl MirGlobalAllocOp {
             ),
         );
         self.set_attr_global_alignment(ctx, align_attr);
+    }
+
+    /// Declare that nothing ever writes this global's storage.
+    ///
+    /// Only the compiler's own promoted constants may claim this; see the op's
+    /// attribute table.
+    pub fn mark_immutable(&self, ctx: &mut Context) {
+        self.set_attr_global_immutable(ctx, pliron::builtin::attributes::UnitAttr);
+    }
+
+    /// Whether this global was declared never-written.
+    pub fn is_immutable(&self, ctx: &Context) -> bool {
+        self.get_attr_global_immutable(ctx).is_some()
     }
 }
 

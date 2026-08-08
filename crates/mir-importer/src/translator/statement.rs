@@ -87,6 +87,24 @@ pub fn translate_statement(
                             ctx, body, place, operands, value_map, block_ptr, prev_op, loc,
                         );
                     }
+                    // A fully-constant array: copy it in from an immutable
+                    // device global rather than storing it element by element in
+                    // every thread. Falls through when the constant is not a
+                    // shape that can be reduced to a byte image.
+                    mir::Rvalue::Use(mir::Operand::Constant(constant)) => {
+                        if let Some(last) = rvalue::translate_array_constant_into_alloca(
+                            ctx,
+                            body,
+                            place,
+                            constant,
+                            value_map,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        )? {
+                            return Ok(Some(last));
+                        }
+                    }
                     mir::Rvalue::Repeat(operand, count) => {
                         let n = count.eval_target_usize().map_err(|e| {
                             input_error!(
