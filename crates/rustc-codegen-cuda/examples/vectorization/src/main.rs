@@ -272,7 +272,19 @@ fn main() {
             Some(line) => println!("f32x4_view_copy: {line}"),
             None => {
                 errors += 1;
-                println!("  !! f32x4_view_copy has no 128-bit {dir}.global vector op");
+                // Deliberately not "has no 128-bit vector op". When this fires,
+                // the likely state is not a scalarized transaction but a
+                // widened one that lost its state space: measured on sm_86
+                // while #657 was open, the view path did reach 128 bits, as a
+                // generic `LD.E.128` / `ST.E.128` rather than the `LDG.E.128` /
+                // `STG.E.128` the direct path gets, and paid four extra
+                // `LDL.64`/`STL.64` local accesses on the way. What was missing
+                // was the *global* window, not the width. Say that, so whoever
+                // sees this next looks at the address space first.
+                println!(
+                    "  !! f32x4_view_copy: no 128-bit {dir}.global vector op \
+                     (the 128-bit access is there, but in the generic window)"
+                );
             }
         }
     }

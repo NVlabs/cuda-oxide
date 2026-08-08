@@ -1587,6 +1587,76 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     assert_no_undefined_temporaries(&legacy);
 }
 
+/// Export a module holding one shared global, optionally labelled with the
+/// Rust path of the `static` it came from.
+fn export_shared_global_with_source_name(source_name: Option<&str>) -> String {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let array_ty = ArrayType::get(&ctx, i32_ty.to_handle(), 64);
+    let global = GlobalOp::new(
+        &mut ctx,
+        "__shared_mem_7".try_into().unwrap(),
+        array_ty.to_handle(),
+    );
+    global.set_address_space(&mut ctx, 3);
+    if let Some(source_name) = source_name {
+        global.set_shared_source_name(&mut ctx, source_name);
+    }
+    global.get_operation().insert_at_back(module_block, &ctx);
+
+    export_module_to_string(&ctx, &module).expect("export succeeds")
+}
+
+#[test]
+fn shared_global_source_name_is_exported_as_a_comment_above_the_definition() {
+    let ir = export_shared_global_with_source_name(Some("my_kernel::TILE"));
+
+    let definition_index = ir
+        .find("@__shared_mem_7 = addrspace(3) global")
+        .expect("module must declare the shared global");
+    let comment_index = ir
+        .find("; shared source: my_kernel::TILE")
+        .unwrap_or_else(|| panic!("shared global must name its Rust source:\n{ir}"));
+    assert!(
+        comment_index < definition_index,
+        "the source comment must precede the definition it describes:\n{ir}"
+    );
+}
+
+#[test]
+fn shared_global_without_a_source_name_exports_no_comment() {
+    let ir = export_shared_global_with_source_name(None);
+
+    assert!(
+        ir.contains("@__shared_mem_7 = addrspace(3) global"),
+        "module must declare the shared global:\n{ir}"
+    );
+    assert!(
+        !ir.contains("; shared source:"),
+        "an unlabelled global must not gain a comment:\n{ir}"
+    );
+}
+
+#[test]
+fn shared_global_source_name_cannot_escape_its_comment_line() {
+    // A newline in the label would end the comment and leave the remainder to
+    // be parsed as IR. Nothing in the current pipeline produces such a name,
+    // so this pins the exporter's own guarantee rather than a live bug.
+    let ir = export_shared_global_with_source_name(Some("EVIL\n@injected = addrspace(3) global"));
+
+    assert!(
+        ir.lines().all(|line| !line.starts_with("@injected")),
+        "a control character in the label must not open a new IR line:\n{ir}"
+    );
+    assert!(
+        ir.contains("; shared source: EVIL @injected = addrspace(3) global"),
+        "the label must survive on one line with controls flattened:\n{ir}"
+    );
+}
+
 #[test]
 fn nvvm_export_rejects_invalid_global_address_spaces() {
     let mut ctx = Context::new();
@@ -1662,6 +1732,61 @@ fn initialized_globals_export_exact_bytes() {
                 r#"@padded_struct = addrspace(1) global [8 x i8] c"\AB\00\00\00\78\56\34\12", align 4"#
             ),
             "repr(C) layout bytes changed:\n{ir}"
+        );
+    }
+}
+
+#[test]
+fn immutable_globals_export_the_constant_keyword() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "constant_keyword".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let table_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+
+    // The compiler's own promoted table: marked never-written, so it must
+    // export as `constant`. That keyword is the whole point of the marker:
+    // it is what lets `opt` treat reads as invariant (deleting a copy into a
+    // stack slot) and what makes `llc` select `ld.global.nc`.
+    let promoted = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "promoted_table".try_into().unwrap(),
+        table_ty.into(),
+        4,
+    );
+    promoted.set_address_space(&mut ctx, 1);
+    promoted.set_initializer_hex(&mut ctx, "01020304");
+    promoted.mark_immutable(&mut ctx);
+    promoted.get_operation().insert_at_back(module_block, &ctx);
+
+    // An identically shaped global without the marker: the host may still
+    // write such storage by symbol, so it must keep `global`. Immutability is
+    // opt-in per global, never inferred from the shape of the initializer.
+    let plain = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "plain_static".try_into().unwrap(),
+        table_ty.into(),
+        4,
+    );
+    plain.set_address_space(&mut ctx, 1);
+    plain.set_initializer_hex(&mut ctx, "01020304");
+    plain.get_operation().insert_at_back(module_block, &ctx);
+
+    for config in [
+        NvvmExportConfig::new(NvvmIrDialect::Modern),
+        NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    ] {
+        let ir = export_module_to_string_with_config(&ctx, &module, &config)
+            .expect("immutable global export succeeds");
+        assert!(
+            ir.contains(
+                r#"@promoted_table = addrspace(1) constant [4 x i8] c"\01\02\03\04", align 4"#
+            ),
+            "promoted global lost the constant keyword:\n{ir}"
+        );
+        assert!(
+            ir.contains(r#"@plain_static = addrspace(1) global [4 x i8] c"\01\02\03\04", align 4"#),
+            "unmarked global must not become constant:\n{ir}"
         );
     }
 }

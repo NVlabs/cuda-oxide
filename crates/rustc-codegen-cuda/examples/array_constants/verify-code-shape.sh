@@ -104,18 +104,27 @@ require_shape \
 
 bare_enum_symbol='array_constants__kernels__bare_enum_array_value'
 
-# A bare enum array must be constructed as six direct-tag values and indexed
+# A bare enum array must be materialized by the importer and indexed
 # dynamically. This distinguishes it from the already-covered enum nested in a
 # tuple array and prevents optimization-only success from hiding importer
 # coverage.
-for discriminant in 1 2 3 4 5 6; do
-    require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
-        "bare enum-array discriminant ${discriminant}" \
-        "insertvalue \\{ i32 \\} undef, i32 ${discriminant}, 0"
-done
+#
+# It is materialized as one immutable device global holding rustc's evaluated
+# allocation, copied into the array's own storage, so the discriminants are
+# asserted in that initializer rather than as a chain of `insertvalue`. Pinning
+# the whole image in a single pattern also fixes their *order*, which the
+# previous per-discriminant search did not: `BARE_ENUM_TABLE` is `LowX, HighZ,
+# HighY, HighX, LowZ, LowY`, so 1, 6, 4, 2, 5, 3 little-endian at four bytes
+# each. A permuted or truncated table now fails where before it passed.
+require_shape \
+    "bare enum-array discriminants in a read-only global initializer" \
+    'addrspace\(1\) constant \[24 x i8\] c"\\01\\00\\00\\00\\06\\00\\00\\00\\04\\00\\00\\00\\02\\00\\00\\00\\05\\00\\00\\00\\03\\00\\00\\00"'
 require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
-    "complete six-element enum array" \
-    'insertvalue \[6 x \{ i32 \}\] .* \{ i32 \} .* 5'
+    "six-element direct-tag enum array storage" \
+    'alloca \[6 x \{ i32 \}\]'
+require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
+    "enum array filled from a read-only global" \
+    'llvm\.memcpy\.p0\.p1\.i64\(ptr %[A-Za-z0-9_.]+, ptr addrspace\(1\) @'
 require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
     "runtime enum-array index" \
     'urem i64 .*, 6'

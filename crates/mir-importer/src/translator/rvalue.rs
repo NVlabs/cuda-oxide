@@ -1027,6 +1027,27 @@ pub fn translate_rvalue(
                                     || ty_obj.is::<dialect_mir::types::MirTupleType>()
                             };
 
+                            // A `DisjointSlice` literal, which
+                            // `DisjointSlice::from_raw_parts` builds. The type
+                            // translator gives the ADT its own slice type rather
+                            // than a struct, so without this arm the shape falls
+                            // into the scalar-lowered path below, where no field
+                            // carries the slice type and the search reports zero
+                            // runtime fields (issue #667).
+                            if adt_ty
+                                .deref(ctx)
+                                .is::<dialect_mir::types::MirDisjointSliceType>()
+                            {
+                                return construct_disjoint_slice_aggregate(
+                                    ctx,
+                                    adt_ty,
+                                    &field_values,
+                                    block_ptr,
+                                    current_prev_op,
+                                    loc,
+                                );
+                            }
+
                             if !is_struct_type {
                                 // Scalar-lowered ADT: layout collapsed to a single runtime
                                 // value. The MIR Aggregate may still list ZST fields
@@ -1924,6 +1945,14 @@ pub fn translate_operand(
                 let alloc_key = format!("{:?}", constant.const_);
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
 
+                // Record which Rust `static` this is. The alloc key above is
+                // opaque and lowering mints an anonymous `__shared_mem_N`
+                // symbol, so without this the generated shared-memory blocks
+                // cannot be attributed back to source.
+                if let Some(source_name) = shared_static_source_name(constant) {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
+                }
+
                 // Set alignment if specified (non-zero)
                 if alignment > 0 {
                     shared_alloc.set_alignment_value(ctx, alignment as u64);
@@ -1986,6 +2015,12 @@ pub fn translate_operand(
                 // Store the alloc key so lowering can deduplicate
                 let alloc_key = format!("{:?}", constant.const_);
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
+
+                // A `Barrier` static occupies shared memory too, so name it
+                // for the same attribution reason as `SharedArray` above.
+                if let Some(source_name) = shared_static_source_name(constant) {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
+                }
 
                 if let Some(prev) = prev_op {
                     shared_alloc.get_operation().insert_after(ctx, prev);
@@ -2944,10 +2979,23 @@ fn classify_place_read_strategy(
                 let Some(pointee) = mir_ptr_pointee(ctx, current_ptr_ty) else {
                     return Ok(PlaceReadStrategy::ValueFallback);
                 };
-                if !pointee.deref(ctx).is::<dialect_mir::types::MirStructType>() {
-                    // `mir.field_addr` currently verifies only struct
-                    // pointees. Tuple field reads stay on the value path,
-                    // where `mir.extract_field` supports tuple values.
+                let is_struct_or_tuple =
+                    pointee.deref(ctx).is::<dialect_mir::types::MirStructType>()
+                        || pointee.deref(ctx).is::<dialect_mir::types::MirTupleType>();
+                if !is_struct_or_tuple {
+                    // `mir.field_addr` verifies struct, tuple, union and enum
+                    // pointees; anything else stays on the value path, where
+                    // `mir.extract_field` supports it instead.
+                    return Ok(PlaceReadStrategy::ValueFallback);
+                }
+                if tuple_has_over_aligned_zst_field(ctx, pointee) {
+                    // Code-shape guard: the address path's final load states
+                    // natural alignment only, while a zero-byte
+                    // `repr(align(N))` field raises the tuple's ABI alignment
+                    // without appearing in its LLVM storage type. Keep such
+                    // tuples on the value path, which moves the whole
+                    // aggregate at its recorded alignment. Gate shape from
+                    // PR #715 (vyncint), with the byte-size gap closed.
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
 
@@ -3793,6 +3841,31 @@ fn apply_field_projection(
 }
 
 /// Apply a Field projection on an enum variant (after Downcast).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_enum_field_projection_pub(
+    ctx: &mut Context,
+    enum_value: Value,
+    enum_rust_ty: &rustc_public::ty::Ty,
+    variant_idx: rustc_public::ty::VariantIdx,
+    field_idx: mir::FieldIdx,
+    field_ty: &rustc_public::ty::Ty,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    apply_enum_field_projection(
+        ctx,
+        enum_value,
+        enum_rust_ty,
+        variant_idx,
+        field_idx,
+        field_ty,
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
 fn apply_enum_field_projection(
     ctx: &mut Context,
     enum_value: Value,
@@ -3946,6 +4019,10 @@ pub(crate) fn translate_place_address(
 /// shared borrow and stays sound. mir-lower's canonical-storage gate on
 /// `mir.field_addr` remains the fail-closed authority, so a miss here still
 /// errors loudly instead of miscompiling.
+pub(crate) fn enum_payload_needs_storage_coercion_pub(ctx: &Context, ty: TypeHandle) -> bool {
+    enum_payload_needs_storage_coercion(ctx, ty)
+}
+
 fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
     // Bool leaf: semantic i1, canonical i8 byte in enum storage.
     if let Some(integer) = ty.deref(ctx).downcast_ref::<IntegerType>() {
@@ -4658,10 +4735,157 @@ fn projected_pointer_type(
     Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
 }
 
+/// Build a `DisjointSlice` value from the fields of its MIR aggregate.
+///
+/// The literal lists `ptr`, `len`, the index space's runtime layout, and the
+/// marker fields; the markers are zero-sized and carry nothing, so dropping
+/// them leaves the operands `mir.construct_disjoint_slice` takes, in the same
+/// order. An index space with no runtime layout (`Index1D`, `Index2D<S>`)
+/// stores `()` there, which drops with the markers and leaves the two-word
+/// slice.
+///
+/// Field selection is positional, which the op's verifier then checks against
+/// the result type: the data pointer must point to the element type, the
+/// length must be an integer, and each remaining operand must match the index
+/// space's layout types in order. A reordered or retyped field therefore
+/// fails at verification rather than silently writing a row width into the
+/// length slot.
+fn construct_disjoint_slice_aggregate(
+    ctx: &mut Context,
+    adt_ty: TypeHandle,
+    field_values: &[Value],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    let (element_type, space_tys) = {
+        let ty_obj = adt_ty.deref(ctx);
+        let slice_ty = ty_obj
+            .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
+            .expect("caller checked the disjoint slice type");
+        (slice_ty.element_type(), slice_ty.space_types().to_vec())
+    };
+
+    let runtime_fields: Vec<Value> = field_values
+        .iter()
+        .copied()
+        .filter(|value| !types::is_zst_type(ctx, value.get_type(ctx)))
+        .collect();
+
+    let expected = 2 + space_tys.len();
+    if runtime_fields.len() != expected {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "DisjointSlice aggregate expected {} runtime fields for {}, found {}",
+                expected,
+                adt_ty.disp(ctx),
+                runtime_fields.len()
+            ))
+        );
+    }
+
+    // The data pointer reaches the slice through the generic address space,
+    // as the fat-pointer arm does for `*mut [T]`: a value coming from shared
+    // memory carries addrspace(3) and would not match the element pointer the
+    // verifier expects.
+    let expected_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, true).into();
+    let (data_val, current_prev_op) = cast_to_generic_addrspace_if_needed(
+        ctx,
+        runtime_fields[0],
+        expected_ptr_ty,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    );
+
+    let mut operands = vec![data_val];
+    operands.extend_from_slice(&runtime_fields[1..]);
+
+    let op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![adt_ty],
+        operands,
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+
+    let result = op.deref(ctx).get_result(0);
+    Ok((Some(op), result, current_prev_op))
+}
+
 fn is_empty_tuple_type(ctx: &Context, ty: TypeHandle) -> bool {
     ty.deref(ctx)
         .downcast_ref::<dialect_mir::types::MirTupleType>()
         .is_some_and(|tt| tt.get_types().is_empty())
+}
+
+/// Whether `ty` is a tuple carrying a field that owns zero bytes while
+/// demanding ABI alignment above 1, at any array nesting depth.
+///
+/// Code-shape guard for the read classifier: the address path's final
+/// `mir.load` states the loaded field's natural alignment only, so a tuple
+/// whose recorded ABI alignment comes from a zero-sized `repr(align(N))`
+/// field must keep the value path, which moves the whole aggregate at its
+/// recorded alignment. Gate shape from PR #715 (vyncint), with the byte-size
+/// gap closed: detection compares byte sizes, not element counts, so
+/// `[Align32; 2]` still reads as zero bytes.
+fn tuple_has_over_aligned_zst_field(ctx: &Context, ty: TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirTupleType>()
+        .is_some_and(|tuple_ty| {
+            tuple_ty
+                .get_types()
+                .iter()
+                .any(|field| is_over_aligned_zst_type(ctx, *field))
+        })
+}
+
+/// Whether `ty` occupies zero bytes while its recorded ABI alignment exceeds
+/// 1: a `repr(align(N))` ZST, possibly wrapped in arrays.
+fn is_over_aligned_zst_type(ctx: &Context, ty: TypeHandle) -> bool {
+    recorded_byte_size_and_abi_align(ctx, ty)
+        .is_some_and(|(byte_size, abi_align)| byte_size == 0 && abi_align > 1)
+}
+
+/// Byte size and ABI alignment of `ty`, when the dialect records them.
+///
+/// Aggregates carry rustc's `total_size` and `abi_align` directly. Arrays
+/// multiply the element's byte size by the element count
+/// (`MirArrayType::size()` is a count, not a byte size) and align like their
+/// element. Scalars and pointers return `None`: they always occupy at least
+/// one byte, so they can never be a zero-sized alignment carrier.
+fn recorded_byte_size_and_abi_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> {
+    use dialect_mir::types::{
+        MirArrayType, MirEnumType, MirStructType, MirTupleType, MirUnionType,
+    };
+
+    let ty_ref = ty.deref(ctx);
+    if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+        let element_ty = array_ty.element_type();
+        let element_count = array_ty.size();
+        return recorded_byte_size_and_abi_align(ctx, element_ty).map(
+            |(element_size, element_align)| {
+                (element_size.saturating_mul(element_count), element_align)
+            },
+        );
+    }
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+        return Some((tuple_ty.total_size(), tuple_ty.abi_align()));
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        return Some((struct_ty.total_size(), struct_ty.abi_align));
+    }
+    if let Some(enum_ty) = ty_ref.downcast_ref::<MirEnumType>() {
+        return Some((enum_ty.total_size(), enum_ty.abi_align()));
+    }
+    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
+        return Some((union_ty.total_size(), union_ty.abi_align()));
+    }
+    None
 }
 
 fn slice_like_element_type(ctx: &Context, ty: TypeHandle) -> Option<TypeHandle> {
@@ -5208,40 +5432,37 @@ fn translate_ptr_to_array_constant(
         );
     }
 
-    use dialect_mir::types::MirPtrType;
-    use pliron::builtin::attributes::{StringAttr, TypeAttr};
-
     validate_ptr_to_array_constant_type(ctx, array_ty, loc.clone())?;
     let expected_size = rust_type_layout_size(rust_array_ty, loc.clone())?;
+    // The same byte-size agreement the bare-array promotion demands: the
+    // global's declared type is the converted dialect type while its
+    // initializer bytes come from rustc's evaluated allocation, so the two
+    // layouts must agree before the byte image is trusted. Unlike that path
+    // there is no element-wise lowering to fall back to here, so disagreement
+    // is an error rather than a bail-out. Zero size stays exempt because
+    // `dialect_stored_size` cannot tell a genuine zero from an unrecorded
+    // layout, and an empty initializer has no bytes to misplace.
+    let stored_size = dialect_stored_size(ctx, array_ty);
+    if expected_size > 0 && stored_size != Some(expected_size as u64) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "translate_ptr_to_array_constant: converted array storage size {stored_size:?} disagrees with rustc layout size {expected_size}"
+            ))
+        );
+    }
     let (bytes, alignment) =
         promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
-    let initializer_hex = bytes_to_hex(&bytes);
-    let global_key = promoted_constant_dedup_key(ctx, array_ty, &bytes);
-    let global_ptr_ty = MirPtrType::get_global(ctx, array_ty, false);
 
-    let global_op = Operation::new(
+    let global_alloc = emit_promoted_immutable_global(
         ctx,
-        MirGlobalAllocOp::get_concrete_op_info(),
-        vec![global_ptr_ty.into()],
-        vec![],
-        vec![],
-        0,
+        array_ty,
+        &bytes,
+        alignment,
+        block_ptr,
+        prev_op,
+        loc.clone(),
     );
-    global_op.deref_mut(ctx).set_loc(loc.clone());
-
-    let global_alloc = MirGlobalAllocOp::new(global_op);
-    global_alloc.set_attr_global_type(ctx, TypeAttr::new(array_ty));
-    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
-    set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
-    if alignment > 0 {
-        global_alloc.set_alignment_value(ctx, alignment);
-    }
-
-    if let Some(prev) = prev_op {
-        global_alloc.get_operation().insert_after(ctx, prev);
-    } else {
-        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
-    }
 
     let global_ptr = global_alloc.get_operation().deref(ctx).get_result(0);
     let (ptr_val, last_op) = cast_to_generic_addrspace_if_needed(
@@ -5255,47 +5476,358 @@ fn translate_ptr_to_array_constant(
     Ok((ptr_val, last_op))
 }
 
-/// Preserve the established pointer-to-array constant boundary: only primitive
-/// scalars and recursively nested arrays of primitive scalars are supported.
+/// Materialize `bytes` as an immutable device global holding a `value_ty`.
 ///
-/// Bare array values have a separate lowering path which additionally supports
-/// tuples. Keeping this validation local to the pointer path prevents that new
-/// support from implicitly widening promoted pointer initializers.
+/// Deduplicated by (type, bytes), so the same table spelled several ways — or
+/// reached from several functions — is emitted once.
+///
+/// The global is marked immutable, which is what makes it useful beyond simply
+/// having an address: the exporter writes LLVM `constant`, so `opt` may treat
+/// reads of it as invariant. That is what lets a copy of the data into a stack
+/// slot be deleted (`isOnlyCopiedFromConstantMemory`) and what makes `llc`
+/// select `ld.global.nc`. The claim is sound here and only here: the bytes are
+/// an evaluated Rust constant, the name is compiler-generated so no host setter
+/// can reach it, and nothing is handed a mutable path to the storage.
+pub(crate) fn emit_promoted_immutable_global(
+    ctx: &mut Context,
+    value_ty: TypeHandle,
+    bytes: &[u8],
+    alignment: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> MirGlobalAllocOp {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::attributes::{StringAttr, TypeAttr};
+
+    let initializer_hex = bytes_to_hex(bytes);
+    let global_key = promoted_constant_dedup_key(ctx, value_ty, bytes);
+    let global_ptr_ty = MirPtrType::get_global(ctx, value_ty, false);
+
+    let global_op = Operation::new(
+        ctx,
+        MirGlobalAllocOp::get_concrete_op_info(),
+        vec![global_ptr_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    global_op.deref_mut(ctx).set_loc(loc);
+
+    let global_alloc = MirGlobalAllocOp::new(global_op);
+    global_alloc.set_attr_global_type(ctx, TypeAttr::new(value_ty));
+    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
+    set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
+    if alignment > 0 {
+        global_alloc.set_alignment_value(ctx, alignment);
+    }
+    global_alloc.mark_immutable(ctx);
+
+    if let Some(prev) = prev_op {
+        global_alloc.get_operation().insert_after(ctx, prev);
+    } else {
+        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
+    }
+
+    global_alloc
+}
+
+/// Whether an array's elements are cheap enough to be worth promoting the whole
+/// array to an immutable global and copying it in.
+///
+/// This is the one element gate for both promoted-constant paths: the bare
+/// array value form ([`translate_array_constant_into_alloca`]) and the
+/// pointer-to-array form ([`translate_ptr_to_array_constant`], via
+/// [`validate_ptr_to_array_constant_type`]). `TABLE[i]` and `(&TABLE)[i]` must
+/// agree on what an admissible element is, so both paths ask here and cannot
+/// drift apart.
+///
+/// Admits primitive scalars, enums carrying no payload, and nested arrays of
+/// either. `ty` is the array type, and nesting is walked so an unsupported leaf
+/// cannot hide inside it. A zero-length array passes for any element type: its
+/// initializer is empty and nothing can ever be read through it, which is what
+/// admits a promoted empty-slice constant such as `&[]` (rustc promotes it to
+/// `&[T; 0]`) regardless of `T`.
+///
+/// **Tuples and structs are excluded, and not because the byte image would be
+/// wrong.** Reading one field of a tuple element out of a local array currently
+/// copies the *whole array* to a fresh stack slot first, once per field
+/// projected. That copy dominates: for a `[(u8, u32); 256]` table it is two
+/// 2 KiB per-thread copies, which no amount of improving the table's own storage
+/// removes. Promoting such a table would therefore add a global to the module
+/// image and leave the depot exactly where it was — dead weight rather than a
+/// win. Admit them once the projection copies are gone.
+///
+/// A payload-carrying enum is excluded for the same reason: reading it back
+/// round-trips the payload through memory.
+fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
+    use dialect_mir::types::{MirArrayType, MirEnumType};
+
+    let obj = ty.deref(ctx);
+    if let Some(array) = obj.downcast_ref::<MirArrayType>() {
+        // No element values exist, so the element restriction is vacuous.
+        if array.size() == 0 {
+            return true;
+        }
+        return promotable_array_element(ctx, array.element_type());
+    }
+    if let Some(enumeration) = obj.downcast_ref::<MirEnumType>() {
+        // No variant carries a field, so the whole element *is* its discriminant
+        // and reading one is a single load.
+        return enumeration.total_size() > 0
+            && enumeration
+                .variant_field_counts
+                .iter()
+                .all(|&count| count == 0);
+    }
+    obj.is::<IntegerType>()
+        || obj.is::<MirFP16Type>()
+        || obj.is::<FP32Type>()
+        || obj.is::<FP64Type>()
+}
+
+/// Bytes a dialect type occupies, as the converted LLVM storage will lay it out,
+/// or `None` when that cannot be established from the type alone.
+///
+/// Aggregates answer with the `total_size` rustc gave them, which is exactly what
+/// the storage builders reproduce: they pad to reach each field's recorded offset
+/// and pad the tail to reach `total_size`. Leaves answer with their own width, and
+/// `i1` counts as the one byte Rust gives a `bool` rather than an eighth of one.
+///
+/// A zero answer is reported as `None`: the dialect uses `total_size() == 0` both
+/// for a genuine zero-sized type and for a size it does not know, and only the
+/// caller's own size comparison could tell them apart.
+fn dialect_stored_size(ctx: &Context, ty: TypeHandle) -> Option<u64> {
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
+
+    let obj = ty.deref(ctx);
+    let size = if let Some(array) = obj.downcast_ref::<MirArrayType>() {
+        let element = dialect_stored_size(ctx, array.element_type())?;
+        element.checked_mul(array.size())?
+    } else if let Some(tuple) = obj.downcast_ref::<MirTupleType>() {
+        tuple.total_size()
+    } else if let Some(structure) = obj.downcast_ref::<MirStructType>() {
+        structure.total_size()
+    } else if let Some(enumeration) = obj.downcast_ref::<MirEnumType>() {
+        enumeration.total_size()
+    } else if let Some(integer) = obj.downcast_ref::<IntegerType>() {
+        // `bool` arrives as `i1` and occupies a byte.
+        u64::from(integer.width().div_ceil(8)).max(1)
+    } else if obj.is::<MirFP16Type>() {
+        2
+    } else if obj.is::<FP32Type>() {
+        4
+    } else if obj.is::<FP64Type>() {
+        8
+    } else {
+        return None;
+    };
+    (size > 0).then_some(size)
+}
+
+/// Whether `local` is written exactly once — by the assignment being translated
+/// — and never has an address handed out.
+///
+/// This chooses *which of two correct lowerings* to use, never correctness: both
+/// give the local a private copy of the constant, and whether that copy is later
+/// deleted is `opt`'s own sound decision. So an unrecognised write form here only
+/// costs performance, which is why the statement match ends in a catch-all rather
+/// than an error.
+///
+/// It has to exist because the two lowerings fail in opposite directions. When
+/// the local really is read-only the copy disappears; when it is written the
+/// copy survives, and NVPTX expands a surviving `memcpy` into a *byte* loop —
+/// measurably worse than the element-wise stores it replaced. Rejecting every
+/// borrow, not just mutable ones, keeps this on the shape that motivates it
+/// (`TABLE[i]`, which projects a place and borrows nothing).
+fn constant_local_is_written_once(body: &mir::Body, local: mir::Local) -> bool {
+    let mut assignments = 0usize;
+    for block in body.blocks.iter() {
+        for statement in block.statements.iter() {
+            match &statement.kind {
+                mir::StatementKind::Assign(place, rvalue) => {
+                    if place.local == local {
+                        // A projected write is a write to part of the local.
+                        if !place.projection.is_empty() {
+                            return false;
+                        }
+                        assignments += 1;
+                    }
+                    // Any borrow or raw pointer, of either mutability, is a
+                    // path this scan cannot follow.
+                    match rvalue {
+                        mir::Rvalue::Ref(_, _, source) if source.local == local => return false,
+                        mir::Rvalue::AddressOf(_, source) if source.local == local => return false,
+                        _ => {}
+                    }
+                }
+                mir::StatementKind::SetDiscriminant { place, .. } if place.local == local => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        // A call writes its destination.
+        if let mir::TerminatorKind::Call { destination, .. } = &block.terminator.kind
+            && destination.local == local
+        {
+            return false;
+        }
+    }
+    assignments == 1
+}
+
+/// Fill an addressable local from a fully-constant array by copying an immutable
+/// device global into it, instead of building the array in registers first.
+///
+/// `Ok(None)` means "not this shape" and the caller keeps the ordinary path.
+///
+/// # Why a copy and not just the global's address
+///
+/// The local is ordinary mutable storage — `let mut t = TABLE; t[0] = x;` is
+/// legal — so handing out the global's address would be wrong in general. A
+/// `memcpy` from `constant` storage is unconditionally correct instead, and
+/// `opt` supplies the proof that removes it: `isOnlyCopiedFromConstantMemory`
+/// deletes the copy and rewrites the reads to the global wherever the local is
+/// never written.
+///
+/// [`constant_local_is_written_once`] gates the path on the same property, so
+/// the two agree. It is not redundant: a copy that survives is *worse* than what
+/// it replaced, because NVPTX expands a surviving `memcpy` into a byte loop.
+///
+/// # Why this is worth doing at all
+///
+/// The value form cannot reach the global no matter how it is spelled: LLVM
+/// splits every first-class-aggregate load, so a whole-array load from the
+/// global is folded straight back into one store per element. Only a `memcpy`
+/// survives to the point where the proof can run.
+///
+/// What this replaces, for `TABLE[i]` with a runtime `i`, is one `st.local` per
+/// element in *every thread* — a per-thread copy of data the module image
+/// already carries — followed by `ld.local` reads of thread-private memory.
+pub(crate) fn translate_array_constant_into_alloca(
+    ctx: &mut Context,
+    body: &mir::Body,
+    dest_place: &mir::Place,
+    constant: &mir::ConstOperand,
+    value_map: &ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<Ptr<Operation>>> {
+    use pliron::builtin::attributes::IntegerAttr;
+
+    // Whole-local assignment only. With a projection the copy would have to land
+    // at an offset, which the ordinary element-wise path already handles.
+    if !dest_place.projection.is_empty() {
+        return Ok(None);
+    }
+    let Some(dest_addr) = value_map.get_slot(dest_place.local) else {
+        return Ok(None);
+    };
+    if !constant_local_is_written_once(body, dest_place.local) {
+        return Ok(None);
+    }
+
+    let rust_ty = constant.const_.ty();
+    let Ok(value_ty) = types::translate_type(ctx, &rust_ty) else {
+        return Ok(None);
+    };
+    if !value_ty.deref(ctx).is::<dialect_mir::types::MirArrayType>() {
+        return Ok(None);
+    }
+    // Elements whose whole-element read is a single scalar-like load: primitive
+    // scalars, field-less enums, and nested arrays of those.
+    if !promotable_array_element(ctx, value_ty) {
+        return Ok(None);
+    }
+    let Ok(expected_size) = rust_type_layout_size(rust_ty, loc.clone()) else {
+        return Ok(None);
+    };
+    // The copy is sized from the destination's *converted* type, while the bytes
+    // come from rustc's evaluated allocation. Require the two to agree before
+    // trusting a byte image: a padded tuple or an enum reaches its layout through
+    // `build_struct_slot_map` / `build_enum_slot_map`, and if either ever stopped
+    // reproducing rustc's size, this is the check that keeps a byte image from
+    // being copied over a differently-sized local.
+    if dialect_stored_size(ctx, value_ty) != Some(expected_size as u64) {
+        return Ok(None);
+    }
+    // Rejects pointer relocations, and any byte image that is not exactly the
+    // Rust size — so the global cannot disagree with the local it fills.
+    let Ok((bytes, alignment)) =
+        promoted_array_initializer(constant, expected_size, "array", loc.clone())
+    else {
+        return Ok(None);
+    };
+
+    // Past every bail-out: nothing below can fail, so no half-built global is
+    // left behind in the block.
+    let global_alloc = emit_promoted_immutable_global(
+        ctx,
+        value_ty,
+        &bytes,
+        alignment,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    );
+    let src = global_alloc.get_operation().deref(ctx).get_result(0);
+
+    // `mir.memcpy`'s count is in destination-pointee elements, and the
+    // destination slot points at the whole array, so one element is the whole
+    // table.
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+    let count_attr = IntegerAttr::new(i64_ty, APInt::from_i64(1, NonZeroUsize::new(64).unwrap()));
+    let count_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![i64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    count_op.deref_mut(ctx).set_loc(loc.clone());
+    MirConstantOp::new(count_op).set_attr_value(ctx, count_attr);
+    count_op.insert_after(ctx, global_alloc.get_operation());
+    let count = count_op.deref(ctx).get_result(0);
+
+    let memcpy_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirMemcpyOp::get_concrete_op_info(),
+        vec![],
+        vec![dest_addr, src, count],
+        vec![],
+        0,
+    );
+    memcpy_op.deref_mut(ctx).set_loc(loc);
+    memcpy_op.insert_after(ctx, count_op);
+
+    Ok(Some(memcpy_op))
+}
+
+/// Enforce the pointer-to-array constant element boundary, as a hard error.
+///
+/// The admission question is [`promotable_array_element`], the same predicate
+/// the bare array value path asks, so the two promoted-constant paths share one
+/// boundary and cannot drift: a table the value form promotes is also reachable
+/// through `&TABLE`. What differs is what rejection means. The value form falls
+/// back to element-wise materialization, while a pointer-to-array constant has
+/// no other lowering, so an inadmissible element type is an input error.
 fn validate_ptr_to_array_constant_type(
     ctx: &Context,
     ty: TypeHandle,
     loc: Location,
 ) -> TranslationResult<()> {
-    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
-
-    let ty_obj = ty.deref(ctx);
-    if ty_obj.is::<IntegerType>()
-        || ty_obj.is::<MirFP16Type>()
-        || ty_obj.is::<FP32Type>()
-        || ty_obj.is::<FP64Type>()
-    {
+    if promotable_array_element(ctx, ty) {
         return Ok(());
-    }
-
-    if let Some(array_ty) = ty_obj.downcast_ref::<dialect_mir::types::MirArrayType>() {
-        // A zero-length array has no element values: its initializer is empty
-        // and nothing can ever be read through it, so the element-type
-        // restriction below is vacuous. This admits promoted empty-slice
-        // constants such as `&[]` (which rustc promotes to `&[T; 0]`) for any
-        // element type, including structs.
-        if array_ty.size() == 0 {
-            return Ok(());
-        }
-        let element_ty = array_ty.element_type();
-        drop(ty_obj);
-        return validate_ptr_to_array_constant_type(ctx, element_ty, loc);
     }
 
     input_err!(
         loc,
         TranslationErr::unsupported(format!(
-            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalar elements (integers, f16, f32, f64) or nested arrays of those.",
-            ty_obj
+            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, or nested arrays of those.",
+            ty.deref(ctx)
         ))
     )
 }
@@ -7923,6 +8455,29 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
     }
 }
 
+/// Best-effort Rust path of the `static` a shared-memory constant refers to.
+///
+/// Used only to label the generated `__shared_mem_N` global, so this is
+/// deliberately infallible: an unexpected constant shape yields `None` and the
+/// allocation stays unlabelled rather than failing a translation that would
+/// otherwise have succeeded. That is why it does not reuse
+/// [`static_target_from_constant`], which rejects multi-relocation constants —
+/// a diagnostic label must never be able to turn into a hard error. It also
+/// has no use for the byte addend: a `SharedArray` or `Barrier` constant always
+/// points at the whole static.
+fn shared_static_source_name(constant: &mir::ConstOperand) -> Option<String> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let ConstantKind::Allocated(allocation) = constant.const_.kind() else {
+        return None;
+    };
+    let &(_, provenance) = allocation.provenance.ptrs.first()?;
+    match GlobalAlloc::from(provenance.0) {
+        GlobalAlloc::Static(static_def) => Some(static_def.name()),
+        _ => None,
+    }
+}
+
 /// Resolve a constant pointer/reference to the Rust static it points at, if any.
 ///
 /// The source allocation stores the pointer's byte addend at the relocation
@@ -10181,7 +10736,7 @@ mod tuple_constant_byte_image_tests {
 #[cfg(test)]
 mod pointer_array_constant_type_tests {
     use super::validate_ptr_to_array_constant_type;
-    use dialect_mir::types::{MirArrayType, MirStructType, MirTupleType};
+    use dialect_mir::types::{EnumVariant, MirArrayType, MirEnumType, MirStructType, MirTupleType};
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
     use pliron::location::Location;
@@ -10227,6 +10782,222 @@ mod pointer_array_constant_type_tests {
         assert!(
             validate_ptr_to_array_constant_type(&ctx, tuple_array, Location::Unknown).is_err(),
             "bare tuple-array support must not widen pointer-to-array constants"
+        );
+    }
+
+    #[test]
+    fn pointer_array_constant_boundary_matches_the_bare_array_gate_for_enums() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let fieldless_variants = vec!["Add", "Sub"]
+            .into_iter()
+            .map(|name| EnumVariant {
+                name: name.into(),
+                field_types: vec![],
+                field_offsets: vec![],
+                field_sizes: vec![],
+            })
+            .collect();
+        let op_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Op".into(),
+            u32_ty,
+            vec![0, 1],
+            fieldless_variants,
+            0,
+            4,
+            4,
+        )
+        .into();
+        let op_array: TypeHandle = MirArrayType::get(&mut ctx, op_ty, 8).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, op_array, Location::Unknown).is_ok(),
+            "const R: &[Op; N] = &OPS must pass the same gate the bare table passes"
+        );
+
+        let payload_variants = vec![
+            EnumVariant {
+                name: "None".into(),
+                field_types: vec![],
+                field_offsets: vec![],
+                field_sizes: vec![],
+            },
+            EnumVariant {
+                name: "Some".into(),
+                field_types: vec![u32_ty],
+                field_offsets: vec![4],
+                field_sizes: vec![4],
+            },
+        ];
+        let maybe_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "Maybe".into(),
+            u32_ty,
+            vec![0, 1],
+            payload_variants,
+            0,
+            8,
+            4,
+        )
+        .into();
+        let maybe_array: TypeHandle = MirArrayType::get(&mut ctx, maybe_ty, 4).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, maybe_array, Location::Unknown).is_err(),
+            "a payload-carrying enum stays out of the reference form too"
+        );
+
+        // The `&[]` shape: a promoted empty-slice constant keeps its
+        // any-element admission now that the check routes through the shared
+        // predicate.
+        let struct_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "EmptySliceElement".into(),
+            vec!["value".into()],
+            vec![u32_ty],
+        )
+        .into();
+        let empty_struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 0).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, empty_struct_array, Location::Unknown)
+                .is_ok(),
+            "a zero-length array has nothing readable, whatever its element type"
+        );
+    }
+}
+
+#[cfg(test)]
+mod promotable_array_element_tests {
+    use super::promotable_array_element;
+    use dialect_mir::types::{EnumVariant, MirArrayType, MirEnumType, MirStructType, MirTupleType};
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::context::Context;
+    use pliron::r#type::TypeHandle;
+
+    /// A field-less enum with a recorded layout, as rustc gives a `#[repr(u32)]`
+    /// C-like enum.
+    fn fieldless_enum(ctx: &mut Context, u32_ty: TypeHandle) -> TypeHandle {
+        let variants = vec!["Add", "Sub"]
+            .into_iter()
+            .map(|name| EnumVariant {
+                name: name.into(),
+                field_types: vec![],
+                field_offsets: vec![],
+                field_sizes: vec![],
+            })
+            .collect();
+        MirEnumType::get_with_layout(ctx, "Op".into(), u32_ty, vec![0, 1], variants, 0, 4, 4).into()
+    }
+
+    /// The same shape, except one variant carries a payload.
+    fn payload_enum(ctx: &mut Context, u32_ty: TypeHandle) -> TypeHandle {
+        let variants = vec![
+            EnumVariant {
+                name: "None".into(),
+                field_types: vec![],
+                field_offsets: vec![],
+                field_sizes: vec![],
+            },
+            EnumVariant {
+                name: "Some".into(),
+                field_types: vec![u32_ty],
+                field_offsets: vec![4],
+                field_sizes: vec![4],
+            },
+        ];
+        MirEnumType::get_with_layout(ctx, "Maybe".into(), u32_ty, vec![0, 1], variants, 0, 8, 4)
+            .into()
+    }
+
+    #[test]
+    fn promotion_admits_scalar_and_fieldless_enum_elements_only() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        let scalars: TypeHandle = MirArrayType::get(&mut ctx, u32_ty, 4).into();
+        assert!(
+            promotable_array_element(&ctx, scalars),
+            "a scalar array is the shape this already promoted"
+        );
+        let nested: TypeHandle = MirArrayType::get(&mut ctx, scalars, 2).into();
+        assert!(
+            promotable_array_element(&ctx, nested),
+            "nesting must not lose a promotable leaf"
+        );
+
+        let op_ty = fieldless_enum(&mut ctx, u32_ty);
+        let op_array: TypeHandle = MirArrayType::get(&mut ctx, op_ty, 8).into();
+        assert!(
+            promotable_array_element(&ctx, op_array),
+            "a field-less enum element is its discriminant, so one load reads it"
+        );
+        let nested_ops: TypeHandle = MirArrayType::get(&mut ctx, op_array, 2).into();
+        assert!(
+            promotable_array_element(&ctx, nested_ops),
+            "nested field-less enum arrays stay promotable"
+        );
+
+        // Everything below is rejected for cost, not for correctness: reading one
+        // field of these elements out of a local array still copies the whole
+        // array, so a promoted global would be dead weight beside an unchanged
+        // depot.
+        let maybe_ty = payload_enum(&mut ctx, u32_ty);
+        let maybe_array: TypeHandle = MirArrayType::get(&mut ctx, maybe_ty, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, maybe_array),
+            "a payload-carrying enum round-trips its payload through memory"
+        );
+
+        let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty, u32_ty]).into();
+        let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, tuple_array),
+            "tuple elements are excluded until the per-field array copies are gone"
+        );
+
+        let struct_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "Element".into(),
+            vec!["value".into()],
+            vec![u32_ty],
+        )
+        .into();
+        let struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, struct_array),
+            "struct elements stay outside, as they are for the element-wise path"
+        );
+
+        let nested_tuples: TypeHandle = MirArrayType::get(&mut ctx, tuple_array, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, nested_tuples),
+            "nesting must not hide an excluded leaf"
+        );
+    }
+
+    #[test]
+    fn an_enum_without_a_recorded_layout_is_not_promoted() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        // `total_size` 0 means the layout was never recorded, so the byte image
+        // has nothing to be checked against.
+        let variants = vec![EnumVariant {
+            name: "Only".into(),
+            field_types: vec![],
+            field_offsets: vec![],
+            field_sizes: vec![],
+        }];
+        let unsized_enum: TypeHandle =
+            MirEnumType::get(&mut ctx, "Unknown".into(), u32_ty, vec![0], variants).into();
+        let array: TypeHandle = MirArrayType::get(&mut ctx, unsized_enum, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, array),
+            "an enum with no recorded size must not be promoted"
         );
     }
 }
@@ -10460,7 +11231,99 @@ mod aggregate_relocation_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dialect_mir::types::{MirPtrType, MirStructType};
+    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
+
+    #[test]
+    fn over_aligned_zst_tuple_fields_force_the_value_fallback_gate() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // `#[repr(align(32))] struct Align32;`: zero bytes, ABI alignment 32.
+        let align32_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Align32".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            32,
+        )
+        .into();
+
+        // `(Align32, u8)` as rustc lays it out: one payload byte padded out
+        // to a 32-byte, align-32 allocation.
+        let pair_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![align32_ty, u8_ty],
+            vec![],
+            vec![0, 0],
+            32,
+            32,
+        )
+        .into();
+        assert!(
+            tuple_has_over_aligned_zst_field(&ctx, pair_ty),
+            "a zero-byte repr(align(32)) field must force the value path"
+        );
+
+        // The byte-size gap in PR #715's gate: `[Align32; 2]` has element
+        // count 2 but still owns zero bytes and still demands align 32, at
+        // any array nesting depth.
+        let align32_x2_ty: TypeHandle = MirArrayType::get(&mut ctx, align32_ty, 2).into();
+        let align32_x2x3_ty: TypeHandle = MirArrayType::get(&mut ctx, align32_x2_ty, 3).into();
+        for wrapped_ty in [align32_x2_ty, align32_x2x3_ty] {
+            let tuple_ty: TypeHandle = MirTupleType::get_with_layout(
+                &mut ctx,
+                vec![wrapped_ty, u8_ty],
+                vec![],
+                vec![0, 0],
+                32,
+                32,
+            )
+            .into();
+            assert!(
+                tuple_has_over_aligned_zst_field(&ctx, tuple_ty),
+                "a zero-byte array of over-aligned ZSTs must not slip through on element count"
+            );
+        }
+
+        // Ordinary tuples keep the address path: rustc's reordered
+        // `(u8, u32)` layout (u8 at offset 4, u32 at offset 0).
+        let plain_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![u8_ty, u32_ty],
+            vec![1, 0],
+            vec![4, 0],
+            8,
+            4,
+        )
+        .into();
+        assert!(
+            !tuple_has_over_aligned_zst_field(&ctx, plain_ty),
+            "tuples without over-aligned ZST fields must stay on the address path"
+        );
+
+        // An align-1 ZST field, the unit tuple, does not trip the gate:
+        // zero bytes alone raise nothing.
+        let unit_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![]).into();
+        let with_unit_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![unit_ty, u32_ty],
+            vec![],
+            vec![0, 0],
+            4,
+            4,
+        )
+        .into();
+        assert!(
+            !tuple_has_over_aligned_zst_field(&ctx, with_unit_ty),
+            "plain ZST fields raise no alignment and must not force the fallback"
+        );
+    }
 
     #[test]
     fn struct_storage_size_reads_layout_presence_not_size() {
@@ -10656,5 +11519,81 @@ mod checked_binary_op_tests {
             .expect_err("Div must remain unsupported as CheckedBinaryOp");
 
         assert_eq!(error, "CheckedBinaryOp Div not yet implemented");
+    }
+
+    #[test]
+    fn promoted_immutable_globals_are_marked_and_dedup_by_type_and_bytes() {
+        use dialect_mir::types::MirArrayType;
+        use pliron::builtin::ops::ModuleOp;
+        use pliron::linked_list::ContainsLinkedList;
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let module = ModuleOp::new(&mut ctx, "promoted_globals".try_into().unwrap());
+        let module_region = module.get_operation().deref(&ctx).get_region(0);
+        let block = {
+            let existing = module_region.deref(&ctx).iter(&ctx).next();
+            match existing {
+                Some(block) => block,
+                None => {
+                    let block = BasicBlock::new(&mut ctx, None, vec![]);
+                    block.insert_at_back(module_region, &ctx);
+                    block
+                }
+            }
+        };
+
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let table_ty: TypeHandle = MirArrayType::get(&mut ctx, f32_ty, 2).into();
+        let bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x40]; // [1.0f32, 2.0f32]
+
+        let first = emit_promoted_immutable_global(
+            &mut ctx,
+            table_ty,
+            &bytes,
+            4,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        // The marker is the point: without it the exporter writes `global` and
+        // `opt` may not delete the per-thread copy this path exists to remove.
+        assert!(
+            first.is_immutable(&ctx),
+            "promoted global must be immutable"
+        );
+        let first_key = String::from(first.get_attr_global_key(&ctx).expect("dedup key").clone());
+
+        // The same table reached again — another function, another spelling —
+        // must produce the same key, which is what convert_global_alloc_dc
+        // collapses into a single emitted global.
+        let again = emit_promoted_immutable_global(
+            &mut ctx,
+            table_ty,
+            &bytes,
+            4,
+            block,
+            None,
+            Location::Unknown,
+        );
+        let again_key = String::from(again.get_attr_global_key(&ctx).expect("dedup key").clone());
+        assert_eq!(first_key, again_key, "same (type, bytes) must share a key");
+
+        // A different byte image must not alias: a short or lossy key would
+        // silently hand two different Rust constants one device global.
+        let other_bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x80, 0x3f];
+        let other = emit_promoted_immutable_global(
+            &mut ctx,
+            table_ty,
+            &other_bytes,
+            4,
+            block,
+            None,
+            Location::Unknown,
+        );
+        let other_key = String::from(other.get_attr_global_key(&ctx).expect("dedup key").clone());
+        assert_ne!(first_key, other_key, "distinct bytes must not share a key");
     }
 }

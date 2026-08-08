@@ -1114,6 +1114,305 @@ pub fn reduce_min_f64(mut val: f64) -> f64 {
     val
 }
 
+// =============================================================================
+// Warp-Level Reductions Over a Partial Warp
+// =============================================================================
+//
+// The reductions above shuffle with the full-warp mask, so every one of the 32
+// lanes must be launched and converged. A block whose width is not a multiple
+// of 32 leaves its last warp short: 48 threads give a second warp of 16 live
+// lanes, and the PTX ISA makes `shfl.sync` undefined when a thread sources a
+// lane that is inactive or outside the member mask. The full-warp butterfly
+// reads lanes that were never launched, so it cannot be used there at all.
+//
+// The forms below take the number of live lanes and reduce over exactly those.
+
+/// Member mask naming the low `live_lanes` lanes of a warp.
+///
+/// Saturates at the full warp, and gives the empty mask for zero, which the
+/// reductions never pass because they clamp to at least one lane.
+#[must_use]
+#[inline(always)]
+const fn live_lane_mask(live_lanes: u32) -> u32 {
+    if live_lanes >= 32 {
+        u32::MAX
+    } else if live_lanes == 0 {
+        0
+    } else {
+        (1u32 << live_lanes) - 1
+    }
+}
+
+/// Live lanes of the calling thread's warp, for a one-dimensional block.
+///
+/// Reads the block width and the calling thread's position in it, so warps
+/// below the last report 32 and the last reports the remainder. The value is
+/// uniform across each warp, which is what the reductions below require.
+///
+/// # Block shape
+///
+/// Threads are numbered x fastest, so this is the live-lane count only for a
+/// block that is one-dimensional. Pass the count directly for a block with a
+/// `y` or `z` extent.
+#[must_use]
+#[inline(always)]
+pub fn live_lanes_1d() -> u32 {
+    let launched = crate::thread::blockDim_x() - (crate::thread::threadIdx_x() / 32) * 32;
+    if launched > 32 { 32 } else { launched }
+}
+
+/// Sum `val` across the live lanes of the calling warp.
+///
+/// After this call every live lane holds the sum, as
+/// [`reduce_sum_f32`] leaves it for a full warp.
+///
+/// Any NaN input propagates to every lane, as with ordinary `f32` addition.
+///
+/// # Participation
+///
+/// `live_lanes` must be uniform across the warp and must name the lanes that
+/// were launched and are converged: lanes `0 .. live_lanes` participate and no
+/// lane above that exists. The count is clamped to `1 ..= 32`. Passing more
+/// lanes than were launched reintroduces the very shuffle from an inactive
+/// lane this exists to avoid.
+///
+/// # Method
+///
+/// A power-of-two count takes the same butterfly as the full-warp form, with
+/// the member mask and the first offset cut to the live lanes, which keeps
+/// `lane ^ offset` inside the mask at every step.
+///
+/// Any other count folds the upper part of the span into the lower half and
+/// halves the span, which reaches an arbitrary count in `ceil(log2(live))`
+/// steps. Every shuffle names a source below `live_lanes`, clamped to the last
+/// live lane where the arithmetic would run past it, so no thread ever sources
+/// a lane that was not launched. The clamped result is discarded wherever the
+/// source lies outside the current span. One broadcast from lane 0 then leaves
+/// the total in every lane.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // A 48-thread block: warp 0 has 32 live lanes, warp 1 has 16.
+/// let total = warp::reduce_sum_f32_partial(val, warp::live_lanes_1d());
+/// ```
+#[must_use]
+#[inline(always)]
+pub fn reduce_sum_f32_partial(val: f32, live_lanes: u32) -> f32 {
+    let live = live_lanes.clamp(1, 32);
+    let mask = live_lane_mask(live);
+
+    if live.is_power_of_two() {
+        let mut acc = val;
+        let mut offset = live / 2;
+        while offset > 0 {
+            acc += shuffle_xor_f32_sync(mask, acc, offset);
+            offset /= 2;
+        }
+        return acc;
+    }
+
+    let lane = lane_id();
+    let mut acc = val;
+    let mut span = live;
+    while span > 1 {
+        let half = span.div_ceil(2);
+        let source = lane + half;
+        let clamped = if source < live { source } else { live - 1 };
+        let other = shuffle_f32_sync(mask, acc, clamped);
+        if lane < half && source < span {
+            acc += other;
+        }
+        span = half;
+    }
+    shuffle_f32_sync(mask, acc, 0)
+}
+
+/// Maximum of `val` across the live lanes of the calling warp.
+///
+/// After this call every live lane holds the maximum. A NaN in one lane is
+/// ignored because `f32::max` returns the non-NaN operand; the result is NaN
+/// only if every live lane holds NaN.
+///
+/// Participation and method are as for [`reduce_sum_f32_partial`].
+#[must_use]
+#[inline(always)]
+pub fn reduce_max_f32_partial(val: f32, live_lanes: u32) -> f32 {
+    let live = live_lanes.clamp(1, 32);
+    let mask = live_lane_mask(live);
+
+    if live.is_power_of_two() {
+        let mut acc = val;
+        let mut offset = live / 2;
+        while offset > 0 {
+            acc = f32::max(acc, shuffle_xor_f32_sync(mask, acc, offset));
+            offset /= 2;
+        }
+        return acc;
+    }
+
+    let lane = lane_id();
+    let mut acc = val;
+    let mut span = live;
+    while span > 1 {
+        let half = span.div_ceil(2);
+        let source = lane + half;
+        let clamped = if source < live { source } else { live - 1 };
+        let other = shuffle_f32_sync(mask, acc, clamped);
+        if lane < half && source < span {
+            acc = f32::max(acc, other);
+        }
+        span = half;
+    }
+    shuffle_f32_sync(mask, acc, 0)
+}
+
+/// Minimum of `val` across the live lanes of the calling warp.
+///
+/// After this call every live lane holds the minimum. A NaN in one lane is
+/// ignored because `f32::min` returns the non-NaN operand; the result is NaN
+/// only if every live lane holds NaN.
+///
+/// Participation and method are as for [`reduce_sum_f32_partial`].
+#[must_use]
+#[inline(always)]
+pub fn reduce_min_f32_partial(val: f32, live_lanes: u32) -> f32 {
+    let live = live_lanes.clamp(1, 32);
+    let mask = live_lane_mask(live);
+
+    if live.is_power_of_two() {
+        let mut acc = val;
+        let mut offset = live / 2;
+        while offset > 0 {
+            acc = f32::min(acc, shuffle_xor_f32_sync(mask, acc, offset));
+            offset /= 2;
+        }
+        return acc;
+    }
+
+    let lane = lane_id();
+    let mut acc = val;
+    let mut span = live;
+    while span > 1 {
+        let half = span.div_ceil(2);
+        let source = lane + half;
+        let clamped = if source < live { source } else { live - 1 };
+        let other = shuffle_f32_sync(mask, acc, clamped);
+        if lane < half && source < span {
+            acc = f32::min(acc, other);
+        }
+        span = half;
+    }
+    shuffle_f32_sync(mask, acc, 0)
+}
+
+/// Sum `val` across the live lanes of the calling warp, in `f64`.
+///
+/// Participation and method are as for [`reduce_sum_f32_partial`].
+#[must_use]
+#[inline(always)]
+pub fn reduce_sum_f64_partial(val: f64, live_lanes: u32) -> f64 {
+    let live = live_lanes.clamp(1, 32);
+    let mask = live_lane_mask(live);
+
+    if live.is_power_of_two() {
+        let mut acc = val;
+        let mut offset = live / 2;
+        while offset > 0 {
+            acc += shuffle_xor_f64_sync(mask, acc, offset);
+            offset /= 2;
+        }
+        return acc;
+    }
+
+    let lane = lane_id();
+    let mut acc = val;
+    let mut span = live;
+    while span > 1 {
+        let half = span.div_ceil(2);
+        let source = lane + half;
+        let clamped = if source < live { source } else { live - 1 };
+        let other = shuffle_f64_sync(mask, acc, clamped);
+        if lane < half && source < span {
+            acc += other;
+        }
+        span = half;
+    }
+    shuffle_f64_sync(mask, acc, 0)
+}
+
+/// Maximum of `val` across the live lanes of the calling warp, in `f64`.
+///
+/// Participation and method are as for [`reduce_sum_f32_partial`], and NaN
+/// behaves as in [`reduce_max_f32_partial`].
+#[must_use]
+#[inline(always)]
+pub fn reduce_max_f64_partial(val: f64, live_lanes: u32) -> f64 {
+    let live = live_lanes.clamp(1, 32);
+    let mask = live_lane_mask(live);
+
+    if live.is_power_of_two() {
+        let mut acc = val;
+        let mut offset = live / 2;
+        while offset > 0 {
+            acc = f64::max(acc, shuffle_xor_f64_sync(mask, acc, offset));
+            offset /= 2;
+        }
+        return acc;
+    }
+
+    let lane = lane_id();
+    let mut acc = val;
+    let mut span = live;
+    while span > 1 {
+        let half = span.div_ceil(2);
+        let source = lane + half;
+        let clamped = if source < live { source } else { live - 1 };
+        let other = shuffle_f64_sync(mask, acc, clamped);
+        if lane < half && source < span {
+            acc = f64::max(acc, other);
+        }
+        span = half;
+    }
+    shuffle_f64_sync(mask, acc, 0)
+}
+
+/// Minimum of `val` across the live lanes of the calling warp, in `f64`.
+///
+/// Participation and method are as for [`reduce_sum_f32_partial`], and NaN
+/// behaves as in [`reduce_min_f32_partial`].
+#[must_use]
+#[inline(always)]
+pub fn reduce_min_f64_partial(val: f64, live_lanes: u32) -> f64 {
+    let live = live_lanes.clamp(1, 32);
+    let mask = live_lane_mask(live);
+
+    if live.is_power_of_two() {
+        let mut acc = val;
+        let mut offset = live / 2;
+        while offset > 0 {
+            acc = f64::min(acc, shuffle_xor_f64_sync(mask, acc, offset));
+            offset /= 2;
+        }
+        return acc;
+    }
+
+    let lane = lane_id();
+    let mut acc = val;
+    let mut span = live;
+    while span > 1 {
+        let half = span.div_ceil(2);
+        let source = lane + half;
+        let clamped = if source < live { source } else { live - 1 };
+        let other = shuffle_f64_sync(mask, acc, clamped);
+        if lane < half && source < span {
+            acc = f64::min(acc, other);
+        }
+        span = half;
+    }
+    shuffle_f64_sync(mask, acc, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1150,5 +1449,125 @@ mod tests {
     fn warp_reduce_signatures_stay_stable() {
         let _: [fn(f32) -> f32; 3] = [reduce_sum_f32, reduce_max_f32, reduce_min_f32];
         let _: [fn(f64) -> f64; 3] = [reduce_sum_f64, reduce_max_f64, reduce_min_f64];
+    }
+
+    #[test]
+    fn partial_warp_reduce_signatures_stay_stable() {
+        let _: [fn(f32, u32) -> f32; 3] = [
+            reduce_sum_f32_partial,
+            reduce_max_f32_partial,
+            reduce_min_f32_partial,
+        ];
+        let _: [fn(f64, u32) -> f64; 3] = [
+            reduce_sum_f64_partial,
+            reduce_max_f64_partial,
+            reduce_min_f64_partial,
+        ];
+    }
+
+    #[test]
+    fn live_lane_mask_names_exactly_the_live_lanes() {
+        assert_eq!(live_lane_mask(0), 0);
+        assert_eq!(live_lane_mask(1), 0b1);
+        assert_eq!(live_lane_mask(16), 0xFFFF);
+        assert_eq!(live_lane_mask(31), 0x7FFF_FFFF);
+        assert_eq!(live_lane_mask(32), u32::MAX);
+        assert_eq!(
+            live_lane_mask(48),
+            u32::MAX,
+            "a count above the warp size saturates rather than shifting out"
+        );
+        for live in 1..=32u32 {
+            assert_eq!(
+                live_lane_mask(live).count_ones(),
+                live,
+                "the mask for {live} live lanes must name {live} lanes"
+            );
+        }
+    }
+
+    /// Host model of the device fold, one array element per lane.
+    ///
+    /// The device code cannot run here, so this replays the same span
+    /// arithmetic over an array and reports the highest lane the shuffles
+    /// would name. Two properties matter and neither is visible from the
+    /// device code by inspection: the fold has to reach the total, and no
+    /// shuffle may ever name a lane at or above the live count, because such
+    /// a lane was never launched and sourcing it is undefined per the PTX
+    /// ISA.
+    fn fold_model(values: &[f64; 32], live: u32) -> ([f64; 32], u32) {
+        let live_usize = live as usize;
+        let mut lanes = *values;
+        let mut highest_source = 0u32;
+
+        if live.is_power_of_two() {
+            let mut offset = live / 2;
+            while offset > 0 {
+                let before = lanes;
+                for lane in 0..live_usize {
+                    let partner = lane ^ offset as usize;
+                    highest_source = highest_source.max(partner as u32);
+                    lanes[lane] = before[lane] + before[partner];
+                }
+                offset /= 2;
+            }
+            return (lanes, highest_source);
+        }
+
+        let mut span = live;
+        while span > 1 {
+            let half = span.div_ceil(2);
+            let before = lanes;
+            for lane in 0..live_usize {
+                let source = lane as u32 + half;
+                let clamped = if source < live { source } else { live - 1 };
+                highest_source = highest_source.max(clamped);
+                if (lane as u32) < half && source < span {
+                    lanes[lane] = before[lane] + before[clamped as usize];
+                }
+            }
+            span = half;
+        }
+        let total = lanes[0];
+        for lane in lanes.iter_mut().take(live_usize) {
+            *lane = total;
+        }
+        (lanes, highest_source)
+    }
+
+    fn ascending_lane_values() -> [f64; 32] {
+        let mut values = [0.0f64; 32];
+        for (i, value) in values.iter_mut().enumerate() {
+            *value = (i + 1) as f64;
+        }
+        values
+    }
+
+    #[test]
+    fn the_partial_fold_totals_every_live_lane_count() {
+        for live in 1..=32u32 {
+            let values = ascending_lane_values();
+            // 1 + 2 + ... + live
+            let expected = (live * (live + 1) / 2) as f64;
+            let (lanes, _) = fold_model(&values, live);
+            for (lane, &value) in lanes.iter().enumerate().take(live as usize) {
+                assert_eq!(
+                    value, expected,
+                    "lane {lane} of {live} live lanes holds {value}, expected the total {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_partial_fold_never_sources_a_lane_that_was_not_launched() {
+        for live in 2..=32u32 {
+            let values = ascending_lane_values();
+            let (_, highest_source) = fold_model(&values, live);
+            assert!(
+                highest_source < live,
+                "a fold over {live} live lanes sourced lane {highest_source}, which was never launched"
+            );
+        }
     }
 }
