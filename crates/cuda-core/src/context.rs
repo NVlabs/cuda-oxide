@@ -377,9 +377,11 @@ impl CudaContext {
 
     /// Sets the per-thread device stack size, in bytes.
     ///
-    /// Wraps `cuCtxSetLimit(CU_LIMIT_STACK_SIZE, ..)`. The driver reserves
-    /// `bytes` for *every* thread that can be resident on the device, so the
-    /// reservation scales as roughly `bytes * mp_count * threads_per_mp`,
+    /// Wraps `cuCtxSetLimit(CU_LIMIT_STACK_SIZE, ..)`. The limit is state on
+    /// the device's primary context, shared by every [`CudaContext`] for this
+    /// device and by any runtime-API user of the same device. The driver
+    /// reserves `bytes` for *every* thread that can be resident on the device,
+    /// so the reservation scales as roughly `bytes * mp_count * threads_per_mp`,
     /// using [`multiprocessor_count`](Self::multiprocessor_count) and
     /// [`max_threads_per_multiprocessor`](Self::max_threads_per_multiprocessor).
     /// That reservation is invisible to allocation APIs: it simply reduces the
