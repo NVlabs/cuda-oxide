@@ -281,6 +281,21 @@ pub mod ops {
     /// Versioned, length-prefixed pointer-relocation metadata for an initialized
     /// Rust static.
     const GLOBAL_INITIALIZER_RELOCATIONS_KEY: &str = "cuda_oxide_global_initializer_relocations";
+    /// Marks a `GlobalOp` whose storage no code ever writes, so it is exported
+    /// as LLVM `constant` rather than `global`.
+    ///
+    /// Set only for storage this compiler itself materialises from an evaluated
+    /// Rust constant: the initializer is the whole value, no device code holds a
+    /// mutable path to it, and no host setter is generated for its name. A Rust
+    /// `static` / `static mut` never carries this, and neither does anything
+    /// reachable through `#[constant]` or `#[device_global]`, because the host
+    /// writes those by symbol.
+    ///
+    /// This is deliberately a property of the *storage*, not of a pointer's
+    /// `is_mutable` bit: a shared reference to a mutable static is an immutable
+    /// pointer to mutable storage, and #413 records that `MirPtrType::is_mutable`
+    /// must not be read as a promise about the pointee.
+    const GLOBAL_IMMUTABLE_KEY: &str = "cuda_oxide_global_immutable";
 
     /// One pointer-width relocation inside an evaluated Rust static initializer.
     ///
@@ -1169,6 +1184,16 @@ pub mod ops {
         fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str);
         /// Read serialized initializer relocation metadata.
         fn initializer_relocations(&self, ctx: &Context) -> Option<String>;
+        /// Mark this global's storage as never written, so it exports as
+        /// `constant` rather than `global`.
+        ///
+        /// Only storage the compiler materialises from an evaluated constant may
+        /// claim this: the initializer is the whole value, the symbol name is
+        /// generated so no host setter can reach it, and nothing is handed a
+        /// mutable path to it. A Rust `static` never carries it.
+        fn mark_immutable(&self, ctx: &mut Context);
+        /// Whether this global's storage was marked never-written.
+        fn is_immutable(&self, ctx: &Context) -> bool;
     }
 
     impl GlobalOpExt for GlobalOp {
@@ -1251,6 +1276,25 @@ pub mod ops {
                 .attributes
                 .get::<StringAttr>(&key)
                 .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn mark_immutable(&self, ctx: &mut Context) {
+            let key =
+                Identifier::try_new(GLOBAL_IMMUTABLE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, pliron::builtin::attributes::UnitAttr);
+        }
+
+        fn is_immutable(&self, ctx: &Context) -> bool {
+            let key =
+                Identifier::try_new(GLOBAL_IMMUTABLE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<pliron::builtin::attributes::UnitAttr>(&key)
+                .is_some()
         }
     }
 

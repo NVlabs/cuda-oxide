@@ -88,6 +88,58 @@ impl PartialEq for CudaContext {
 }
 impl Eq for CudaContext {}
 
+/// Context scheduling policy (`CU_CTX_SCHED_*`), governing how the driver
+/// waits when the calling host thread blocks on GPU work (a stream or
+/// context synchronize).
+///
+/// Set via [`CudaContext::set_sync_policy`], read via
+/// [`CudaContext::sync_policy`]. The trade-off is host CPU against wake
+/// latency: [`Spin`](Self::Spin) burns a full core for the lowest latency,
+/// [`BlockingSync`](Self::BlockingSync) frees the core but wakes later. On a
+/// host with spare cores this trade rarely matters; on a CPU-constrained one
+/// (few physical cores, a sync-heavy pipeline) it can cost double-digit
+/// percentages of host CPU for no wall-clock benefit, which is the case
+/// [`BlockingSync`](Self::BlockingSync) exists to fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncPolicy {
+    /// Driver-chosen default: spin if the process has more logical CPUs than
+    /// active contexts, otherwise yield.
+    Auto,
+    /// Spin the calling thread while waiting. Lowest latency, highest CPU use.
+    Spin,
+    /// Yield the calling thread's timeslice while waiting.
+    Yield,
+    /// Block the calling thread on a synchronization primitive while
+    /// waiting. Lowest CPU use, highest wake latency.
+    BlockingSync,
+}
+
+impl SyncPolicy {
+    fn to_raw(self) -> cuda_bindings::CUctx_flags_enum {
+        match self {
+            SyncPolicy::Auto => cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_AUTO,
+            SyncPolicy::Spin => cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_SPIN,
+            SyncPolicy::Yield => cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_YIELD,
+            SyncPolicy::BlockingSync => cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_BLOCKING_SYNC,
+        }
+    }
+
+    /// Decodes the scheduling bits (`CU_CTX_SCHED_MASK`) out of a raw flags
+    /// word. `None` for a driver-reserved combination this enum does not
+    /// name (the mask is 3 bits wide; only 4 of 8 values are assigned today).
+    fn from_raw(raw: cuda_bindings::CUctx_flags_enum) -> Option<Self> {
+        match raw & cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_MASK {
+            cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_AUTO => Some(SyncPolicy::Auto),
+            cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_SPIN => Some(SyncPolicy::Spin),
+            cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_YIELD => Some(SyncPolicy::Yield),
+            cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_BLOCKING_SYNC => {
+                Some(SyncPolicy::BlockingSync)
+            }
+            _ => None,
+        }
+    }
+}
+
 impl CudaContext {
     fn device_attribute(
         &self,
@@ -399,6 +451,65 @@ impl CudaContext {
             cuda_bindings::cuCtxSetLimit(cuda_bindings::CUlimit_enum_CU_LIMIT_STACK_SIZE, bytes)
         }
         .result()
+    }
+
+    /// Sets the context's scheduling policy (`CU_CTX_SCHED_*`).
+    ///
+    /// Wraps `cuDevicePrimaryCtxSetFlags_v2`, scoped to this context's
+    /// device rather than `cuCtxSetFlags`'s "whatever is current on this
+    /// thread": [`CudaContext`] retains and owns a specific device's primary
+    /// context, so the device-scoped call is the one that matches what this
+    /// type actually holds. Read-modify-write: only the 3 scheduling bits
+    /// (`CU_CTX_SCHED_MASK`) are replaced, any other flag bit the process has
+    /// set independently (e.g. `CU_CTX_MAP_HOST`) is preserved.
+    ///
+    /// The policy is process-wide state on the device's primary context:
+    /// it affects every [`CudaContext`] clone of this device, and any
+    /// runtime-API user of the same device in this process, not just this
+    /// handle. The read-modify-write over `CU_CTX_SCHED_MASK` is also not
+    /// atomic: a concurrent flag writer on the same device can interleave
+    /// between the get and the set, and one side's update is then lost.
+    ///
+    /// Historical note: before CUDA 11, `cuDevicePrimaryCtxSetFlags` failed
+    /// with `CUDA_ERROR_PRIMARY_CONTEXT_ACTIVE` once the primary context was
+    /// active. That restriction was lifted; the flags now apply to the
+    /// already-active context.
+    pub fn set_sync_policy(&self, policy: SyncPolicy) -> Result<(), DriverError> {
+        self.bind_to_thread()?;
+        unsafe {
+            let mut current = MaybeUninit::uninit();
+            let mut active = MaybeUninit::uninit();
+            cuda_bindings::cuDevicePrimaryCtxGetState(
+                self.cu_device,
+                current.as_mut_ptr(),
+                active.as_mut_ptr(),
+            )
+            .result()?;
+            let current = current.assume_init();
+            let new_flags =
+                (current & !cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_MASK) | policy.to_raw();
+            cuda_bindings::cuDevicePrimaryCtxSetFlags_v2(self.cu_device, new_flags).result()
+        }
+    }
+
+    /// Returns the context's current scheduling policy (`CU_CTX_SCHED_*`).
+    ///
+    /// `None` if the driver reports a scheduling value this enum does not
+    /// name (see [`SyncPolicy::from_raw`](SyncPolicy) -- the mask has more
+    /// bit patterns than the driver assigns meanings to today).
+    pub fn sync_policy(&self) -> Result<Option<SyncPolicy>, DriverError> {
+        self.bind_to_thread()?;
+        unsafe {
+            let mut flags = MaybeUninit::uninit();
+            let mut active = MaybeUninit::uninit();
+            cuda_bindings::cuDevicePrimaryCtxGetState(
+                self.cu_device,
+                flags.as_mut_ptr(),
+                active.as_mut_ptr(),
+            )
+            .result()?;
+            Ok(SyncPolicy::from_raw(flags.assume_init()))
+        }
     }
 
     /// Atomically reads and clears the sticky error state.

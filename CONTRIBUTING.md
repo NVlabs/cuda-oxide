@@ -151,6 +151,12 @@ third-party files must keep their upstream license and copyright notices.
   correct behavior.
 - Dialect changes should include appropriate tests in the crate's `tests/`
   directory.
+- A new example must print a `SUCCESS`/`PASS`/`Complete` marker once it has
+  verified its results, or `scripts/smoketest.sh` reports it as
+  `FAIL (no success marker)`. `scripts/check-example-smoketest-contract.sh`
+  checks that without a GPU, along with the `*_EXAMPLES` arrays in
+  `smoketest.sh`; CI runs it as the `status-guard / smoketest example contract`
+  job.
 
 #### Running the driver-linked crates without a GPU
 

@@ -1258,7 +1258,7 @@ impl Verify for MirFieldAddrOp {
             }
         };
 
-        // Pointee must be a struct or union type.
+        // Pointee must be a struct, tuple, union or enum type.
         let pointee_ty = ptr_type.pointee;
         let pointee_ty_obj = pointee_ty.deref(ctx);
 
@@ -1269,6 +1269,8 @@ impl Verify for MirFieldAddrOp {
 
         let field_types = if let Some(struct_ty) = pointee_ty_obj.downcast_ref::<MirStructType>() {
             struct_ty.field_types()
+        } else if let Some(tuple_ty) = pointee_ty_obj.downcast_ref::<MirTupleType>() {
+            tuple_ty.get_types()
         } else if let Some(union_ty) = pointee_ty_obj.downcast_ref::<MirUnionType>() {
             union_ty.field_types()
         } else if let Some(enum_ty) = pointee_ty_obj.downcast_ref::<MirEnumType>() {
@@ -1283,7 +1285,7 @@ impl Verify for MirFieldAddrOp {
         } else {
             return verify_err!(
                 op.loc(),
-                "MirFieldAddrOp pointer must point to a struct, union or enum type, got: {}",
+                "MirFieldAddrOp pointer must point to a struct, tuple, union or enum type, got: {}",
                 pointee_ty.disp(ctx)
             );
         };

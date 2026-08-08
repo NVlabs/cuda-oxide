@@ -26,11 +26,16 @@ use std::path::{Path, PathBuf};
 const TOOLKIT_ENV_VARS: &[&str] = &["CUDA_TOOLKIT_PATH", "CUDA_HOME"];
 const DEFAULT_TOOLKIT_DIR: &str = "/usr/local/cuda";
 
+/// Overrides the `targets/<dir>` selection with a single directory name,
+/// like nvcc's `-target-dir`; matches `cuda-bindings`.
+const TOOLKIT_TARGET_DIR_ENV: &str = "CUDA_TOOLKIT_TARGET_DIR";
+
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(cuda_has_multicast)");
     for var in TOOLKIT_ENV_VARS {
         println!("cargo:rerun-if-env-changed={var}");
     }
+    println!("cargo:rerun-if-env-changed={TOOLKIT_TARGET_DIR_ENV}");
 
     let Some(cuda_h) = find_cuda_header() else {
         return;
@@ -41,15 +46,33 @@ fn main() {
     }
 }
 
-/// CUDA toolkit `targets/` directory name for cargo's build `TARGET`,
-/// matching `cuda-bindings`: CUDA names these layouts after the GPU
-/// platform, not the Rust triple.
-fn toolkit_target_dir() -> Option<&'static str> {
-    let target = env::var("TARGET").ok()?;
-    match target.split('-').next()? {
-        "x86_64" => Some("x86_64-linux"),
-        "aarch64" => Some("sbsa-linux"),
-        _ => None,
+/// CUDA toolkit `targets/` directory names to probe for cargo's build
+/// target, most specific first.
+///
+/// Kept in lockstep BY HAND with the selection table in
+/// `crates/cuda-bindings/toolkit_target.rs` (`resolve_toolkit_target_dirs`):
+/// build scripts cannot import each other's sources across crates. If the
+/// selection there changes, mirror it here. CUDA names these layouts after
+/// the GPU platform, not the Rust triple, and an aarch64 Linux triple is
+/// ambiguous between servers (`sbsa-linux`) and Tegra (`aarch64-linux`), so
+/// both are probed in that order. A non-blank [`TOOLKIT_TARGET_DIR_ENV`]
+/// replaces the table with that single directory.
+fn toolkit_target_dirs() -> Vec<String> {
+    if let Some(dir) = env::var(TOOLKIT_TARGET_DIR_ENV)
+        .ok()
+        .filter(|dir| !dir.trim().is_empty())
+    {
+        return vec![dir];
+    }
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if os != "linux" {
+        return vec![];
+    }
+    match arch.as_str() {
+        "x86_64" => vec!["x86_64-linux".to_string()],
+        "aarch64" => vec!["sbsa-linux".to_string(), "aarch64-linux".to_string()],
+        _ => vec![],
     }
 }
 
@@ -62,7 +85,7 @@ fn find_cuda_header() -> Option<PathBuf> {
         .unwrap_or_else(|| DEFAULT_TOOLKIT_DIR.to_string());
     let base = Path::new(&toolkit);
     let mut candidates = vec![base.join("include")];
-    if let Some(target_dir) = toolkit_target_dir() {
+    for target_dir in toolkit_target_dirs() {
         candidates.push(base.join("targets").join(target_dir).join("include"));
     }
     candidates

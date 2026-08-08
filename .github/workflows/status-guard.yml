@@ -25,3 +25,20 @@ jobs:
 
       - name: Verify error* examples are in STATUS.md and smoketest.sh
         run: bash scripts/check-error-example-status.sh
+
+  # Both of the things this checks are otherwise only visible when the suite
+  # runs on a GPU: the compile-only lane collapses every category into
+  # verdict_compile, so it never exercises classify() or the standard-category
+  # success marker. 981b9eb0 is the precedent -- a new example landed with no
+  # marker and needed a follow-up commit on main to stop reporting FAIL.
+  example-smoketest-contract:
+    name: smoketest example contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads sources only: no cargo, no CUDA toolkit, no LLVM.
+      - name: Verify smoketest categories and standard-example success markers
+        run: bash scripts/check-example-smoketest-contract.sh
