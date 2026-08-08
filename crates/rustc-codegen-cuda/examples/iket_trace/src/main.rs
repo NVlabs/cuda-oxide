@@ -74,5 +74,5 @@ fn main() {
             .enumerate()
             .all(|(index, value)| *value == (index * 3) as f32)
     );
-    println!("IKET trace example passed for {ELEMENTS} elements");
+    println!("IKET trace example PASSED for {ELEMENTS} elements");
 }

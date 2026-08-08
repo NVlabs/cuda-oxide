@@ -1365,8 +1365,11 @@ run_cargo() {
     local verb="run"
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
     local -a args=("${verb}" "${ex}")
-    if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "cluster" ]]; then
-        args+=("--arch=sm_90")
+    if [[ ${COMPILE_ONLY} -eq 1 ]]; then
+        case "${ex}" in
+            cluster) args+=("--arch=sm_90") ;;
+            iket_trace) args+=("--arch=sm_120") ;;
+        esac
     fi
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
