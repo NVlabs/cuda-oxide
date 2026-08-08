@@ -29,8 +29,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r cuda-oxide-book/requirements.txt
 
+      # `-W` matches the Rust docs gate, which builds under
+      # RUSTDOCFLAGS="-D warnings". Without it a broken cross-reference, a
+      # malformed directive or a page dropped from a toctree still exits 0 and
+      # publishes. `--keep-going` reports every warning in one run instead of
+      # stopping at the first.
       - name: Build Sphinx site
-        run: sphinx-build -b html cuda-oxide-book cuda-oxide-book/_build/html
+        run: >-
+          sphinx-build -W --keep-going -b html
+          cuda-oxide-book cuda-oxide-book/_build/html
 
       - uses: actions/upload-pages-artifact@v3
         with:
