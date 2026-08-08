@@ -19,7 +19,9 @@
 //! is the case where deriving the warp index as `index_1d() / 32` would give
 //! two different warps the same index. The same partial tail warp also rules
 //! out `warp::reduce_sum_f32`, whose contract needs all 32 lanes launched and
-//! converged, so both kernels reduce over exactly the live lanes instead.
+//! converged, so both kernels call `warp::reduce_sum_f32_partial` with the
+//! live-lane count instead. See the `partial_warp_reduce` example for the
+//! tail widths that no butterfly reaches.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 use cuda_device::{
@@ -39,37 +41,6 @@ const WARPS: u32 = WARPS_PER_BLOCK * BLOCKS;
 mod kernels {
     use super::*;
 
-    /// Sum `val` across the live lanes of the calling thread's warp.
-    ///
-    /// `warp::reduce_sum_f32` shuffles with the full 32-lane member mask, so
-    /// its contract requires all 32 lanes launched and converged. Blocks of 48
-    /// threads leave each block's second warp with only 16 live lanes, and the
-    /// PTX ISA makes `shfl.sync` undefined when a thread sources a lane that
-    /// is inactive or outside the member mask; lanes 16-31 of the tail warp
-    /// were never launched. The butterfly below instead names exactly the live
-    /// lanes in the mask and only ever reads inside it.
-    ///
-    /// The live-lane count must be a power of two so that `lane ^ offset`
-    /// stays inside the member mask at every step. The launch contract pins
-    /// the block to 48 threads, so the count is 32 or 16 here, and every lane
-    /// of a warp computes the same `mask` and the same trip count.
-    #[inline(always)]
-    fn live_lane_reduce_sum(mut val: f32) -> f32 {
-        let lanes_launched = thread::blockDim_x() - (thread::threadIdx_x() / 32) * 32;
-        let live = lanes_launched.min(32);
-        let mask = if live == 32 {
-            u32::MAX
-        } else {
-            (1u32 << live) - 1
-        };
-        let mut offset = live / 2;
-        while offset > 0 {
-            val += warp::shuffle_xor_f32_sync(mask, val, offset);
-            offset /= 2;
-        }
-        val
-    }
-
     /// Sum each warp's contributions and store one value per warp.
     #[kernel(launch_context = launch_context)]
     #[launch_bounds(48)]
@@ -77,7 +48,7 @@ mod kernels {
     pub fn warp_sums(input: &[f32], mut sums: DisjointSlice<f32, thread::WarpIndex>) {
         let gid = thread::index_1d().get();
         let contribution = if gid < input.len() { input[gid] } else { 0.0 };
-        let total = live_lane_reduce_sum(contribution);
+        let total = warp::reduce_sum_f32_partial(contribution, warp::live_lanes_1d());
 
         // No `unsafe`, and the store is bounds-checked: `warp_index` yields a
         // witness only for lane 0, and the slice's index space is the warp.
@@ -104,7 +75,7 @@ mod kernels {
     pub unsafe fn warp_sums_raw(input: &[f32], mut sums: DisjointSlice<f32>) {
         let gid = thread::index_1d().get();
         let contribution = if gid < input.len() { input[gid] } else { 0.0 };
-        let total = live_lane_reduce_sum(contribution);
+        let total = warp::reduce_sum_f32_partial(contribution, warp::live_lanes_1d());
 
         if warp::lane_id() == 0 {
             let warps_per_block = thread::blockDim_x().div_ceil(32);

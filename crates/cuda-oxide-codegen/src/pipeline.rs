@@ -199,6 +199,7 @@ pub fn compile_translated_module(
         MirPreparation {
             promote_and_unroll,
             verbose: request.trace.verbose,
+            mir_pass_pipeline: request.backend.mir_pass_pipeline.as_deref(),
         },
     )?;
     if request.trace.verbose {

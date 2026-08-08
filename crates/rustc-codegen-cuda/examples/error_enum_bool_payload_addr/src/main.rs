@@ -11,9 +11,14 @@
 //! an `i1` store through it would leave the byte's upper seven bits undefined
 //! for every `i8` reader, including a niche tag sharing the byte. Shared
 //! borrows of such payloads compile through a sound value copy (see the
-//! `shared_borrow_bool_payload` kernel in `enum_payload_addr`), but a mutable
-//! borrow cannot use a copy (writes would be lost), so the compiler must
-//! reject it loudly instead of miscompiling.
+//! `shared_borrow_bool_payload` kernel in `enum_payload_addr`), and a write
+//! that stays inside its own function compiles by rebuilding the enum around
+//! the new payload (see `mutate_bool_payload` there).
+//!
+//! Neither route reaches the borrow below. It crosses a `#[device]` call, so
+//! the address genuinely escapes and no rewrite at the store site can stand in
+//! for it. A copy would lose the write, so the compiler must reject it loudly
+//! instead of miscompiling.
 
 use cuda_device::{device, kernel};
 

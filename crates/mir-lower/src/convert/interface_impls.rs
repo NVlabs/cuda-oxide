@@ -27,13 +27,14 @@ use crate::conversion_interface::MirToLlvmConversion;
 use dialect_mir::ops::{
     MirAddOp, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirBitAndOp, MirBitOrOp,
     MirBitXorOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp, MirCheckedSubOp, MirCmpOp,
-    MirCondBranchOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructSliceOp,
-    MirConstructStructOp, MirConstructTupleOp, MirDbgValueOp, MirDivOp, MirEnumPayloadOp, MirEqOp,
-    MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp,
-    MirGetDiscriminantOp, MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp,
-    MirMemcpyOp, MirMemmoveOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
-    MirRemOp, MirReturnOp, MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp,
-    MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
+    MirCondBranchOp, MirConstantOp, MirConstructArrayOp, MirConstructDisjointSliceOp,
+    MirConstructEnumOp, MirConstructSliceOp, MirConstructStructOp, MirConstructTupleOp,
+    MirDbgValueOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractArrayElementOp,
+    MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp, MirGetDiscriminantOp,
+    MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp, MirMemcpyOp, MirMemmoveOp,
+    MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirReturnOp,
+    MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp,
+    MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
     AssertFailOp, CvtaGenericToSharedOffsetOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
@@ -623,6 +624,23 @@ impl MirToLlvmConversion for MirConstructSliceOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::ops::aggregate::convert_construct_slice(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MirConstructDisjointSliceOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::aggregate::convert_construct_disjoint_slice(
             ctx,
             rewriter,
             self.get_operation(),

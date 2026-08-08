@@ -6,6 +6,10 @@
 
 //! Proves that the codegen pipeline can carry thirty-two tied `f32` values
 //! through one inline-PTX operation and produce spill-free `sm_90a` code.
+//!
+//! The probe covers both group shapes the value-form lowering emits: a
+//! single `wgmma.mma_async` and a chain of several under one
+//! fence/commit/wait sequence in the same asm region.
 
 #![cfg(unix)]
 
@@ -33,7 +37,7 @@ use std::num::NonZeroUsize;
 
 const ACCUMULATOR_LEN: usize = 32;
 
-fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule) {
+fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule, mma_count: usize) {
     module.edit(|ctx, module| {
         let module_region = module.get_operation().deref(ctx).get_region(0);
         let module_block = module_region
@@ -47,6 +51,8 @@ fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule) {
         let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
         let output_ptr_ty = MirPtrType::get_global(ctx, f32_ty.into(), true);
 
+        let descriptor_count = mma_count * 2;
+
         // Kernel signature:
         //
         // wgmma_value_carrier_kernel(
@@ -54,11 +60,12 @@ fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule) {
         //     acc0: f32,
         //     ...
         //     acc31: f32,
-        //     desc_a: u64,
-        //     desc_b: u64,
+        //     desc_a0: u64,
+        //     desc_b0: u64,
+        //     ...              // one descriptor pair per chained MMA
         // )
         let mut argument_types: Vec<pliron::r#type::TypeHandle> =
-            Vec::with_capacity(3 + ACCUMULATOR_LEN);
+            Vec::with_capacity(1 + ACCUMULATOR_LEN + descriptor_count);
 
         argument_types.push(output_ptr_ty.into());
 
@@ -66,8 +73,10 @@ fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule) {
             vec![f32_ty.into(); ACCUMULATOR_LEN];
 
         argument_types.extend(accumulator_types);
-        argument_types.push(u64_ty.into());
-        argument_types.push(u64_ty.into());
+
+        for _ in 0..descriptor_count {
+            argument_types.push(u64_ty.into());
+        }
 
         let function_type = FunctionType::get(ctx, argument_types.clone(), vec![]);
         let function_op = Operation::new(
@@ -90,42 +99,47 @@ fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule) {
             .map(|index| entry.deref(ctx).get_argument(index + 1))
             .collect::<Vec<_>>();
 
-        let desc_a = entry.deref(ctx).get_argument(1 + ACCUMULATOR_LEN);
-        let desc_b = entry.deref(ctx).get_argument(2 + ACCUMULATOR_LEN);
+        let descriptors = (0..descriptor_count)
+            .map(|index| entry.deref(ctx).get_argument(1 + ACCUMULATOR_LEN + index))
+            .collect::<Vec<_>>();
 
         // Each output is tied to the corresponding accumulator input through
-        // constraints 0..31. The WGMMA instruction references all thirty-two
-        // output operands as one accumulator register tuple.
+        // constraints 0..31. Every chained WGMMA instruction references all
+        // thirty-two output operands as one accumulator register tuple, the
+        // same shape the value-form lowering template emits.
         let accumulator_registers = (0..ACCUMULATOR_LEN)
             .map(|index| format!("${index}"))
             .collect::<Vec<_>>()
             .join(", ");
 
-        const DESC_A_OPERAND: usize = ACCUMULATOR_LEN * 2;
-        const DESC_B_OPERAND: usize = DESC_A_OPERAND + 1;
+        const DESC_OPERAND_BASE: usize = ACCUMULATOR_LEN * 2;
 
-        let template = format!(
-            "{{\n\
-             \x20   wgmma.fence.sync.aligned;\n\
-             \x20   wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
-             {{{accumulator_registers}}}, \
-             ${DESC_A_OPERAND}, ${DESC_B_OPERAND}, 1, 1, 1, 0, 0;\n\
-             \x20   wgmma.commit_group.sync.aligned;\n\
-             \x20   wgmma.wait_group.sync.aligned 0;\n\
-             }}"
-        );
+        let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
+
+        for mma_index in 0..mma_count {
+            let desc_a = DESC_OPERAND_BASE + mma_index * 2;
+            let desc_b = desc_a + 1;
+            template.push_str(&format!(
+                "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+                 {{{accumulator_registers}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
+            ));
+        }
+
+        template.push_str("    wgmma.commit_group.sync.aligned;\n");
+        template.push_str("    wgmma.wait_group.sync.aligned 0;\n");
+        template.push('}');
 
         let mut constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
 
         constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
 
-        constraints.extend(["l".to_owned(), "l".to_owned(), "~{memory}".to_owned()]);
+        constraints.extend((0..descriptor_count).map(|_| "l".to_owned()));
+        constraints.push("~{memory}".to_owned());
 
         let constraints = constraints.join(",");
 
         let mut asm_inputs = accumulator_inputs;
-        asm_inputs.push(desc_a);
-        asm_inputs.push(desc_b);
+        asm_inputs.extend(descriptors);
 
         let inline_ptx = InlinePtxOp::build(
             ctx,
@@ -233,10 +247,9 @@ fn used_register_count(ptxas_stderr: &str) -> Option<u32> {
     })
 }
 
-#[test]
-fn bf16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
+fn assert_spill_free_value_carrier(mma_count: usize) {
     let mut module = CodegenModule::new("wgmma_value_carrier").unwrap();
-    build_wgmma_value_carrier_kernel(&mut module);
+    build_wgmma_value_carrier_kernel(&mut module, mma_count);
 
     let compiler = Compiler::discover().expect("LLVM 21+ llc/opt must be installed");
     let options = CompileOptions::new(Target::parse("sm_90a").unwrap());
@@ -269,8 +282,8 @@ fn bf16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
     assert_eq!(
         text.matches("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
             .count(),
-        1,
-        "the WGMMA carrier must contain exactly one BF16 MMA:\n{text}",
+        mma_count,
+        "the WGMMA carrier must chain exactly {mma_count} BF16 MMAs:\n{text}",
     );
 
     assert_eq!(
@@ -295,7 +308,8 @@ fn bf16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
         .unwrap_or(0);
 
     let directory = std::env::temp_dir().join(format!(
-        "wgmma_value_carrier_ptx_{}_{}",
+        "wgmma_value_carrier_ptx_{}_{}_{}",
+        mma_count,
         std::process::id(),
         unique,
     ));
@@ -351,4 +365,14 @@ fn bf16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
     );
 
     eprintln!("{stderr}");
+}
+
+#[test]
+fn bf16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
+    assert_spill_free_value_carrier(1);
+}
+
+#[test]
+fn bf16_wgmma_chains_two_mma_async_under_one_commit_without_spills() {
+    assert_spill_free_value_carrier(2);
 }

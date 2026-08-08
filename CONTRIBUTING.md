@@ -151,6 +151,12 @@ third-party files must keep their upstream license and copyright notices.
   correct behavior.
 - Dialect changes should include appropriate tests in the crate's `tests/`
   directory.
+- A new example must print a `SUCCESS`/`PASS`/`Complete` marker once it has
+  verified its results, or `scripts/smoketest.sh` reports it as
+  `FAIL (no success marker)`. `scripts/check-example-smoketest-contract.sh`
+  checks that without a GPU, along with the `*_EXAMPLES` arrays in
+  `smoketest.sh`; CI runs it as the `status-guard / smoketest example contract`
+  job.
 
 #### Running the driver-linked crates without a GPU
 
@@ -187,6 +193,11 @@ are configured.
   declares but that file does not record; CI runs it as the
   `cargo-deny / license-manifest` job. It checks presence, not versions, so a
   routine version bump needs no CSV edit.
+- The same applies to an example that pulls third-party code. Each example
+  under `crates/rustc-codegen-cuda/examples/` is its own workspace, so
+  `cargo deny check` does not resolve it; the script reads the example lock
+  files directly and asks for a row per third-party crate. Examples that
+  depend only on first-party crates by path need nothing.
 
 ## IP Review Process
 

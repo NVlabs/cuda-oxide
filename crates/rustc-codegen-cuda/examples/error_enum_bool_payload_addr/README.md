@@ -22,7 +22,7 @@ Expected: the build FAILS, and the smoketest checks the log for this
 exact diagnostic:
 
 ```text
-in-place mutation of bool or shared-pointer enum payloads is not supported
+a write that stays inside its function is compiled by rebuilding the enum around the new payload; a borrow that escapes into a call keeps no such rewrite and is refused here
 ```
 
 together with the `canonical storage type` explanation from the

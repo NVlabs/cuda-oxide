@@ -59,7 +59,10 @@ if [[ ${recorded_count} -lt 20 || ${data_rows} -lt 20 ]]; then
     exit 1
 fi
 
-required="$(cargo metadata --format-version 1 | python3 -c '
+# `--locked` so the guard reads the committed resolution rather than silently
+# updating Cargo.lock to satisfy itself: a check that can rewrite its own input
+# is not a check.
+required="$(cargo metadata --locked --format-version 1 | python3 -c '
 import json, sys
 
 metadata = json.load(sys.stdin)
@@ -91,3 +94,103 @@ if [[ -n "${missing}" ]]; then
 fi
 
 echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared crates."
+
+# ---------------------------------------------------------------------------
+# Second half: the example workspaces.
+#
+# Every example under crates/rustc-codegen-cuda/examples/ sets its own
+# [workspace], so neither `cargo deny check` nor the check above resolves any
+# of them -- both stop at the root workspace boundary.  Most examples declare
+# only path dependencies on first-party crates and so bring nothing new, but a
+# few link third-party code (tokio, rayon, libm, the cutile-rs git dependency),
+# and that code is compiled by `cargo oxide run <example>` and by
+# scripts/smoketest.sh without any license gate seeing it.
+#
+# Presence only, as above.  Lock files are parsed directly rather than through
+# `cargo metadata`: resolving every example workspace separately would be slow
+# and would need the network, and the lock files already record the resolved
+# graph.  The search is recursive so a lockfile in a nested sub-workspace
+# (e.g. cutile_inter_kernel/simt) is inventoried under its top-level example
+# instead of escaping the guard.
+#
+# A package counts as covered when it is in the root graph, has a CSV row, or
+# carries no `source` field.  That last case is a path dependency, which is
+# first-party by construction.  Name matching is deliberately avoided -- some
+# first-party crates are pulled by git rather than by path (cuda-core and
+# friends in cutile_inter_kernel), so a heuristic over names would misfile
+# them.
+# Examples whose third-party dependencies are deliberately out of inventory
+# scope.  cutile_inter_kernel links cutile-rs by git, which resolves a further
+# ~60 crates (wasm-bindgen, wit-bindgen, wasmparser, windows-targets) that exist
+# in this tree only to build one interop example.  Whether those belong in the
+# inventory is the open question in #663; until it is settled the example is
+# listed here rather than left silently uncovered.  Delete the entry to require
+# the rows.
+#
+# Every name here is checked against the examples on disk below, so a typo or a
+# rename fails the run instead of quietly exempting nothing -- or everything.
+INVENTORY_EXEMPT_EXAMPLES=(cutile_inter_kernel)
+
+examples_missing="$(python3 -c '
+import glob, os, re, sys
+
+def packages(path):
+    """(name, has_source) for every [[package]] in a Cargo.lock."""
+    out = []
+    for block in open(path).read().split("[[package]]")[1:]:
+        name = re.search(r"^name = \"([^\"]+)\"", block, re.M)
+        if name:
+            out.append((name.group(1), re.search(r"^source = ", block, re.M) is not None))
+    return out
+
+covered = set()
+for lock in ("Cargo.lock", "crates/rustc-codegen-cuda/Cargo.lock"):
+    covered |= {name for name, _ in packages(lock)}
+
+with open("dependency-licenses.csv", newline="") as handle:
+    next(handle, None)
+    covered |= {line.split(",")[0].strip().strip("\r") for line in handle if line.strip()}
+
+examples_root = "crates/rustc-codegen-cuda/examples"
+locks = sorted(glob.glob(os.path.join(examples_root, "**", "Cargo.lock"), recursive=True))
+if len(locks) < 20:
+    sys.exit("parse self-test failed: found %d example lock files" % len(locks))
+
+def example_of(lock):
+    """Top-level example directory a lockfile belongs to, however deep it sits."""
+    return os.path.relpath(lock, examples_root).split(os.sep)[0]
+
+present = {example_of(lock) for lock in locks}
+exempt = set(sys.argv[1:])
+unknown = sorted(exempt - present)
+if unknown:
+    sys.exit("INVENTORY_EXEMPT_EXAMPLES names no such example: " + ", ".join(unknown))
+
+seen = 0
+findings = []
+for lock in locks:
+    example = example_of(lock)
+    entries = packages(lock)
+    seen += len(entries)
+    if example in exempt:
+        continue
+    extra = sorted({n for n, sourced in entries if sourced and n not in covered})
+    if extra:
+        findings.append((example, extra))
+
+if seen < 100:
+    sys.exit("parse self-test failed: read %d packages from %d lock files" % (seen, len(locks)))
+
+for example, extra in findings:
+    print("%s: %s" % (example, " ".join(extra)))
+' "${INVENTORY_EXEMPT_EXAMPLES[@]}")"
+
+if [[ -n "${examples_missing}" ]]; then
+    echo "error: ${CSV} is missing rows for third-party crates that example" >&2
+    echo "       workspaces compile (neither cargo-deny nor the check above" >&2
+    echo "       resolves these -- both stop at the root workspace):" >&2
+    printf '%s\n' "${examples_missing}" | sed 's/^/  /' >&2
+    exit 1
+fi
+
+echo "OK: ${CSV} also covers every third-party crate the example workspaces pull."

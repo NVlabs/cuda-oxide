@@ -7,6 +7,8 @@
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub enum PipelineError {
+    /// The requested MIR pass pipeline is invalid for this compilation.
+    InvalidMirPassPipeline(String),
     /// Function has no MIR body (shouldn't happen for collected functions).
     NoBody(String),
     /// MIR→Pliron IR translation failed.
@@ -45,6 +47,9 @@ pub enum PipelineError {
 impl std::fmt::Display for PipelineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidMirPassPipeline(message) => {
+                write!(f, "invalid MIR pass pipeline: {message}")
+            }
             Self::NoBody(name) => write!(f, "Function '{}' has no MIR body", name),
             Self::Translation(msg) => write!(f, "Translation failed: {}", msg),
             Self::Verification {
