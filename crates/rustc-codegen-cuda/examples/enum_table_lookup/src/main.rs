@@ -11,10 +11,11 @@
 //! kernels below does the same arithmetic over the same index stream and differs
 //! only in whether the table's element type is the enum or its discriminant:
 //!
-//! | kernel        | table                    |
-//! |---------------|--------------------------|
-//! | `enumN_table` | `const OPS: [Op; N]`     |
-//! | `u32N_table`  | `const CODES: [u32; N]`  |
+//! | kernel              | table                          |
+//! |---------------------|--------------------------------|
+//! | `enumN_table`       | `const OPS: [Op; N]`           |
+//! | `u32N_table`        | `const CODES: [u32; N]`        |
+//! | `enum256_ref_table` | `const R: &[Op; 256] = &OPS`   |
 //!
 //! The integer form has been materialized as one immutable device global, read
 //! with a single `ld.global.nc`, since bare array constants stopped being built
@@ -26,7 +27,10 @@
 //!
 //! There was no way to spell around it either. `&[Op; N]` — the reference form
 //! that works for scalar tables — is rejected outright, so a field-less enum
-//! table had no fast spelling at all.
+//! table had no fast spelling at all. Both spellings are exercised here:
+//! `enum256_ref_table` reads through `const R: &[Op; 256] = &OPS`, which used
+//! to hard-error with "invalid input program" and now lowers to the same
+//! immutable global as the bare table.
 //!
 //! Both sizes are measured because `ptxas` can rescue a small table on its own,
 //! so the 256-entry row is the one that shows what the lowering costs.
@@ -127,6 +131,12 @@ macro_rules! build_tables {
 build_tables!(N16, OPS16, CODES16);
 build_tables!(N256, OPS256, CODES256);
 
+/// The reference spelling of the 256-entry enum table. This form used to be
+/// rejected outright; it must lower to the same immutable global the bare
+/// table gets, and the kernel reading through it must match the same host
+/// reference.
+const OPS256_REF: &[Op; N256] = &OPS256;
+
 #[cuda_module]
 mod kernels {
     use cuda_device::{DisjointSlice, kernel, thread};
@@ -208,6 +218,27 @@ mod kernels {
         for _ in 0..super::ROUNDS {
             h = step(h);
             acc = acc.wrapping_add(super::CODES256[(h >> 24) as usize & (super::N256 - 1)]);
+        }
+        if let Some(o) = output.get_mut(idx) {
+            *o = acc;
+        }
+    }
+
+    /// The same loop as `enum256_table`, read through the reference spelling
+    /// `const R: &[Op; 256] = &OPS` instead of the bare table.
+    #[kernel]
+    pub fn enum256_ref_table(input: &[u32], mut output: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+        let mut h = input[i];
+        let mut acc = 0u32;
+        for _ in 0..super::ROUNDS {
+            h = step(h);
+            acc =
+                acc.wrapping_add(super::OPS256_REF[(h >> 24) as usize & (super::N256 - 1)] as u32);
         }
         if let Some(o) = output.get_mut(idx) {
             *o = acc;
@@ -310,6 +341,7 @@ fn main() {
     let c16 = measure!("u3216_table", N16, "u32", u3216_table, &ref16);
     let e256 = measure!("enum256_table", N256, "Op", enum256_table, &ref256);
     let c256 = measure!("u32256_table", N256, "u32", u32256_table, &ref256);
+    let r256 = measure!("enum256_ref_table", N256, "&Op", enum256_ref_table, &ref256);
 
     println!();
     println!(
@@ -319,13 +351,13 @@ fn main() {
     );
     println!("{ITERS} timed launches after {WARMUP} warmup\n");
     println!(
-        "{:<16} {:>8} {:>9} {:>11} {:>12} {:>9}",
+        "{:<18} {:>8} {:>9} {:>11} {:>12} {:>9}",
         "kernel", "entries", "element", "us/launch", "Glookups/s", "correct"
     );
-    println!("{:-<70}", "");
+    println!("{:-<72}", "");
     for r in &rows {
         println!(
-            "{:<16} {:>8} {:>9} {:>11.1} {:>12.2} {:>9}",
+            "{:<18} {:>8} {:>9} {:>11.1} {:>12.2} {:>9}",
             r.name,
             r.entries,
             r.element,
@@ -336,11 +368,16 @@ fn main() {
     }
 
     // The enum table should now cost what the integer table of the same
-    // discriminants costs: 1.00x is the target, not a speedup over it.
+    // discriminants costs: 1.00x is the target, not a speedup over it. The
+    // reference spelling reads the same global, so it is held to the same bar.
     println!("\ntime of the enum table relative to the u32 table of the same values:");
-    println!("{:-<70}", "");
+    println!("{:-<72}", "");
     println!("  {N16:>3} entries:  {:>6.2}x", e16 / c16);
     println!("  {N256:>3} entries:  {:>6.2}x", e256 / c256);
+    println!(
+        "  {N256:>3} entries through &[Op; {N256}]:  {:>6.2}x",
+        r256 / c256
+    );
 
     let wrong: Vec<&str> = rows.iter().filter(|r| !r.correct).map(|r| r.name).collect();
     if wrong.is_empty() {
