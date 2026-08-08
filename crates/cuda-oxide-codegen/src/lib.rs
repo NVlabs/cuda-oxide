@@ -21,6 +21,7 @@ mod export;
 mod generated;
 #[allow(dead_code, missing_docs)]
 mod generated_intrinsic_targets;
+mod iket;
 mod llvm_tools;
 mod lower;
 mod mir_pass_registry;
