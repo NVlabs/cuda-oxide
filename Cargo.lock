@@ -457,6 +457,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dialect-iket"
+version = "0.1.0"
+dependencies = [
+ "combine",
+ "dyn-clone",
+ "linkme",
+ "pliron",
+ "pliron-derive",
+ "thiserror",
+]
+
+[[package]]
 name = "dialect-mir"
 version = "0.2.1"
 dependencies = [
@@ -856,6 +868,7 @@ version = "0.2.1"
 dependencies = [
  "combine",
  "cuda-oxide-codegen",
+ "dialect-iket",
  "dialect-mir",
  "dialect-nvvm",
  "linkme",

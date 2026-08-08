@@ -10,6 +10,7 @@ members = [
     "crates/cuda-macros",
     "crates/llvm-export",
     "crates/dialect-mir",
+    "crates/dialect-iket",
     "crates/dialect-nvvm",
     "crates/mir-importer",
     "crates/cuda-oxide-codegen",
@@ -58,6 +59,7 @@ pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "0d3f25df6d0
 # Internal crates
 llvm-export = { path = "crates/llvm-export" }
 dialect-mir = { path = "crates/dialect-mir" }
+dialect-iket = { path = "crates/dialect-iket" }
 dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
 mir-importer = { path = "crates/mir-importer" }
@@ -112,4 +114,3 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 # optimize only SHA-256 so exact content fingerprinting remains inexpensive.
 [profile.dev.package.sha2]
 opt-level = 3
-

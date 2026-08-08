@@ -33,6 +33,7 @@
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
+use dialect_iket::{ops::IketSentinelTokenOp, types::IketRangeTokenType};
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
@@ -2189,6 +2190,22 @@ pub fn translate_operand(
             }
 
             let const_ty_ptr = types::translate_type(ctx, &rust_ty)?;
+
+            // `RangeToken<R>` is intentionally a Rust ZST. Optimized MIR can
+            // therefore materialize a token operand as an independent ZST
+            // constant instead of preserving the call-result SSA edge. Keep a
+            // well-typed semantic placeholder here; the frontend-provided
+            // static range key pairs range_start/range_end during lowering.
+            if const_ty_ptr.deref(ctx).is::<IketRangeTokenType>() {
+                let op = IketSentinelTokenOp::new(ctx).get_operation();
+                op.deref_mut(ctx).set_loc(loc);
+                if let Some(prev) = prev_op {
+                    op.insert_after(ctx, prev);
+                } else {
+                    op.insert_at_front(block_ptr, ctx);
+                }
+                return Ok((op.deref(ctx).get_result(0), Some(op)));
+            }
 
             // ZSTs have no runtime bytes, but they still need a value with the
             // exact translated type. This is critical for marker structs,
