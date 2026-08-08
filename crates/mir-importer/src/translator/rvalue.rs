@@ -2974,6 +2974,16 @@ fn classify_place_read_strategy(
                     // `mir.extract_field` supports it instead.
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
+                if tuple_has_over_aligned_zst_field(ctx, pointee) {
+                    // Code-shape guard: the address path's final load states
+                    // natural alignment only, while a zero-byte
+                    // `repr(align(N))` field raises the tuple's ABI alignment
+                    // without appearing in its LLVM storage type. Keep such
+                    // tuples on the value path, which moves the whole
+                    // aggregate at its recorded alignment. Gate shape from
+                    // PR #715 (vyncint), with the byte-size gap closed.
+                    return Ok(PlaceReadStrategy::ValueFallback);
+                }
 
                 let field_type = types::translate_type(ctx, field_ty)?;
                 let Some(projected_ptr_ty) = projected_pointer_type(
@@ -4797,6 +4807,71 @@ fn is_empty_tuple_type(ctx: &Context, ty: TypeHandle) -> bool {
     ty.deref(ctx)
         .downcast_ref::<dialect_mir::types::MirTupleType>()
         .is_some_and(|tt| tt.get_types().is_empty())
+}
+
+/// Whether `ty` is a tuple carrying a field that owns zero bytes while
+/// demanding ABI alignment above 1, at any array nesting depth.
+///
+/// Code-shape guard for the read classifier: the address path's final
+/// `mir.load` states the loaded field's natural alignment only, so a tuple
+/// whose recorded ABI alignment comes from a zero-sized `repr(align(N))`
+/// field must keep the value path, which moves the whole aggregate at its
+/// recorded alignment. Gate shape from PR #715 (vyncint), with the byte-size
+/// gap closed: detection compares byte sizes, not element counts, so
+/// `[Align32; 2]` still reads as zero bytes.
+fn tuple_has_over_aligned_zst_field(ctx: &Context, ty: TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirTupleType>()
+        .is_some_and(|tuple_ty| {
+            tuple_ty
+                .get_types()
+                .iter()
+                .any(|field| is_over_aligned_zst_type(ctx, *field))
+        })
+}
+
+/// Whether `ty` occupies zero bytes while its recorded ABI alignment exceeds
+/// 1: a `repr(align(N))` ZST, possibly wrapped in arrays.
+fn is_over_aligned_zst_type(ctx: &Context, ty: TypeHandle) -> bool {
+    recorded_byte_size_and_abi_align(ctx, ty)
+        .is_some_and(|(byte_size, abi_align)| byte_size == 0 && abi_align > 1)
+}
+
+/// Byte size and ABI alignment of `ty`, when the dialect records them.
+///
+/// Aggregates carry rustc's `total_size` and `abi_align` directly. Arrays
+/// multiply the element's byte size by the element count
+/// (`MirArrayType::size()` is a count, not a byte size) and align like their
+/// element. Scalars and pointers return `None`: they always occupy at least
+/// one byte, so they can never be a zero-sized alignment carrier.
+fn recorded_byte_size_and_abi_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> {
+    use dialect_mir::types::{
+        MirArrayType, MirEnumType, MirStructType, MirTupleType, MirUnionType,
+    };
+
+    let ty_ref = ty.deref(ctx);
+    if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+        let element_ty = array_ty.element_type();
+        let element_count = array_ty.size();
+        return recorded_byte_size_and_abi_align(ctx, element_ty).map(
+            |(element_size, element_align)| {
+                (element_size.saturating_mul(element_count), element_align)
+            },
+        );
+    }
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+        return Some((tuple_ty.total_size(), tuple_ty.abi_align()));
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        return Some((struct_ty.total_size(), struct_ty.abi_align));
+    }
+    if let Some(enum_ty) = ty_ref.downcast_ref::<MirEnumType>() {
+        return Some((enum_ty.total_size(), enum_ty.abi_align()));
+    }
+    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
+        return Some((union_ty.total_size(), union_ty.abi_align()));
+    }
+    None
 }
 
 fn slice_like_element_type(ctx: &Context, ty: TypeHandle) -> Option<TypeHandle> {
@@ -10805,7 +10880,99 @@ mod aggregate_relocation_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dialect_mir::types::{MirPtrType, MirStructType};
+    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
+
+    #[test]
+    fn over_aligned_zst_tuple_fields_force_the_value_fallback_gate() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // `#[repr(align(32))] struct Align32;`: zero bytes, ABI alignment 32.
+        let align32_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Align32".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            32,
+        )
+        .into();
+
+        // `(Align32, u8)` as rustc lays it out: one payload byte padded out
+        // to a 32-byte, align-32 allocation.
+        let pair_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![align32_ty, u8_ty],
+            vec![],
+            vec![0, 0],
+            32,
+            32,
+        )
+        .into();
+        assert!(
+            tuple_has_over_aligned_zst_field(&ctx, pair_ty),
+            "a zero-byte repr(align(32)) field must force the value path"
+        );
+
+        // The byte-size gap in PR #715's gate: `[Align32; 2]` has element
+        // count 2 but still owns zero bytes and still demands align 32, at
+        // any array nesting depth.
+        let align32_x2_ty: TypeHandle = MirArrayType::get(&mut ctx, align32_ty, 2).into();
+        let align32_x2x3_ty: TypeHandle = MirArrayType::get(&mut ctx, align32_x2_ty, 3).into();
+        for wrapped_ty in [align32_x2_ty, align32_x2x3_ty] {
+            let tuple_ty: TypeHandle = MirTupleType::get_with_layout(
+                &mut ctx,
+                vec![wrapped_ty, u8_ty],
+                vec![],
+                vec![0, 0],
+                32,
+                32,
+            )
+            .into();
+            assert!(
+                tuple_has_over_aligned_zst_field(&ctx, tuple_ty),
+                "a zero-byte array of over-aligned ZSTs must not slip through on element count"
+            );
+        }
+
+        // Ordinary tuples keep the address path: rustc's reordered
+        // `(u8, u32)` layout (u8 at offset 4, u32 at offset 0).
+        let plain_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![u8_ty, u32_ty],
+            vec![1, 0],
+            vec![4, 0],
+            8,
+            4,
+        )
+        .into();
+        assert!(
+            !tuple_has_over_aligned_zst_field(&ctx, plain_ty),
+            "tuples without over-aligned ZST fields must stay on the address path"
+        );
+
+        // An align-1 ZST field, the unit tuple, does not trip the gate:
+        // zero bytes alone raise nothing.
+        let unit_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![]).into();
+        let with_unit_ty: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![unit_ty, u32_ty],
+            vec![],
+            vec![0, 0],
+            4,
+            4,
+        )
+        .into();
+        assert!(
+            !tuple_has_over_aligned_zst_field(&ctx, with_unit_ty),
+            "plain ZST fields raise no alignment and must not force the fallback"
+        );
+    }
 
     #[test]
     fn struct_storage_size_reads_layout_presence_not_size() {
