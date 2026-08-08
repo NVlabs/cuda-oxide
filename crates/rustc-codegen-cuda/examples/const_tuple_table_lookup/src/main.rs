@@ -24,6 +24,12 @@
 //! which only trusts primitive-scalar or nested-array elements, so a
 //! tuple-element table keeps its own per-thread copy until that is extended.
 //!
+//! `tuple_field_store` covers the WRITE side the same verifier change
+//! unlocks: `arr[j].1 = x` through a runtime index and a write through a
+//! `&mut` tuple-field borrow both previously failed dialect verification
+//! loudly. The reordered `(u8, u32)` element makes the check bit-exact on
+//! the memory-slot vs declaration-index distinction for stores.
+//!
 //! `sum_lookup` reads a table this fix does NOT change (`ROW: [u32; 4]`,
 //! scalar elements, single index) as a same-run contrast: its lowering is
 //! untouched by this diff, and its correctness check rules out an unrelated
@@ -65,6 +71,35 @@ mod kernels {
         let (a, b) = PAIRS[(indices[i] as usize) & (TABLE_LEN - 1)];
         if let Some(o) = out.get_mut(idx) {
             *o = a as u32 + b;
+        }
+    }
+
+    /// The WRITE side of the same verifier unlock: `arr[j].1 = x` and a
+    /// `&mut` tuple-field borrow both lower to `mir.field_addr` + `mir.store`
+    /// on a tuple pointee, which the verifier rejected before this fix. The
+    /// `(u8, u32)` element is rustc-reordered (u32 first in memory), so a
+    /// store that confused the declaration index with the memory slot would
+    /// garble the neighbouring field and fail the bit-exact check below.
+    #[kernel]
+    pub fn tuple_field_store(indices: &[u32], mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= indices.len() {
+            return;
+        }
+        let t = (indices[i] as usize) & (TABLE_LEN - 1);
+        // Copy two neighbouring table entries into a local tuple array so
+        // both a written and an untouched element are checked.
+        let mut arr = [PAIRS[t], PAIRS[(t + 1) & (TABLE_LEN - 1)]];
+        let j = t & 1;
+        // Tuple-field write through a runtime index: `arr[j].1 = ...` with a
+        // thread-unique value.
+        arr[j].1 = indices[i].wrapping_mul(2_246_822_519);
+        // Tuple-field write through a `&mut` borrow.
+        let first = &mut arr[j].0;
+        *first = (indices[i] >> 24) as u8;
+        if let Some(o) = out.get_mut(idx) {
+            *o = arr[j].0 as u32 + arr[j].1 + arr[1 - j].0 as u32 + arr[1 - j].1;
         }
     }
 
@@ -126,6 +161,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     println!("tuple_field_lookup: {N} elements, exact match");
+
+    let mut store_out = DeviceBuffer::<u32>::zeroed(&stream, N as usize)?;
+    // SAFETY: the grid covers exactly N elements and both buffers hold them.
+    unsafe {
+        module.tuple_field_store(&stream, config, &indices, &mut store_out)?;
+    }
+    stream.synchronize()?;
+
+    let store_got = store_out.to_host_vec(&stream)?;
+    for (i, value) in store_got.iter().enumerate() {
+        let t = (indices_host[i] as usize) & (TABLE_LEN - 1);
+        let mut arr = [pairs[t], pairs[(t + 1) & (TABLE_LEN - 1)]];
+        let j = t & 1;
+        arr[j].1 = indices_host[i].wrapping_mul(2_246_822_519);
+        arr[j].0 = (indices_host[i] >> 24) as u8;
+        let expected = arr[j].0 as u32 + arr[j].1 + arr[1 - j].0 as u32 + arr[1 - j].1;
+        if *value != expected {
+            return Err(
+                format!("tuple_field_store: element {i} is {value}, expected {expected}").into(),
+            );
+        }
+    }
+    println!("tuple_field_store: {N} elements, exact match");
 
     let mut sum_out = DeviceBuffer::<u32>::zeroed(&stream, N as usize)?;
     // SAFETY: the grid covers exactly N elements and both buffers hold them.

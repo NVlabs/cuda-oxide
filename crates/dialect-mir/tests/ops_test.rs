@@ -1647,3 +1647,85 @@ fn test_mir_field_addr_tuple_pointee_verify() {
         "out-of-bounds tuple field index rejected"
     );
 }
+
+#[test]
+fn test_mir_field_addr_tuple_pointee_store_verify() {
+    // The WRITE side of the tuple-pointee unlock: `t.1 = x` / `arr[i].1 = x`
+    // lower to `mir.field_addr` + `mir.store` through the field's address, so
+    // a tuple-pointee field address used as a store destination must pass
+    // verification too. Same reordered `(u8, u32)` layout as above (the u32
+    // field first in memory), so the store type-checks against the DECLARED
+    // field type, not whatever occupies that memory slot.
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+
+    let tuple_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![u8_ty.into(), u32_ty.into()],
+        vec![1, 0],
+        vec![4, 0],
+        8,
+        4,
+    );
+
+    let tuple_ptr_ty = MirPtrType::get_generic(&mut ctx, tuple_ty.into(), false);
+    let blk = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![tuple_ptr_ty.into(), u32_ty.into(), u8_ty.into()],
+    );
+    let tuple_ptr = blk.deref(&ctx).get_argument(0);
+    let u32_val = blk.deref(&ctx).get_argument(1);
+    let u8_val = blk.deref(&ctx).get_argument(2);
+
+    // `.1 = x`: address declaration field 1 (u32, memory slot 0) and store a
+    // u32 through it.
+    let u32_ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), false);
+    let op_field1 = Operation::new(
+        &mut ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![u32_ptr_ty.into()],
+        vec![tuple_ptr],
+        vec![],
+        0,
+    );
+    let field1 = MirFieldAddrOp::new(op_field1);
+    field1.set_attr_field_index(&ctx, FieldIndexAttr(1));
+    assert!(
+        field1.verify(&ctx).is_ok(),
+        "tuple field 1 (u32) address accepted as a store destination"
+    );
+    let field1_ptr = op_field1.deref(&ctx).get_result(0);
+
+    let op_store = Operation::new(
+        &mut ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![field1_ptr, u32_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirStoreOp::new(op_store).verify(&ctx).is_ok(),
+        "store through a tuple field address verifies"
+    );
+
+    // The stored value must match the DECLARED field type (`u32` for `.1`),
+    // not the type of the field sharing the tuple: a u8 store through the
+    // `.1` pointer is a type mismatch.
+    let op_store_wrong_ty = Operation::new(
+        &mut ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![field1_ptr, u8_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirStoreOp::new(op_store_wrong_ty).verify(&ctx).is_err(),
+        "store of a mismatched value type through a tuple field address rejected"
+    );
+}

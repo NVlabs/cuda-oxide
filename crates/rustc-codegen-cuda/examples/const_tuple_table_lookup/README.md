@@ -30,6 +30,14 @@ table keeps its own per-thread copy). What this fix removes is the
 materialization; after, both fields resolve through one shared
 `mir.field_addr`-computed element address.
 
+`tuple_field_store` covers the WRITE side the same verifier change unlocks:
+`arr[j].1 = x` through a runtime index and a write through a `&mut`
+tuple-field borrow both lower to `mir.field_addr` + `mir.store` on a tuple
+pointee, which previously failed dialect verification loudly. The
+rustc-reordered `(u8, u32)` element (u32 first in memory) makes the bit-exact
+check lock the memory-slot vs declaration-index distinction for stores, as
+the read kernel already does for loads.
+
 `sum_lookup` reads a table this fix does not change (`ROW: [u32; 4]`, scalar
 elements, single index), run in the same binary as a contrast: its lowering
 is untouched by this diff, so its correctness check rules out an unrelated
@@ -51,6 +59,7 @@ scripts/smoketest.sh -x -v '^const_tuple_table_lookup$'
 
 ```text
 tuple_field_lookup: 16384 elements, exact match
+tuple_field_store: 16384 elements, exact match
 sum_lookup: 16384 elements, exact match
 SUCCESS: tuple-field table lookups match the CPU reference
 ```
