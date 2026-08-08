@@ -665,6 +665,7 @@ pub fn convert_global_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
@@ -748,6 +749,7 @@ pub fn convert_global_alloc_dc(
             ctx,
             op,
             device_globals,
+            next_device_global_index,
             DeviceGlobalSpec {
                 key: &global_key,
                 mir_type: mir_global_type,
@@ -779,10 +781,15 @@ struct DeviceGlobalSpec<'a> {
     immutable: bool,
 }
 
+/// `next_device_global_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a device global earlier in the process (#706).
 fn create_device_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
     spec: DeviceGlobalSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     // An explicit initializer is already the evaluated Rust allocation image.
@@ -830,9 +837,8 @@ fn create_device_global(
                 ))
             })?
         } else {
-            static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let counter = DEVICE_GLOBAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let counter = *next_device_global_index;
+            *next_device_global_index += 1;
             format!("__device_global_{counter}").try_into().unwrap()
         };
 
@@ -2236,34 +2242,41 @@ mod tests {
         assert_eq!(count_ops::<llvm::AddressOfOp>(&ctx, &body), 3);
     }
 
-    /// A `__shared_mem_N` index must depend only on the module being
-    /// lowered, not on how many shared allocations any OTHER module has
-    /// already lowered in this process (#706). Before the fix, `N` came
-    /// from a `static AtomicUsize` shared across every call in the process,
-    /// so lowering the second of these two modules would have produced
-    /// `__shared_mem_1`, not `__shared_mem_0`.
+    /// A `__shared_mem_N` or `__device_global_N` index must depend only on
+    /// the module being lowered, not on how many allocations any OTHER
+    /// module has already lowered in this process (#706). Before the fix,
+    /// each `N` came from a `static AtomicUsize` shared across every call in
+    /// the process, so lowering the second of these two modules would have
+    /// produced `__shared_mem_1` and `__device_global_1`, not the `_0` names.
     #[test]
-    fn shared_mem_index_is_per_module_not_process_global() {
+    fn shared_and_device_global_indices_are_per_module_not_process_global() {
         for _ in 0..2 {
             let mut ctx = make_ctx();
             let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
             append_shared_alloc(&mut ctx, block, "k", 64);
+            append_global_alloc(&mut ctx, block, "ordinary_static", false);
             append_mir_return(&mut ctx, block, vec![]);
 
             crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
 
             let top = module_top_block(&ctx, module_ptr);
-            let global = top
+            let names: Vec<String> = top
                 .deref(&ctx)
                 .iter(&ctx)
-                .find_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
-                .expect("expected an llvm.global for the shared allocation");
-            assert_eq!(
-                global.get_symbol_name(&ctx).to_string(),
-                "__shared_mem_0",
+                .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+                .map(|g| g.get_symbol_name(&ctx).to_string())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "__shared_mem_0"),
                 "a module with exactly one shared allocation must always name it \
                  __shared_mem_0, regardless of how many other modules already lowered \
-                 one in this process"
+                 one in this process (got {names:?})"
+            );
+            assert!(
+                names.iter().any(|n| n == "__device_global_0"),
+                "a module with exactly one ordinary device global must always name it \
+                 __device_global_0, regardless of how many other modules already \
+                 lowered one in this process (got {names:?})"
             );
         }
     }
