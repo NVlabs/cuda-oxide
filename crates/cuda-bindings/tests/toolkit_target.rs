@@ -132,6 +132,56 @@ fn top_level_include_wins_over_any_targets_tree() {
 }
 
 #[test]
+fn env_override_is_the_single_targets_candidate() {
+    // CUDA_TOOLKIT_TARGET_DIR names one tree by hand, like nvcc's
+    // `-target-dir`: the table's candidates are not consulted at all.
+    let root = fake_toolkit(
+        "override",
+        &[
+            "targets/sbsa-linux/include",
+            "targets/aarch64-linux/include",
+        ],
+    );
+    let dirs = resolve_toolkit_target_dirs(Some("aarch64-linux"), "aarch64", "linux");
+    assert_eq!(dirs, vec!["aarch64-linux".to_string()]);
+    let candidates = toolkit_include_candidates(&root, &dirs);
+    let selected = select_include_dir(&candidates).expect("override layout must resolve");
+    assert_eq!(selected, &root.join("targets/aarch64-linux/include"));
+    let _ = std::fs::remove_dir_all(&root);
+
+    // A blank override means "unset": the table decides, as before.
+    for blank in [None, Some(""), Some("  ")] {
+        assert_eq!(
+            resolve_toolkit_target_dirs(blank, "aarch64", "linux"),
+            vec!["sbsa-linux".to_string(), "aarch64-linux".to_string()],
+            "blank override {blank:?} must fall back to the table"
+        );
+    }
+}
+
+#[test]
+fn wrong_env_override_fails_instead_of_falling_back() {
+    // The override is existence-probed, not trusted: a typo must surface as
+    // the "could not find cuda.h" error listing exactly what was probed,
+    // never as a silent fallback to another architecture's tree.
+    let root = fake_toolkit("override-bad", &["targets/sbsa-linux/include"]);
+    let dirs = resolve_toolkit_target_dirs(Some("aarch64-qnx"), "aarch64", "linux");
+    let candidates = toolkit_include_candidates(&root, &dirs);
+    assert_eq!(
+        candidates,
+        vec![
+            root.join("include"),
+            root.join("targets/aarch64-qnx/include")
+        ]
+    );
+    assert!(
+        select_include_dir(&candidates).is_none(),
+        "a wrong override must not resolve the sbsa-linux headers"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn non_linux_probes_only_the_top_level_include() {
     let root = fake_toolkit("darwin", &["targets/sbsa-linux/include"]);
     let candidates = toolkit_include_candidates(&root, toolkit_target_dirs("aarch64", "macos"));

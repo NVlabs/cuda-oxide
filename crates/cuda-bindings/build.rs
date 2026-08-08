@@ -12,6 +12,15 @@ const TOOLKIT_ENV_VARS: [&str; 2] = ["CUDA_TOOLKIT_PATH", "CUDA_HOME"];
 /// Toolkit root fallback when none of [`TOOLKIT_ENV_VARS`] is set.
 const DEFAULT_TOOLKIT_DIR: &str = "/usr/local/cuda";
 
+/// Environment variable naming the CUDA `targets/<dir>` tree to use,
+/// overriding the arch+OS table in `toolkit_target.rs`. The value is a
+/// directory name under `{toolkit}/targets/` (e.g. `aarch64-linux`), the
+/// same shape nvcc's `-target-dir` flag takes; CMake exposes the equivalent
+/// selection as `CUDAToolkit_TARGET_DIR`. The named directory is still
+/// probed for `cuda.h`, so a wrong value fails with the clear discovery
+/// error instead of silently falling back to the table.
+const TOOLKIT_TARGET_DIR_ENV: &str = "CUDA_TOOLKIT_TARGET_DIR";
+
 /// Returns the CUDA toolkit install root: the first set variable among
 /// [`TOOLKIT_ENV_VARS`], otherwise [`DEFAULT_TOOLKIT_DIR`]. Used for include
 /// paths, library search paths, and bindgen’s Clang configuration.
@@ -42,6 +51,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     for var in TOOLKIT_ENV_VARS {
         println!("cargo:rerun-if-env-changed={var}");
     }
+    println!("cargo:rerun-if-env-changed={TOOLKIT_TARGET_DIR_ENV}");
     println!("cargo::rustc-check-cfg=cfg(cuda_has_cuEventElapsedTime_v2)");
 
     let toolkit = cuda_toolkit_dir();
@@ -75,27 +85,28 @@ fn run() -> Result<(), Box<dyn Error>> {
 // `tests/toolkit_target.rs` so it can be unit tested.
 include!("toolkit_target.rs");
 
-/// [`toolkit_target_dirs`] for the target cargo is building for, read from
-/// `CARGO_CFG_TARGET_ARCH` / `CARGO_CFG_TARGET_OS`. Empty when either is
-/// unset, which keeps discovery on the plain `{toolkit}/include` layout
+/// The `targets/<dir>` candidates for the target cargo is building for: the
+/// [`TOOLKIT_TARGET_DIR_ENV`] override when set, otherwise
+/// [`toolkit_target_dirs`] for `CARGO_CFG_TARGET_ARCH` /
+/// `CARGO_CFG_TARGET_OS`. Empty when the override is absent and either cfg
+/// is unset, which keeps discovery on the plain `{toolkit}/include` layout
 /// rather than guessing.
-fn build_target_dirs() -> &'static [&'static str] {
-    let arch = env::var("CARGO_CFG_TARGET_ARCH");
-    let os = env::var("CARGO_CFG_TARGET_OS");
-    match (&arch, &os) {
-        (Ok(arch), Ok(os)) => toolkit_target_dirs(arch, os),
-        _ => &[],
-    }
+fn build_target_dirs() -> Vec<String> {
+    let override_dir = env::var(TOOLKIT_TARGET_DIR_ENV).ok();
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    resolve_toolkit_target_dirs(override_dir.as_deref(), &arch, &os)
 }
 
 /// Returns the include directory containing `cuda.h`: `{toolkit}/include`
 /// for standard installs, or `{toolkit}/targets/<dir>/include` for
 /// redistributable layouts that have no top-level `include/`.
 ///
-/// Only the `targets/` directories [`toolkit_target_dirs`] lists for the
-/// build target's own architecture are probed, in order. Globbing all of
-/// `targets/*` would let another architecture's headers and stubs shadow the
-/// right ones on multi-target installs (`sbsa-linux` sorts before
+/// Only the `targets/` directories [`build_target_dirs`] yields (the
+/// [`TOOLKIT_TARGET_DIR_ENV`] override, or the [`toolkit_target_dirs`] table
+/// for the build target's own architecture) are probed, in order. Globbing
+/// all of `targets/*` would let another architecture's headers and stubs
+/// shadow the right ones on multi-target installs (`sbsa-linux` sorts before
 /// `x86_64-linux`).
 ///
 /// A missing `cuda.h` is a hard error here: bindgen cannot run without it,
@@ -103,7 +114,7 @@ fn build_target_dirs() -> &'static [&'static str] {
 /// diagnostics.
 fn find_cuda_include_dir(toolkit: &str) -> Result<PathBuf, String> {
     let base = Path::new(toolkit);
-    let candidates = toolkit_include_candidates(base, build_target_dirs());
+    let candidates = toolkit_include_candidates(base, &build_target_dirs());
 
     if let Some(dir) = select_include_dir(&candidates) {
         return Ok(dir.clone());
@@ -157,7 +168,7 @@ fn probe_event_elapsed_time_v2(cuda_h: &Path) {
 /// Adds `{toolkit}/lib64` and `{toolkit}/lib64/stubs` when `lib64` exists. For each
 /// `targets/<dir>` candidate whose `include/cuda.h` exists (redistributable / cross-layout
 /// install), also adds that target's `lib` and `lib/stubs`. Only the candidates
-/// [`toolkit_target_dirs`] lists for the build target's own architecture are considered,
+/// [`build_target_dirs`] yields for the build target (override or table) are considered,
 /// never all of `targets/*`. Order is preserved; duplicates are not filtered.
 fn collect_lib_paths(toolkit: &str) -> Vec<PathBuf> {
     let base = PathBuf::from(toolkit);

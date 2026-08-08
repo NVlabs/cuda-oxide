@@ -52,15 +52,38 @@ fn toolkit_target_dirs(target_arch: &str, target_os: &str) -> &'static [&'static
     }
 }
 
+/// [`toolkit_target_dirs`] with the `CUDA_TOOLKIT_TARGET_DIR` override
+/// applied: when `override_dir` carries a non-blank value, that value is the
+/// single `targets/` candidate, naming one tree by hand exactly like nvcc's
+/// `-target-dir` flag. The override is deliberately not existence-checked
+/// here; callers still probe the candidate for `cuda.h`, so a wrong value
+/// fails with the clear discovery error instead of silently falling back to
+/// the table.
+fn resolve_toolkit_target_dirs(
+    override_dir: Option<&str>,
+    target_arch: &str,
+    target_os: &str,
+) -> Vec<String> {
+    match override_dir.filter(|dir| !dir.trim().is_empty()) {
+        Some(dir) => vec![dir.to_string()],
+        None => toolkit_target_dirs(target_arch, target_os)
+            .iter()
+            .map(|dir| (*dir).to_string())
+            .collect(),
+    }
+}
+
 /// Include directories to probe for `cuda.h`, in priority order: the standard
 /// top-level `{toolkit}/include`, then `{toolkit}/targets/<dir>/include` for
-/// each candidate from [`toolkit_target_dirs`].
+/// each candidate from [`resolve_toolkit_target_dirs`].
 ///
 /// Fully-qualified `std::path` types, because `build.rs` already imports
-/// `Path` and `PathBuf` and this file is `include!`d into it.
+/// `Path` and `PathBuf` and this file is `include!`d into it. Generic over
+/// the directory-name slice so both the table's `&[&str]` and the resolved
+/// `Vec<String>` feed in unchanged.
 fn toolkit_include_candidates(
     toolkit: &std::path::Path,
-    target_dirs: &[&str],
+    target_dirs: &[impl AsRef<std::path::Path>],
 ) -> Vec<std::path::PathBuf> {
     let mut candidates = vec![toolkit.join("include")];
     for target_dir in target_dirs {
