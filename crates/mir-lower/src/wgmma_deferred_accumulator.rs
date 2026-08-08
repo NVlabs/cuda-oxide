@@ -324,9 +324,7 @@ fn affine_u64_step(ctx: &Context, argument: Value, next: Value) -> Option<u64> {
     }
 
     let defining_op = next.defining_op()?;
-    if Operation::get_op::<MirAddOp>(defining_op, ctx).is_none() {
-        return None;
-    }
+    Operation::get_op::<MirAddOp>(defining_op, ctx)?;
 
     let operation = defining_op.deref(ctx);
     if operation.get_num_operands() != 2 || operation.get_num_results() != 1 {
@@ -620,9 +618,7 @@ fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHan
     }
 
     let element_type = row_array.element_type();
-    if element_type.deref(ctx).downcast_ref::<FP32Type>().is_none() {
-        return None;
-    }
+    element_type.deref(ctx).downcast_ref::<FP32Type>()?;
 
     Some((row_type, element_type))
 }
@@ -737,10 +733,7 @@ fn store_accumulator_values_before(
     accumulator_results: Vec<Value>,
     loc: pliron::location::Location,
 ) {
-    for (element_pointer, result) in element_pointers
-        .into_iter()
-        .zip(accumulator_results.into_iter())
-    {
+    for (element_pointer, result) in element_pointers.into_iter().zip(accumulator_results) {
         let store = Operation::new(
             ctx,
             MirStoreOp::get_concrete_op_info(),
@@ -815,6 +808,7 @@ fn store_canonical_accumulator_values_before(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_value_plan(
     ctx: &mut Context,
     fence: Ptr<Operation>,
