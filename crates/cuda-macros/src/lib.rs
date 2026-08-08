@@ -3,6 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Procedural macros for CUDA kernel development: `#[kernel]`, `#[device]`,
+//! `#[cuda_module]`, `gpu_printf!`, `ptx_asm!`, and friends.
+//!
+//! # The `host` feature in mixed build graphs
+//!
+//! The default-on `host` cargo feature makes `#[kernel]` and `#[cuda_module]`
+//! emit the generated host surface (the `LoadedModule` loader and launchers,
+//! the `CudaKernel` marker impls), all of which names `::cuda_host` /
+//! `::cuda_core`. A crate that only compiles kernels takes this crate with
+//! `default-features = false` and drops the host dependency stack.
+//!
+//! Proc-macro features unify globally per build graph. If any crate in the
+//! graph enables `cuda-macros/host`, every crate expanding these macros gets
+//! the host-emitting expansion, including a device-only kernel crate; its
+//! expansion then names `cuda_host`, which it cannot resolve (E0433). A
+//! device-only kernel crate consumed by a host application must therefore
+//! forward the feature itself:
+//!
+//! ```toml
+//! [features]
+//! host = ["dep:cuda-host", "cuda-macros/host"]
+//! ```
+//!
+//! so the same switch that turns host emission on also adds the `cuda-host`
+//! dependency that resolves it.
+
 #![feature(proc_macro_def_site, proc_macro_tracked_env)]
 
 mod device_copy;
@@ -5489,6 +5515,10 @@ fn generate_simple_kernel(mut input: ItemFn, explicit_scope: Option<Ident>) -> T
 /// borrow alive across `stream.synchronize()` remains the caller's
 /// responsibility, exactly as it was under the previous `type_name`
 /// scheme.
+///
+/// Deliberately NOT gated by the `host` feature: generic kernels remain
+/// host-coupled by design for now, because the TypeId naming machinery
+/// lives in `cuda_host`.
 fn generate_generic_cuda_kernel_impl(
     fn_name: &Ident,
     vis: &syn::Visibility,
