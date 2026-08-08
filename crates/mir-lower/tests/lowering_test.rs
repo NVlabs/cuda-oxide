@@ -9188,17 +9188,16 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
         }
     }
 
-    // A `~{memory}` clobber appears only where the access carries ordering.
-    // Relaxed orders nothing, so clobbering all of memory around it is
-    // over-conservative: it forces every value LLVM was holding in a register to
-    // be spilled and reloaded across the access, which is exactly wrong for a
-    // relaxed load inside a spin loop.
+    // Every access keeps the `~{memory}` clobber, Relaxed included. Without
+    // it LLVM may move plain loads and stores of the same address across the
+    // asm, breaking the single-thread coherence Rust still guarantees for
+    // Relaxed atomics; libcu++ keeps the clobber on its relaxed accesses too.
     let expected = [
-        ("ld.relaxed.gpu.b32 $0, [$1];", "=r,l"),
+        ("ld.relaxed.gpu.b32 $0, [$1];", "=r,l,~{memory}"),
         ("ld.acquire.cta.b32 $0, [$1];", "=r,l,~{memory}"),
-        ("ld.relaxed.sys.b64 $0, [$1];", "=l,l"),
+        ("ld.relaxed.sys.b64 $0, [$1];", "=l,l,~{memory}"),
         ("st.release.gpu.b32 [$0], $1;", "l,r,~{memory}"),
-        ("st.relaxed.gpu.b64 [$0], $1;", "l,l"),
+        ("st.relaxed.gpu.b64 [$0], $1;", "l,l,~{memory}"),
     ];
     assert_eq!(
         lowered.len(),
@@ -9222,10 +9221,11 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
     Ok(())
 }
 
-/// Orderings a plain PTX load or store cannot express must be rejected, not
-/// silently weakened.
+/// Orderings a PTX load or store cannot carry must be rejected, not silently
+/// weakened.
 ///
-/// `SeqCst` needs a `fence.sc`; emitting `relaxed` instead would be a
+/// Acquire is load-only, Release is store-only, and AcqRel makes no sense on
+/// a single access. Approximating any of them with `relaxed` would be a
 /// correctness bug that no runtime test would catch, because the wrong answer
 /// only appears under contention on hardware that reorders.
 #[test]
@@ -9237,10 +9237,10 @@ fn test_scoped_atomic_rejects_inexpressible_orderings() -> Result<(), anyhow::Er
     use pliron::builtin::types::{IntegerType, Signedness};
 
     for (is_load, ordering) in [
-        (true, AtomicOrdering::SeqCst),
         (true, AtomicOrdering::Release), // release is store-only
-        (false, AtomicOrdering::SeqCst),
+        (true, AtomicOrdering::AcqRel),
         (false, AtomicOrdering::Acquire), // acquire is load-only
+        (false, AtomicOrdering::AcqRel),
     ] {
         let mut ctx = make_test_ctx();
         let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
@@ -9277,6 +9277,220 @@ fn test_scoped_atomic_rejects_inexpressible_orderings() -> Result<(), anyhow::Er
             result.is_err(),
             "{} with {ordering:?} ordering must be rejected, not approximated",
             if is_load { "load" } else { "store" }
+        );
+    }
+    Ok(())
+}
+
+/// SeqCst load and store lower to one asm op whose template fuses the
+/// `fence.sc` with the access, at every scope.
+///
+/// PTX has no sequentially consistent load or store instruction. libcu++ maps
+/// a SeqCst load to `fence.sc.{scope}` followed by an acquire load at the
+/// same scope, and a SeqCst store to `fence.sc.{scope}` followed by a release
+/// store. Fusing the fence into the same template keeps the pair inseparable.
+#[test]
+fn test_seqcst_atomic_load_store_fuse_fence_into_template() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for (scope, ptx) in [
+        (AtomicScope::Device, "gpu"),
+        (AtomicScope::Block, "cta"),
+        (AtomicScope::System, "sys"),
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            address,
+            u32_ty.into(),
+            AtomicOrdering::SeqCst,
+            scope.clone(),
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        NvvmAtomicStoreOp::build(&mut ctx, val, address, AtomicOrdering::SeqCst, scope)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut lowered = Vec::new();
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+                continue;
+            };
+            lowered.push((
+                asm.get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default(),
+                asm.get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default(),
+            ));
+        }
+        let expected = vec![
+            (
+                format!("fence.sc.{ptx}; ld.acquire.{ptx}.b32 $0, [$1];"),
+                "=r,l,~{memory}".to_string(),
+            ),
+            (
+                format!("fence.sc.{ptx}; st.release.{ptx}.b32 [$0], $1;"),
+                "l,r,~{memory}".to_string(),
+            ),
+        ];
+        assert_eq!(lowered, expected, "SeqCst lowering at scope {ptx}");
+    }
+    Ok(())
+}
+
+/// Float atomic loads and stores travel through integer registers with an
+/// LLVM-level bitcast on each side.
+///
+/// The register classes in the constraints are integer (`h`/`r`/`l`), so
+/// handing llc a float-typed asm operand or result is a constraint mismatch.
+/// The store bitcasts the float to the same-width integer before the asm; the
+/// load returns the integer and bitcasts it back to the float type. The f16
+/// case also covers the `b16`/`h` arm end to end, which is what makes
+/// `DeviceAtomicF16::load`/`store` compile at all.
+#[test]
+fn test_float_atomic_load_store_bitcast_through_integer_registers() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::{MirFP16Type, MirPtrType};
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{FP32Type, IntegerType};
+    use pliron::r#type::Typed;
+
+    let is_expected_float = |ctx: &Context, ty: pliron::r#type::TypeHandle, width: u32| -> bool {
+        let ty_ref = ty.deref(ctx);
+        match width {
+            16 => ty_ref.is::<llvm_types::HalfType>(),
+            32 => ty_ref.is::<FP32Type>(),
+            _ => false,
+        }
+    };
+    let integer_width_of = |ctx: &Context, ty: pliron::r#type::TypeHandle| -> Option<u32> {
+        ty.deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .map(IntegerType::width)
+    };
+
+    for (is_f16, ptx_ty, reg, width) in [(false, "b32", "r", 32u32), (true, "b16", "h", 16u32)] {
+        let mut ctx = make_test_ctx();
+        let elem_ty: pliron::r#type::TypeHandle = if is_f16 {
+            MirFP16Type::get(&ctx).into()
+        } else {
+            FP32Type::get(&ctx).into()
+        };
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, elem_ty, true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), elem_ty]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            address,
+            elem_ty,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        NvvmAtomicStoreOp::build(
+            &mut ctx,
+            val,
+            address,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut ld_asm = None;
+        let mut st_asm = None;
+        let mut bitcasts = Vec::new();
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                let constraints = asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if template.starts_with("ld.") {
+                    ld_asm = Some((op, template, constraints));
+                } else if template.starts_with("st.") {
+                    st_asm = Some((op, template, constraints));
+                }
+            }
+            if Operation::get_op::<llvm::BitcastOp>(op, &ctx).is_some() {
+                bitcasts.push(op);
+            }
+        }
+
+        // Load direction: asm produces the staging integer, then one bitcast
+        // turns it back into the float.
+        let (ld_op, ld_template, ld_constraints) =
+            ld_asm.expect("float atomic load must lower to inline asm");
+        assert_eq!(ld_template, format!("ld.relaxed.gpu.{ptx_ty} $0, [$1];"));
+        assert_eq!(ld_constraints, format!("={reg},l,~{{memory}}"));
+        let ld_result = ld_op.deref(&ctx).get_result(0);
+        assert_eq!(
+            integer_width_of(&ctx, ld_result.get_type(&ctx)),
+            Some(width),
+            "load asm must produce the staging integer, not the float"
+        );
+        let load_cast = bitcasts
+            .iter()
+            .copied()
+            .find(|&cast| cast.deref(&ctx).get_operand(0) == ld_result)
+            .expect("load asm result must be bitcast back to the float type");
+        let load_cast_ty = load_cast.deref(&ctx).get_result(0).get_type(&ctx);
+        assert!(
+            is_expected_float(&ctx, load_cast_ty, width),
+            "load bitcast must produce the float type"
+        );
+
+        // Store direction: the float is bitcast to the staging integer, and
+        // that integer is what the asm consumes.
+        let (st_op, st_template, st_constraints) =
+            st_asm.expect("float atomic store must lower to inline asm");
+        assert_eq!(st_template, format!("st.relaxed.gpu.{ptx_ty} [$0], $1;"));
+        assert_eq!(st_constraints, format!("l,{reg},~{{memory}}"));
+        let stored = st_op.deref(&ctx).get_operand(1);
+        assert_eq!(
+            integer_width_of(&ctx, stored.get_type(&ctx)),
+            Some(width),
+            "store asm must consume the staging integer, not the float"
+        );
+        let store_cast = bitcasts
+            .iter()
+            .copied()
+            .find(|&cast| cast.deref(&ctx).get_result(0) == stored)
+            .expect("store asm value must come from a float-to-integer bitcast");
+        let store_src_ty = store_cast.deref(&ctx).get_operand(0).get_type(&ctx);
+        assert!(
+            is_expected_float(&ctx, store_src_ty, width),
+            "store bitcast must consume the float type"
         );
     }
     Ok(())

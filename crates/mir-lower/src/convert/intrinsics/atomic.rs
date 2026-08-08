@@ -10,13 +10,14 @@
 //!
 //! # Lowering Strategy
 //!
-//! Unlike most GPU intrinsics that lower to LLVM NVVM intrinsic calls or
-//! inline PTX, atomic operations lower to **standard LLVM IR instructions**:
+//! RMW and compare-exchange lower to standard LLVM IR instructions. Loads
+//! and stores lower to inline PTX, because libNVVM rejects `load atomic` /
+//! `store atomic` outright ("Atomic loads/stores are not supported"):
 //!
-//! | NVVM Op                 | LLVM IR                                  |
+//! | NVVM Op                 | Lowered form                             |
 //! |-------------------------|------------------------------------------|
-//! | `NvvmAtomicLoadOp`      | `load atomic ... syncscope("device")`    |
-//! | `NvvmAtomicStoreOp`     | `store atomic ... syncscope("device")`   |
+//! | `NvvmAtomicLoadOp`      | inline PTX `ld.{sem}.{scope}.{ty}`       |
+//! | `NvvmAtomicStoreOp`     | inline PTX `st.{sem}.{scope}.{ty}`       |
 //! | `NvvmAtomicRmwOp`       | `atomicrmw ... syncscope("device")` `[*]`  |
 //! | `NvvmAtomicCmpxchgOp`   | `cmpxchg ... syncscope("device")`        |
 //!
@@ -54,6 +55,7 @@ use dialect_nvvm::ops::atomic::{
     NvvmAtomicStoreOp,
 };
 use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
+use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
 use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
@@ -110,25 +112,42 @@ fn map_rmw_kind(kind: &NvvmRmwKind) -> LlvmAtomicRmwKind {
 // Helpers
 // =============================================================================
 
-/// PTX type suffix and register constraint class for an operand type.
+/// PTX type suffix, register constraint class, and (for floats) the integer
+/// type the value is staged through.
+///
+/// The asm always uses an integer register class (`h`/`r`/`l`). A float
+/// operand or result is bitcast to and from the same-width integer type at
+/// the LLVM dialect level, so the asm operand type always agrees with its
+/// constraint; handing llc a float value under an integer constraint is a
+/// constraint mismatch.
 fn ptx_type_and_reg(
     ctx: &Context,
     ty: pliron::r#type::TypeHandle,
-) -> Option<(&'static str, &'static str)> {
+) -> Option<(
+    &'static str,
+    &'static str,
+    Option<pliron::r#type::TypeHandle>,
+)> {
+    let staging = |width: u32| -> pliron::r#type::TypeHandle {
+        IntegerType::get(ctx, width, Signedness::Signless).into()
+    };
     let ty_ref = ty.deref(ctx);
     if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
         return match int_ty.width() {
-            16 => Some(("b16", "h")),
-            32 => Some(("b32", "r")),
-            64 => Some(("b64", "l")),
+            16 => Some(("b16", "h", None)),
+            32 => Some(("b32", "r", None)),
+            64 => Some(("b64", "l", None)),
             _ => None,
         };
     }
-    if ty_ref.downcast_ref::<FP32Type>().is_some() {
-        return Some(("b32", "r"));
+    if ty_ref.is::<llvm_types::HalfType>() {
+        return Some(("b16", "h", Some(staging(16))));
     }
-    if ty_ref.downcast_ref::<FP64Type>().is_some() {
-        return Some(("b64", "l"));
+    if ty_ref.is::<FP32Type>() {
+        return Some(("b32", "r", Some(staging(32))));
+    }
+    if ty_ref.is::<FP64Type>() {
+        return Some(("b64", "l", Some(staging(64))));
     }
     None
 }
@@ -142,53 +161,39 @@ fn ptx_scope(scope: &NvvmScope) -> &'static str {
     }
 }
 
-/// Whether an inline-asm atomic needs a `~{memory}` clobber.
+/// Inline-PTX template for an atomic load.
 ///
-/// A memory clobber tells LLVM the asm may read and write ALL memory, so every
-/// other value it was keeping in a register has to be spilled and reloaded
-/// around it. That is required for an ordering-carrying access, whose whole
-/// purpose is to order other memory operations. It is NOT required for a
-/// relaxed access, which orders nothing.
-///
-/// The difference is large and easy to miss. A relaxed atomic load in a spin
-/// loop with a memory clobber forces the loop to re-load unrelated values every
-/// iteration: measured on a hash-table probe, L1 sector hit rate fell from 58%
-/// to 29% and the kernel took 65% longer, all of it extra L1 misses on data the
-/// atomic never touched.
-///
-/// `AsmKind::SideEffect` alone still prevents the access being deleted or
-/// hoisted out of its loop, which is what a spin needs.
-fn needs_memory_clobber(ord: &NvvmOrdering) -> bool {
-    !matches!(ord, NvvmOrdering::Relaxed)
-}
-
-/// PTX memory-ordering qualifier for a load.
-fn ptx_load_sem(ord: &NvvmOrdering) -> Result<&'static str> {
+/// PTX has no sequentially consistent load instruction. libcu++ maps a SeqCst
+/// load to `fence.sc.{scope}` followed by an acquire load at the same scope;
+/// the same mapping is emitted here, fused into a single asm template so the
+/// fence can never be separated from the access.
+fn ptx_load_template(ord: &NvvmOrdering, scope: &str, ptx_ty: &str) -> Result<String> {
     match ord {
-        NvvmOrdering::Relaxed => Ok("relaxed"),
-        NvvmOrdering::Acquire => Ok("acquire"),
-        NvvmOrdering::SeqCst => pliron::input_err_noloc!(
-            "atomic load with SeqCst ordering is not supported on this target; \
-             use Acquire, or an explicit fence plus an Acquire load"
-        ),
+        NvvmOrdering::Relaxed => Ok(format!("ld.relaxed.{scope}.{ptx_ty} $0, [$1];")),
+        NvvmOrdering::Acquire => Ok(format!("ld.acquire.{scope}.{ptx_ty} $0, [$1];")),
+        NvvmOrdering::SeqCst => Ok(format!(
+            "fence.sc.{scope}; ld.acquire.{scope}.{ptx_ty} $0, [$1];"
+        )),
         other => pliron::input_err_noloc!(
-            "atomic load cannot have {:?} ordering; use Relaxed or Acquire",
+            "atomic load cannot have {:?} ordering; use Relaxed, Acquire or SeqCst",
             other
         ),
     }
 }
 
-/// PTX memory-ordering qualifier for a store.
-fn ptx_store_sem(ord: &NvvmOrdering) -> Result<&'static str> {
+/// Inline-PTX template for an atomic store.
+///
+/// SeqCst mirrors the load mapping (libcu++'s): `fence.sc.{scope}` followed
+/// by a release store at the same scope, fused into one template.
+fn ptx_store_template(ord: &NvvmOrdering, scope: &str, ptx_ty: &str) -> Result<String> {
     match ord {
-        NvvmOrdering::Relaxed => Ok("relaxed"),
-        NvvmOrdering::Release => Ok("release"),
-        NvvmOrdering::SeqCst => pliron::input_err_noloc!(
-            "atomic store with SeqCst ordering is not supported on this target; \
-             use Release, or a Release store preceded by an explicit fence"
-        ),
+        NvvmOrdering::Relaxed => Ok(format!("st.relaxed.{scope}.{ptx_ty} [$0], $1;")),
+        NvvmOrdering::Release => Ok(format!("st.release.{scope}.{ptx_ty} [$0], $1;")),
+        NvvmOrdering::SeqCst => Ok(format!(
+            "fence.sc.{scope}; st.release.{scope}.{ptx_ty} [$0], $1;"
+        )),
         other => pliron::input_err_noloc!(
-            "atomic store cannot have {:?} ordering; use Relaxed or Release",
+            "atomic store cannot have {:?} ordering; use Relaxed, Release or SeqCst",
             other
         ),
     }
@@ -279,7 +284,7 @@ pub(crate) fn convert_atomic_load(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let nvvm_op = NvvmAtomicLoadOp::new(op);
-    let sem = ptx_load_sem(&nvvm_op.ordering(ctx))?;
+    let ordering = nvvm_op.ordering(ctx);
     let scope = ptx_scope(&nvvm_op.scope(ctx));
 
     let operands: Vec<_> = op.deref(ctx).operands().collect();
@@ -288,29 +293,39 @@ pub(crate) fn convert_atomic_load(
     let result_ty =
         convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error_noloc!("{}", e))?;
 
-    let (ptx_ty, reg) = ptx_type_and_reg(ctx, result_ty)
+    let (ptx_ty, reg, staging_int_ty) = ptx_type_and_reg(ctx, result_ty)
         .ok_or_else(|| pliron::input_error_noloc!("atomic load of unsupported operand type"))?;
+    let template = ptx_load_template(&ordering, scope, ptx_ty)?;
 
-    // SideEffect plus a memory clobber, deliberately. A scoped atomic load is
-    // usually a spin on another thread's publication, so it must be re-issued
-    // every iteration rather than hoisted out of the loop.
-    let clobber = if needs_memory_clobber(&nvvm_op.ordering(ctx)) {
-        ",~{memory}"
-    } else {
-        ""
-    };
+    // SideEffect plus an unconditional `~{memory}` clobber, including for
+    // Relaxed. Without the clobber LLVM may move plain loads and stores of
+    // the same address across the asm, breaking the single-thread coherence
+    // Rust still guarantees for Relaxed atomics; libcu++ keeps the clobber
+    // on its relaxed accesses for the same reason.
+    //
+    // Floats travel through the integer register class: the asm produces the
+    // same-width integer and the value is bitcast back below.
+    let asm_result_ty = staging_int_ty.unwrap_or(result_ty);
     let inline_asm = llvm::InlineAsmOp::build(
         ctx,
-        result_ty,
+        asm_result_ty,
         vec![ptr],
-        &format!("ld.{sem}.{scope}.{ptx_ty} $0, [$1];"),
-        &format!("={reg},l{clobber}"),
+        &template,
+        &format!("={reg},l,~{{memory}}"),
         AsmKind::SideEffect,
     );
 
     let asm_op = inline_asm.get_operation();
     rewriter.insert_operation(ctx, asm_op);
-    rewriter.replace_operation(ctx, op, asm_op);
+
+    if staging_int_ty.is_some() {
+        let asm_result = asm_op.deref(ctx).get_result(0);
+        let bitcast = llvm::BitcastOp::new(ctx, asm_result, result_ty);
+        rewriter.insert_operation(ctx, bitcast.get_operation());
+        rewriter.replace_operation(ctx, op, bitcast.get_operation());
+    } else {
+        rewriter.replace_operation(ctx, op, asm_op);
+    }
 
     Ok(())
 }
@@ -326,7 +341,7 @@ pub(crate) fn convert_atomic_store(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let nvvm_op = NvvmAtomicStoreOp::new(op);
-    let sem = ptx_store_sem(&nvvm_op.ordering(ctx))?;
+    let ordering = nvvm_op.ordering(ctx);
     let scope = ptx_scope(&nvvm_op.scope(ctx));
 
     let operands: Vec<_> = op.deref(ctx).operands().collect();
@@ -334,23 +349,33 @@ pub(crate) fn convert_atomic_store(
     let ptr = operands[1];
 
     let val_ty = val.get_type(ctx);
-    let (ptx_ty, reg) = ptx_type_and_reg(ctx, val_ty)
+    let (ptx_ty, reg, staging_int_ty) = ptx_type_and_reg(ctx, val_ty)
         .ok_or_else(|| pliron::input_error_noloc!("atomic store of unsupported operand type"))?;
+    let template = ptx_store_template(&ordering, scope, ptx_ty)?;
+
+    // A float value is bitcast to the same-width integer first, so the asm
+    // operand type matches the integer register class in the constraint.
+    let val = match staging_int_ty {
+        Some(int_ty) => {
+            let bitcast = llvm::BitcastOp::new(ctx, val, int_ty);
+            let bitcast_op = bitcast.get_operation();
+            rewriter.insert_operation(ctx, bitcast_op);
+            bitcast_op.deref(ctx).get_result(0)
+        }
+        None => val,
+    };
 
     // No result: a store produces nothing. Operand order matches the template,
     // address first then value, which is the reverse of the NVVM op's operands.
+    // The `~{memory}` clobber is unconditional, Relaxed included, for the same
+    // single-thread coherence reason as the load above.
     let void_ty = llvm_types::VoidType::get(ctx);
-    let clobber = if needs_memory_clobber(&nvvm_op.ordering(ctx)) {
-        ",~{memory}"
-    } else {
-        ""
-    };
     let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![ptr, val],
-        &format!("st.{sem}.{scope}.{ptx_ty} [$0], $1;"),
-        &format!("l,{reg}{clobber}"),
+        &template,
+        &format!("l,{reg},~{{memory}}"),
         AsmKind::SideEffect,
     );
 

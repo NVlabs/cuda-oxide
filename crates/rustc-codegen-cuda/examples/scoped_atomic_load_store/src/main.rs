@@ -48,15 +48,15 @@ mod kernels {
     ///
     /// Exercises, in one kernel: `st.release.gpu.b32`, `ld.acquire.gpu.b32`,
     /// `st.relaxed.gpu.b64`, `ld.relaxed.gpu.b64`, and the `fence.acq_rel.gpu`
-    /// emitted by the AcqRel compare-exchange. None of these could be compiled
-    /// under `--materialize-cubin` before.
+    /// pair the AcqRel fetch_add is bracketed with. None of these could be
+    /// compiled under `--materialize-cubin` before.
     #[kernel]
     pub fn publish_and_observe(
         flags: &[u32],
         wide: &[u64],
         mut observed: DisjointSlice<u32>,
         mut observed_wide: DisjointSlice<u64>,
-        mut cas_ok: DisjointSlice<u32>,
+        mut rmw_ok: DisjointSlice<u32>,
     ) {
         let tid = thread::threadIdx_x() as usize;
         if tid >= N {
@@ -93,17 +93,13 @@ mod kernels {
             *out = seen_wide;
         }
 
-        // AcqRel compare-exchange: emits the fence libNVVM used to reject.
-        let ok = mine
-            .compare_exchange(
-                tid as u32 + 1,
-                tid as u32 + 1,
-                AtomicOrdering::AcqRel,
-                AtomicOrdering::Relaxed,
-            )
-            .is_ok();
-        if let Some(out) = cas_ok.get_mut(thread::index_1d()) {
-            *out = u32::from(ok);
+        // AcqRel fetch_add: the RMW fence-splitting lowering brackets the
+        // atom.add with `fence.acq_rel.gpu`, the fence libNVVM used to
+        // reject at the IR level. (A compare-exchange would not cover it:
+        // the cmpxchg lowering emits no fence.)
+        let prev = mine.fetch_add(0, AtomicOrdering::AcqRel);
+        if let Some(out) = rmw_ok.get_mut(thread::index_1d()) {
+            *out = u32::from(prev == tid as u32 + 1);
         }
     }
 }
@@ -118,7 +114,7 @@ fn main() {
     let wide = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
     let mut observed = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
     let mut observed_wide = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
-    let mut cas_ok = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    let mut rmw_ok = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // SAFETY: one block of N threads, and every buffer has N elements.
@@ -134,14 +130,14 @@ fn main() {
             &wide,
             &mut observed,
             &mut observed_wide,
-            &mut cas_ok,
+            &mut rmw_ok,
         )
     }
     .expect("Kernel launch failed");
 
     let observed = observed.to_host_vec(&stream).unwrap();
     let observed_wide = observed_wide.to_host_vec(&stream).unwrap();
-    let cas_ok = cas_ok.to_host_vec(&stream).unwrap();
+    let rmw_ok = rmw_ok.to_host_vec(&stream).unwrap();
 
     let mut errors = 0;
     for i in 0..N {
@@ -163,9 +159,9 @@ fn main() {
             }
             errors += 1;
         }
-        if cas_ok[i] != 1 {
+        if rmw_ok[i] != 1 {
             if errors < 5 {
-                eprintln!("  AcqRel compare_exchange failed on thread {i}");
+                eprintln!("  AcqRel fetch_add on thread {i} returned the wrong previous value");
             }
             errors += 1;
         }
@@ -173,7 +169,7 @@ fn main() {
 
     println!("  release store / acquire load   {} threads", N);
     println!("  relaxed 64-bit store / load    {} threads", N);
-    println!("  AcqRel compare_exchange        {} threads", N);
+    println!("  AcqRel fetch_add               {} threads", N);
 
     if errors == 0 {
         println!("\n=== SUCCESS: scoped atomic load/store and fences all correct ===");
