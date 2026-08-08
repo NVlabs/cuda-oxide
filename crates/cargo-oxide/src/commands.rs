@@ -1031,6 +1031,7 @@ pub fn codegen_run(
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
+    device_features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
@@ -1076,6 +1077,7 @@ pub fn codegen_run(
             target_arch,
             detected_device_arch.as_deref(),
             features,
+            device_features,
             bin,
             no_fmad,
             unchecked_indexing,
@@ -1083,6 +1085,10 @@ pub fn codegen_run(
             app_args,
         );
         return;
+    }
+    if device_features.is_some() {
+        eprintln!("Error: --device-features requires metadata-declared interop device crates.");
+        std::process::exit(2);
     }
 
     clean_generated_files(&example_dir, example);
@@ -1231,6 +1237,7 @@ pub fn codegen_sanitize(
             verbose,
             target_arch,
             detected_device_arch.as_deref(),
+            None,
             InteropDeviceBuildOptions {
                 no_fmad,
                 unchecked_indexing,
@@ -1299,8 +1306,36 @@ struct InteropConfig {
 #[derive(Debug, Clone)]
 struct DeviceCrateConfig {
     manifest_path: PathBuf,
-    ptx_dir: PathBuf,
+    artifact_dir: PathBuf,
     artifact_name: Option<String>,
+    artifact_kind: InteropArtifactKind,
+    source_identity: bool,
+    bin: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum InteropArtifactKind {
+    #[default]
+    Ptx,
+    Cubin,
+}
+
+impl InteropArtifactKind {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Ptx => "ptx",
+            Self::Cubin => "cubin",
+        }
+    }
+
+    fn emits_nvvm_ir(self) -> bool {
+        self == Self::Cubin
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct InteropBinaryTarget {
+    source_path: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1331,6 +1366,7 @@ fn codegen_run_interop(
     arch: Option<&str>,
     detected_device_arch: Option<&str>,
     features: Option<&str>,
+    device_features: Option<&str>,
     bin: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
@@ -1357,6 +1393,7 @@ fn codegen_run_interop(
         verbose,
         arch,
         detected_device_arch,
+        device_features,
         InteropDeviceBuildOptions::standard(no_fmad, unchecked_indexing),
         materialization,
     );
@@ -1382,6 +1419,7 @@ fn codegen_build_interop(
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
+    device_features: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
     materialization: &MaterializationMode,
@@ -1405,6 +1443,7 @@ fn codegen_build_interop(
         verbose,
         arch,
         None,
+        device_features,
         InteropDeviceBuildOptions::standard(no_fmad, unchecked_indexing),
         materialization,
     );
@@ -1423,12 +1462,14 @@ fn codegen_build_interop(
 fn reject_interop_output_mode(emit_nvvm_ir: bool, materialization: &MaterializationMode) {
     if materialization.enabled() {
         eprintln!("Error: --materialize-cubin is not supported for metadata interop examples yet.");
-        eprintln!("Interop host crates currently consume PTX files from nested device crates.");
+        eprintln!(
+            "Declare `artifact-kind = \"cubin\"` on each device crate that requires native output."
+        );
         std::process::exit(2);
     }
     if emit_nvvm_ir {
         eprintln!("Error: --emit-nvvm-ir is not supported for metadata interop examples yet.");
-        eprintln!("Interop host crates embed PTX artifacts produced by nested device crates.");
+        eprintln!("Interop device output is selected by each metadata `artifact-kind`.");
         std::process::exit(2);
     }
 }
@@ -1441,6 +1482,7 @@ fn build_interop_device_crates(
     verbose: bool,
     arch: Option<&str>,
     detected_device_arch: Option<&str>,
+    device_features: Option<&str>,
     options: InteropDeviceBuildOptions,
     materialization: &MaterializationMode,
 ) {
@@ -1452,6 +1494,7 @@ fn build_interop_device_crates(
             verbose,
             arch,
             detected_device_arch,
+            device_features,
             options,
             materialization,
         );
@@ -1459,20 +1502,137 @@ fn build_interop_device_crates(
 }
 
 fn interop_device_artifact_name(manifest_path: &Path, device_crate: &DeviceCrateConfig) -> String {
-    device_crate
-        .artifact_name
-        .clone()
-        .unwrap_or_else(|| normalize_crate_name(&package_name_from_manifest(manifest_path)))
+    device_crate.artifact_name.clone().unwrap_or_else(|| {
+        normalize_crate_name(&interop_device_cargo_target_name(
+            manifest_path,
+            device_crate,
+        ))
+    })
 }
 
-fn interop_device_ptx_path(
+fn interop_device_cargo_target_name(
+    manifest_path: &Path,
+    device_crate: &DeviceCrateConfig,
+) -> String {
+    device_crate
+        .bin
+        .clone()
+        .unwrap_or_else(|| package_name_from_manifest(manifest_path))
+}
+
+fn interop_device_artifact_path(
     example_dir: &Path,
     device_crate: &DeviceCrateConfig,
     artifact_name: &str,
 ) -> PathBuf {
-    example_dir
-        .join(&device_crate.ptx_dir)
-        .join(format!("{}.ptx", artifact_stem(artifact_name)))
+    example_dir.join(&device_crate.artifact_dir).join(format!(
+        "{}.{}",
+        artifact_stem(artifact_name),
+        device_crate.artifact_kind.extension()
+    ))
+}
+
+fn interop_cubin_target(
+    arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+) -> Result<cuda_artifact_finalizer::CudaArch, String> {
+    let target = arch
+        .map(str::to_owned)
+        .or_else(|| std::env::var("CUDA_OXIDE_TARGET").ok())
+        .or_else(|| detected_device_arch.map(str::to_owned))
+        .ok_or_else(|| {
+            "cubin interop artifacts require --arch, CUDA_OXIDE_TARGET, a configured target, or a detected run device"
+                .to_string()
+        })?;
+    parse_nvvm_arch(&target)
+        .map_err(|error| format!("invalid cubin interop target {target:?}: {error}"))
+}
+
+fn finalize_interop_device_artifact(
+    example_dir: &Path,
+    device_crate: &DeviceCrateConfig,
+    artifact_name: &str,
+    arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+) -> (PathBuf, String) {
+    let artifact_path = interop_device_artifact_path(example_dir, device_crate, artifact_name);
+    match device_crate.artifact_kind {
+        InteropArtifactKind::Ptx => {
+            let target = arch
+                .map(str::to_owned)
+                .or_else(|| std::env::var("CUDA_OXIDE_TARGET").ok())
+                .or_else(|| detected_device_arch.map(str::to_owned))
+                .unwrap_or_else(|| "ptx".to_string());
+            (artifact_path, target)
+        }
+        InteropArtifactKind::Cubin => {
+            let target = interop_cubin_target(arch, detected_device_arch).unwrap_or_else(|error| {
+                eprintln!("Error: {error}");
+                std::process::exit(2);
+            });
+            let ir_path = example_dir
+                .join(&device_crate.artifact_dir)
+                .join(format!("{}.ll", artifact_stem(artifact_name)));
+            let ir = std::fs::read(&ir_path).unwrap_or_else(|error| {
+                eprintln!(
+                    "Error: could not read emitted NVVM IR at {}: {error}",
+                    ir_path.display()
+                );
+                std::process::exit(1);
+            });
+            let options_path = ir_path.with_extension("options");
+            let options_text = std::fs::read_to_string(&options_path).unwrap_or_else(|error| {
+                eprintln!(
+                    "Error: could not read emitted compile options at {}: {error}",
+                    options_path.display()
+                );
+                std::process::exit(1);
+            });
+            let compile_options =
+                oxide_artifacts::ArtifactCompileOptions::from_sidecar_text(&options_text)
+                    .unwrap_or_else(|error| {
+                        eprintln!(
+                            "Error: invalid emitted compile options at {}: {error}",
+                            options_path.display()
+                        );
+                        std::process::exit(1);
+                    });
+            let finalizer = cuda_artifact_finalizer::Finalizer::discover().unwrap_or_else(|error| {
+                eprintln!("Error: could not initialize the CUDA artifact finalizer: {error}");
+                eprintln!(
+                    "libNVVM and nvJitLink ship with the CUDA Toolkit; run `cargo oxide doctor` to check discovery."
+                );
+                std::process::exit(1);
+            });
+            let options = finalization_options_from_artifact(&target, compile_options);
+            let cubin = finalizer
+                .materialize_nvvm_ir(artifact_name, &ir, &options)
+                .unwrap_or_else(|error| {
+                    eprintln!(
+                        "Error: could not finalize {} for {}: {error}",
+                        ir_path.display(),
+                        target.sm()
+                    );
+                    std::process::exit(1);
+                });
+            let temporary_path = artifact_path.with_extension("cubin.tmp");
+            std::fs::write(&temporary_path, cubin).unwrap_or_else(|error| {
+                eprintln!(
+                    "Error: could not write temporary cubin {}: {error}",
+                    temporary_path.display()
+                );
+                std::process::exit(1);
+            });
+            std::fs::rename(&temporary_path, &artifact_path).unwrap_or_else(|error| {
+                eprintln!(
+                    "Error: could not install cubin {}: {error}",
+                    artifact_path.display()
+                );
+                std::process::exit(1);
+            });
+            (artifact_path, target.sm())
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1483,6 +1643,7 @@ fn build_interop_device_crate(
     verbose: bool,
     arch: Option<&str>,
     detected_device_arch: Option<&str>,
+    device_features: Option<&str>,
     options: InteropDeviceBuildOptions,
     materialization: &MaterializationMode,
 ) {
@@ -1496,19 +1657,31 @@ fn build_interop_device_crate(
         std::process::exit(1);
     });
     let device_dir = manifest_path.parent().unwrap_or(example_dir);
-    let ptx_dir = example_dir.join(&device_crate.ptx_dir);
-    std::fs::create_dir_all(&ptx_dir).unwrap_or_else(|e| {
+    let binary_target = device_crate.bin.as_deref().map(|bin| {
+        resolve_interop_binary_target(ctx, device_dir, &manifest_path, bin).unwrap_or_else(
+            |error| {
+                eprintln!("Error: could not resolve device binary target: {error}");
+                std::process::exit(1);
+            },
+        )
+    });
+    let artifact_dir = example_dir.join(&device_crate.artifact_dir);
+    std::fs::create_dir_all(&artifact_dir).unwrap_or_else(|e| {
         eprintln!(
             "Error: could not create device artifact directory {}: {}",
-            ptx_dir.display(),
+            artifact_dir.display(),
             e
         );
         std::process::exit(1);
     });
 
     let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
-    clean_generated_files(&ptx_dir, &artifact_name);
-    touch_main_rs(device_dir);
+    clean_generated_files(&artifact_dir, &artifact_name);
+    if let Some(target) = &binary_target {
+        touch_source_file(&target.source_path);
+    } else {
+        touch_main_rs(device_dir);
+    }
 
     println!("Building device crate {}...", manifest_path.display());
 
@@ -1516,6 +1689,12 @@ fn build_interop_device_crate(
     cmd.args(["build", "--release", "--manifest-path"])
         .arg(&manifest_path)
         .current_dir(device_dir);
+    if let Some(device_features) = device_features {
+        cmd.args(["--features", device_features]);
+    }
+    if let Some(bin) = &device_crate.bin {
+        cmd.args(["--bin", bin]);
+    }
 
     apply_interop_device_codegen_options(&mut cmd, ctx, verbose, options);
     let fingerprint = interop_codegen_fingerprint(
@@ -1526,7 +1705,9 @@ fn build_interop_device_crate(
         DeviceDebug::Off,
         arch,
         detected_device_arch,
-        &ptx_dir,
+        &artifact_dir,
+        device_crate.artifact_kind.emits_nvvm_ir(),
+        device_features,
         options.sanitizer_line_tables,
         materialization,
     );
@@ -1539,8 +1720,13 @@ fn build_interop_device_crate(
     );
     // This is an internal artifact contract, so it must override a project
     // `[env]` default for the same variable.
-    cmd.env("CUDA_OXIDE_PTX_DIR", &ptx_dir);
-    apply_output_mode(&mut cmd, false, arch, materialization);
+    cmd.env("CUDA_OXIDE_PTX_DIR", &artifact_dir);
+    apply_output_mode(
+        &mut cmd,
+        device_crate.artifact_kind.emits_nvvm_ir(),
+        arch,
+        materialization,
+    );
     apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
 
     let status = cmd.status().expect("Failed to build interop device crate");
@@ -1552,15 +1738,58 @@ fn build_interop_device_crate(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let ptx_path = interop_device_ptx_path(example_dir, device_crate, &artifact_name);
-    if !ptx_path.exists() {
+    let (artifact_path, artifact_target) = finalize_interop_device_artifact(
+        example_dir,
+        device_crate,
+        &artifact_name,
+        arch,
+        detected_device_arch,
+    );
+    if !artifact_path.exists() {
         eprintln!(
             "Error: device crate build succeeded but did not produce {}",
-            ptx_path.display()
+            artifact_path.display()
         );
         std::process::exit(1);
     }
-    println!("PTX written: {}", ptx_path.display());
+    println!(
+        "{} written: {}",
+        device_crate.artifact_kind.extension().to_ascii_uppercase(),
+        artifact_path.display()
+    );
+    if device_crate.source_identity {
+        let cargo_target_name = interop_device_cargo_target_name(&manifest_path, device_crate);
+        let depfile_path =
+            release_depfile_path(ctx, device_dir, &manifest_path, &cargo_target_name)
+                .unwrap_or_else(|error| {
+                    eprintln!("Error: could not locate device dependency file: {error}");
+                    std::process::exit(1);
+                });
+        if !depfile_path.is_file() {
+            eprintln!(
+                "Error: device crate build succeeded but did not produce dependency file {}",
+                depfile_path.display()
+            );
+            std::process::exit(1);
+        }
+        let identity_base = artifact_path.parent().unwrap_or(example_dir);
+        let identity_path = crate::artifact_identity::write(
+            &artifact_path,
+            &depfile_path,
+            &manifest_path,
+            identity_base,
+            &artifact_target,
+            device_features,
+        )
+        .unwrap_or_else(|error| {
+            eprintln!(
+                "Error: could not write source identity for {}: {error}",
+                artifact_path.display()
+            );
+            std::process::exit(1);
+        });
+        println!("Artifact identity written: {}", identity_path.display());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2231,6 +2460,7 @@ pub fn codegen_build(
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
+    device_features: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
     device_debug: DeviceDebug,
@@ -2256,11 +2486,16 @@ pub fn codegen_build(
             emit_nvvm_ir,
             target_arch,
             features,
+            device_features,
             no_fmad,
             unchecked_indexing,
             &materialization,
         );
         return;
+    }
+    if device_features.is_some() {
+        eprintln!("Error: --device-features requires metadata-declared interop device crates.");
+        std::process::exit(2);
     }
 
     clean_generated_files(&example_dir, example);
@@ -2353,6 +2588,23 @@ pub fn codegen_inspect_ptx(
         std::process::exit(2);
     }
 
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
+    if load_interop_config(&example_dir).is_some_and(|interop| {
+        interop
+            .device_crates
+            .iter()
+            .any(|device_crate| device_crate.artifact_kind != InteropArtifactKind::Ptx)
+    }) {
+        eprintln!(
+            "Error: inspect requires PTX output, but metadata declares a non-PTX device artifact."
+        );
+        std::process::exit(2);
+    }
+
     codegen_build(
         ctx,
         example,
@@ -2360,17 +2612,12 @@ pub fn codegen_inspect_ptx(
         false,
         arch,
         features,
+        None,
         no_fmad,
         unchecked_indexing,
         device_debug,
         false,
     );
-
-    let example_dir = if ctx.is_workspace {
-        resolve_example_dir(ctx, example)
-    } else {
-        ctx.workspace_root.clone()
-    };
 
     for path in ptx_artifact_paths(&example_dir, example) {
         print_ptx_artifact(&path).unwrap_or_else(|error| {
@@ -2440,6 +2687,7 @@ pub fn emit_ltoir(
         true,
         Some(&sm_arch),
         features,
+        None,
         no_fmad,
         unchecked_indexing,
         device_debug,
@@ -3030,7 +3278,9 @@ fn interop_codegen_fingerprint(
     device_debug: DeviceDebug,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
-    ptx_dir: &Path,
+    artifact_dir: &Path,
+    emit_nvvm_ir: bool,
+    device_features: Option<&str>,
     sanitizer_line_tables: bool,
     materialization: &MaterializationMode,
 ) -> String {
@@ -3040,7 +3290,7 @@ fn interop_codegen_fingerprint(
         no_fmad,
         unchecked_indexing,
         device_debug,
-        false,
+        emit_nvvm_ir,
         target_arch,
         detected_device_arch,
         materialization,
@@ -3054,7 +3304,8 @@ fn interop_codegen_fingerprint(
         } else {
             b"default-debug"
         },
-        ptx_dir.as_os_str().as_encoded_bytes(),
+        artifact_dir.as_os_str().as_encoded_bytes(),
+        device_features.unwrap_or("").as_bytes(),
     ] {
         update_codegen_fingerprint_hash(&mut hash, bytes);
     }
@@ -5028,7 +5279,8 @@ fn parse_device_crate_config(value: &toml::Value, manifest_path: &Path) -> Devic
     });
 
     let device_manifest = required_metadata_string(table, "manifest-path", manifest_path);
-    let ptx_dir = optional_metadata_string(table, "ptx-dir")
+    let artifact_dir = optional_metadata_string(table, "artifact-dir")
+        .or_else(|| optional_metadata_string(table, "ptx-dir"))
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             Path::new(&device_manifest)
@@ -5037,11 +5289,36 @@ fn parse_device_crate_config(value: &toml::Value, manifest_path: &Path) -> Devic
                 .to_path_buf()
         });
     let artifact_name = optional_metadata_string(table, "artifact-name");
+    let artifact_kind = match optional_metadata_string(table, "artifact-kind").as_deref() {
+        None | Some("ptx") => InteropArtifactKind::Ptx,
+        Some("cubin") => InteropArtifactKind::Cubin,
+        Some(value) => {
+            eprintln!(
+                "Error: package.metadata.cuda-oxide.device-crates `artifact-kind` in {} must be `ptx` or `cubin`, got {value:?}",
+                manifest_path.display()
+            );
+            std::process::exit(2);
+        }
+    };
+    let source_identity = match table.get("source-identity") {
+        None => false,
+        Some(value) => value.as_bool().unwrap_or_else(|| {
+            eprintln!(
+                "Error: package.metadata.cuda-oxide.device-crates `source-identity` in {} must be a boolean",
+                manifest_path.display()
+            );
+            std::process::exit(2);
+        }),
+    };
+    let bin = optional_metadata_string(table, "bin");
 
     DeviceCrateConfig {
         manifest_path: PathBuf::from(device_manifest),
-        ptx_dir,
+        artifact_dir,
         artifact_name,
+        artifact_kind,
+        source_identity,
+        bin,
     }
 }
 
@@ -5097,6 +5374,126 @@ fn package_name_from_manifest(manifest_path: &Path) -> String {
 
 fn normalize_crate_name(package_name: &str) -> String {
     package_name.replace('-', "_")
+}
+
+fn release_depfile_path(
+    ctx: &Context,
+    device_dir: &Path,
+    manifest_path: &Path,
+    package_name: &str,
+) -> Result<PathBuf, String> {
+    let metadata = interop_cargo_metadata(ctx, device_dir, manifest_path)?;
+    let target_dir = metadata
+        .get("target_directory")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "cargo metadata omitted target_directory".to_string())?;
+    Ok(PathBuf::from(target_dir)
+        .join("release")
+        .join(format!("{}.d", normalize_crate_name(package_name))))
+}
+
+fn interop_cargo_metadata(
+    ctx: &Context,
+    device_dir: &Path,
+    manifest_path: &Path,
+) -> Result<serde_json::Value, String> {
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "metadata",
+            "--format-version=1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(manifest_path)
+        .current_dir(device_dir);
+    apply_config_env(&mut command, ctx);
+    let output = command
+        .output()
+        .map_err(|error| format!("could not start cargo metadata: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "cargo metadata failed with status {}{}{}",
+            output.status,
+            if stderr.is_empty() { "" } else { ": " },
+            stderr.trim()
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("could not parse cargo metadata JSON: {error}"))
+}
+
+fn resolve_interop_binary_target(
+    ctx: &Context,
+    device_dir: &Path,
+    manifest_path: &Path,
+    bin: &str,
+) -> Result<InteropBinaryTarget, String> {
+    let metadata = interop_cargo_metadata(ctx, device_dir, manifest_path)?;
+    interop_binary_target_from_metadata(&metadata, manifest_path, bin)
+}
+
+fn interop_binary_target_from_metadata(
+    metadata: &serde_json::Value,
+    manifest_path: &Path,
+    bin: &str,
+) -> Result<InteropBinaryTarget, String> {
+    let packages = metadata
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "cargo metadata omitted packages".to_string())?;
+    let package = packages
+        .iter()
+        .find(|package| {
+            package
+                .get("manifest_path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| Path::new(path) == manifest_path)
+        })
+        .ok_or_else(|| {
+            format!(
+                "cargo metadata omitted package for manifest {}",
+                manifest_path.display()
+            )
+        })?;
+    let targets = package
+        .get("targets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "cargo metadata omitted package targets".to_string())?;
+    let is_binary = |target: &&serde_json::Value| {
+        target
+            .get("kind")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")))
+    };
+    let target = targets
+        .iter()
+        .filter(is_binary)
+        .find(|target| target.get("name").and_then(serde_json::Value::as_str) == Some(bin))
+        .ok_or_else(|| {
+            let mut available = targets
+                .iter()
+                .filter(is_binary)
+                .filter_map(|target| target.get("name").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>();
+            available.sort_unstable();
+            format!(
+                "manifest {} has no binary target {bin:?}; available binary targets: {}",
+                manifest_path.display(),
+                if available.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    available.join(", ")
+                }
+            )
+        })?;
+    let source_path = target
+        .get("src_path")
+        .and_then(serde_json::Value::as_str)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("cargo metadata omitted source path for binary target {bin:?}"))?;
+    Ok(InteropBinaryTarget { source_path })
 }
 
 /// Resolve an example name to its directory path, or exit with a list of
@@ -5713,12 +6110,15 @@ fn touch_main_rs(example_dir: &Path) {
     // tests in `main.rs`, perf bench in `bin/<name>.rs`, etc.) all
     // re-codegen on every `cargo oxide run/build` invocation.
     for rel in ["src/main.rs", "src/lib.rs"] {
-        let path = example_dir.join(rel);
-        if path.exists()
-            && let Ok(content) = std::fs::read(&path)
-        {
-            let _ = std::fs::write(&path, content);
-        }
+        touch_source_file(&example_dir.join(rel));
+    }
+}
+
+fn touch_source_file(path: &Path) {
+    if path.exists()
+        && let Ok(content) = std::fs::read(path)
+    {
+        let _ = std::fs::write(path, content);
     }
 }
 
@@ -5739,11 +6139,12 @@ fn ptx_artifact_paths(example_dir: &Path, example: &str) -> Vec<PathBuf> {
         return interop
             .device_crates
             .iter()
+            .filter(|device_crate| device_crate.artifact_kind == InteropArtifactKind::Ptx)
             .map(|device_crate| {
                 let manifest_path = example_dir.join(&device_crate.manifest_path);
                 let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
 
-                interop_device_ptx_path(example_dir, device_crate, &artifact_name)
+                interop_device_artifact_path(example_dir, device_crate, &artifact_name)
             })
             .collect();
     }
@@ -5800,6 +6201,9 @@ const GENERATED_ARTIFACT_SUFFIXES: &[&str] = &[
     "opt.ll",
     "ltoir",
     "cubin",
+    "cubin.tmp",
+    "cubin.identity",
+    "ptx.identity",
     "target",
     "options",
     "cubin.target",
@@ -7293,6 +7697,33 @@ path = "src/other.rs"
 
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
         assert_eq!(command_env(&cmd, "CUDA_OXIDE_DEBUG"), None);
+    }
+
+    #[test]
+    fn interop_fingerprint_tracks_artifact_mode_and_device_features() {
+        let ctx = test_context(OxideConfig::default());
+        let fingerprint = |emit_nvvm_ir: bool, device_features: Option<&str>| {
+            interop_codegen_fingerprint(
+                &ctx,
+                false,
+                false,
+                false,
+                DeviceDebug::Off,
+                Some("sm_120a"),
+                None,
+                Path::new("/tmp/cuda-oxide-artifacts"),
+                emit_nvvm_ir,
+                device_features,
+                false,
+                &MaterializationMode::default(),
+            )
+        };
+
+        assert_ne!(fingerprint(false, None), fingerprint(true, None));
+        assert_ne!(
+            fingerprint(true, None),
+            fingerprint(true, Some("tensor-cores"))
+        );
     }
 
     #[test]
@@ -9439,6 +9870,99 @@ Instructions.
     }
 
     #[test]
+    fn interop_metadata_selects_named_binary_artifact() {
+        let root = unique_temp_dir("cargo_oxide_named_bin_interop");
+        let device_dir = root.join("device");
+        std::fs::create_dir_all(&device_dir).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "host-app"
+version = "0.1.0"
+edition = "2024"
+
+[[package.metadata.cuda-oxide.device-crates]]
+manifest-path = "device/Cargo.toml"
+bin = "secondary-device"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            device_dir.join("Cargo.toml"),
+            r#"[package]
+name = "kernel-package"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        let config = load_interop_config(&root).expect("interop metadata should load");
+        let device = &config.device_crates[0];
+        assert_eq!(device.bin.as_deref(), Some("secondary-device"));
+        assert_eq!(
+            interop_device_cargo_target_name(&device_dir.join("Cargo.toml"), device),
+            "secondary-device"
+        );
+        assert_eq!(
+            interop_device_artifact_name(&device_dir.join("Cargo.toml"), device),
+            "secondary_device"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interop_binary_target_uses_cargo_source_path() {
+        let manifest = Path::new("/workspace/kernels/Cargo.toml");
+        let metadata = serde_json::json!({
+            "packages": [{
+                "manifest_path": "/workspace/kernels/Cargo.toml",
+                "targets": [
+                    {
+                        "name": "kernel-package",
+                        "kind": ["lib"],
+                        "src_path": "/workspace/kernels/src/lib.rs"
+                    },
+                    {
+                        "name": "secondary-device",
+                        "kind": ["bin"],
+                        "src_path": "/workspace/kernels/src/device_secondary.rs"
+                    }
+                ]
+            }]
+        });
+
+        assert_eq!(
+            interop_binary_target_from_metadata(&metadata, manifest, "secondary-device").unwrap(),
+            InteropBinaryTarget {
+                source_path: PathBuf::from("/workspace/kernels/src/device_secondary.rs"),
+            }
+        );
+    }
+
+    #[test]
+    fn interop_binary_target_rejects_unknown_name_with_available_targets() {
+        let manifest = Path::new("/workspace/kernels/Cargo.toml");
+        let metadata = serde_json::json!({
+            "packages": [{
+                "manifest_path": "/workspace/kernels/Cargo.toml",
+                "targets": [{
+                    "name": "main-device",
+                    "kind": ["bin"],
+                    "src_path": "/workspace/kernels/src/device_main.rs"
+                }]
+            }]
+        });
+
+        let error =
+            interop_binary_target_from_metadata(&metadata, manifest, "missing-device").unwrap_err();
+        assert!(error.contains("no binary target \"missing-device\""));
+        assert!(error.contains("available binary targets: main-device"));
+    }
+
+    #[test]
     fn ptx_artifact_paths_normalize_hyphenated_example_names() {
         let root = unique_temp_dir("cargo_oxide_inspect_regular");
         std::fs::create_dir_all(&root).unwrap();
@@ -9498,6 +10022,58 @@ edition = "2024"
         assert_eq!(
             ptx_artifact_paths(&root, "host-app"),
             vec![root.join("generated/custom_device.ptx")]
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interop_metadata_declares_cubin_and_source_identity() {
+        let root = unique_temp_dir("cargo_oxide_cubin_interop");
+        let device_dir = root.join("device");
+        std::fs::create_dir_all(&device_dir).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "host-app"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.cuda-oxide]
+interop = "device"
+
+[[package.metadata.cuda-oxide.device-crates]]
+manifest-path = "device/Cargo.toml"
+artifact-dir = "device"
+artifact-name = "custom-device"
+artifact-kind = "cubin"
+source-identity = true
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            device_dir.join("Cargo.toml"),
+            r#"[package]
+name = "device-app"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        let config = load_interop_config(&root).expect("interop metadata should load");
+        assert_eq!(config.device_crates.len(), 1);
+        let device = &config.device_crates[0];
+        assert_eq!(device.artifact_kind, InteropArtifactKind::Cubin);
+        assert!(device.source_identity);
+        assert_eq!(
+            interop_device_artifact_path(&root, device, "custom-device"),
+            root.join("device/custom_device.cubin")
+        );
+        assert_eq!(
+            interop_cubin_target(Some("sm_120a"), None).unwrap().sm(),
+            "sm_120a"
         );
 
         std::fs::remove_dir_all(root).unwrap();

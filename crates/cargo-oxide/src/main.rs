@@ -32,6 +32,7 @@
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use std::path::PathBuf;
 
+mod artifact_identity;
 mod backend;
 mod commands;
 
@@ -80,6 +81,9 @@ enum Commands {
         /// Comma-separated list of features to enable
         #[arg(long)]
         features: Option<String>,
+        /// Comma-separated list of features to enable only for metadata-declared device crates
+        #[arg(long)]
+        device_features: Option<String>,
         /// Pick a specific binary in a multi-bin package (forwarded as
         /// `cargo run --bin <name>`). Defaults to the package's
         /// `default-run`.
@@ -170,6 +174,9 @@ enum Commands {
         /// Comma-separated list of features to enable
         #[arg(long)]
         features: Option<String>,
+        /// Comma-separated list of features to enable only for metadata-declared device crates
+        #[arg(long)]
+        device_features: Option<String>,
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
@@ -552,6 +559,7 @@ fn main() {
             emit_nvvm_ir,
             arch,
             features,
+            device_features,
             bin,
             verbose,
             no_fmad,
@@ -576,6 +584,7 @@ fn main() {
                 emit_nvvm_ir,
                 arch.as_deref(),
                 features.as_deref(),
+                device_features.as_deref(),
                 bin.as_deref(),
                 no_fmad,
                 unchecked_indexing,
@@ -623,6 +632,7 @@ fn main() {
             emit_nvvm_ir,
             arch,
             features,
+            device_features,
             verbose,
             no_fmad,
             unchecked_indexing,
@@ -657,6 +667,7 @@ fn main() {
                     emit_nvvm_ir,
                     arch.as_deref(),
                     features.as_deref(),
+                    device_features.as_deref(),
                     no_fmad,
                     unchecked_indexing,
                     commands::DeviceDebug::from_flags(lineinfo, device_debug),
@@ -992,6 +1003,41 @@ mod tests {
             cargo_args,
             strings(&["-p", "gpu-app", "--test", "smoke", "--", "--nocapture"])
         );
+    }
+
+    #[test]
+    fn interop_commands_accept_device_only_features() {
+        let build = Cli::try_parse_from([
+            "cargo-oxide",
+            "build",
+            "interop-app",
+            "--device-features",
+            "tensor-cores,diagnostics",
+        ])
+        .expect("build should accept device-only features");
+        let Commands::Build {
+            device_features, ..
+        } = build.command
+        else {
+            panic!("expected build command");
+        };
+        assert_eq!(device_features.as_deref(), Some("tensor-cores,diagnostics"));
+
+        let run = Cli::try_parse_from([
+            "cargo-oxide",
+            "run",
+            "interop-app",
+            "--device-features",
+            "tensor-cores",
+        ])
+        .expect("run should accept device-only features");
+        let Commands::Run {
+            device_features, ..
+        } = run.command
+        else {
+            panic!("expected run command");
+        };
+        assert_eq!(device_features.as_deref(), Some("tensor-cores"));
     }
 
     #[test]
