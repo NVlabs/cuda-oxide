@@ -12,6 +12,7 @@ use crate::provenance::{
 use crate::validation::is_valid_cubin;
 use crate::{FinalizerError, validate_name};
 use nvjitlink_sys::{InputType, LibNvJitLink, Linker};
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex, OnceLock};
 
 struct LoadedLinkerTool {
@@ -22,7 +23,7 @@ struct LoadedLinkerTool {
 static LINKER_TOOL: OnceLock<Arc<LoadedLinkerTool>> = OnceLock::new();
 static LINKER_TOOL_LOAD: OnceLock<Mutex<()>> = OnceLock::new();
 
-/// Driver-independent ordered LTOIR linker.
+/// Driver-independent linker for LTOIR and PTX inputs.
 #[derive(Clone)]
 pub struct LtoLinker {
     tool: Arc<LoadedLinkerTool>,
@@ -61,19 +62,50 @@ impl LtoLinker {
         output: FinalizerOutput,
     ) -> Result<Vec<u8>, FinalizerError> {
         validate_inputs(inputs)?;
+        self.link_inputs(
+            inputs,
+            InputType::Ltoir,
+            options.nvjitlink_ltoir_options(output),
+            output,
+        )
+    }
+
+    /// Compile and link one PTX module to a validated target-specific cubin.
+    pub fn link_ptx_to_cubin(
+        &self,
+        input: NamedInput<'_>,
+        options: &FinalizationOptions,
+    ) -> Result<Vec<u8>, FinalizerError> {
+        validate_inputs(std::slice::from_ref(&input))?;
+        let ptx = nul_terminated_ptx(input)?;
+        let input = NamedInput::new(input.name, &ptx);
+        self.link_inputs(
+            std::slice::from_ref(&input),
+            InputType::Ptx,
+            options.nvjitlink_ptx_options(),
+            FinalizerOutput::Cubin,
+        )
+    }
+
+    fn link_inputs(
+        &self,
+        inputs: &[NamedInput<'_>],
+        input_type: InputType,
+        option_storage: Vec<String>,
+        output: FinalizerOutput,
+    ) -> Result<Vec<u8>, FinalizerError> {
         with_revalidated_tool_identity(
             "nvJitLink",
             self.tool.digest,
             || current_linker_tool_digest(&self.tool),
             || {
-                let option_storage = options.nvjitlink_options(output);
                 let option_refs = option_storage
                     .iter()
                     .map(String::as_str)
                     .collect::<Vec<_>>();
                 let mut linker = Linker::new(&self.tool.library, &option_refs)?;
                 for input in inputs {
-                    linker.add(InputType::Ltoir, input.bytes, input.name)?;
+                    linker.add(input_type, input.bytes, input.name)?;
                 }
                 let image = match output {
                     FinalizerOutput::Cubin => linker.finish()?,
@@ -102,6 +134,24 @@ impl LtoLinker {
             inputs, options, output, &nvjitlink,
         ))
     }
+
+    /// Digest every semantic input to a PTX-to-cubin link.
+    pub fn ptx_artifact_digest(
+        &self,
+        input: NamedInput<'_>,
+        options: &FinalizationOptions,
+    ) -> Result<Option<[u8; 32]>, FinalizerError> {
+        validate_inputs(std::slice::from_ref(&input))?;
+        let ptx = logical_ptx(input)?;
+        let Some(nvjitlink) = self.nvjitlink_digest() else {
+            return Ok(None);
+        };
+        Ok(Some(ptx_artifact_digest_parts(
+            NamedInput::new(input.name, ptx),
+            options,
+            &nvjitlink,
+        )))
+    }
 }
 
 fn current_linker_tool_digest(tool: &LoadedLinkerTool) -> Option<[u8; 32]> {
@@ -122,6 +172,33 @@ fn validate_inputs(inputs: &[NamedInput<'_>]) -> Result<(), FinalizerError> {
         }
     }
     Ok(())
+}
+
+fn logical_ptx(input: NamedInput<'_>) -> Result<&[u8], FinalizerError> {
+    let logical = input.bytes.strip_suffix(&[0]).unwrap_or(input.bytes);
+    if logical.is_empty() {
+        return Err(FinalizerError::EmptyInput {
+            name: input.name.to_string(),
+        });
+    }
+    if logical.contains(&0) {
+        return Err(FinalizerError::InteriorNulPtx {
+            name: input.name.to_string(),
+        });
+    }
+    Ok(logical)
+}
+
+fn nul_terminated_ptx(input: NamedInput<'_>) -> Result<Cow<'_, [u8]>, FinalizerError> {
+    let logical = logical_ptx(input)?;
+    if logical.len() != input.bytes.len() {
+        Ok(Cow::Borrowed(input.bytes))
+    } else {
+        let mut terminated = Vec::with_capacity(logical.len() + 1);
+        terminated.extend_from_slice(logical);
+        terminated.push(0);
+        Ok(Cow::Owned(terminated))
+    }
 }
 
 fn load_linker_tool() -> Result<Arc<LoadedLinkerTool>, FinalizerError> {
@@ -171,7 +248,25 @@ pub(crate) fn ltoir_artifact_digest_parts(
             .field("ltoir-name", input.name.as_bytes())
             .field("ltoir", input.bytes);
     }
-    for option in options.nvjitlink_options(output) {
+    for option in options.nvjitlink_ltoir_options(output) {
+        digest = digest.field("nvjitlink-option", option.as_bytes());
+    }
+    digest
+        .field("libnvjitlink-sha256", nvjitlink_digest)
+        .finish()
+}
+
+pub(crate) fn ptx_artifact_digest_parts(
+    input: NamedInput<'_>,
+    options: &FinalizationOptions,
+    nvjitlink_digest: &[u8; 32],
+) -> [u8; 32] {
+    let mut digest = StableDigest::new()
+        .field("recipe", recipe_digest())
+        .field("route", b"ptx-to-cubin")
+        .field("ptx-name", input.name.as_bytes())
+        .field("ptx", input.bytes);
+    for option in options.nvjitlink_ptx_options() {
         digest = digest.field("nvjitlink-option", option.as_bytes());
     }
     digest
@@ -256,5 +351,94 @@ mod tests {
             validate_inputs(&[NamedInput::new("bad\0name", b"x")]),
             Err(FinalizerError::InvalidInputName { .. })
         ));
+    }
+
+    #[test]
+    fn ptx_digest_covers_name_bytes_policy_and_linker_identity() {
+        let options = FinalizationOptions::new("sm_80".parse().unwrap());
+        let baseline =
+            ptx_artifact_digest_parts(NamedInput::new("kernel.ptx", b"ptx"), &options, &[7; 32]);
+        assert_ne!(
+            baseline,
+            ptx_artifact_digest_parts(NamedInput::new("other.ptx", b"ptx"), &options, &[7; 32])
+        );
+        assert_ne!(
+            baseline,
+            ptx_artifact_digest_parts(
+                NamedInput::new("kernel.ptx", b"changed"),
+                &options,
+                &[7; 32]
+            )
+        );
+        assert_ne!(
+            baseline,
+            ptx_artifact_digest_parts(
+                NamedInput::new("kernel.ptx", b"ptx"),
+                &options.clone().with_fma_contraction(false),
+                &[7; 32]
+            )
+        );
+        assert_ne!(
+            baseline,
+            ptx_artifact_digest_parts(NamedInput::new("kernel.ptx", b"ptx"), &options, &[8; 32])
+        );
+    }
+
+    #[test]
+    fn ptx_normalization_adds_one_terminator_and_rejects_interior_nuls() {
+        let plain = NamedInput::new("kernel.ptx", b"ptx");
+        let terminated = NamedInput::new("kernel.ptx", b"ptx\0");
+        assert_eq!(logical_ptx(plain).unwrap(), b"ptx");
+        assert_eq!(logical_ptx(terminated).unwrap(), b"ptx");
+        assert_eq!(nul_terminated_ptx(plain).unwrap().as_ref(), b"ptx\0");
+        assert!(matches!(
+            nul_terminated_ptx(NamedInput::new("bad.ptx", b"p\0tx")),
+            Err(FinalizerError::InteriorNulPtx { .. })
+        ));
+        assert!(matches!(
+            nul_terminated_ptx(NamedInput::new("empty.ptx", b"\0")),
+            Err(FinalizerError::EmptyInput { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    const ACQUIRE_LOAD_PTX: &[u8] = br#"
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry acquire_load(
+    .param .u64 input,
+    .param .u64 output
+)
+{
+    .reg .b32 value;
+    .reg .b64 input_ptr;
+    .reg .b64 output_ptr;
+
+    ld.param.u64 input_ptr, [input];
+    ld.param.u64 output_ptr, [output];
+    ld.acquire.gpu.global.u32 value, [input_ptr];
+    st.global.u32 [output_ptr], value;
+    ret;
+}
+"#;
+
+    #[test]
+    #[ignore = "requires discoverable CUDA Toolkit nvJitLink"]
+    fn live_ptx_pipeline_compiles_acquire_load_to_cubin() {
+        let linker = LtoLinker::discover().unwrap();
+        let options = FinalizationOptions::new("sm_80".parse().unwrap());
+        let cubin = linker
+            .link_ptx_to_cubin(
+                NamedInput::new("acquire-load.ptx", ACQUIRE_LOAD_PTX),
+                &options,
+            )
+            .unwrap();
+        assert!(is_valid_cubin(&cubin));
     }
 }
