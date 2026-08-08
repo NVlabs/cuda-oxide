@@ -201,9 +201,7 @@ fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHan
     }
 
     let element_type = row_array.element_type();
-    if element_type.deref(ctx).downcast_ref::<FP32Type>().is_none() {
-        return None;
-    }
+    element_type.deref(ctx).downcast_ref::<FP32Type>()?;
 
     Some((row_type, element_type))
 }
@@ -245,6 +243,7 @@ fn erase_original_sequence(
     rewriter.erase_operation(ctx, wait);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_value_plan(
     ctx: &mut Context,
     fence: Ptr<Operation>,
@@ -320,10 +319,7 @@ fn apply_value_plan(
         .collect::<Vec<_>>();
     group.insert_before(ctx, wait);
 
-    for (element_pointer, result) in element_pointers
-        .into_iter()
-        .zip(accumulator_results.into_iter())
-    {
+    for (element_pointer, result) in element_pointers.into_iter().zip(accumulator_results) {
         let store = Operation::new(
             ctx,
             MirStoreOp::get_concrete_op_info(),
