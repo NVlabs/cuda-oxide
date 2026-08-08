@@ -525,6 +525,7 @@ pub fn convert_shared_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     shared_globals: &mut SharedGlobalsMap,
+    next_shared_mem_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 
@@ -580,6 +581,7 @@ pub fn convert_shared_alloc_dc(
             ctx,
             op,
             shared_globals,
+            next_shared_mem_index,
             SharedAllocSpec {
                 mir_elem_type,
                 size,
@@ -628,17 +630,23 @@ struct SharedAllocSpec<'a> {
 /// contributes a name — a later allocation with the same `alloc_key` hits
 /// the cache and never reaches this function — which is consistent because
 /// the key and the name are both derived from the same constant.
+///
+/// `next_shared_mem_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a shared allocation earlier in the process (#706).
 fn create_shared_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     shared_globals: &mut SharedGlobalsMap,
+    next_shared_mem_index: &mut usize,
     spec: SharedAllocSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     let llvm_elem_type = convert_type(ctx, spec.mir_elem_type).map_err(anyhow_to_pliron)?;
     let array_type = ArrayType::get(ctx, llvm_elem_type, spec.size);
 
-    static SHARED_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let counter = SHARED_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let counter = *next_shared_mem_index;
+    *next_shared_mem_index += 1;
     let name: pliron::identifier::Identifier =
         format!("__shared_mem_{counter}").try_into().unwrap();
 
@@ -685,6 +693,7 @@ pub fn convert_global_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
@@ -768,6 +777,7 @@ pub fn convert_global_alloc_dc(
             ctx,
             op,
             device_globals,
+            next_device_global_index,
             DeviceGlobalSpec {
                 key: &global_key,
                 mir_type: mir_global_type,
@@ -799,10 +809,15 @@ struct DeviceGlobalSpec<'a> {
     immutable: bool,
 }
 
+/// `next_device_global_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a device global earlier in the process (#706).
 fn create_device_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
     spec: DeviceGlobalSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     // An explicit initializer is already the evaluated Rust allocation image.
@@ -850,9 +865,8 @@ fn create_device_global(
                 ))
             })?
         } else {
-            static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let counter = DEVICE_GLOBAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let counter = *next_device_global_index;
+            *next_device_global_index += 1;
             format!("__device_global_{counter}").try_into().unwrap()
         };
 
@@ -2381,6 +2395,45 @@ mod tests {
             comment_index < definition_index,
             "the source comment must precede the global it describes:\n{ir}"
         );
+    }
+
+    /// A `__shared_mem_N` or `__device_global_N` index must depend only on
+    /// the module being lowered, not on how many allocations any OTHER
+    /// module has already lowered in this process (#706). Before the fix,
+    /// each `N` came from a `static AtomicUsize` shared across every call in
+    /// the process, so lowering the second of these two modules would have
+    /// produced `__shared_mem_1` and `__device_global_1`, not the `_0` names.
+    #[test]
+    fn shared_and_device_global_indices_are_per_module_not_process_global() {
+        for _ in 0..2 {
+            let mut ctx = make_ctx();
+            let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+            append_shared_alloc(&mut ctx, block, "k", 64);
+            append_global_alloc(&mut ctx, block, "ordinary_static", false);
+            append_mir_return(&mut ctx, block, vec![]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+            let top = module_top_block(&ctx, module_ptr);
+            let names: Vec<String> = top
+                .deref(&ctx)
+                .iter(&ctx)
+                .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+                .map(|g| g.get_symbol_name(&ctx).to_string())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "__shared_mem_0"),
+                "a module with exactly one shared allocation must always name it \
+                 __shared_mem_0, regardless of how many other modules already lowered \
+                 one in this process (got {names:?})"
+            );
+            assert!(
+                names.iter().any(|n| n == "__device_global_0"),
+                "a module with exactly one ordinary device global must always name it \
+                 __device_global_0, regardless of how many other modules already \
+                 lowered one in this process (got {names:?})"
+            );
+        }
     }
 
     fn append_global_alloc(
