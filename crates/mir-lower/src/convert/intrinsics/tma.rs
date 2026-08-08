@@ -247,6 +247,272 @@ pub(crate) fn convert_s2g(
     Ok(())
 }
 
+/// Convert a tensor-map descriptor prefetch through the selected backend.
+pub(crate) fn convert_prefetch_tensormap(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+    intrinsic_name: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 || op.deref(ctx).get_num_results() != 0 {
+        return pliron::input_err_noloc!("prefetch.tensormap requires one operand and no results");
+    }
+
+    let void_ty = llvm_types::VoidType::get(ctx);
+    match context::lowering_options(ctx).intrinsic_backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let pointer_ty = llvm_types::PointerType::get(ctx, 0);
+            let function_ty =
+                llvm_types::FuncType::get(ctx, void_ty.into(), vec![pointer_ty.into()], false);
+            call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?;
+        }
+        IntrinsicBackend::LibNvvm => {
+            inline_asm_sideeffect(
+                ctx,
+                rewriter,
+                void_ty.into(),
+                operands,
+                "prefetch.tensormap [$0];",
+                "l,~{memory}",
+            );
+        }
+    }
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+pub(crate) struct PrefetchTileConfig<'a> {
+    coordinate_count: usize,
+    gather4: bool,
+    use_cache_hint: bool,
+    intrinsic_name: &'a str,
+}
+
+impl<'a> PrefetchTileConfig<'a> {
+    pub(crate) const fn new(
+        coordinate_count: usize,
+        gather4: bool,
+        use_cache_hint: bool,
+        intrinsic_name: &'a str,
+    ) -> Self {
+        Self {
+            coordinate_count,
+            gather4,
+            use_cache_hint,
+            intrinsic_name,
+        }
+    }
+}
+
+/// Convert one dimensional or gather-four tensor tile prefetch.
+pub(crate) fn convert_prefetch_tile(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+    config: PrefetchTileConfig<'_>,
+) -> Result<()> {
+    let PrefetchTileConfig {
+        coordinate_count,
+        gather4,
+        use_cache_hint,
+        intrinsic_name,
+    } = config;
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let expected_operands = 1 + coordinate_count + usize::from(use_cache_hint);
+    if operands.len() != expected_operands || op.deref(ctx).get_num_results() != 0 {
+        return pliron::input_err_noloc!(
+            "TMA tile prefetch requires {expected_operands} operand(s) and no results"
+        );
+    }
+
+    let void_ty = llvm_types::VoidType::get(ctx);
+    match context::lowering_options(ctx).intrinsic_backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let pointer_ty = llvm_types::PointerType::get(ctx, 0);
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+            let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+            let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+            let mut argument_types = vec![pointer_ty.into()];
+            for _ in 0..coordinate_count {
+                argument_types.push(i32_ty.into());
+            }
+            argument_types.push(i64_ty.into());
+            argument_types.push(i1_ty.into());
+            let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), argument_types, false);
+            let mut call_operands = operands;
+            if !use_cache_hint {
+                call_operands.push(create_i64_const(ctx, rewriter, 0));
+            }
+            call_operands.push(create_i1_const(ctx, rewriter, use_cache_hint));
+            call_intrinsic(
+                ctx,
+                rewriter,
+                op,
+                intrinsic_name,
+                function_ty,
+                call_operands,
+            )?;
+        }
+        IntrinsicBackend::LibNvvm => {
+            let coordinates = (0..coordinate_count)
+                .map(|index| format!("${}", index + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let dimensionality = if gather4 {
+                "2d".to_owned()
+            } else {
+                format!("{coordinate_count}d")
+            };
+            let tile = if gather4 { "tile::gather4" } else { "tile" };
+            let template = if use_cache_hint {
+                format!(
+                    "cp.async.bulk.prefetch.tensor.{dimensionality}.L2.global.{tile}.L2::cache_hint [$0, {{{coordinates}}}], ${};",
+                    coordinate_count + 1
+                )
+            } else {
+                format!(
+                    "cp.async.bulk.prefetch.tensor.{dimensionality}.L2.global.{tile} [$0, {{{coordinates}}}];"
+                )
+            };
+            let mut constraints = vec!["l"];
+            constraints.extend(std::iter::repeat_n("r", coordinate_count));
+            if use_cache_hint {
+                constraints.push("l");
+            }
+            constraints.push("~{memory}");
+            inline_asm_convergent(
+                ctx,
+                rewriter,
+                void_ty.into(),
+                operands,
+                &template,
+                &constraints.join(","),
+            );
+        }
+    }
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Convert one member of the global tensor-map replacement family.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_tensormap_replace(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+    _intrinsic_name: &str,
+    field: &str,
+    value_kind: &str,
+    ordinal: bool,
+    immediate: bool,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let expected_operands = if ordinal { 3 } else { 2 };
+    if operands.len() != expected_operands || op.deref(ctx).get_num_results() != 0 {
+        return pliron::input_err_noloc!(
+            "tensormap.replace {field} requires {expected_operands} operand(s) and no results"
+        );
+    }
+
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let value_width = match value_kind {
+        "u32" => 32,
+        "u64" | "address" => 64,
+        _ => return pliron::input_err_noloc!("unsupported tensor-map replacement value kind"),
+    };
+    let width = if value_width == 64 { "b64" } else { "b32" };
+    let template = if ordinal {
+        format!("tensormap.replace.tile.{field}.global.b1024.{width} [$0], $1, $2;")
+    } else {
+        format!("tensormap.replace.tile.{field}.global.b1024.{width} [$0], $1;")
+    };
+    let mut constraints = vec!["l"];
+    if ordinal {
+        constraints.push("n");
+    }
+    constraints.push(if immediate {
+        "n"
+    } else if value_width == 64 {
+        "l"
+    } else {
+        "r"
+    });
+    constraints.push("~{memory}");
+    inline_asm_sideeffect(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        operands,
+        &template,
+        &constraints.join(","),
+    );
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Convert one acquire or release member of the tensor-map proxy-fence family.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_tensormap_fence(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+    intrinsic_name: &str,
+    acquire: bool,
+    scope: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let expected_operands = usize::from(acquire);
+    if operands.len() != expected_operands || op.deref(ctx).get_num_results() != 0 {
+        return pliron::input_err_noloc!(
+            "tensor-map {scope} proxy fence requires {expected_operands} operand(s) and no results"
+        );
+    }
+
+    let void_ty = llvm_types::VoidType::get(ctx);
+    match context::lowering_options(ctx).intrinsic_backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let mut argument_types = Vec::new();
+            let mut call_operands = operands;
+            if acquire {
+                argument_types.push(llvm_types::PointerType::get(ctx, 0).into());
+                argument_types.push(IntegerType::get(ctx, 32, Signedness::Signless).into());
+                call_operands.push(create_i32_const(ctx, rewriter, 128));
+            }
+            let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), argument_types, false);
+            call_intrinsic(
+                ctx,
+                rewriter,
+                op,
+                intrinsic_name,
+                function_ty,
+                call_operands,
+            )?;
+        }
+        IntrinsicBackend::LibNvvm => {
+            let template = if acquire {
+                format!("fence.proxy.tensormap::generic.acquire.{scope} [$0], 128;")
+            } else {
+                format!("fence.proxy.tensormap::generic.release.{scope};")
+            };
+            inline_asm_sideeffect(
+                ctx,
+                rewriter,
+                void_ty.into(),
+                operands,
+                &template,
+                if acquire { "l,~{memory}" } else { "~{memory}" },
+            );
+        }
+    }
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
 /// Convert one TMA group-control operation through the selected backend.
 pub(crate) fn convert_control(
     ctx: &mut Context,

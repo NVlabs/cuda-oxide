@@ -1,0 +1,337 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.73-execution-control",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA 13.3 libNVVM package 13.3.73; libNVVM API 2.0",
+  "backend_sha256": "5317a9fb3c8b719198e89e27fd60e2b59f2702fe6b1eab357167c920b52be9cc",
+  "build_id_prefix": "88b802",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "barrier_cta_sync",
+      "source_record": "int_nvvm_barrier_cta_sync_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.sync.count",
+      "llvm_arguments": ["i32", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "NVVM IR 2.0 convergent side-effecting inline PTX barrier.sync probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 7c4289764865653725853dc986143d5dde7ef39f05f597aa54ad99d44e007d79 to LTOIR SHA-256 f31807cefa0865b1f9e3284dd06b2d3d5718913fa37a2618c57dfec4b11cdb52; nvJitLink emitted matching PTX SHA-256 fe2a971c69e1bab0ab620a3d6f97e55cbb6b36f46a92743989a586b58f988889."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked counted barrier synchronization probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced cubin SHA-256 24b9e4d4395e926a4aa66ccfcc439ad28955798825178c7113076b1ccd579d0e; cuobjdump retained BAR.SYNC.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": ["sync"],
+        "operands": [
+          {"kind": "register_or_immediate"},
+          {"kind": "register_or_immediate"}
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_sync_aligned",
+      "source_record": "int_nvvm_barrier_cta_sync_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.sync.aligned.count",
+      "llvm_arguments": ["i32", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "NVVM IR 2.0 convergent side-effecting inline PTX bar.sync probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 579466b9aa311ff37495c4e7f604bdf107ae171d820b25105feb84258152f7f0 to LTOIR SHA-256 94e983ade64421ea5a8d44d8453affd15dc765762667343044f76efea8e1aa16; nvJitLink emitted matching PTX SHA-256 6b10b5c6a1248b83b5f4518bdbb8876e15730cc1b7b2b2796da142ece753b0ef."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked aligned counted barrier synchronization probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced cubin SHA-256 2ed2b6758f44f5bfe3414a3f0051f915709eddd6b4054401ec85aa3afbcc942f; cuobjdump retained BAR.SYNC.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": ["sync"],
+        "operands": [
+          {"kind": "register_or_immediate"},
+          {"kind": "register_or_immediate"}
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_arrive",
+      "source_record": "int_nvvm_barrier_cta_arrive_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.arrive.count",
+      "llvm_arguments": ["i32", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "NVVM IR 2.0 convergent side-effecting inline PTX barrier.arrive probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 65671f4a746d155eb12254e1f871fcd3fead7041b26f32c06a9ce819bbc90d3b to LTOIR SHA-256 147b4026da4581071480f95cf1f691b4888078a572d050640bc71bedba935ed4; nvJitLink emitted matching PTX SHA-256 2a9d61847160b457cd8dffbcb0ff18d6bfaffc0bc5d45175dc4515dfce786a77."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked counted barrier arrival probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced cubin SHA-256 1fd529cda3a3e0acf3310eec5e68b025d6b41d6e12588f45cdf1d9fbf488d1cf; cuobjdump retained BAR.ARV.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": ["arrive"],
+        "operands": [
+          {"kind": "register_or_immediate"},
+          {"kind": "register_or_immediate"}
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_arrive_aligned",
+      "source_record": "int_nvvm_barrier_cta_arrive_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.arrive.aligned.count",
+      "llvm_arguments": ["i32", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "NVVM IR 2.0 convergent side-effecting inline PTX bar.arrive probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 6f4a98ea80bfcad48693cdfd222167642dbc916957e2f2dd74bcd5b2ee8550e8 to LTOIR SHA-256 60404c53823ad015a8a1ea47c3bb8d705d833f6bd8184b569933c17e74d98710; nvJitLink emitted matching PTX SHA-256 130dc6b1c3ac18204ed037ec7ada696f28829255d62ff2f3971c32bdbdec86af."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "linked aligned counted barrier arrival probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced cubin SHA-256 a73a41d6b67c452bd0b5d73dcb28e01a81c01cc91d27a6e98f499a409d4f6001; cuobjdump retained BAR.ARV.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": ["arrive"],
+        "operands": [
+          {"kind": "register_or_immediate"},
+          {"kind": "register_or_immediate"}
+        ]
+      }
+    },
+    {
+      "id": "grid_dependency_launch_dependents",
+      "source_record": "int_nvvm_griddepcontrol_launch_dependents",
+      "llvm_symbol": "llvm.nvvm.griddepcontrol.launch.dependents",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_90",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "NVVM IR 2.0 side-effecting inline PTX griddepcontrol.launch_dependents probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 55e66456c6d94738f891265e35df2dc4c562f70204de5974900471c8d90141b0 to LTOIR SHA-256 a756d76960b6510a63454230169f254a36918faa5fffc4defd94eccabc937854; nvJitLink emitted matching PTX SHA-256 9a50bac1217347e320d682ac35f580cf815ac14dbd4e11753325b4ca9d1f93d7."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "linked grid dependency launch probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced cubin SHA-256 b58003d0006957a49ab1f4c5e305fdb686b4271f1644f1ef58114cd41670a8bd; cuobjdump decoded the launch operation as PREEXIT.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "griddepcontrol",
+        "modifiers": ["launch_dependents"],
+        "operands": []
+      }
+    },
+    {
+      "id": "grid_dependency_wait",
+      "source_record": "int_nvvm_griddepcontrol_wait",
+      "llvm_symbol": "llvm.nvvm.griddepcontrol.wait",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_90",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "NVVM IR 2.0 side-effecting inline PTX griddepcontrol.wait probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 f8fdc53d19dcba3c9334cc2fe1e3048fb24b2e30d8d09a45d75fcff19c29167d to LTOIR SHA-256 326bc0c859d9b9014f23e13f1da999091e1cc6872e15ec827fa81092d0e6e4d5; nvJitLink emitted matching PTX SHA-256 a90a113865f2ba8c53c1f2b0fee84ef277e3e70bb0cea5653d0fe9ee90ca6246."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "linked grid dependency wait probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced cubin SHA-256 25b03a5e3721c020006dc2ad615fe0a4a5f8034548a3f3e4bc5454f577fee18c; cuobjdump decoded the wait operation as ACQBULK.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "griddepcontrol",
+        "modifiers": ["wait"],
+        "operands": []
+      }
+    },
+    {
+      "id": "setmaxnreg_inc",
+      "source_record": "int_nvvm_setmaxnreg_inc_sync_aligned_u32",
+      "llvm_symbol": "llvm.nvvm.setmaxnreg.inc.sync.aligned.u32",
+      "llvm_arguments": ["i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_90a",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "NVVM IR 2.0 convergent side-effecting inline PTX setmaxnreg increment probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 5df660b3f34a8c45d1ec9a8bca38024084bfc025bbfc414179db9a753a11d557 to LTOIR SHA-256 75b77b6e2edb6cbb43c8fa19f80be297f73ff3a29b956049e5419d9b87b35c77; nvJitLink emitted matching PTX SHA-256 ebf19d2fcde31e23f608880f61b2c4d5b916a4cc58fd87235e74918c0b6badde."
+        },
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "linked setmaxnreg increment probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink accepted the instruction and produced cubin SHA-256 632a69e158fb616805f1aba4fe87fa7e15372e60f12ef26f6ccd3add16d20dea.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "setmaxnreg",
+        "modifiers": ["inc", "sync", "aligned", "u32"],
+        "operands": [{"kind": "immediate"}]
+      }
+    },
+    {
+      "id": "setmaxnreg_dec",
+      "source_record": "int_nvvm_setmaxnreg_dec_sync_aligned_u32",
+      "llvm_symbol": "llvm.nvvm.setmaxnreg.dec.sync.aligned.u32",
+      "llvm_arguments": ["i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_90a",
+      "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "NVVM IR 2.0 convergent side-effecting inline PTX setmaxnreg decrement probe",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled source IR SHA-256 b9d4789bf7c7e6265427203eaf0d2fd2b2c0e2b7e5af33b27ec0ff53debf157f to LTOIR SHA-256 1b7d8499637583aeaf1954612605a4278ae1e29ef4cf1823928cf238b049a733; nvJitLink emitted matching PTX SHA-256 8828781cfc87509545585b74eb5338a745d1120454e798a819f9a61b7308f8f2."
+        },
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "linked setmaxnreg decrement probe",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink accepted the instruction and produced cubin SHA-256 09fe97fe245219bd114da9e46252415a83d870d45ddde64e79fe380ea2bfb960.",
+          "tool_path": "libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "setmaxnreg",
+        "modifiers": ["dec", "sync", "aligned", "u32"],
+        "operands": [{"kind": "immediate"}]
+      }
+    }
+  ]
+}

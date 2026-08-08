@@ -104,6 +104,7 @@ impl Barrier {
 
 include!("generated/mbarrier_basic.rs");
 include!("generated/mbarrier_extended.rs");
+include!("generated/counted_barrier.rs");
 
 // =============================================================================
 // Barrier Arrive Operations

@@ -1,0 +1,298 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.73",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; libNVVM release V13.3.73",
+  "backend_sha256": "5317a9fb3c8b719198e89e27fd60e2b59f2702fe6b1eab357167c920b52be9cc",
+  "build_id_prefix": "88b802",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": [
+      "i32",
+      "i32",
+      "i32",
+      "i32",
+      "i32",
+      "i32",
+      "f32",
+      "f32",
+      "f32",
+      "f32",
+      "i32",
+      "i16",
+      "i16",
+      "i32",
+      "i16",
+      "i16"
+    ],
+    "llvm_results": [
+      "f32",
+      "f32",
+      "f32",
+      "f32"
+    ],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_120a",
+    "ptx_feature": "PTX ISA 8.7 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "dense_mxf8f6f4_f32_all_targets",
+      "coverage_count": 25,
+      "stages": [
+        {
+          "targets": [
+            "compute_120a",
+            "ptx93"
+          ],
+          "representation": "kernel-rooted dense kind::mxf8f6f4 F32 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled all 25 cuda-intrinsics-gen candidate forms to LTOIR; the sorted LTOIR SHA-256 ledger hashes to 64961f12856a78fe21d451d9699ce57261d968d544e419ff2df4b554fe09abf5."
+        },
+        {
+          "targets": [
+            "sm_120a",
+            "ptx93"
+          ],
+          "representation": "libNVVM dense kind::mxf8f6f4 F32 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink PTX followed by ptxas compile-only accepted all 25 forms; the sorted PTX, CUBIN, and nvdisasm SHA-256 ledgers hash to 701e011522fd8d4eeb3ee8a1d790c027da777c5d3625601bbafc485542a7331d, 6febe6b05a3c815745ca2bccf9e4c6e118e99cfff22325143c08c1acf6f4e3e5, and 0d03d94f65568b315fedd2d3dc89d9f0a424f851b97b9fd346a101edb9154ff6.",
+          "tool_path": "ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.73",
+          "tool_sha256": "ffb76e4665a12915797c67adf37153fc1a1253ec1ebc3a4d3cbe92a0112b310f"
+        },
+        {
+          "targets": [
+            "sm_120a",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining dense kind::mxf8f6f4 F32 MMA",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced 25 kernel-rooted CUBINs; the sorted CUBIN SHA-256 ledger hashes to 2a3b6068e8a38415f89aa441b76fc8032850600474975b1cc546616a5d3bbfd2 and every disassembly contains the matching QMMA type pair.",
+          "tool_path": "libnvJitLink.so.13",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        },
+        {
+          "targets": [
+            "compute_120f",
+            "ptx93"
+          ],
+          "representation": "kernel-rooted dense kind::mxf8f6f4 F32 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled all 25 cuda-intrinsics-gen candidate forms to LTOIR; the sorted LTOIR SHA-256 ledger hashes to efe50d837c41219c3010e39ed94bd764f0ebd96d1bb96ac0f4c197a58fb493f0."
+        },
+        {
+          "targets": [
+            "sm_120f",
+            "ptx93"
+          ],
+          "representation": "libNVVM dense kind::mxf8f6f4 F32 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink PTX followed by ptxas compile-only accepted all 25 forms; the sorted PTX, CUBIN, and nvdisasm SHA-256 ledgers hash to 96bbad628f4c37fe882946fe6b95a1583a9e16592db6d091ffd6461f52a2f3ef, aeeab9f03d46ad7d55ec6eec6d0dfb1de986af46989e9853130454563eb12fb1, and 4545dc169911c74dbc2c819ff907bb35483ba12bca88c2df8317a949ca7dee1f.",
+          "tool_path": "ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.73",
+          "tool_sha256": "ffb76e4665a12915797c67adf37153fc1a1253ec1ebc3a4d3cbe92a0112b310f"
+        },
+        {
+          "targets": [
+            "sm_120f",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining dense kind::mxf8f6f4 F32 MMA",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced 25 kernel-rooted CUBINs; the sorted CUBIN SHA-256 ledger hashes to c6aa53e721e968f38aa8b208b041106ad2463bf8c575ed84115f7a7e02a22fe4 and every disassembly contains the matching QMMA type pair.",
+          "tool_path": "libnvJitLink.so.13",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        },
+        {
+          "targets": [
+            "compute_121a",
+            "ptx93"
+          ],
+          "representation": "kernel-rooted dense kind::mxf8f6f4 F32 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled all 25 cuda-intrinsics-gen candidate forms to LTOIR; the sorted LTOIR SHA-256 ledger hashes to cce37d6bd1fcbfda9dc09da5a2e6f2a7e2dac5e9af910bf51e8ccf63236b8c35."
+        },
+        {
+          "targets": [
+            "sm_121a",
+            "ptx93"
+          ],
+          "representation": "libNVVM dense kind::mxf8f6f4 F32 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink PTX followed by ptxas compile-only accepted all 25 forms; the sorted PTX, CUBIN, and nvdisasm SHA-256 ledgers hash to b1de638b7021ed56191f40b81f4e3d4844e17098a90203266d7dda3d17655d91, b2c0914cfec02ea4626dd17eba1aaee3567cb8964b7ac6f7ce658bb0242dc654, and c4fd0ed7446ccf51509c9baff7463b9db37608c0784334ac30111f53d3ce05f4.",
+          "tool_path": "ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.73",
+          "tool_sha256": "ffb76e4665a12915797c67adf37153fc1a1253ec1ebc3a4d3cbe92a0112b310f"
+        },
+        {
+          "targets": [
+            "sm_121a",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining dense kind::mxf8f6f4 F32 MMA",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced 25 kernel-rooted CUBINs; the sorted CUBIN SHA-256 ledger hashes to 80251d8ca3f09b242c8e36dfa70b5877f14ed18d22f68b1cfc2fd349ae4ffe86 and every disassembly contains the matching QMMA type pair.",
+          "tool_path": "libnvJitLink.so.13",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        },
+        {
+          "targets": [
+            "compute_121f",
+            "ptx93"
+          ],
+          "representation": "kernel-rooted dense kind::mxf8f6f4 F32 inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "libNVVM compiled all 25 cuda-intrinsics-gen candidate forms to LTOIR; the sorted LTOIR SHA-256 ledger hashes to 9c833159d468d4555846e9cbe67a256ea2735cd48b6004698c90c973a5225e8e."
+        },
+        {
+          "targets": [
+            "sm_121f",
+            "ptx93"
+          ],
+          "representation": "libNVVM dense kind::mxf8f6f4 F32 PTX",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink PTX followed by ptxas compile-only accepted all 25 forms; the sorted PTX, CUBIN, and nvdisasm SHA-256 ledgers hash to 071fd3ef0876391a20073d0e68ea24612619762b5821504bd3da19d8c9b56b1f, 8372c69f96306963b3566f25a0fb96318dc58a4c3f760e832c9d6fd2d1ef82ee, and af29dff1abb9124c325dca840b709080a3575da003ca93afe94233a8ff048c36.",
+          "tool_path": "ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.73",
+          "tool_sha256": "ffb76e4665a12915797c67adf37153fc1a1253ec1ebc3a4d3cbe92a0112b310f"
+        },
+        {
+          "targets": [
+            "sm_121f",
+            "ptx93"
+          ],
+          "representation": "libNVVM LTOIR retaining dense kind::mxf8f6f4 F32 MMA",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced 25 kernel-rooted CUBINs; the sorted CUBIN SHA-256 ledger hashes to 15d2a6017e2457bab4a5831b3481c07e57bdaaca1383c13e64322fba384ff126 and every disassembly contains the matching QMMA type pair.",
+          "tool_path": "libnvJitLink.so.13",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+          "tool_sha256": "f84abd240b428825c3ef16632deb1026b208252fe19cef225a9f4ad06a39d1aa"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {
+          "name": "a_element",
+          "values": [
+            "e2m1",
+            "e2m3",
+            "e3m2",
+            "e4m3",
+            "e5m2"
+          ]
+        },
+        {
+          "name": "b_element",
+          "values": [
+            "e2m1",
+            "e2m3",
+            "e3m2",
+            "e4m3",
+            "e5m2"
+          ]
+        }
+      ],
+      "product_count": 25,
+      "fixtures": [
+        "dense_mxf8f6f4_f32_all_targets"
+      ],
+      "template": {
+        "id": "mma_m16n8k32_mxf8f6f4_f32_${a_element}_${b_element}",
+        "source_record": "int_nvvm_mma_block_scale_m16n8k32_row_col_mxf8f6f4_f32_${a_element}_${b_element}_f32_ue8m0",
+        "llvm_symbol": "llvm.nvvm.mma.block.scale.m16n8k32.row.col.mxf8f6f4.f32.${a_element}.${b_element}.f32.ue8m0",
+        "expected_ptx": {
+          "mnemonic": "mma",
+          "modifiers": [
+            "sync",
+            "aligned",
+            "m16n8k32",
+            "row",
+            "col",
+            "kind::mxf8f6f4",
+            "block_scale",
+            "f32",
+            "${a_element}",
+            "${b_element}",
+            "f32",
+            "ue8m0"
+          ],
+          "operands": [
+            {
+              "kind": "register_list",
+              "length": 4
+            },
+            {
+              "kind": "register_list",
+              "length": 4
+            },
+            {
+              "kind": "register_list",
+              "length": 2
+            },
+            {
+              "kind": "register_list",
+              "length": 4
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register_list",
+              "length": 2
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register_list",
+              "length": 2
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

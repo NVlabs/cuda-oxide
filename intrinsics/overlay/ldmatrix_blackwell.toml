@@ -344,6 +344,9 @@ rust_result = "[u32; 2]"
 safe = false
 must_use = true
 public_rust_path = "cuda_intrinsics::matrix::ldmatrix_m8n16_x2_b8x16_b4x16_p64"
+compatibility_rust_paths = [
+    "cuda_device::wmma::ldmatrix_m8n16_x2_b8x16_b4x16_p64",
+]
 dialect_op_type = "LdmatrixOp"
 dialect_op_name = "nvvm.ldmatrix"
 llvm_symbol = "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64"
@@ -426,6 +429,9 @@ rust_result = "[u32; 4]"
 safe = false
 must_use = true
 public_rust_path = "cuda_intrinsics::matrix::ldmatrix_m8n16_x4_b8x16_b4x16_p64"
+compatibility_rust_paths = [
+    "cuda_device::wmma::ldmatrix_m8n16_x4_b8x16_b4x16_p64",
+]
 dialect_op_type = "LdmatrixOp"
 dialect_op_name = "nvvm.ldmatrix"
 llvm_symbol = "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64"

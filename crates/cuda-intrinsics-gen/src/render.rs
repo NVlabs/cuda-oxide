@@ -11,20 +11,21 @@ use crate::model::{
     CpAsyncControlOperation, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
     CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControlAdapter, DebugControlOperation,
     DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
-    EvidenceStageKind, ExtendedMinMaxAdapter, ExtendedMinMaxFormat, ExtendedMinMaxNan,
-    ExtendedMinMaxOperation, ExtendedMinMaxSubnormal, ImportedAddressSpace, IntrinsicBackend,
-    IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity, LdmatrixParticipation,
-    LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
-    MbarrierExtendedAdapter, MbarrierExtendedOperation, MbarrierExtendedSourceContract,
-    MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
-    RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
-    RegisterMmaShape, RuntimeValidation, ScalarArithmeticFormat, ScalarArithmeticOperation,
-    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
-    ScalarConversionRounding, ScalarConversionSaturation, ScalarMathFormat, ScalarMathOperation,
-    ScalarMathPrecision, ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    EvidenceStageKind, ExecutionControlOperation, ExtendedMinMaxAdapter, ExtendedMinMaxFormat,
+    ExtendedMinMaxNan, ExtendedMinMaxOperation, ExtendedMinMaxSubnormal, ImportedAddressSpace,
+    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
+    LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter,
+    MbarrierBasicOperation, MbarrierExtendedAdapter, MbarrierExtendedOperation,
+    MbarrierExtendedSourceContract, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
+    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
+    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
+    RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaKind,
+    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
+    RuntimeValidation, ScalarArithmeticFormat, ScalarArithmeticOperation, ScalarArithmeticRounding,
+    ScalarArithmeticSaturation, ScalarArithmeticSubnormal, ScalarConversionRounding,
+    ScalarConversionSaturation, ScalarMathFormat, ScalarMathOperation, ScalarMathPrecision,
+    ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
     SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, StmatrixLayout, StmatrixMultiplicity,
@@ -63,6 +64,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/cuda-device/src/generated/register_mma.rs".into(),
         render_compat_register_mma(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/ldmatrix.rs".into(),
+        render_compat_ldmatrix(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/cuda-device/src/generated/sparse_mma.rs".into(),
@@ -223,6 +228,24 @@ pub fn all_outputs(
         outputs.insert(
             "crates/dialect-nvvm/src/ops/generated/tma.rs".into(),
             render_dialect_tma(catalog, catalog_sha256),
+        );
+    }
+    if execution_controls(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/counted_barrier.rs".into(),
+            render_compat_counted_barrier(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/cuda-device/src/generated/grid_dependency.rs".into(),
+            render_compat_grid_dependency(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/cuda-device/src/generated/register_control.rs".into(),
+            render_compat_register_control(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/execution_control.rs".into(),
+            render_dialect_execution_control(catalog, catalog_sha256),
         );
     }
     if tcgen05_intrinsics(catalog).next().is_some() {
@@ -441,6 +464,10 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "wgmma_control" && record.wgmma_control.is_some())
                     || (record.family == "tma" && record.tma.is_some())
                     || (record.family == "tcgen05" && record.tcgen05.is_some())
+                    || matches!(
+                        record.family.as_str(),
+                        "counted_barrier" | "grid_dependency" | "register_control"
+                    )
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -506,7 +533,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             ),
             "register_mma" => ensure!(
                 record.rust.module == "matrix"
-                    && record.rust.arguments.len() == 3
+                    && record.rust.arguments.len() == 3 + register_mma_extra_operand_count(record)
                     && !record.rust.safe
                     && record.rust.must_use
                     && record.semantics.memory == "none"
@@ -1131,7 +1158,6 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && !record.rust.must_use
                     && record.dialect.results.is_empty()
                     && record.llvm.as_ref().is_some_and(|llvm| llvm.results.is_empty())
-                    && record.semantics.memory == "read_write"
                     && record.lowering == "generated_tma"
                     && record.tma.as_ref().is_some_and(|tma| {
                         tma.runtime_validation == RuntimeValidation::Unexecuted
@@ -1143,12 +1169,20 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                                     | TmaOperation::G2sTile4d
                                     | TmaOperation::G2sTile5d,
                                     TmaAdapter::G2sPointersCoordinatesBarrierInjectDefaults,
-                                ) => !record.rust.safe && record.semantics.convergent,
+                                ) => {
+                                    !record.rust.safe
+                                        && record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                }
                                 (
                                     TmaOperation::G2sTile2dMulticast
                                     | TmaOperation::G2sTile2dMulticastCg2,
                                     TmaAdapter::G2sPointersCoordinatesBarrierMaskInjectDefaults,
-                                ) => !record.rust.safe && record.semantics.convergent,
+                                ) => {
+                                    !record.rust.safe
+                                        && record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                }
                                 (
                                     TmaOperation::S2gTile1d
                                     | TmaOperation::S2gTile2d
@@ -1156,18 +1190,163 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                                     | TmaOperation::S2gTile4d
                                     | TmaOperation::S2gTile5d,
                                     TmaAdapter::S2gPointersCoordinatesInjectDefaults,
-                                ) => !record.rust.safe && record.semantics.convergent,
+                                ) => {
+                                    !record.rust.safe
+                                        && record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                }
                                 (TmaOperation::CommitGroup, TmaAdapter::NoOperands) => {
-                                    record.rust.safe && !record.semantics.convergent
+                                    record.rust.safe
+                                        && !record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
                                 }
                                 (
                                     TmaOperation::WaitGroup | TmaOperation::WaitGroupRead,
                                     TmaAdapter::CompileTimeConstantMaxPending,
-                                ) => record.rust.safe && !record.semantics.convergent,
+                                ) => {
+                                    record.rust.safe
+                                        && !record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                }
+                                (
+                                    TmaOperation::PrefetchTensorMap,
+                                    TmaAdapter::DescriptorPointer,
+                                ) => {
+                                    !record.rust.safe
+                                        && !record.semantics.convergent
+                                        && record.semantics.memory == "read"
+                                }
+                                (
+                                    TmaOperation::PrefetchTile1d
+                                    | TmaOperation::PrefetchTile2d
+                                    | TmaOperation::PrefetchTile3d
+                                    | TmaOperation::PrefetchTile4d
+                                    | TmaOperation::PrefetchTile5d
+                                    | TmaOperation::PrefetchTileGather4TwoDimensional,
+                                    TmaAdapter::DescriptorCoordinatesInjectDefaults,
+                                ) => {
+                                    !record.rust.safe
+                                        && record.semantics.convergent
+                                        && record.semantics.memory == "read"
+                                }
+                                (
+                                    TmaOperation::PrefetchTile1dCacheHint
+                                    | TmaOperation::PrefetchTile2dCacheHint
+                                    | TmaOperation::PrefetchTile3dCacheHint
+                                    | TmaOperation::PrefetchTile4dCacheHint
+                                    | TmaOperation::PrefetchTile5dCacheHint
+                                    | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint,
+                                    TmaAdapter::DescriptorCoordinatesCacheHintInjectFlag,
+                                ) => {
+                                    !record.rust.safe
+                                        && record.semantics.convergent
+                                        && record.semantics.memory == "read"
+                                }
+                                (
+                                    TmaOperation::ReplaceGlobalAddress,
+                                    TmaAdapter::DescriptorAndAddressPointers,
+                                )
+                                | (
+                                    TmaOperation::ReplaceBoxDim
+                                    | TmaOperation::ReplaceElementStride
+                                    | TmaOperation::ReplaceGlobalDim,
+                                    TmaAdapter::DescriptorOrdinalAndU32,
+                                )
+                                | (
+                                    TmaOperation::ReplaceGlobalStride,
+                                    TmaAdapter::DescriptorOrdinalAndU64,
+                                )
+                                | (
+                                    TmaOperation::ReplaceElementType
+                                    | TmaOperation::ReplaceFillMode
+                                    | TmaOperation::ReplaceInterleaveLayout
+                                    | TmaOperation::ReplaceSwizzleAtomicity
+                                    | TmaOperation::ReplaceSwizzleMode,
+                                    TmaAdapter::DescriptorAndImmediateU32,
+                                )
+                                | (
+                                    TmaOperation::ReplaceRank,
+                                    TmaAdapter::DescriptorAndRuntimeU32,
+                                ) => {
+                                    !record.rust.safe
+                                        && !record.semantics.convergent
+                                        && record.semantics.memory == "write"
+                                }
+                                (
+                                    TmaOperation::FenceProxyTensorMapAcquireCluster
+                                    | TmaOperation::FenceProxyTensorMapAcquireCta
+                                    | TmaOperation::FenceProxyTensorMapAcquireGpu
+                                    | TmaOperation::FenceProxyTensorMapAcquireSystem,
+                                    TmaAdapter::DescriptorPointerInjectBytes,
+                                ) => {
+                                    !record.rust.safe
+                                        && !record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                }
+                                (
+                                    TmaOperation::FenceProxyTensorMapReleaseCluster
+                                    | TmaOperation::FenceProxyTensorMapReleaseCta
+                                    | TmaOperation::FenceProxyTensorMapReleaseGpu
+                                    | TmaOperation::FenceProxyTensorMapReleaseSystem,
+                                    TmaAdapter::NoOperands,
+                                ) => {
+                                    record.rust.safe
+                                        && !record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                }
                                 _ => false,
                             }
                     }),
                 "{} is outside the closed generated TMA recipe",
+                record.id
+            ),
+            "counted_barrier" | "grid_dependency" | "register_control" => ensure!(
+                ExecutionControlOperation::from_catalog_id(&record.id).is_some_and(|operation| {
+                    record.family == operation.family()
+                        && record.rust.result == "()"
+                        && !record.rust.safe
+                        && !record.rust.must_use
+                        && record.dialect.results.is_empty()
+                        && record
+                            .llvm
+                            .as_ref()
+                            .is_some_and(|llvm| llvm.results.is_empty())
+                        && record.lowering == "generated_execution_control"
+                        && match operation {
+                            ExecutionControlOperation::BarrierCtaSync
+                            | ExecutionControlOperation::BarrierCtaSyncAligned
+                            | ExecutionControlOperation::BarrierCtaArrive
+                            | ExecutionControlOperation::BarrierCtaArriveAligned => {
+                                record.rust.module == "barrier"
+                                    && record.rust.arguments == ["u32", "u32"]
+                                    && record.dialect.operands == ["i32", "i32"]
+                                    && record.llvm.as_ref().is_some_and(|llvm| {
+                                        llvm.arguments == ["i32", "i32"]
+                                    })
+                            }
+                            ExecutionControlOperation::GridDependencyLaunchDependents
+                            | ExecutionControlOperation::GridDependencyWait => {
+                                record.rust.module == "grid"
+                                    && record.rust.arguments.is_empty()
+                                    && record.dialect.operands.is_empty()
+                                    && record
+                                        .llvm
+                                        .as_ref()
+                                        .is_some_and(|llvm| llvm.arguments.is_empty())
+                            }
+                            ExecutionControlOperation::SetMaxNRegInc
+                            | ExecutionControlOperation::SetMaxNRegDec => {
+                                record.rust.module == "thread"
+                                    && record.rust.arguments == ["u32"]
+                                    && record.dialect.operands.is_empty()
+                                    && record
+                                        .llvm
+                                        .as_ref()
+                                        .is_some_and(|llvm| llvm.arguments == ["i32"])
+                            }
+                        }
+                }),
+                "{} is outside the closed generated execution-control recipe",
                 record.id
             ),
             "tcgen05" => ensure!(
@@ -2089,6 +2268,22 @@ fn tma_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "tma")
+}
+
+fn execution_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog.intrinsics.iter().filter(|record| {
+        matches!(
+            record.family.as_str(),
+            "counted_barrier" | "grid_dependency" | "register_control"
+        )
+    })
+}
+
+fn execution_control_family<'a>(
+    catalog: &'a CatalogFile,
+    family: &'a str,
+) -> impl Iterator<Item = &'a CatalogIntrinsic> {
+    execution_controls(catalog).filter(move |record| record.family == family)
 }
 
 fn wgmma_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -3793,6 +3988,7 @@ fn register_mma_attr_variants(
     let kind = match register_mma_effective_kind(record) {
         RegisterMmaKind::Standard => "RegisterMmaKindAttr::Standard",
         RegisterMmaKind::F8f6f4 => "RegisterMmaKindAttr::F8f6f4",
+        RegisterMmaKind::Mxf8f6f4 => "RegisterMmaKindAttr::Mxf8f6f4",
     };
     let accumulator = match mma.accumulator {
         RegisterMmaAccumulator::F16 => "RegisterMmaAccumulatorAttr::F16",
@@ -3846,11 +4042,19 @@ fn register_mma_fragment_counts(record: &CatalogIntrinsic) -> (usize, usize, usi
         RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 | RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => {
             (4, 4, 2, 4)
         }
+        RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 => (4, 4, 2, 4),
         RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 | RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32 => {
             (2, 1, 1, 2)
         }
         RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32 => (4, 2, 1, 4),
     }
+}
+
+fn register_mma_extra_operand_count(record: &CatalogIntrinsic) -> usize {
+    usize::from(
+        record.register_mma.as_ref().unwrap().adapter
+            == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32,
+    ) * 6
 }
 
 fn expected_ptx_head(record: &CatalogIntrinsic) -> String {
@@ -3877,28 +4081,47 @@ fn register_mma_template(record: &CatalogIntrinsic) -> String {
     let c = register_list(d_count, c_count);
     let a = register_list(d_count + c_count, a_count);
     let b = register_list(d_count + c_count + a_count, b_count);
-    format!("{} {d}, {a}, {b}, {c};", expected_ptx_head(record))
+    if record.register_mma.as_ref().unwrap().adapter
+        == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+    {
+        let scale_a = d_count + c_count + a_count + b_count;
+        let byte_id_a = scale_a + 1;
+        let thread_id_a = scale_a + 2;
+        let scale_b = scale_a + 3;
+        let byte_id_b = scale_a + 4;
+        let thread_id_b = scale_a + 5;
+        format!(
+            "{} {d}, {a}, {b}, {c}, ${scale_a}, {{${byte_id_a}, ${thread_id_a}}}, ${scale_b}, {{${byte_id_b}, ${thread_id_b}}};",
+            expected_ptx_head(record)
+        )
+    } else {
+        format!("{} {d}, {a}, {b}, {c};", expected_ptx_head(record))
+    }
 }
 
 fn register_mma_constraints(record: &CatalogIntrinsic) -> String {
     let mma = record.register_mma.as_ref().unwrap();
     let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
-    let (output, c, packed) =
-        match mma.adapter {
-            RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32
-            | RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => ("=r", "r", "r"),
-            RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
-            | RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => ("=f", "f", "r"),
-            RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("=d", "d", "d"),
-            RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
-            | RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32
-            | RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32 => ("=r", "r", "r"),
-        };
-    std::iter::repeat_n(output, d_count)
+    let (output, c, packed) = match mma.adapter {
+        RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32 | RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => {
+            ("=r", "r", "r")
+        }
+        RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
+        | RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32
+        | RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 => ("=f", "f", "r"),
+        RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("=d", "d", "d"),
+        RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
+        | RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32
+        | RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32 => ("=r", "r", "r"),
+    };
+    let mut constraints = std::iter::repeat_n(output, d_count)
         .chain(std::iter::repeat_n(c, c_count))
         .chain(std::iter::repeat_n(packed, a_count + b_count))
-        .collect::<Vec<_>>()
-        .join(",")
+        .collect::<Vec<_>>();
+    if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
+        constraints.extend(["r", "h", "h", "r", "h", "h"]);
+    }
+    constraints.join(",")
 }
 
 fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
@@ -3907,6 +4130,9 @@ fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
             "GeneratedMmaResultType::I32"
         }
         RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32 | RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => {
+            "GeneratedMmaResultType::F32"
+        }
+        RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 => {
             "GeneratedMmaResultType::F32"
         }
         RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => "GeneratedMmaResultType::F64",
@@ -4442,6 +4668,13 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                      /// `_arg0`, `_arg1`, and `_arg2` must contain this lane's C, A, and B fragments in the documented PTX layout.\n\
                      /// The operation is register-only and is not a memory fence.\n",
                 );
+                if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+                {
+                    output.push_str(
+                        "/// `_arg3` and `_arg6` contain this lane's packed A and B scale data. `_arg4`/`_arg5` and `_arg7`/`_arg8` are the corresponding byte/thread selectors.\n\
+                         /// For `scale_vec::1X`, A and B byte selectors must be in `0..=3`, the A thread selector in `0..=1`, and the B thread selector in `0..=3`; other values make the PTX operation undefined.\n",
+                    );
+                }
                 writeln!(
                     output,
                     "/// See the [PTX MMA fragment layouts]({}).",
@@ -4563,7 +4796,39 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                         "/// The source must name a live shared-memory tile, and the tensor map must be a live descriptor for this dimensionality.\n\
                          /// Keep both objects alive until the committed bulk-copy group completes.\n",
                     ),
+                    TmaAdapter::DescriptorPointer
+                    | TmaAdapter::DescriptorCoordinatesInjectDefaults
+                    | TmaAdapter::DescriptorCoordinatesCacheHintInjectFlag => output.push_str(
+                        "/// The tensor-map pointer must name a live, correctly encoded descriptor for this operation.\n",
+                    ),
+                    TmaAdapter::DescriptorAndAddressPointers
+                    | TmaAdapter::DescriptorOrdinalAndU32
+                    | TmaAdapter::DescriptorOrdinalAndU64
+                    | TmaAdapter::DescriptorAndImmediateU32
+                    | TmaAdapter::DescriptorAndRuntimeU32 => output.push_str(
+                        "/// The tensor-map pointer must name a writable, 128-byte descriptor in global memory, and every replacement value must satisfy the PTX field contract.\n",
+                    ),
+                    TmaAdapter::DescriptorPointerInjectBytes => output.push_str(
+                        "/// The tensor-map pointer must name a live 128-byte descriptor covered by the matching generic-proxy release fence.\n",
+                    ),
                     TmaAdapter::NoOperands | TmaAdapter::CompileTimeConstantMaxPending => {}
+                }
+            } else if let Some(operation) = ExecutionControlOperation::from_catalog_id(&record.id) {
+                match operation {
+                    ExecutionControlOperation::BarrierCtaSync
+                    | ExecutionControlOperation::BarrierCtaSyncAligned
+                    | ExecutionControlOperation::BarrierCtaArrive
+                    | ExecutionControlOperation::BarrierCtaArriveAligned => output.push_str(
+                        "/// `_arg0` must identify a CTA barrier and `_arg1` must be the compatible expected thread count used by every participant.\n",
+                    ),
+                    ExecutionControlOperation::GridDependencyLaunchDependents
+                    | ExecutionControlOperation::GridDependencyWait => output.push_str(
+                        "/// The kernel launch must participate in a valid programmatic dependent-launch protocol.\n",
+                    ),
+                    ExecutionControlOperation::SetMaxNRegInc
+                    | ExecutionControlOperation::SetMaxNRegDec => output.push_str(
+                        "/// `_arg0` must be a compile-time multiple of eight in `24..=256`, and every thread in the warpgroup must execute the same operation and count.\n",
+                    ),
                 }
             } else if let Some(bridge) = &record.cp_async_mbarrier {
                 output.push_str(
@@ -4776,7 +5041,23 @@ fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> String {
         assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
         assert!(!record.rust.safe);
         assert!(record.rust.must_use);
-        assert_eq!(record.rust.arguments.len(), 3);
+        let argument_names: &[&str] =
+            if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
+                &[
+                    "c",
+                    "a",
+                    "b",
+                    "scale_a",
+                    "byte_id_a",
+                    "thread_id_a",
+                    "scale_b",
+                    "byte_id_b",
+                    "thread_id_b",
+                ]
+            } else {
+                &["c", "a", "b"]
+            };
+        assert_eq!(record.rust.arguments.len(), argument_names.len());
 
         writeln!(output, "/// {}", record.summary).unwrap();
         writeln!(
@@ -4810,6 +5091,12 @@ fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "/// `c`, `a`, and `b` must contain this lane's fragments in the documented PTX layout.\n",
         );
+        if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
+            output.push_str(
+                "/// `scale_a` and `scale_b` contain this lane's packed scale data.\n\
+                 /// For `scale_vec::1X`, `byte_id_a` and `byte_id_b` must be in `0..=3`, `thread_id_a` in `0..=1`, and `thread_id_b` in `0..=3`; other values make the PTX operation undefined.\n",
+            );
+        }
         writeln!(
             output,
             "/// See the [PTX MMA fragment layouts]({}).",
@@ -4817,9 +5104,13 @@ fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("/// This register-only operation is not a memory fence.\n");
+        if record.rust.arguments.len() > 7 {
+            output.push_str("#[allow(clippy::too_many_arguments)]\n");
+        }
         output.push_str("#[must_use]\n#[inline(never)]\n");
-        let arguments = ["c", "a", "b"]
-            .into_iter()
+        let arguments = argument_names
+            .iter()
+            .copied()
             .zip(&record.rust.arguments)
             .map(|(name, ty)| format!("{name}: {ty}"))
             .collect::<Vec<_>>()
@@ -4830,7 +5121,54 @@ fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> String {
             record.rust.name, record.rust.result
         )
         .unwrap();
-        output.push_str("    let _ = (c, a, b);\n");
+        writeln!(output, "    let _ = ({});", argument_names.join(", ")).unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_ldmatrix(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::wmma` to keep public paths stable.\n\n");
+    for record in ldmatrix(catalog).filter(|record| {
+        is_blackwell_ldmatrix(record) && !record.rust.compatibility_paths.is_empty()
+    }) {
+        let [path] = record.rust.compatibility_paths.as_slice() else {
+            panic!("generated Blackwell ldmatrix API requires one compatibility path");
+        };
+        assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
+        assert_eq!(record.rust.arguments, ["*const u8"]);
+        assert!(!record.rust.safe);
+        assert!(record.rust.must_use);
+
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", expected_ptx_head(record)).unwrap();
+        writeln!(
+            output,
+            "/// Requires PTX {} and `{}`.",
+            record.target.minimum_ptx,
+            hardware_target_label(&record.target.hardware)
+        )
+        .unwrap();
+        output.push_str(
+            "///\n/// # Safety\n\
+             /// All 32 lanes must execute the same instruction and qualifiers, with no exited lanes.\n\
+             /// `smem_ptr` must satisfy the lane-address mapping, alignment, and readable-byte contract documented by PTX.\n\
+             #[must_use]\n#[inline(never)]\n",
+        );
+        writeln!(
+            output,
+            "pub unsafe fn {}(smem_ptr: *const u8) -> {} {{",
+            record.rust.name, record.rust.result
+        )
+        .unwrap();
+        output.push_str("    let _ = smem_ptr;\n");
         writeln!(
             output,
             "    unreachable!(\"{} called outside CUDA kernel context\")",
@@ -5459,11 +5797,110 @@ fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_counted_barrier(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(
+        execution_control_family(catalog, "counted_barrier").count(),
+        4
+    );
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::barrier` to keep its public API stable.\n\n");
+    for record in execution_control_family(catalog, "counted_barrier") {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n/// # Safety\n/// Every participating thread must use a compatible barrier ID and expected thread count.\n#[inline(never)]\n",
+        );
+        writeln!(
+            output,
+            "pub unsafe fn {}(barrier_id: u32, thread_count: u32) {{",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("    let _ = (barrier_id, thread_count);\n");
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_grid_dependency(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(
+        execution_control_family(catalog, "grid_dependency").count(),
+        2
+    );
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "// Included inside `cuda_device::grid` to keep its public API stable.\n\npub mod dependency {\n",
+    );
+    for (id, name) in [
+        ("grid_dependency_launch_dependents", "trigger_dependents"),
+        ("grid_dependency_wait", "wait"),
+    ] {
+        let record = execution_control_family(catalog, "grid_dependency")
+            .find(|record| record.id == id)
+            .expect("complete grid-dependency family");
+        writeln!(output, "    /// {}", record.summary).unwrap();
+        output.push_str(
+            "    ///\n    /// # Safety\n    /// The kernel launch must participate in a valid programmatic dependent-launch protocol.\n    #[inline(never)]\n",
+        );
+        writeln!(output, "    pub unsafe fn {name}() {{").unwrap();
+        writeln!(
+            output,
+            "        unreachable!(\"{name} called outside CUDA kernel context\")"
+        )
+        .unwrap();
+        output.push_str("    }\n\n");
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_compat_register_control(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(
+        execution_control_family(catalog, "register_control").count(),
+        2
+    );
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::thread` to keep its public API stable.\n\n");
+    for (id, public_name, hidden_name) in [
+        ("setmaxnreg_inc", "setmaxnreg_inc", "__setmaxnreg_inc"),
+        ("setmaxnreg_dec", "setmaxnreg_dec", "__setmaxnreg_dec"),
+    ] {
+        let record = execution_control_family(catalog, "register_control")
+            .find(|record| record.id == id)
+            .expect("complete register-control family");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n/// # Safety\n/// Every thread in the warpgroup must execute the same operation with the same count.\n#[inline(always)]\n",
+        );
+        writeln!(output, "pub unsafe fn {public_name}<const N: u32>() {{").unwrap();
+        writeln!(output, "    unsafe {{ {hidden_name}(N) }}").unwrap();
+        output.push_str("}\n\n#[doc(hidden)]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub(crate) unsafe fn {hidden_name}(_register_count: u32) {{"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"{public_name} called outside CUDA kernel context\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tma` to keep its public API stable.\n\n");
     for record in tma_intrinsics(catalog) {
-        let operation = record.tma.as_ref().expect("TMA contract").operation;
+        let tma = record.tma.as_ref().expect("TMA contract");
+        let operation = tma.operation;
         writeln!(output, "/// {}", record.summary).unwrap();
         let dimensions = operation.dimensions();
         let is_g2s = matches!(
@@ -5484,16 +5921,29 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
                 | TmaOperation::S2gTile4d
                 | TmaOperation::S2gTile5d
         );
-        if is_g2s || is_s2g {
+        if !record.rust.safe {
             output.push_str("///\n/// # Safety\n");
             if is_g2s {
                 output.push_str(
                     "/// `dst`, `tensor_map`, and `barrier` must remain valid until the copy completes.\n",
                 );
-            } else {
+            } else if is_s2g {
                 output.push_str(
                     "/// `src` and `tensor_map` must remain valid until the committed copy group completes.\n",
                 );
+            } else if matches!(
+                tma.adapter,
+                TmaAdapter::DescriptorAndAddressPointers
+                    | TmaAdapter::DescriptorOrdinalAndU32
+                    | TmaAdapter::DescriptorOrdinalAndU64
+                    | TmaAdapter::DescriptorAndImmediateU32
+                    | TmaAdapter::DescriptorAndRuntimeU32
+            ) {
+                output.push_str(
+                    "/// `tensor_map` must point to a writable, 128-byte tensor-map descriptor in global memory.\n",
+                );
+            } else {
+                output.push_str("/// `tensor_map` must point to a live tensor-map descriptor.\n");
             }
         }
         output.push_str("#[inline(never)]\n");
@@ -5549,9 +5999,91 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
             writeln!(output, "    let _ = ({});", values.join(", ")).unwrap();
         } else if operation == TmaOperation::CommitGroup {
             writeln!(output, "pub fn {}() {{", record.rust.name).unwrap();
-        } else {
+        } else if matches!(
+            operation,
+            TmaOperation::WaitGroup | TmaOperation::WaitGroupRead
+        ) {
             writeln!(output, "pub fn {}(n: u32) {{", record.rust.name).unwrap();
             output.push_str("    let _ = n;\n");
+        } else if operation == TmaOperation::PrefetchTensorMap {
+            writeln!(
+                output,
+                "pub unsafe fn {}(tensor_map: *const TmaDescriptor) {{",
+                record.rust.name
+            )
+            .unwrap();
+            output.push_str("    let _ = tensor_map;\n");
+        } else if let Some(coordinate_count) = operation.prefetch_coordinate_count() {
+            let mut arguments = vec!["tensor_map: *const TmaDescriptor".to_owned()];
+            let mut values = vec!["tensor_map".to_owned()];
+            for index in 0..coordinate_count {
+                arguments.push(format!("coord{index}: i32"));
+                values.push(format!("coord{index}"));
+            }
+            if operation.uses_prefetch_cache_hint() {
+                arguments.push("cache_hint: u64".into());
+                values.push("cache_hint".into());
+            }
+            writeln!(
+                output,
+                "pub unsafe fn {}({}) {{",
+                record.rust.name,
+                arguments.join(", ")
+            )
+            .unwrap();
+            writeln!(output, "    let _ = ({});", values.join(", ")).unwrap();
+        } else {
+            match tma.adapter {
+                TmaAdapter::DescriptorAndAddressPointers => {
+                    writeln!(
+                        output,
+                        "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, new_address: *const u8) {{",
+                        record.rust.name
+                    )
+                    .unwrap();
+                    output.push_str("    let _ = (tensor_map, new_address);\n");
+                }
+                TmaAdapter::DescriptorOrdinalAndU32 => {
+                    writeln!(
+                        output,
+                        "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, ordinal: u32, new_value: u32) {{",
+                        record.rust.name
+                    )
+                    .unwrap();
+                    output.push_str("    let _ = (tensor_map, ordinal, new_value);\n");
+                }
+                TmaAdapter::DescriptorOrdinalAndU64 => {
+                    writeln!(
+                        output,
+                        "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, ordinal: u32, new_value: u64) {{",
+                        record.rust.name
+                    )
+                    .unwrap();
+                    output.push_str("    let _ = (tensor_map, ordinal, new_value);\n");
+                }
+                TmaAdapter::DescriptorAndImmediateU32 | TmaAdapter::DescriptorAndRuntimeU32 => {
+                    writeln!(
+                        output,
+                        "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, new_value: u32) {{",
+                        record.rust.name
+                    )
+                    .unwrap();
+                    output.push_str("    let _ = (tensor_map, new_value);\n");
+                }
+                TmaAdapter::DescriptorPointerInjectBytes => {
+                    writeln!(
+                        output,
+                        "pub unsafe fn {}(tensor_map: *const TmaDescriptor) {{",
+                        record.rust.name
+                    )
+                    .unwrap();
+                    output.push_str("    let _ = tensor_map;\n");
+                }
+                TmaAdapter::NoOperands => {
+                    writeln!(output, "pub fn {}() {{", record.rust.name).unwrap();
+                }
+                _ => unreachable!("TMA compatibility operation category was matched"),
+            }
         }
         writeln!(
             output,
@@ -5561,6 +6093,23 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("}\n\n");
     }
+    output.push_str(
+        r#"/// Replace a global tensor-map address and publish it to the tensor-map proxy.
+///
+/// # Safety
+/// `tensor_map` must point to a writable, 128-byte tensor-map descriptor in
+/// global memory, and `new_address` must remain valid for every later TMA use.
+#[inline(always)]
+pub unsafe fn replace_tma_global_address(
+    tensor_map: *mut TmaDescriptor,
+    new_address: *const u8,
+) {
+    unsafe { tensormap_replace_global_address(tensor_map, new_address) };
+    fence_proxy_tensormap_generic_release_gpu();
+    unsafe { fence_proxy_tensormap_generic_acquire_gpu(tensor_map) };
+}
+"#,
+    );
     output
 }
 
@@ -6739,6 +7288,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    warp_shuffle::register(ctx);",
                 "    warp_shuffle::register(ctx);\n    wgmma_control::register(ctx);",
+            );
+    }
+    if execution_controls(catalog).next().is_some() {
+        output = output
+            .replace("mod dotprod;", "mod dotprod;\nmod execution_control;")
+            .replace(
+                "pub use dotprod::*;",
+                "pub use dotprod::*;\npub use execution_control::*;",
+            )
+            .replace(
+                "    dotprod::register(ctx);",
+                "    dotprod::register(ctx);\n    execution_control::register(ctx);",
             );
     }
     if tma_intrinsics(catalog).next().is_some() {
@@ -8319,6 +8880,10 @@ fn register_mma_carriers(record: &CatalogIntrinsic) -> (&'static str, &'static s
             "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]",
             "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32]",
         ),
+        RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 => (
+            "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U16, MmaCarrier::U16, MmaCarrier::U32, MmaCarrier::U16, MmaCarrier::U16]",
+            "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32]",
+        ),
         RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => (
             "&[MmaCarrier::F64, MmaCarrier::F64, MmaCarrier::F64, MmaCarrier::F64]",
             "&[MmaCarrier::F64, MmaCarrier::F64]",
@@ -8381,7 +8946,7 @@ pub enum RegisterMmaOperationAttr { Multiply, AndPopc, XorPopc }
 
 #[pliron_attr(name = "nvvm.register_mma_kind", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaKindAttr { Standard, F8f6f4 }
+pub enum RegisterMmaKindAttr { Standard, F8f6f4, Mxf8f6f4 }
 
 #[pliron_attr(name = "nvvm.register_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -8457,13 +9022,13 @@ impl RegisterMmaOp {
 }
 
 #[derive(Clone, Copy)]
-enum MmaCarrier { F32, F64, I32, U32 }
+enum MmaCarrier { F32, F64, I32, U16, U32 }
 
 fn is_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool {
     match carrier {
         MmaCarrier::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
         MmaCarrier::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
-        MmaCarrier::I32 | MmaCarrier::U32 => {
+        MmaCarrier::I32 | MmaCarrier::U16 | MmaCarrier::U32 => {
             let expected = if matches!(carrier, MmaCarrier::I32) {
                 Signedness::Signed
             } else {
@@ -8471,7 +9036,11 @@ fn is_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool {
             };
             ty.deref(ctx)
                 .downcast_ref::<IntegerType>()
-                .is_some_and(|integer| integer.width() == 32 && integer.signedness() == expected)
+                .is_some_and(|integer| {
+                    integer.width()
+                        == if matches!(carrier, MmaCarrier::U16) { 16 } else { 32 }
+                        && integer.signedness() == expected
+                })
         }
     }
 }
@@ -8542,10 +9111,16 @@ fn is_compat_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool
     match carrier {
         MmaCarrier::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
         MmaCarrier::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
-        MmaCarrier::I32 | MmaCarrier::U32 => ty
-            .deref(ctx)
-            .downcast_ref::<IntegerType>()
-            .is_some_and(|integer| integer.width() == 32),
+        MmaCarrier::I32 | MmaCarrier::U16 | MmaCarrier::U32 => {
+            let expected_width = if matches!(carrier, MmaCarrier::U16) {
+                16
+            } else {
+                32
+            };
+            ty.deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == expected_width)
+        }
     }
 }
 
@@ -10356,8 +10931,52 @@ fn render_dialect_clc(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_dialect_execution_control(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(execution_controls(catalog).count(), 8);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated counted-barrier, grid-dependency, and register-control operations.\n\nuse pliron::{\n    builtin::{attributes::IntegerAttr, op_interfaces::{NOpdsInterface, NResultsInterface}, types::{IntegerType, Signedness}},\n    common_traits::Verify,\n    context::{Context, Ptr},\n    identifier::Identifier,\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    verify_err,\n};\nuse pliron::utils::apint::APInt;\nuse pliron_derive::pliron_op;\nuse std::num::NonZeroUsize;\n\n",
+    );
+    for record in execution_controls(catalog).filter(|record| record.family != "register_control") {
+        let operand_count = record.dialect.operands.len();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+    }
+    for record in execution_control_family(catalog, "register_control") {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n    pub fn build(ctx: &mut Context, register_count: u32) -> Ptr<Operation> {\n        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);\n        let ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        let value = APInt::from_u64(register_count.into(), NonZeroUsize::new(32).unwrap());\n        op.deref_mut(ctx).attributes.set(\n            Identifier::try_from(\"register_count\").unwrap(),\n            IntegerAttr::new(ty, value),\n        );\n        op\n    }\n\n    pub fn register_count(&self, ctx: &Context) -> Option<u32> {\n        let key = Identifier::try_from(\"register_count\").unwrap();\n        let operation = self.get_operation().deref(ctx);\n        let attribute: &IntegerAttr = operation.attributes.get(&key)?;\n        let ty_handle = attribute.get_type();\n        let ty = ty_handle.deref(ctx);\n        if ty.width() != 32 || ty.signedness() != Signedness::Unsigned {\n            return None;\n        }\n        u32::try_from(attribute.value().to_u64()).ok().filter(|value| (24..=256).contains(value) && value % 8 == 0)\n    }\n}\n\n",
+        );
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {\n        let op = self.get_operation().deref(ctx);\n        if self.register_count(ctx).is_none() {\n            return verify_err!(op.loc(), \"setmaxnreg requires an immediate register count in 24..=256 divisible by 8\");\n        }\n        Ok(())\n    }\n}\n\n",
+        );
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in execution_controls(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
 fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tma_intrinsics(catalog).count(), 15);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         "//! Generated Tensor Memory Accelerator operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
@@ -11266,6 +11885,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in execution_controls(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     if wgmma_controls(catalog).next().is_some() {
         output.push_str(
             ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
@@ -11473,7 +12096,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
-    if debug_controls(catalog).next().is_some() {
+    if debug_controls(catalog).next().is_some()
+        || execution_control_family(catalog, "register_control")
+            .next()
+            .is_some()
+    {
         output.push_str("use dialect_mir::ops::{MirConstantOp, MirUnreachableOp};\n\n");
     } else if wgmma_controls(catalog).next().is_some() {
         output.push_str("use dialect_mir::ops::MirConstantOp;\n\n");
@@ -11703,6 +12330,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32 => {
                 "GeneratedMmaImportAdapter::C4I32A2U32B1U32ToD4I32"
             }
+            RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 => {
+                "GeneratedMmaImportAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32"
+            }
         };
         let (
             shape,
@@ -11720,7 +12350,12 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("        ");
         render_inline_patterns(&mut output, &path_refs);
         output.push_str(" => {\n");
-        output.push_str("            require_arity(name, args.len(), 3, &loc)?;\n");
+        let arity = record.rust.arguments.len();
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {arity}, &loc)?;"
+        )
+        .unwrap();
         writeln!(
             output,
             "            let (operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), {adapter})?;"
@@ -12862,6 +13497,67 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    for record in execution_controls(catalog) {
+        let operation = ExecutionControlOperation::from_catalog_id(&record.id)
+            .expect("closed execution-control record");
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {}, &loc)?;",
+            operation.operand_count()
+        )
+        .unwrap();
+        if operation.requires_immediate_operands() {
+            output.push_str(
+                "            if !matches!(&args[0], mir::Operand::Constant(_)) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"setmaxnreg requires a compile-time register count in 24..=256 divisible by 8\".to_owned()\n                    )\n                );\n            }\n            let (register_count_value, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n            let register_count = register_count_value\n                .defining_op()\n                .and_then(|defining_op| Operation::get_op::<MirConstantOp>(defining_op, ctx))\n                .and_then(|constant| constant.get_attr_value(ctx))\n                .map(|value| value.value().to_u64())\n                .and_then(|value| u32::try_from(value).ok())\n                .filter(|value| (24..=256).contains(value) && value % 8 == 0);\n            let Some(register_count) = register_count else {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"setmaxnreg requires a compile-time register count in 24..=256 divisible by 8\".to_owned()\n                    )\n                );\n            };\n",
+            );
+            writeln!(
+                output,
+                "            let control = {}::build(ctx, register_count);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        } else if operation.operand_count() == 0 {
+            output.push_str("            let last_op = prev_op;\n");
+            writeln!(
+                output,
+                "            let control = Operation::new(ctx, {}::get_concrete_op_info(), vec![], vec![], vec![], 0);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        } else {
+            output.push_str(
+                "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
+            );
+            writeln!(
+                output,
+                "            let control = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        }
+        output.push_str("            control.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, control, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, control, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, control, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
     for record in tma_intrinsics(catalog) {
         let operation = record.tma.as_ref().unwrap().operation;
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
@@ -12931,6 +13627,49 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                     operation == TmaOperation::WaitGroupRead
                 )
                 .unwrap();
+            }
+            _ => {
+                let arity = record.dialect.operands.len();
+                writeln!(
+                    output,
+                    "            require_arity(name, args.len(), {arity}, &loc)?;"
+                )
+                .unwrap();
+                if matches!(
+                    record.tma.as_ref().unwrap().adapter,
+                    TmaAdapter::DescriptorOrdinalAndU32
+                        | TmaAdapter::DescriptorOrdinalAndU64
+                        | TmaAdapter::DescriptorAndImmediateU32
+                ) {
+                    output.push_str(
+                        "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tensor-map replacement selector must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+                    );
+                }
+                output.push_str(
+                    "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
+                );
+                writeln!(
+                    output,
+                    "            let intrinsic = Operation::new(ctx, dialect_nvvm::ops::{}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                    record.dialect.op_type
+                )
+                .unwrap();
+                output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {marker:?});"
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+                );
+                writeln!(
+                    output,
+                    "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                    format!("{} call without target block", record.rust.name)
+                )
+                .unwrap();
+                output.push_str("            }\n");
             }
         }
         output.push_str("        }\n");
@@ -13287,6 +14026,7 @@ enum GeneratedMmaImportAdapter {
     C4I32A4U32B4U32ToD4I32,
     C4I32A2U32B1U32ToD4I32,
     C4I32A2U32B2U32ToD4I32,
+    C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -13376,6 +14116,8 @@ fn import_generated_mma_operands(
                 (i32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, i32_ty, 4),
             GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32 =>
                 (i32_ty, 4, u32_ty, 2, true, u32_ty, 2, true, i32_ty, 4),
+            GeneratedMmaImportAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 =>
+                (f32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, f32_ty, 4),
         };
     let (c_array, last_op) = rvalue::translate_operand(
         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
@@ -13399,12 +14141,31 @@ fn import_generated_mma_operands(
     )?;
     let (b_registers, last_op) = if b_array {
         extract_generated_mma_array(
-            ctx, b_value, b_ty, b_count, block_ptr, last_after_b, loc,
+            ctx, b_value, b_ty, b_count, block_ptr, last_after_b, loc.clone(),
         )?
     } else {
         (vec![b_value], last_after_b.expect("generated MMA B translation keeps predecessor"))
     };
     operands.extend(b_registers);
+    let mut last_op = last_op;
+    if matches!(
+        adapter,
+        GeneratedMmaImportAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+    ) {
+        for arg in &args[3..] {
+            let (value, translated) = rvalue::translate_operand(
+                ctx,
+                body,
+                arg,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            last_op = translated.expect("generated block-scale MMA operand translation keeps predecessor");
+            operands.push(value);
+        }
+    }
     Ok((operands, last_op, result_ty, result_count))
 }
 
@@ -13809,7 +14570,13 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if tma_intrinsics(catalog).next().is_some() {
         output = output.replace(
             "prmt::convert_generated_prmt, warp::{",
-            "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
+            "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig}, warp::{",
+        );
+    }
+    if execution_controls(catalog).next().is_some() {
+        output = output.replace(
+            "dotprod::convert_generated_dot_product, ",
+            "dotprod::convert_generated_dot_product, execution_control::{convert_counted_barrier, convert_grid_dependency, convert_setmaxnreg}, ",
         );
     }
     if scalar_conversions(catalog).next().is_some() {
@@ -14083,6 +14850,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(&record.dialect.op_type);
     }
     for record in tma_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
+    for record in execution_controls(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
@@ -14463,7 +15234,8 @@ fn convert_generated_tcgen05_load(
                 overflow,
             ) = register_mma_attr_variants(record);
             let (c_count, a_count, b_count, result_count) = register_mma_fragment_counts(record);
-            let expected_operands = c_count + a_count + b_count;
+            let expected_operands =
+                c_count + a_count + b_count + register_mma_extra_operand_count(record);
             writeln!(
                 output,
                 "            (Some(&{shape}), {operation}, {kind}, Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({}, {result_count}, {expected_operands}, {:?}, {:?}),",
@@ -15335,6 +16107,68 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    for record in execution_controls(catalog) {
+        let operation = ExecutionControlOperation::from_catalog_id(&record.id)
+            .expect("closed execution-control record");
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        match operation {
+            ExecutionControlOperation::BarrierCtaSync
+            | ExecutionControlOperation::BarrierCtaSyncAligned
+            | ExecutionControlOperation::BarrierCtaArrive
+            | ExecutionControlOperation::BarrierCtaArriveAligned => {
+                let template = format!(
+                    "{}.{} $0, $1;",
+                    record.expected_ptx.mnemonic,
+                    record.expected_ptx.modifiers.join(".")
+                );
+                writeln!(
+                    output,
+                    "        convert_counted_barrier(ctx, rewriter, self.get_operation(), operands_info, {:?}, {template:?})",
+                    record.llvm_identifier()
+                )
+                .unwrap();
+            }
+            ExecutionControlOperation::GridDependencyLaunchDependents
+            | ExecutionControlOperation::GridDependencyWait => {
+                let template = format!(
+                    "{}.{};",
+                    record.expected_ptx.mnemonic,
+                    record.expected_ptx.modifiers.join(".")
+                );
+                writeln!(
+                    output,
+                    "        convert_grid_dependency(ctx, rewriter, self.get_operation(), operands_info, {:?}, {template:?})",
+                    record.llvm_identifier()
+                )
+                .unwrap();
+            }
+            ExecutionControlOperation::SetMaxNRegInc | ExecutionControlOperation::SetMaxNRegDec => {
+                let direction = match operation {
+                    ExecutionControlOperation::SetMaxNRegInc => "inc",
+                    ExecutionControlOperation::SetMaxNRegDec => "dec",
+                    _ => unreachable!("setmaxnreg operation was matched"),
+                };
+                output.push_str(
+                    "        let register_count = self.register_count(ctx).ok_or_else(|| pliron::input_error_noloc!(\"setmaxnreg register-count attribute is invalid\"))?;\n",
+                );
+                writeln!(
+                    output,
+                    "        convert_setmaxnreg(ctx, rewriter, self.get_operation(), operands_info, register_count, {:?}, {direction:?})",
+                    record.llvm_identifier()
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("    }\n}\n\n");
+    }
     for record in tma_intrinsics(catalog) {
         let operation = record.tma.as_ref().unwrap().operation;
         writeln!(
@@ -15387,7 +16221,111 @@ fn convert_generated_tcgen05_load(
                 writeln!(
                     output,
                     "        convert_control(ctx, rewriter, self.get_operation(), operands_info, {operation_name:?}, {:?})",
-                    record.llvm_identifier()
+                    record.resolved_llvm_identifier()
+                )
+                .unwrap();
+            }
+            TmaOperation::PrefetchTensorMap => {
+                writeln!(
+                    output,
+                    "        convert_prefetch_tensormap(ctx, rewriter, self.get_operation(), operands_info, {:?})",
+                    record.resolved_llvm_identifier()
+                )
+                .unwrap();
+            }
+            TmaOperation::PrefetchTile1d
+            | TmaOperation::PrefetchTile2d
+            | TmaOperation::PrefetchTile3d
+            | TmaOperation::PrefetchTile4d
+            | TmaOperation::PrefetchTile5d
+            | TmaOperation::PrefetchTileGather4TwoDimensional
+            | TmaOperation::PrefetchTile1dCacheHint
+            | TmaOperation::PrefetchTile2dCacheHint
+            | TmaOperation::PrefetchTile3dCacheHint
+            | TmaOperation::PrefetchTile4dCacheHint
+            | TmaOperation::PrefetchTile5dCacheHint
+            | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint => {
+                writeln!(
+                    output,
+                    "        convert_prefetch_tile(ctx, rewriter, self.get_operation(), operands_info, PrefetchTileConfig::new({}, {}, {}, {:?}))",
+                    operation.prefetch_coordinate_count().unwrap(),
+                    matches!(
+                        operation,
+                        TmaOperation::PrefetchTileGather4TwoDimensional
+                            | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint
+                    ),
+                    operation.uses_prefetch_cache_hint(),
+                    record.resolved_llvm_identifier()
+                )
+                .unwrap();
+            }
+            TmaOperation::ReplaceBoxDim
+            | TmaOperation::ReplaceElementStride
+            | TmaOperation::ReplaceElementType
+            | TmaOperation::ReplaceFillMode
+            | TmaOperation::ReplaceGlobalAddress
+            | TmaOperation::ReplaceGlobalDim
+            | TmaOperation::ReplaceGlobalStride
+            | TmaOperation::ReplaceInterleaveLayout
+            | TmaOperation::ReplaceRank
+            | TmaOperation::ReplaceSwizzleAtomicity
+            | TmaOperation::ReplaceSwizzleMode => {
+                let (field, value_kind, ordinal, immediate) = match operation {
+                    TmaOperation::ReplaceBoxDim => ("box_dim", "u32", true, false),
+                    TmaOperation::ReplaceElementStride => {
+                        ("element_stride", "u32", true, false)
+                    }
+                    TmaOperation::ReplaceElementType => ("elemtype", "u32", false, true),
+                    TmaOperation::ReplaceFillMode => ("fill_mode", "u32", false, true),
+                    TmaOperation::ReplaceGlobalAddress => {
+                        ("global_address", "address", false, false)
+                    }
+                    TmaOperation::ReplaceGlobalDim => ("global_dim", "u32", true, false),
+                    TmaOperation::ReplaceGlobalStride => {
+                        ("global_stride", "u64", true, false)
+                    }
+                    TmaOperation::ReplaceInterleaveLayout => {
+                        ("interleave_layout", "u32", false, true)
+                    }
+                    TmaOperation::ReplaceRank => ("rank", "u32", false, false),
+                    TmaOperation::ReplaceSwizzleAtomicity => {
+                        ("swizzle_atomicity", "u32", false, true)
+                    }
+                    TmaOperation::ReplaceSwizzleMode => {
+                        ("swizzle_mode", "u32", false, true)
+                    }
+                    _ => unreachable!("TMA tensor-map replace operation was matched"),
+                };
+                writeln!(
+                    output,
+                    "        convert_tensormap_replace(ctx, rewriter, self.get_operation(), operands_info, {:?}, {field:?}, {value_kind:?}, {ordinal}, {immediate})",
+                    record.resolved_llvm_identifier()
+                )
+                .unwrap();
+            }
+            TmaOperation::FenceProxyTensorMapAcquireCluster
+            | TmaOperation::FenceProxyTensorMapAcquireCta
+            | TmaOperation::FenceProxyTensorMapAcquireGpu
+            | TmaOperation::FenceProxyTensorMapAcquireSystem
+            | TmaOperation::FenceProxyTensorMapReleaseCluster
+            | TmaOperation::FenceProxyTensorMapReleaseCta
+            | TmaOperation::FenceProxyTensorMapReleaseGpu
+            | TmaOperation::FenceProxyTensorMapReleaseSystem => {
+                let (acquire, scope) = match operation {
+                    TmaOperation::FenceProxyTensorMapAcquireCluster => (true, "cluster"),
+                    TmaOperation::FenceProxyTensorMapAcquireCta => (true, "cta"),
+                    TmaOperation::FenceProxyTensorMapAcquireGpu => (true, "gpu"),
+                    TmaOperation::FenceProxyTensorMapAcquireSystem => (true, "sys"),
+                    TmaOperation::FenceProxyTensorMapReleaseCluster => (false, "cluster"),
+                    TmaOperation::FenceProxyTensorMapReleaseCta => (false, "cta"),
+                    TmaOperation::FenceProxyTensorMapReleaseGpu => (false, "gpu"),
+                    TmaOperation::FenceProxyTensorMapReleaseSystem => (false, "sys"),
+                    _ => unreachable!("TMA tensor-map fence operation was matched"),
+                };
+                writeln!(
+                    output,
+                    "        convert_tensormap_fence(ctx, rewriter, self.get_operation(), operands_info, {:?}, {acquire}, {scope:?})",
+                    record.resolved_llvm_identifier()
                 )
                 .unwrap();
             }
@@ -15808,6 +16746,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
         let kind = match register_mma_effective_kind(record) {
             RegisterMmaKind::Standard => "GeneratedRegisterMmaKind::Standard",
             RegisterMmaKind::F8f6f4 => "GeneratedRegisterMmaKind::F8f6f4",
+            RegisterMmaKind::Mxf8f6f4 => "GeneratedRegisterMmaKind::Mxf8f6f4",
         };
         let accumulator = match mma.accumulator {
             RegisterMmaAccumulator::F16 => "GeneratedRegisterMmaAccumulator::F16",
@@ -16107,7 +17046,7 @@ impl GeneratedIntrinsicTarget {
     replace_exact_render_fragment(
         &mut output,
         "pub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }",
-        "pub enum GeneratedRegisterMmaOperation { Multiply, AndPopc, XorPopc }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaKind { Standard, F8f6f4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F16, F32, F64, S32 }",
+        "pub enum GeneratedRegisterMmaOperation { Multiply, AndPopc, XorPopc }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaKind { Standard, F8f6f4, Mxf8f6f4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F16, F32, F64, S32 }",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -16313,7 +17252,7 @@ impl GeneratedIntrinsicTarget {
     replace_exact_render_fragment(
         &mut output,
         "            };\n            let accumulator_matches = match accumulator {",
-        "            };\n            let operation_matches = match mma_operation {\n                GeneratedRegisterMmaOperation::Multiply => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::Multiply,\n                GeneratedRegisterMmaOperation::AndPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::AndPopc,\n                GeneratedRegisterMmaOperation::XorPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::XorPopc,\n            };\n            let kind_matches = match kind {\n                GeneratedRegisterMmaKind::Standard => op.kind_or_inferred(ctx) == RegisterMmaKindAttr::Standard,\n                GeneratedRegisterMmaKind::F8f6f4 => op.kind_or_inferred(ctx) == RegisterMmaKindAttr::F8f6f4,\n            };\n            let accumulator_matches = match accumulator {",
+        "            };\n            let operation_matches = match mma_operation {\n                GeneratedRegisterMmaOperation::Multiply => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::Multiply,\n                GeneratedRegisterMmaOperation::AndPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::AndPopc,\n                GeneratedRegisterMmaOperation::XorPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::XorPopc,\n            };\n            let kind_matches = match kind {\n                GeneratedRegisterMmaKind::Standard => op.kind_or_inferred(ctx) == RegisterMmaKindAttr::Standard,\n                GeneratedRegisterMmaKind::F8f6f4 => op.kind_or_inferred(ctx) == RegisterMmaKindAttr::F8f6f4,\n                GeneratedRegisterMmaKind::Mxf8f6f4 => op.kind_or_inferred(ctx) == RegisterMmaKindAttr::Mxf8f6f4,\n            };\n            let accumulator_matches = match accumulator {",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -16586,7 +17525,8 @@ fn render_special_register_probe(
 
 fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
     let operation = record.tma.as_ref().expect("TMA contract").operation;
-    let symbol = &llvm(record).symbol;
+    let llvm = llvm(record);
+    let symbol = llvm.resolved_symbol.as_ref().unwrap_or(&llvm.symbol);
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
     if let Some(dimensions) = operation.dimensions() {
@@ -16692,7 +17632,177 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
             .unwrap();
         }
         output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
-    } else if operation == TmaOperation::CommitGroup {
+    } else if operation == TmaOperation::PrefetchTensorMap {
+        writeln!(output, "declare void @{symbol}(ptr)\n").unwrap();
+        writeln!(
+            output,
+            "define void @probe_{}(ptr %tensor_map) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(output, "  call void @{symbol}(ptr %tensor_map)").unwrap();
+        output.push_str("  ret void\n}\n");
+    } else if let Some(coordinate_count) = operation.prefetch_coordinate_count() {
+        let coordinates = std::iter::repeat_n("i32", coordinate_count)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let declaration_coordinates = if coordinates.is_empty() {
+            String::new()
+        } else {
+            format!(", {coordinates}")
+        };
+        let coordinate_parameters = (0..coordinate_count)
+            .map(|index| format!("i32 %coord{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let parameters = if coordinate_parameters.is_empty() {
+            String::new()
+        } else {
+            format!(", {coordinate_parameters}")
+        };
+        let cache_hint_parameter = if operation.uses_prefetch_cache_hint() {
+            ", i64 %cache_hint"
+        } else {
+            ""
+        };
+        let coordinate_arguments = (0..coordinate_count)
+            .map(|index| format!("i32 %coord{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = if coordinate_arguments.is_empty() {
+            String::new()
+        } else {
+            format!(", {coordinate_arguments}")
+        };
+        writeln!(
+            output,
+            "declare void @{symbol}(ptr{declaration_coordinates}, i64, i1) #0\n"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "define void @probe_{}(ptr %tensor_map{parameters}{cache_hint_parameter}) #0 {{",
+            record.id,
+        )
+        .unwrap();
+        let cache_hint = if operation.uses_prefetch_cache_hint() {
+            "%cache_hint"
+        } else {
+            "0"
+        };
+        let use_cache_hint = operation.uses_prefetch_cache_hint();
+        writeln!(
+            output,
+            "  call void @{symbol}(ptr %tensor_map{arguments}, i64 {cache_hint}, i1 {use_cache_hint}) #0"
+        )
+        .unwrap();
+        output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+    } else if matches!(
+        operation,
+        TmaOperation::ReplaceBoxDim
+            | TmaOperation::ReplaceElementStride
+            | TmaOperation::ReplaceElementType
+            | TmaOperation::ReplaceFillMode
+            | TmaOperation::ReplaceGlobalAddress
+            | TmaOperation::ReplaceGlobalDim
+            | TmaOperation::ReplaceGlobalStride
+            | TmaOperation::ReplaceInterleaveLayout
+            | TmaOperation::ReplaceRank
+            | TmaOperation::ReplaceSwizzleAtomicity
+            | TmaOperation::ReplaceSwizzleMode
+    ) {
+        let (field, width, ordinal, value_ty, immediate, address) = match operation {
+            TmaOperation::ReplaceBoxDim => ("box_dim", "b32", true, "i32", false, false),
+            TmaOperation::ReplaceElementStride => {
+                ("element_stride", "b32", true, "i32", false, false)
+            }
+            TmaOperation::ReplaceElementType => ("elemtype", "b32", false, "i32", true, false),
+            TmaOperation::ReplaceFillMode => ("fill_mode", "b32", false, "i32", true, false),
+            TmaOperation::ReplaceGlobalAddress => {
+                ("global_address", "b64", false, "i64", false, true)
+            }
+            TmaOperation::ReplaceGlobalDim => ("global_dim", "b32", true, "i32", false, false),
+            TmaOperation::ReplaceGlobalStride => {
+                ("global_stride", "b64", true, "i64", false, false)
+            }
+            TmaOperation::ReplaceInterleaveLayout => {
+                ("interleave_layout", "b32", false, "i32", true, false)
+            }
+            TmaOperation::ReplaceRank => ("rank", "b32", false, "i32", false, false),
+            TmaOperation::ReplaceSwizzleAtomicity => {
+                ("swizzle_atomicity", "b32", false, "i32", true, false)
+            }
+            TmaOperation::ReplaceSwizzleMode => ("swizzle_mode", "b32", false, "i32", true, false),
+            _ => unreachable!("TMA tensor-map replace operation was matched"),
+        };
+        let value_parameter = if immediate {
+            String::new()
+        } else if address {
+            ", ptr %new_address".into()
+        } else {
+            format!(", {value_ty} %new_value")
+        };
+        writeln!(
+            output,
+            "define void @probe_{}(ptr %tensor_map{value_parameter}) {{",
+            record.id
+        )
+        .unwrap();
+        let mut arguments = vec!["ptr %tensor_map".to_owned()];
+        let mut constraints = vec!["l"];
+        if ordinal {
+            arguments.push("i32 0".into());
+            constraints.push("n");
+        }
+        if immediate {
+            arguments.push(format!("{value_ty} 0"));
+            constraints.push("n");
+        } else if address {
+            arguments.push("ptr %new_address".into());
+            constraints.push("l");
+        } else {
+            arguments.push(format!("{value_ty} %new_value"));
+            constraints.push(if value_ty == "i64" { "l" } else { "r" });
+        }
+        constraints.push("~{memory}");
+        let template = if ordinal {
+            format!("tensormap.replace.tile.{field}.global.b1024.{width} [$0], $1, $2;")
+        } else {
+            format!("tensormap.replace.tile.{field}.global.b1024.{width} [$0], $1;")
+        };
+        writeln!(
+            output,
+            "  call void asm sideeffect {template:?}, {:?}({})",
+            constraints.join(","),
+            arguments.join(", ")
+        )
+        .unwrap();
+        output.push_str("  ret void\n}\n");
+    } else if matches!(
+        operation,
+        TmaOperation::FenceProxyTensorMapAcquireCluster
+            | TmaOperation::FenceProxyTensorMapAcquireCta
+            | TmaOperation::FenceProxyTensorMapAcquireGpu
+            | TmaOperation::FenceProxyTensorMapAcquireSystem
+    ) {
+        writeln!(output, "declare void @{symbol}(ptr, i32)\n").unwrap();
+        writeln!(
+            output,
+            "define void @probe_{}(ptr %tensor_map) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(output, "  call void @{symbol}(ptr %tensor_map, i32 128)").unwrap();
+        output.push_str("  ret void\n}\n");
+    } else if operation == TmaOperation::CommitGroup
+        || matches!(
+            operation,
+            TmaOperation::FenceProxyTensorMapReleaseCluster
+                | TmaOperation::FenceProxyTensorMapReleaseCta
+                | TmaOperation::FenceProxyTensorMapReleaseGpu
+                | TmaOperation::FenceProxyTensorMapReleaseSystem
+        )
+    {
         writeln!(output, "declare void @{symbol}()\n").unwrap();
         writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
         writeln!(output, "  call void @{symbol}()").unwrap();
@@ -16702,6 +17812,65 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
         writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
         writeln!(output, "  call void @{symbol}(i32 0)").unwrap();
         output.push_str("  ret void\n}\n");
+    }
+    output
+}
+
+fn render_execution_control_probe(
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+    hash: &str,
+) -> String {
+    let operation = ExecutionControlOperation::from_catalog_id(&record.id)
+        .expect("closed execution-control operation");
+    let symbol = &llvm(record).symbol;
+    let mut output = llvm_header(catalog, hash);
+    output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+    match operation {
+        ExecutionControlOperation::BarrierCtaSync
+        | ExecutionControlOperation::BarrierCtaSyncAligned
+        | ExecutionControlOperation::BarrierCtaArrive
+        | ExecutionControlOperation::BarrierCtaArriveAligned => {
+            writeln!(output, "declare void @{symbol}(i32, i32)\n").unwrap();
+            for (suffix, parameters, barrier_id, thread_count) in [
+                (
+                    "rr",
+                    "i32 %barrier_id, i32 %thread_count",
+                    "%barrier_id",
+                    "%thread_count",
+                ),
+                ("ri", "i32 %barrier_id", "%barrier_id", "32"),
+                ("ir", "i32 %thread_count", "1", "%thread_count"),
+                ("ii", "", "1", "32"),
+            ] {
+                writeln!(
+                    output,
+                    "define void @probe_{}_{suffix}({parameters}) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  call void @{symbol}(i32 {barrier_id}, i32 {thread_count})"
+                )
+                .unwrap();
+                output.push_str("  ret void\n}\n\n");
+            }
+            output.push_str("attributes #0 = { convergent }\n");
+        }
+        ExecutionControlOperation::GridDependencyLaunchDependents
+        | ExecutionControlOperation::GridDependencyWait => {
+            writeln!(output, "declare void @{symbol}()\n").unwrap();
+            writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
+            writeln!(output, "  call void @{symbol}()").unwrap();
+            output.push_str("  ret void\n}\n");
+        }
+        ExecutionControlOperation::SetMaxNRegInc | ExecutionControlOperation::SetMaxNRegDec => {
+            writeln!(output, "declare void @{symbol}(i32)\n").unwrap();
+            writeln!(output, "define void @probe_{}() #0 {{", record.id).unwrap();
+            writeln!(output, "  call void @{symbol}(i32 64)").unwrap();
+            output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
+        }
     }
     output
 }
@@ -17146,6 +18315,9 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     }
     if record.tma.is_some() {
         return render_tma_probe(catalog, record, hash);
+    }
+    if ExecutionControlOperation::from_catalog_id(&record.id).is_some() {
+        return render_execution_control_probe(catalog, record, hash);
     }
     if record.tcgen05.is_some() {
         return render_tcgen05_probe(catalog, record, hash);
@@ -18015,24 +19187,39 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32
             | RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32 => ("i32", "i32", "i32"),
             RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
-            | RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => ("float", "i32", "float"),
+            | RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32
+            | RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 => {
+                ("float", "i32", "float")
+            }
             RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("double", "double", "double"),
             RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
             | RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32
             | RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32 => ("i32", "i32", "i32"),
         };
-        let parameters = (0..c_count)
+        let mut parameter_values = (0..c_count)
             .map(|index| format!("{c_type} %c{index}"))
             .chain((0..a_count).map(|index| format!("{packed_type} %a{index}")))
             .chain((0..b_count).map(|index| format!("{packed_type} %b{index}")))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let arguments = (0..c_count)
+            .collect::<Vec<_>>();
+        let mut argument_values = (0..c_count)
             .map(|index| format!("{c_type} %c{index}"))
             .chain((0..a_count).map(|index| format!("{packed_type} %a{index}")))
             .chain((0..b_count).map(|index| format!("{packed_type} %b{index}")))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
+        if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
+            let block_scale_parameters = [
+                "i32 %scale_a",
+                "i16 %byte_id_a",
+                "i16 %thread_id_a",
+                "i32 %scale_b",
+                "i16 %byte_id_b",
+                "i16 %thread_id_b",
+            ];
+            parameter_values.extend(block_scale_parameters.map(str::to_owned));
+            argument_values.extend(block_scale_parameters.map(str::to_owned));
+        }
+        let parameters = parameter_values.join(", ");
+        let arguments = argument_values.join(", ");
         let result = format!(
             "{{ {} }}",
             std::iter::repeat_n(result_type, d_count)
@@ -18355,13 +19542,23 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             RuntimeValidation::Unexecuted => "not executed on a GPU",
             RuntimeValidation::Executed => "executed on a GPU",
         };
-        writeln!(
-            output,
-            "- `{}` takes fragments in C, A, B order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
-            record.id,
-            expected_ptx_head(record),
-        )
-        .unwrap();
+        if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
+            writeln!(
+                output,
+                "- `{}` takes C, A, B, scale-A data/selectors, and scale-B data/selectors in PTX operand order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. For `scale_vec::1X`, byte selectors must be in `0..=3`, the A thread selector in `0..=1`, and the B thread selector in `0..=3`. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+                record.id,
+                expected_ptx_head(record),
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "- `{}` takes fragments in C, A, B order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+                record.id,
+                expected_ptx_head(record),
+            )
+            .unwrap();
+        }
     }
     output.push_str("\n## Sparse-MMA contracts\n\n");
     for record in sparse_mmas(catalog) {
@@ -19092,7 +20289,7 @@ mod tests {
     fn catalog_with_tma() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tma(&repo_root).unwrap();
-        assert_eq!(tma_intrinsics(&catalog).count(), 15);
+        assert_eq!(tma_intrinsics(&catalog).count(), 47);
         catalog
     }
 
@@ -21047,9 +22244,9 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 857);
+        assert_eq!(catalog.intrinsics.len(), 922);
         let records: Vec<_> = register_mmas(&catalog).collect();
-        assert_eq!(records.len(), 129);
+        assert_eq!(records.len(), 154);
         let generated_records = records
             .iter()
             .copied()
@@ -21066,7 +22263,7 @@ mod tests {
                     == RegisterMmaCompatibilitySource::ExistingStub
             })
             .collect::<Vec<_>>();
-        assert_eq!(generated_records.len(), 124);
+        assert_eq!(generated_records.len(), 149);
         assert_eq!(existing_records.len(), 5);
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -21078,10 +22275,27 @@ mod tests {
         assert!(raw.contains("Signed accumulator overflow clamps"));
 
         let compatibility = render_compat_register_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 124);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 149);
         for record in generated_records {
-            let arguments = ["c", "a", "b"]
-                .into_iter()
+            let argument_names: &[&str] = if record.register_mma.as_ref().unwrap().adapter
+                == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+            {
+                &[
+                    "c",
+                    "a",
+                    "b",
+                    "scale_a",
+                    "byte_id_a",
+                    "thread_id_a",
+                    "scale_b",
+                    "byte_id_b",
+                    "thread_id_b",
+                ]
+            } else {
+                &["c", "a", "b"]
+            };
+            let arguments = argument_names
+                .iter()
                 .zip(&record.rust.arguments)
                 .map(|(name, ty)| format!("{name}: {ty}"))
                 .collect::<Vec<_>>()
@@ -21110,10 +22324,12 @@ mod tests {
         assert!(dialect.contains("RegisterMmaOperationAttr::Multiply"));
         assert!(dialect.contains("RegisterMmaOperationAttr::AndPopc"));
         assert!(dialect.contains("RegisterMmaOperationAttr::XorPopc"));
-        assert!(dialect.contains("pub enum RegisterMmaKindAttr { Standard, F8f6f4 }"));
+        assert!(dialect.contains("pub enum RegisterMmaKindAttr { Standard, F8f6f4, Mxf8f6f4 }"));
         assert!(dialect.contains("kind_or_inferred"));
         assert!(dialect.contains("RegisterMmaAccumulatorAttr::F16"));
         assert!(dialect.contains("operation_or_multiply"));
+        assert!(dialect.contains("MmaCarrier::I32 | MmaCarrier::U16 | MmaCarrier::U32"));
+        assert!(dialect.contains("if matches!(carrier, MmaCarrier::U16)"));
         assert!(dialect.contains("RegisterMmaElementAttr::B1"));
         assert!(dialect.contains("RegisterMmaElementAttr::E2m1"));
         assert!(dialect.contains("RegisterMmaElementAttr::E5m2"));
@@ -21142,6 +22358,10 @@ mod tests {
         assert!(importer.contains("C2U32A4U32B2U32ToD2U32"));
         assert!(importer.contains("C2U32A2U32B1U32ToD2U32"));
         assert!(importer.contains("C4F32A2U32B1U32ToD4F32"));
+        assert!(importer.contains("C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32"));
+        assert!(
+            importer.contains("ctx, b_value, b_ty, b_count, block_ptr, last_after_b, loc.clone()")
+        );
         assert!(importer.contains("C4I32A2U32B1U32ToD4I32"));
         assert!(importer.contains("C2I32A1U32B1U32ToD2I32"));
         assert!(importer.contains("(i32_ty, 2, u32_ty, 1, false, u32_ty, 1, false, i32_ty, 2)"));
@@ -21238,6 +22458,9 @@ mod tests {
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::I32, 2, 8, "mma.sync.aligned.m16n8k32.row.col.kind::f8f6f4.f16.e5m2.e5m2.f16 {$0, $1}, {$4, $5, $6, $7}, {$8, $9}, {$2, $3};", "=r,=r,r,r,r,r,r,r,r,r")"#
         ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::F32, 4, 16, "mma.sync.aligned.m16n8k32.row.col.kind::mxf8f6f4.block_scale.f32.e2m1.e2m1.f32.ue8m0 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7}, $14, {$15, $16}, $17, {$18, $19};", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r,r,h,h,r,h,h")"#
+        ));
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
@@ -21268,12 +22491,16 @@ mod tests {
         assert!(targets.contains("GeneratedRegisterMmaOperation::Multiply"));
         assert!(targets.contains("GeneratedRegisterMmaOperation::AndPopc"));
         assert!(targets.contains("GeneratedRegisterMmaOperation::XorPopc"));
-        assert!(targets.contains("pub enum GeneratedRegisterMmaKind { Standard, F8f6f4 }"));
+        assert!(
+            targets.contains("pub enum GeneratedRegisterMmaKind { Standard, F8f6f4, Mxf8f6f4 }")
+        );
         assert!(targets.contains("kind: GeneratedRegisterMmaKind::Standard"));
         assert!(targets.contains("kind: GeneratedRegisterMmaKind::F8f6f4"));
+        assert!(targets.contains("kind: GeneratedRegisterMmaKind::Mxf8f6f4"));
         assert!(targets.contains("kind_or_inferred"));
         assert!(targets.contains("RegisterMmaKindAttr::Standard"));
         assert!(targets.contains("RegisterMmaKindAttr::F8f6f4"));
+        assert!(targets.contains("RegisterMmaKindAttr::Mxf8f6f4"));
         assert!(targets.contains("GeneratedRegisterMmaAccumulator::F16"));
         assert!(targets.contains("operation: GeneratedRegisterMmaOperation::AndPopc"));
         assert!(targets.contains("operation: GeneratedRegisterMmaOperation::XorPopc"));
@@ -21334,6 +22561,33 @@ mod tests {
         );
         assert!(
             render_probe(&catalog, first_dense_f16, "test-hash").contains("define { i32, i32 }")
+        );
+
+        let first_mxf8f6f4 = records
+            .iter()
+            .find(|record| record.id == "mma_m16n8k32_mxf8f6f4_f32_e2m1_e2m1")
+            .unwrap();
+        let last_mxf8f6f4 = records
+            .iter()
+            .find(|record| record.id == "mma_m16n8k32_mxf8f6f4_f32_e5m2_e5m2")
+            .unwrap();
+        assert_eq!(first_mxf8f6f4.rust.abi_id, "i0858");
+        assert_eq!(last_mxf8f6f4.rust.abi_id, "i0882");
+        assert_eq!(
+            register_mma_constraints(first_mxf8f6f4),
+            "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r,r,h,h,r,h,h"
+        );
+        assert!(
+            render_probe(&catalog, first_mxf8f6f4, "test-hash")
+                .contains("kind::mxf8f6f4.block_scale")
+        );
+        let first_mxf8f6f4_compatibility = format!("pub unsafe fn {}(", first_mxf8f6f4.rust.name);
+        let first_mxf8f6f4_compatibility = compatibility
+            .find(&first_mxf8f6f4_compatibility)
+            .expect("generated MXF8F6F4 compatibility wrapper");
+        assert!(
+            compatibility[..first_mxf8f6f4_compatibility]
+                .ends_with("#[allow(clippy::too_many_arguments)]\n#[must_use]\n#[inline(never)]\n")
         );
 
         for record in &records {
@@ -22202,12 +23456,40 @@ mod tests {
         ));
         assert!(compatibility.contains("pub fn cp_async_bulk_commit_group()"));
         assert!(compatibility.contains("pub fn cp_async_bulk_wait_group(n: u32)"));
+        for dimensions in 1..=5 {
+            assert!(compatibility.contains(&format!(
+                "pub unsafe fn cp_async_bulk_prefetch_tensor_{dimensions}d_l2("
+            )));
+            assert!(compatibility.contains(&format!(
+                "pub unsafe fn cp_async_bulk_prefetch_tensor_{dimensions}d_l2_cache_hint("
+            )));
+        }
+        assert!(
+            compatibility.contains("pub unsafe fn cp_async_bulk_prefetch_tensor_gather4_2d_l2(")
+        );
+        assert!(
+            compatibility
+                .contains("pub unsafe fn cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint(")
+        );
+        assert!(compatibility.contains("pub unsafe fn tensormap_replace_swizzle_atomicity("));
+        assert!(
+            compatibility.contains("pub unsafe fn fence_proxy_tensormap_generic_acquire_system(")
+        );
+        assert!(compatibility.contains("pub fn fence_proxy_tensormap_generic_release_system()"));
 
         let dialect = render_dialect_tma(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct CpAsyncBulk").count(), 15);
-        assert_eq!(dialect.matches("NResultsInterface<0>").count(), 15);
+        assert_eq!(dialect.matches("pub struct ").count(), 47);
+        assert_eq!(dialect.matches("NResultsInterface<0>").count(), 47);
         assert!(dialect.contains("NOpdsInterface<10>"));
         assert!(dialect.contains("CpAsyncBulkWaitGroupReadOp::register(ctx)"));
+        assert!(
+            dialect.contains("CpAsyncBulkPrefetchTensorGather4TwoDimensionalL2Op::register(ctx)")
+        );
+        assert!(dialect.contains(
+            "CpAsyncBulkPrefetchTensorGather4TwoDimensionalL2CacheHintOp::register(ctx)"
+        ));
+        assert!(dialect.contains("ReplaceTensorMapSwizzleAtomicityOp::register(ctx)"));
+        assert!(dialect.contains("FenceProxyTensorMapGenericReleaseSystemOp::register(ctx)"));
 
         let dialect_mod = render_dialect_mod(&catalog, "test-hash");
         assert!(dialect_mod.contains("mod tma;"));
@@ -22227,7 +23509,7 @@ mod tests {
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(lowering.contains("CpAsyncBulkTensorG2sTile1dOp"));
         assert!(lowering.contains(
-            "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}"
+            "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig}"
         ));
         assert!(
             lowering.contains(
@@ -22240,6 +23522,19 @@ mod tests {
         assert!(lowering.contains(
             "convert_control(ctx, rewriter, self.get_operation(), operands_info, \"commit_group\", \"llvm_nvvm_cp_async_bulk_commit_group\")"
         ));
+        assert!(lowering.contains(
+            "convert_prefetch_tile(ctx, rewriter, self.get_operation(), operands_info, PrefetchTileConfig::new(5, false, false, \"llvm_nvvm_cp_async_bulk_tensor_prefetch_tile_5d\"))"
+        ));
+        assert!(lowering.contains(
+            "convert_tensormap_replace(ctx, rewriter, self.get_operation(), operands_info, \"llvm_nvvm_tensormap_replace_global_address\", \"global_address\", \"address\", false, false)"
+        ));
+        let release_system = tma_intrinsics(&catalog)
+            .find(|record| record.id == "fence_proxy_tensormap_generic_release_system")
+            .unwrap();
+        assert!(lowering.contains(&format!(
+            "convert_tensormap_fence(ctx, rewriter, self.get_operation(), operands_info, {:?}, false, \"sys\")",
+            release_system.resolved_llvm_identifier()
+        )));
 
         let g2s = tma_intrinsics(&catalog)
             .find(|record| record.id == "cp_async_bulk_tensor_2d_g2s_multicast_cg2")
@@ -22253,6 +23548,31 @@ mod tests {
             .unwrap();
         let s2g_probe = render_probe(&catalog, s2g, "test-hash");
         assert!(s2g_probe.contains("ptr %tensor_map, i32 %coord0, i32 %coord1, i64 0, i1 false"));
+
+        for stem in [
+            "cp_async_bulk_prefetch_tensor_1d_l2",
+            "cp_async_bulk_prefetch_tensor_2d_l2",
+            "cp_async_bulk_prefetch_tensor_3d_l2",
+            "cp_async_bulk_prefetch_tensor_4d_l2",
+            "cp_async_bulk_prefetch_tensor_5d_l2",
+            "cp_async_bulk_prefetch_tensor_gather4_2d_l2",
+        ] {
+            let prefetch_plain = tma_intrinsics(&catalog)
+                .find(|record| record.id == stem)
+                .unwrap();
+            let prefetch_plain_probe = render_probe(&catalog, prefetch_plain, "test-hash");
+            assert!(prefetch_plain_probe.contains("i64 0, i1 false"));
+            assert!(!prefetch_plain_probe.contains("%cache_hint"));
+
+            let cache_hint_id = format!("{stem}_cache_hint");
+            let prefetch_cache_hint = tma_intrinsics(&catalog)
+                .find(|record| record.id == cache_hint_id)
+                .unwrap();
+            let prefetch_cache_hint_probe =
+                render_probe(&catalog, prefetch_cache_hint, "test-hash");
+            assert!(prefetch_cache_hint_probe.contains("i64 %cache_hint"));
+            assert!(prefetch_cache_hint_probe.contains("i64 %cache_hint, i1 true"));
+        }
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
         assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/tma.rs")));

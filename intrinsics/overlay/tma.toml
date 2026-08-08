@@ -1,11 +1,11 @@
 # Reviewed Tensor Memory Accelerator operations.
 
-schema = 41
+schema = 61
 family = "tma"
 
 [tma]
 llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383-tma"
-libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tma"
+libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.73-tma"
 runtime_validation = "unexecuted"
 
 [[tma.variant]]
@@ -67,3 +67,131 @@ operation = "wait_group"
 [[tma.variant]]
 abi_id = "i0342"
 operation = "wait_group_read"
+
+[[tma.variant]]
+abi_id = "i0887"
+operation = "prefetch_tensor_map"
+
+[[tma.variant]]
+abi_id = "i0888"
+operation = "prefetch_tile1d"
+
+[[tma.variant]]
+abi_id = "i0889"
+operation = "prefetch_tile2d"
+
+[[tma.variant]]
+abi_id = "i0890"
+operation = "prefetch_tile3d"
+
+[[tma.variant]]
+abi_id = "i0891"
+operation = "prefetch_tile4d"
+
+[[tma.variant]]
+abi_id = "i0892"
+operation = "prefetch_tile5d"
+
+[[tma.variant]]
+abi_id = "i0893"
+operation = "prefetch_tile_gather4_2d"
+
+[[tma.variant]]
+abi_id = "i0894"
+operation = "replace_box_dim"
+
+[[tma.variant]]
+abi_id = "i0895"
+operation = "replace_element_stride"
+
+[[tma.variant]]
+abi_id = "i0896"
+operation = "replace_element_type"
+
+[[tma.variant]]
+abi_id = "i0897"
+operation = "replace_fill_mode"
+
+[[tma.variant]]
+abi_id = "i0898"
+operation = "replace_global_address"
+
+[[tma.variant]]
+abi_id = "i0899"
+operation = "replace_global_dim"
+
+[[tma.variant]]
+abi_id = "i0900"
+operation = "replace_global_stride"
+
+[[tma.variant]]
+abi_id = "i0901"
+operation = "replace_interleave_layout"
+
+[[tma.variant]]
+abi_id = "i0902"
+operation = "replace_rank"
+
+[[tma.variant]]
+abi_id = "i0903"
+operation = "replace_swizzle_atomicity"
+
+[[tma.variant]]
+abi_id = "i0904"
+operation = "replace_swizzle_mode"
+
+[[tma.variant]]
+abi_id = "i0905"
+operation = "fence_proxy_tensor_map_acquire_cluster"
+
+[[tma.variant]]
+abi_id = "i0906"
+operation = "fence_proxy_tensor_map_acquire_cta"
+
+[[tma.variant]]
+abi_id = "i0907"
+operation = "fence_proxy_tensor_map_acquire_gpu"
+
+[[tma.variant]]
+abi_id = "i0908"
+operation = "fence_proxy_tensor_map_acquire_system"
+
+[[tma.variant]]
+abi_id = "i0909"
+operation = "fence_proxy_tensor_map_release_cluster"
+
+[[tma.variant]]
+abi_id = "i0910"
+operation = "fence_proxy_tensor_map_release_cta"
+
+[[tma.variant]]
+abi_id = "i0911"
+operation = "fence_proxy_tensor_map_release_gpu"
+
+[[tma.variant]]
+abi_id = "i0912"
+operation = "fence_proxy_tensor_map_release_system"
+
+[[tma.variant]]
+abi_id = "i0917"
+operation = "prefetch_tile1d_cache_hint"
+
+[[tma.variant]]
+abi_id = "i0918"
+operation = "prefetch_tile2d_cache_hint"
+
+[[tma.variant]]
+abi_id = "i0919"
+operation = "prefetch_tile3d_cache_hint"
+
+[[tma.variant]]
+abi_id = "i0920"
+operation = "prefetch_tile4d_cache_hint"
+
+[[tma.variant]]
+abi_id = "i0921"
+operation = "prefetch_tile5d_cache_hint"
+
+[[tma.variant]]
+abi_id = "i0922"
+operation = "prefetch_tile_gather4_2d_cache_hint"
