@@ -602,7 +602,7 @@ use cuda_device::debug;
 let t = debug::clock64();       // Cycle counter
 debug::trap();                  // Abort kernel
 debug::breakpoint();            // cuda-gdb breakpoint
-cuda_device::barrier::nanosleep(1000); // Sleep ~1μs
+unsafe { cuda_device::barrier::nanosleep(1000) }; // Sleep ~1μs
 debug::prof_trigger::<7>();     // Nsight profiler trigger
 ```
 
