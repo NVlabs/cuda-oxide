@@ -406,14 +406,17 @@ impl CudaContext {
     /// (`CU_CTX_SCHED_MASK`) are replaced, any other flag bit the process has
     /// set independently (e.g. `CU_CTX_MAP_HOST`) is preserved.
     ///
-    /// CUDA's own docs note `cuDevicePrimaryCtxSetFlags` can return
-    /// `CUDA_ERROR_INVALID_CONTEXT` once the primary context is active.
-    /// Measured on an RTX 5060 (driver 595.71.05, CUDA 13.3): calling this
-    /// immediately after [`CudaContext::new`] -- i.e. after the context has
-    /// already been retained and made current, which `new` always does --
-    /// succeeds. Treat a `CUDA_ERROR_INVALID_CONTEXT` result as that
-    /// documented restriction surfacing on a driver or usage pattern where
-    /// it does apply, not as this wrapper being wrong.
+    /// The policy is process-wide state on the device's primary context:
+    /// it affects every [`CudaContext`] clone of this device, and any
+    /// runtime-API user of the same device in this process, not just this
+    /// handle. The read-modify-write over `CU_CTX_SCHED_MASK` is also not
+    /// atomic: a concurrent flag writer on the same device can interleave
+    /// between the get and the set, and one side's update is then lost.
+    ///
+    /// Historical note: before CUDA 11, `cuDevicePrimaryCtxSetFlags` failed
+    /// with `CUDA_ERROR_PRIMARY_CONTEXT_ACTIVE` once the primary context was
+    /// active. That restriction was lifted; the flags now apply to the
+    /// already-active context.
     pub fn set_sync_policy(&self, policy: SyncPolicy) -> Result<(), DriverError> {
         self.bind_to_thread()?;
         unsafe {
