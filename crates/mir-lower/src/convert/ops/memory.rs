@@ -325,6 +325,17 @@ fn convert_mem_transfer(
     Ok(())
 }
 
+/// Alignment the op that computed `ptr` recorded about the address it produced.
+///
+/// Field addresses stamp this during their own conversion, where the aggregate's
+/// `abi_align` is still in hand; by the time a load that consumes the address is
+/// converted, `mir.field_addr` is already a GEP and the MIR aggregate type is no
+/// longer reachable from the load's operands.
+fn pointer_proved_alignment(ctx: &Context, ptr: Value) -> Option<u64> {
+    let defining_op = ptr.defining_op()?;
+    llvm_export::ops::address_alignment(ctx, defining_op).map(u64::from)
+}
+
 /// Convert `mir.load` to `llvm.load`.
 ///
 /// Takes a single pointer operand and returns the loaded value.
@@ -345,8 +356,13 @@ pub(crate) fn convert_load(
     }
     // The loaded value's ABI alignment comes from this op's own result type,
     // which is still the MIR type: result types are only converted by the
-    // op's own rewrite.
-    if let Some(align) = mir_type_abi_align(ctx, result_ty) {
+    // op's own rewrite. A scalar records none, so fall back to whatever the
+    // address itself proved when it was computed -- for a field projection
+    // that is the aggregate's `abi_align` narrowed to the field's offset,
+    // which is otherwise lost here and costs the pair its vectorization.
+    if let Some(align) =
+        mir_type_abi_align(ctx, result_ty).or_else(|| pointer_proved_alignment(ctx, ptr))
+    {
         llvm_export::ops::set_op_alignment(ctx, llvm_load.get_operation(), align as u32);
     }
     rewriter.insert_operation(ctx, llvm_load.get_operation());

@@ -746,6 +746,9 @@ pub mod ops {
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
     const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
+    /// Op-attribute key for the alignment an address computation guarantees.
+    /// Lowering-internal: never exported.
+    const ADDRESS_ALIGNMENT_KEY: &str = "cuda_oxide_address_alignment";
 
     /// Stamp the ABI alignment (bytes) onto a memory op.
     pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
@@ -756,6 +759,28 @@ pub mod ops {
     /// Read the ABI alignment (bytes) stamped on a memory op, if any.
     pub fn op_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
         let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<AlignmentAttr>(&key)
+            .map(|a| a.0)
+    }
+
+    /// Stamp the alignment (bytes) that an *address-producing* op guarantees.
+    ///
+    /// Distinct from [`set_op_alignment`], which states the alignment of a
+    /// memory op's own access and is what the exporter prints as `align N`.
+    /// This records what a computed address proves about itself, so a later
+    /// load through it can state an alignment its own result type does not
+    /// know. Nothing exports it: it is consumed during lowering and is inert
+    /// on the op that carries it.
+    pub fn set_address_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
+        let key = Identifier::try_new(ADDRESS_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx).attributes.set(key, AlignmentAttr(align));
+    }
+
+    /// Read the alignment an address-producing op guarantees, if any.
+    pub fn address_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
+        let key = Identifier::try_new(ADDRESS_ALIGNMENT_KEY.to_string()).expect("valid identifier");
         op.deref(ctx)
             .attributes
             .get::<AlignmentAttr>(&key)
