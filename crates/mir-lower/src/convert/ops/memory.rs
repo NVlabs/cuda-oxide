@@ -60,7 +60,7 @@ use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
 use llvm_export::types::{ArrayType, FuncType, StructType, VoidType};
 use pliron::attribute::AttrObj;
-use pliron::builtin::attributes::IntegerAttr;
+use pliron::builtin::attributes::{IntegerAttr, StringAttr};
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -148,6 +148,32 @@ fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op:
             ctx, llvm_op, file, pos.line, pos.column,
         );
     }
+}
+
+const LLVM_LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
+
+/// Carry Rust-local identity from the MIR alloca to the LLVM alloca.
+///
+/// This is compiler-only metadata stored in the in-memory dialect operation;
+/// it is not emitted as LLVM metadata because an unrecognized metadata node is
+/// not a preservation contract for middle-end passes. The textual exporter
+/// instead consumes the attribute to choose a stable SSA name before `opt`.
+fn copy_local_memory_provenance(
+    ctx: &mut Context,
+    mir_op: Ptr<Operation>,
+    llvm_op: Ptr<Operation>,
+) {
+    let Some(provenance) = dialect_mir::ops::MirAllocaOp::new(mir_op).local_memory_provenance(ctx)
+    else {
+        return;
+    };
+    let key: Identifier = LLVM_LOCAL_MEMORY_PROVENANCE_KEY
+        .try_into()
+        .expect("valid local-memory provenance attribute key");
+    llvm_op
+        .deref_mut(ctx)
+        .attributes
+        .set(key, StringAttr::new(provenance));
 }
 
 /// Convert `mir.memcpy` to the matching `llvm.memcpy.p<dst>.p<src>.i<bits>`.
@@ -418,6 +444,7 @@ pub(crate) fn convert_alloca(
         llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align as u32);
     }
     copy_debug_local_variable(ctx, op, alloca.get_operation());
+    copy_local_memory_provenance(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
 
@@ -1519,6 +1546,40 @@ mod tests {
                 encoding: "DW_ATE_signed",
             }
         );
+    }
+
+    #[test]
+    fn convert_alloca_preserves_local_memory_provenance() {
+        let mut ctx = make_ctx();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let alloca_op = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        mir::MirAllocaOp::new(alloca_op)
+            .set_local_memory_provenance(&mut ctx, "3\t16\tscratch\t[u32; 4]".to_string());
+        alloca_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).unwrap();
+        let key: Identifier = LLVM_LOCAL_MEMORY_PROVENANCE_KEY.try_into().unwrap();
+        let provenance = alloca
+            .get_operation()
+            .deref(&ctx)
+            .attributes
+            .get::<StringAttr>(&key)
+            .map(|value| String::from((*value).clone()));
+        assert_eq!(provenance.as_deref(), Some("3\t16\tscratch\t[u32; 4]"));
     }
 
     #[test]

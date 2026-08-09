@@ -459,6 +459,29 @@ fn generate_ptx_impl(
         optimized
     };
     let llc_input: &Path = optimized.as_deref().unwrap_or(post_link_input);
+
+    // Diagnose Rust locals only from the successful post-O2 input that will
+    // actually reach llc. Looking earlier would report slots that LLVM SROA
+    // still removes, while full-debug and no-opt builds intentionally retain
+    // stack storage and therefore are not meaningful promotion diagnostics.
+    if opts.verbose && optimized.is_some() && !debug_kind.variables_enabled() {
+        match crate::local_memory_diagnostic::diagnose_file(llc_input) {
+            Ok(local_memory_diagnostics) => {
+                for diagnostic in local_memory_diagnostics {
+                    record_diagnostic(&mut diagnostics, diagnostic_sink, diagnostic);
+                }
+            }
+            Err(error) => record_diagnostic(
+                &mut diagnostics,
+                diagnostic_sink,
+                format!(
+                    "warning: could not inspect optimized LLVM IR for local-memory promotion diagnostics ({}): {error}",
+                    llc_input.display()
+                ),
+            ),
+        }
+    }
+
     let llc_requirements = detect_module_requirements_in_llvm_file(llc_input)?;
     let requirements = merge_module_requirements(requirements, llc_requirements);
     let requirements =

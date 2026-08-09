@@ -18,6 +18,7 @@ use pliron::{
         types::{FP32Type, FP64Type, IntegerType},
     },
     context::Ptr,
+    identifier::Identifier,
     location::Located,
     op::Op,
     operation::Operation,
@@ -235,7 +236,46 @@ impl LlvmOp<'_> {
     }
 }
 
+const LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
+const LOCAL_MEMORY_VALUE_PREFIX: &str = "__cuda_oxide_local_x";
+const LOCAL_MEMORY_ALLOCA_PREFIX: &str = "__cuda_oxide_local_alloca_x";
+
+fn encode_local_memory_provenance(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.as_bytes() {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
 impl<'a> ModuleExportState<'a> {
+    fn local_memory_provenance(&self, op: Ptr<Operation>) -> Option<String> {
+        let key: Identifier = LOCAL_MEMORY_PROVENANCE_KEY
+            .try_into()
+            .expect("valid local-memory provenance attribute key");
+        op.deref(self.ctx)
+            .attributes
+            .get::<StringAttr>(&key)
+            .map(|value| String::from((*value).clone()))
+    }
+
+    fn local_memory_value_name(
+        &self,
+        op: Ptr<Operation>,
+        allocation_storage: bool,
+    ) -> Option<String> {
+        let provenance = self.local_memory_provenance(op)?;
+        let prefix = if allocation_storage {
+            LOCAL_MEMORY_ALLOCA_PREFIX
+        } else {
+            LOCAL_MEMORY_VALUE_PREFIX
+        };
+        Some(format!(
+            "%{prefix}{}",
+            encode_local_memory_provenance(&provenance)
+        ))
+    }
+
     pub(super) fn export_op(
         &mut self,
         op: Ptr<Operation>,
@@ -258,6 +298,16 @@ impl<'a> ModuleExportState<'a> {
             .as_ref()
             .is_some_and(LlvmOp::needs_scoped_debug_location);
         let output_before = output.len();
+
+        // Rust-local allocas carry an encoded provenance name into textual LLVM IR.
+        // `opt -O2` preserves SSA names on instructions that survive, so the
+        // post-optimization local-memory diagnostic can attribute a remaining
+        // alloca without relying on non-semantic metadata preservation.
+        if let Some(LlvmOp::Alloca(alloca)) = llvm_op.as_ref()
+            && let Some(name) = self.local_memory_value_name(alloca.get_operation(), false)
+        {
+            value_names.insert(op_ref.get_result(0), name);
+        }
 
         // Register result names (skip if already named in pre-pass)
         for res in op_ref.results() {
@@ -722,7 +772,8 @@ impl<'a> ModuleExportState<'a> {
         }
         let needs_normalization = self.legacy_typed_pointers() && !self.is_i8_type(elem_llvm_ty);
         let alloca_name = if needs_normalization {
-            Self::fresh_value_name(next_value_id)
+            self.local_memory_value_name(op.get_operation(), true)
+                .unwrap_or_else(|| Self::fresh_value_name(next_value_id))
         } else {
             res_name.clone()
         };
