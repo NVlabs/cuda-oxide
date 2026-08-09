@@ -41,19 +41,17 @@ const N: usize = 256;
 #[cuda_module]
 mod kernels {
     use super::*;
+    use core::sync::atomic::{Ordering, fence};
     use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32, DeviceAtomicU64};
 
     /// Each thread publishes a payload with a release store, then reads its
     /// neighbour's with an acquire load.
     ///
     /// Exercises, in one kernel: `st.release.gpu.b32`, `ld.acquire.gpu.b32`,
-    /// `st.relaxed.gpu.b64`, `ld.relaxed.gpu.b64`, and the fused-fence
+    /// `st.relaxed.gpu.b64`, `ld.relaxed.gpu.b64`, source-level
+    /// `fence.acq_rel.sys` / `llvm.nvvm.membar.sys`, and the fused-fence
     /// SeqCst forms `fence.sc.gpu; st.release.gpu.b32` and `fence.sc.gpu;
-    /// ld.acquire.gpu.b32`. None of these could be compiled under
-    /// `--materialize-cubin` before. Everything here stays in the
-    /// load/store family, so the kernel also compiles through the legacy
-    /// (pre-Blackwell) NVVM path, which still rejects atomic
-    /// read-modify-write operations.
+    /// ld.acquire.gpu.b32`.
     #[kernel]
     pub fn publish_and_observe(
         flags: &[u32],
@@ -81,6 +79,10 @@ mod kernels {
         mine.store(tid as u32 + 1, AtomicOrdering::Release);
         mine_wide.store((tid as u64 + 1) << 32, AtomicOrdering::Relaxed);
 
+        // Exercise the source-level core fence path from issue #723. Core
+        // atomics use system scope, so Release lowers to fence.acq_rel.sys.
+        fence(Ordering::Release);
+
         // Pair writers with readers without spinning: a hung example is a far
         // worse failure mode than a slightly weaker test, and the instruction
         // coverage is identical either way.
@@ -96,14 +98,14 @@ mod kernels {
             *out = seen_wide;
         }
 
+        // Exercise the other source-level lowering route. SeqCst core fences
+        // use the typed llvm.nvvm.membar.sys intrinsic rather than LLVM fence.
+        fence(Ordering::SeqCst);
+
         // SeqCst store and load: PTX has no sequentially consistent access,
         // so these lower to the libcu++ mapping with the fence fused into
         // one asm template: `fence.sc.gpu; st.release.gpu.b32` and
-        // `fence.sc.gpu; ld.acquire.gpu.b32`. That is this example's runtime
-        // fence coverage, and it stays in the load/store family, which is
-        // what keeps the kernel compiling through the legacy NVVM path too
-        // (RMW orderings are still rejected there, and source-level
-        // `core::sync::atomic::fence` does not translate yet).
+        // `fence.sc.gpu; ld.acquire.gpu.b32`.
         mine.store(tid as u32 + 1, AtomicOrdering::SeqCst);
         let reread = mine.load(AtomicOrdering::SeqCst);
         if let Some(out) = fence_ok.get_mut(thread::index_1d()) {
@@ -180,6 +182,7 @@ fn main() {
 
     println!("  release store / acquire load   {} threads", N);
     println!("  relaxed 64-bit store / load    {} threads", N);
+    println!("  source-level core fences        Release + SeqCst");
     println!("  SeqCst store / load (fence.sc)  {} threads", N);
 
     if errors == 0 {

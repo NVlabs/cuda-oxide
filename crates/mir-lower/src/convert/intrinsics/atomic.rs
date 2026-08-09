@@ -18,6 +18,7 @@
 //! |-------------------------|------------------------------------------|
 //! | `NvvmAtomicLoadOp`      | inline PTX `ld.{sem}.{scope}.{ty}`       |
 //! | `NvvmAtomicStoreOp`     | inline PTX `st.{sem}.{scope}.{ty}`       |
+//! | `NvvmAtomicFenceOp`     | inline PTX or `llvm.nvvm.membar.*`       |
 //! | `NvvmAtomicRmwOp`       | `atomicrmw ... syncscope("device")` `[*]`  |
 //! | `NvvmAtomicCmpxchgOp`   | `cmpxchg ... syncscope("device")`        |
 //!
@@ -51,8 +52,8 @@ use crate::convert::types::convert_type;
 
 use dialect_nvvm::ops::atomic::{
     AtomicOrdering as NvvmOrdering, AtomicRmwKind as NvvmRmwKind, AtomicScope as NvvmScope,
-    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicOpInterface, NvvmAtomicRmwOp,
-    NvvmAtomicStoreOp,
+    NvvmAtomicCmpxchgOp, NvvmAtomicFenceOp, NvvmAtomicLoadOp, NvvmAtomicOpInterface,
+    NvvmAtomicRmwOp, NvvmAtomicStoreOp,
 };
 use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
 use llvm_export::op_interfaces::CastOpInterface;
@@ -270,6 +271,33 @@ fn emit_fence(
         AsmKind::SideEffect,
     );
     rewriter.insert_operation(ctx, asm.get_operation());
+    Ok(())
+}
+
+// =============================================================================
+// Fence
+// =============================================================================
+
+pub(crate) fn convert_atomic_fence(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let fence = NvvmAtomicFenceOp::new(op);
+    let ordering = fence.ordering(ctx);
+    if matches!(ordering, NvvmOrdering::Relaxed) {
+        return pliron::input_err_noloc!("atomic fence cannot use Relaxed ordering");
+    }
+
+    emit_fence(
+        ctx,
+        rewriter,
+        op,
+        map_ordering(&ordering),
+        map_scope(&fence.scope(ctx)),
+    )?;
+    rewriter.erase_operation(ctx, op);
     Ok(())
 }
 

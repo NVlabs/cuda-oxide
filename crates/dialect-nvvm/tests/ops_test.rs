@@ -78,6 +78,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("asm.rs", "InlinePtxOp"),
         ("atomic.rs", "NvvmAtomicLoadOp"),
         ("atomic.rs", "NvvmAtomicStoreOp"),
+        ("atomic.rs", "NvvmAtomicFenceOp"),
         ("atomic.rs", "NvvmAtomicRmwOp"),
         ("atomic.rs", "NvvmAtomicCmpxchgOp"),
         ("cluster.rs", "ReadPtxSregClusterIdxOp"),

@@ -10469,3 +10469,106 @@ fn test_fence_uses_membar_intrinsic_only_for_seqcst() -> Result<(), anyhow::Erro
     }
     Ok(())
 }
+
+/// A first-class atomic fence must lower through the same libNVVM-safe routes
+/// used by the RMW ordering workaround.
+///
+/// `core::sync::atomic::fence` imports with system scope, so the source-level
+/// path depends on this exact mapping: Acquire/Release/AcqRel become
+/// `fence.acq_rel.sys`, while SeqCst becomes `llvm.nvvm.membar.sys`.
+#[test]
+fn test_first_class_atomic_fence_lowers_at_system_scope() -> Result<(), anyhow::Error> {
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicScope, NvvmAtomicFenceOp};
+
+    for ordering in [
+        AtomicOrdering::Acquire,
+        AtomicOrdering::Release,
+        AtomicOrdering::AcqRel,
+        AtomicOrdering::SeqCst,
+    ] {
+        let mut ctx = make_test_ctx();
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+        NvvmAtomicFenceOp::build(&mut ctx, ordering.clone(), AtomicScope::System)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut membar_calls = 0usize;
+        let mut fence_asm = Vec::new();
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            assert!(
+                Operation::get_op::<NvvmAtomicFenceOp>(op, &ctx).is_none(),
+                "first-class atomic fence must be fully consumed by lowering"
+            );
+
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+                && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+                && callee.to_string() == "llvm_nvvm_membar_sys"
+            {
+                membar_calls += 1;
+            }
+
+            let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+                continue;
+            };
+            let template = asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap_or_default();
+            if template.starts_with("fence.") {
+                assert_eq!(
+                    asm.get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some("~{memory}")
+                );
+                assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::SideEffect);
+                fence_asm.push(template);
+            }
+        }
+
+        match ordering {
+            AtomicOrdering::SeqCst => {
+                assert_eq!(membar_calls, 1, "SeqCst must use membar.sys");
+                assert!(
+                    fence_asm.is_empty(),
+                    "SeqCst must not also emit an inline PTX fence"
+                );
+            }
+            AtomicOrdering::Acquire | AtomicOrdering::Release | AtomicOrdering::AcqRel => {
+                assert_eq!(membar_calls, 0, "weak fences must not use membar.sys");
+                assert_eq!(
+                    fence_asm,
+                    vec!["fence.acq_rel.sys;".to_owned()],
+                    "{ordering:?} must lower to one system-scope acq_rel fence"
+                );
+            }
+            AtomicOrdering::Relaxed => unreachable!("Relaxed is not a valid Rust fence ordering"),
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_first_class_atomic_fence_rejects_relaxed() -> Result<(), anyhow::Error> {
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicScope, NvvmAtomicFenceOp};
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    NvvmAtomicFenceOp::build(&mut ctx, AtomicOrdering::Relaxed, AtomicScope::System)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    let result = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr);
+    assert!(
+        result.is_err(),
+        "Relaxed is not a valid atomic fence ordering and must be rejected"
+    );
+    Ok(())
+}
