@@ -99,7 +99,8 @@ pub fn store_result_to_place(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     use crate::translator::statement::{
-        pointer_address_space, pointer_is_mutable, reject_raw_field_index_on_enum_pointee,
+        emit_array_element_store, pointer_address_space, pointer_is_mutable,
+        reject_raw_field_index_on_enum_pointee, slot_array_element_ty,
     };
     use dialect_mir::ops::{MirFieldAddrOp, MirStoreOp};
 
@@ -182,6 +183,43 @@ pub fn store_result_to_place(
             store_op.deref_mut(ctx).set_loc(loc);
             store_op.insert_after(ctx, field_addr_op);
             Ok(store_op)
+        }
+
+        [mir::ProjectionElem::Index(index_local)] => {
+            let Some(arr_ptr) = value_map.get_slot(destination.local) else {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Local {:?} has no alloca slot for a runtime index destination",
+                        destination.local
+                    ))
+                );
+            };
+            let index_place = mir::Place {
+                local: *index_local,
+                projection: vec![],
+            };
+            let (index_value, after_index) = rvalue::translate_place(
+                ctx,
+                body,
+                &index_place,
+                value_map,
+                block_ptr,
+                Some(prev_op),
+                loc.clone(),
+            )?;
+            let (element_ty, address_space) = slot_array_element_ty(ctx, arr_ptr, &loc)?;
+            Ok(emit_array_element_store(
+                ctx,
+                arr_ptr,
+                index_value,
+                value,
+                element_ty,
+                address_space,
+                block_ptr,
+                after_index,
+                loc,
+            ))
         }
 
         projection => input_err!(

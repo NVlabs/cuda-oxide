@@ -1158,7 +1158,7 @@ fn store_through_place_address(
 /// error when the pointer's pointee isn't a [`MirArrayType`], which signals
 /// a structural mismatch (most likely the wrong MIR projection reaching
 /// this path).
-fn slot_array_element_ty(
+pub(crate) fn slot_array_element_ty(
     ctx: &pliron::context::Context,
     arr_ptr: Value,
     loc: &Location,
@@ -1193,7 +1193,7 @@ fn slot_array_element_ty(
 /// The caller owns positioning (`prev_op`): we chain the address op after
 /// it, then chain the store after the address op.
 #[allow(clippy::too_many_arguments)]
-fn emit_array_element_store(
+pub(crate) fn emit_array_element_store(
     ctx: &mut pliron::context::Context,
     array_ptr: Value,
     index: Value,
