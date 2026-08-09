@@ -3,6 +3,12 @@ name: Deploy cuda-oxide Book
 on:
   push:
     branches: [main]
+  # Validate the book on PRs too. The build job alone runs there; `deploy` is
+  # gated below, so a pull request never publishes. Without this the book was
+  # only ever built after merge, so a PR that broke it could not be caught by
+  # review or by CI.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,9 +16,14 @@ permissions:
   pages: write
   id-token: write
 
+# Serialising every run under one `pages` group is a deploy constraint, and
+# applying it workflow-wide would queue unrelated PR builds behind each other.
+# Scope this to the ref, and keep the single-deploy guarantee on the deploy job
+# itself. Superseded PR runs are cancelled; pushes to main are not, so a
+# publish in flight is never interrupted.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -45,6 +56,13 @@ jobs:
 
   deploy:
     needs: build
+    # Publishing is for main only. A pull request builds the book to prove it is
+    # sound and stops there; it never touches the Pages environment, and the
+    # `pages: write` / `id-token: write` permissions go unused on that path.
+    if: github.event_name != 'pull_request'
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment:
       name: github-pages
