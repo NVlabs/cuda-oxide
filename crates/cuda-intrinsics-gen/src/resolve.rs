@@ -62,6 +62,7 @@ use crate::model::{
     Tcgen05MmaFixedSelectors, Tcgen05MmaForm, Tcgen05MmaKind, Tcgen05MmaSelectorLayout,
     Tcgen05Operation, Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant,
     ThreadfenceAdmission, ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation,
+    TmaReduction, TmaReductionAdmissionVariant, TmaReductionLoadMode, TmaReductionOperation,
     VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
     WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
     WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode,
@@ -78,7 +79,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 44;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 61;
+const OVERLAY_SHARD_SCHEMA: u32 = 62;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_MXF8F6F4_SHARD_SCHEMA: u32 = 60;
@@ -98,6 +99,7 @@ const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
 const CLC_SHARD_SCHEMA: u32 = 40;
 const TMA_SHARD_SCHEMA: u32 = 61;
+const TMA_REDUCTION_SHARD_SCHEMA: u32 = 62;
 const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
@@ -111,7 +113,7 @@ const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
 const TCGEN05_CONTROL_SHARD_SCHEMA: u32 = 56;
 const TCGEN05_MMA_SHARD_SCHEMA: u32 = 57;
 const SCALAR_MATH_SHARD_SCHEMA: u32 = 58;
-pub(crate) const CATALOG_SCHEMA: u32 = 45;
+pub(crate) const CATALOG_SCHEMA: u32 = 46;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
 const BLACKWELL_LDMATRIX_LIBNVVM_TARGETS: &str = BLACKWELL_LDMATRIX_LLVM_TARGETS;
@@ -347,20 +349,27 @@ pub(crate) fn test_catalog_with_clc(repo_root: &Path) -> Result<CatalogFile> {
 #[cfg(test)]
 pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
     let mut catalog = resolve(repo_root)?;
-    if catalog
+    let active_count = catalog
         .intrinsics
         .iter()
         .filter(|record| record.tma.is_some())
-        .count()
-        == TMA_OPERATIONS.len()
-    {
+        .count();
+    let expected_count = TMA_OPERATIONS.len() + tma_reduction_matrix().len();
+    if active_count == expected_count {
         return Ok(catalog);
     }
+    ensure!(
+        active_count == 0 || active_count == TMA_OPERATIONS.len(),
+        "active TMA catalog has {active_count} records; expected 0, {} base records, or {expected_count} total records",
+        TMA_OPERATIONS.len()
+    );
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
     let admission = TmaAdmission {
         llvm_evidence_profile: "llvm-tma-test".into(),
         libnvvm_evidence_profile: "libnvvm-tma-test".into(),
+        reduce_llvm_evidence_profile: Some("llvm-tma-reduce-test".into()),
+        reduce_libnvvm_evidence_profile: Some("libnvvm-tma-reduce-test".into()),
         runtime_validation: RuntimeValidation::Unexecuted,
         variants: TMA_OPERATIONS
             .into_iter()
@@ -369,8 +378,16 @@ pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
                 operation,
             })
             .collect(),
+        reduce_variants: tma_reduction_admission_variants(),
     };
     for policy in expand_tma_admission(&admission)? {
+        if catalog
+            .intrinsics
+            .iter()
+            .any(|record| record.id.as_str() == policy.id.as_str())
+        {
+            continue;
+        }
         let source = resolve_policy_source(&policy)?;
         let declaration = resolve_imported_declaration(&policy, &source, &imported_by_record)?;
         validate_policy(&policy, &source, declaration, catalog.intrinsic_abi)?;
@@ -1330,6 +1347,15 @@ fn validate_overlay_shard_schema_with_max(
         shard.tma.is_none() || shard.schema >= TMA_SHARD_SCHEMA,
         "compact TMA admission requires overlay shard schema {}",
         TMA_SHARD_SCHEMA
+    );
+    ensure!(
+        shard
+            .tma
+            .as_ref()
+            .is_none_or(|admission| admission.reduce_variants.is_empty())
+            || shard.schema >= TMA_REDUCTION_SHARD_SCHEMA,
+        "compact TMA reduction admission requires overlay shard schema {}",
+        TMA_REDUCTION_SHARD_SCHEMA
     );
     ensure!(
         shard.mbarrier_extended.is_none() || shard.schema >= MBARRIER_EXTENDED_SHARD_SCHEMA,
@@ -2300,7 +2326,8 @@ fn validate_policy(
                 && policy.tma.as_ref().is_some_and(|tma| {
                     matches!(
                         tma.operation,
-                        TmaOperation::PrefetchTensorMap
+                        TmaOperation::Reduce
+                            | TmaOperation::PrefetchTensorMap
                             | TmaOperation::ReplaceBoxDim
                             | TmaOperation::ReplaceElementStride
                             | TmaOperation::ReplaceElementType
@@ -2352,7 +2379,8 @@ fn validate_policy(
                 if policy.tma.as_ref().is_some_and(|tma| {
                     matches!(
                         tma.operation,
-                        TmaOperation::PrefetchTensorMap
+                        TmaOperation::Reduce
+                            | TmaOperation::PrefetchTensorMap
                             | TmaOperation::ReplaceBoxDim
                             | TmaOperation::ReplaceElementStride
                             | TmaOperation::ReplaceElementType
@@ -2722,7 +2750,8 @@ fn selection_matches_tma_policy(
     let operation = tma.operation;
     if matches!(
         operation,
-        TmaOperation::PrefetchTensorMap
+        TmaOperation::Reduce
+            | TmaOperation::PrefetchTensorMap
             | TmaOperation::ReplaceBoxDim
             | TmaOperation::ReplaceElementStride
             | TmaOperation::ReplaceElementType
@@ -2872,7 +2901,8 @@ fn selection_matches_tma_policy(
             "INT_FENCE_PROXY_TENSORMAP_GENERIC_RELEASE_SYS",
             "fence.proxy.tensormap::generic.release.sys;",
         ),
-        TmaOperation::PrefetchTensorMap
+        TmaOperation::Reduce
+        | TmaOperation::PrefetchTensorMap
         | TmaOperation::ReplaceBoxDim
         | TmaOperation::ReplaceElementStride
         | TmaOperation::ReplaceElementType
@@ -3101,8 +3131,8 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 targets: "all".into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                    "9.7.14.4 Parallel Synchronization and Communication Instructions: membar / fence"
-                        .into(),
+                "9.7.14.4 Parallel Synchronization and Communication Instructions: membar / fence"
+                    .into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-membar-fence".into(),
                 lowering: "direct_nvvm".into(),
                 backend_lowerings: vec![
@@ -4411,6 +4441,310 @@ const TMA_OPERATIONS: [TmaOperation; 47] = [
     TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint,
 ];
 
+const TMA_REDUCTION_FIRST_ABI_ID: u32 = 923;
+const TMA_REDUCTION_OPERATIONS: [TmaReductionOperation; 8] = [
+    TmaReductionOperation::Add,
+    TmaReductionOperation::And,
+    TmaReductionOperation::Dec,
+    TmaReductionOperation::Inc,
+    TmaReductionOperation::Max,
+    TmaReductionOperation::Min,
+    TmaReductionOperation::Or,
+    TmaReductionOperation::Xor,
+];
+
+fn tma_reduction_matrix() -> Vec<TmaReduction> {
+    let mut reductions = Vec::with_capacity(64);
+    for operation in TMA_REDUCTION_OPERATIONS {
+        for dimensions in 1..=5 {
+            reductions.push(TmaReduction {
+                operation,
+                load_mode: TmaReductionLoadMode::Tile,
+                dimensions,
+            });
+        }
+        for dimensions in 3..=5 {
+            reductions.push(TmaReduction {
+                operation,
+                load_mode: TmaReductionLoadMode::Im2col,
+                dimensions,
+            });
+        }
+    }
+    reductions
+}
+
+fn tma_reduction_expected_abi_id(reduction: TmaReduction) -> String {
+    let index = tma_reduction_matrix()
+        .into_iter()
+        .position(|candidate| candidate == reduction)
+        .expect("TMA reduction must belong to the closed matrix");
+    format!("i{:04}", TMA_REDUCTION_FIRST_ABI_ID + index as u32)
+}
+
+#[cfg(test)]
+fn tma_reduction_admission_variants() -> Vec<TmaReductionAdmissionVariant> {
+    tma_reduction_matrix()
+        .into_iter()
+        .map(|reduction| TmaReductionAdmissionVariant {
+            abi_id: tma_reduction_expected_abi_id(reduction),
+            operation: reduction.operation,
+            load_mode: reduction.load_mode,
+            dimensions: reduction.dimensions,
+        })
+        .collect()
+}
+
+fn tma_reduction_operation_name(operation: TmaReductionOperation) -> (&'static str, &'static str) {
+    match operation {
+        TmaReductionOperation::Add => ("add", "Add"),
+        TmaReductionOperation::And => ("and", "And"),
+        TmaReductionOperation::Dec => ("dec", "Dec"),
+        TmaReductionOperation::Inc => ("inc", "Inc"),
+        TmaReductionOperation::Max => ("max", "Max"),
+        TmaReductionOperation::Min => ("min", "Min"),
+        TmaReductionOperation::Or => ("or", "Or"),
+        TmaReductionOperation::Xor => ("xor", "Xor"),
+    }
+}
+
+fn tma_reduction_load_mode_name(
+    load_mode: TmaReductionLoadMode,
+) -> (&'static str, &'static str, &'static str) {
+    match load_mode {
+        TmaReductionLoadMode::Tile => ("tile", "Tile", "tile"),
+        TmaReductionLoadMode::Im2col => ("im2col", "Im2col", "im2col_no_offs"),
+    }
+}
+
+struct TmaReductionRecipe {
+    id: String,
+    operation_key: String,
+    source_record: String,
+    llvm_symbol: String,
+    rust_arguments: Vec<&'static str>,
+    dialect_op_type: String,
+    dialect_op_name: String,
+    dialect_operands: Vec<&'static str>,
+    llvm_arguments: Vec<&'static str>,
+    modifiers: Vec<String>,
+    operands: Vec<OperandPattern>,
+    summary: String,
+}
+
+fn tma_reduction_recipe(reduction: TmaReduction) -> Result<TmaReductionRecipe> {
+    ensure!(
+        (1..=5).contains(&reduction.dimensions),
+        "TMA reduction dimensionality must be in 1..=5"
+    );
+    ensure!(
+        reduction.load_mode != TmaReductionLoadMode::Im2col || reduction.dimensions >= 3,
+        "TMA reduction im2col mode requires at least three dimensions"
+    );
+
+    let (operation, operation_camel) = tma_reduction_operation_name(reduction.operation);
+    let (load_mode, load_mode_camel, ptx_load_mode) =
+        tma_reduction_load_mode_name(reduction.load_mode);
+    let dimensions = reduction.dimensions as usize;
+    let id = format!(
+        "cp_async_bulk_tensor_reduce_{operation}_{load_mode}_{}d",
+        reduction.dimensions
+    );
+    let mut rust_arguments = vec!["*const u8", "*const u8"];
+    rust_arguments.extend(std::iter::repeat_n("i32", dimensions));
+    let mut dialect_operands = vec!["ptr", "ptr"];
+    dialect_operands.extend(std::iter::repeat_n("i32", dimensions));
+    let mut llvm_arguments = vec!["shared_ptr", "ptr"];
+    llvm_arguments.extend(std::iter::repeat_n("i32", dimensions));
+    llvm_arguments.extend(["i64", "i1"]);
+
+    Ok(TmaReductionRecipe {
+        operation_key: format!(
+            "memory.reduce.async.bulk.tensor.{operation}.{load_mode}.{}d",
+            reduction.dimensions
+        ),
+        source_record: format!(
+            "int_nvvm_cp_async_bulk_tensor_reduce_{operation}_{load_mode}_{}d",
+            reduction.dimensions
+        ),
+        llvm_symbol: format!(
+            "llvm.nvvm.cp.async.bulk.tensor.reduce.{operation}.{load_mode}.{}d",
+            reduction.dimensions
+        ),
+        dialect_op_type: format!(
+            "CpAsyncBulkTensorReduce{operation_camel}{load_mode_camel}{}dOp",
+            reduction.dimensions
+        ),
+        dialect_op_name: format!(
+            "nvvm.cp_async_bulk_tensor_reduce_{operation}_{load_mode}_{}d",
+            reduction.dimensions
+        ),
+        rust_arguments,
+        dialect_operands,
+        llvm_arguments,
+        modifiers: vec![
+            "reduce".into(),
+            "async".into(),
+            "bulk".into(),
+            "tensor".into(),
+            format!("{}d", reduction.dimensions),
+            "global".into(),
+            "shared::cta".into(),
+            operation.into(),
+            ptx_load_mode.into(),
+            "bulk_group".into(),
+        ],
+        operands: vec![OperandPattern::Address, OperandPattern::Address],
+        summary: format!(
+            "Starts a TMA tensor {operation} reduction from shared to global memory in {load_mode} mode."
+        ),
+        id,
+    })
+}
+
+fn expand_tma_reduction_variant(
+    admission: &TmaAdmission,
+    variant: &TmaReductionAdmissionVariant,
+) -> Result<OverlayIntrinsic> {
+    let reduction = TmaReduction {
+        operation: variant.operation,
+        load_mode: variant.load_mode,
+        dimensions: variant.dimensions,
+    };
+    let recipe = tma_reduction_recipe(reduction)?;
+    let expected_abi_id = tma_reduction_expected_abi_id(reduction);
+    ensure!(
+        variant.abi_id == expected_abi_id,
+        "{} must keep reserved ABI ID {}",
+        recipe.id,
+        expected_abi_id
+    );
+
+    Ok(OverlayIntrinsic {
+        id: recipe.id.clone(),
+        abi_id: variant.abi_id.clone(),
+        operation_key: recipe.operation_key.clone(),
+        family: "tma".into(),
+        source: None,
+        source_record: Some(recipe.source_record.clone()),
+        rust_module: "tma".into(),
+        rust_name: recipe.id.clone(),
+        rust_arguments: recipe
+            .rust_arguments
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        rust_result: "()".into(),
+        safe: false,
+        must_use: false,
+        safe_allowlist_reason: None,
+        public_rust_path: format!("cuda_intrinsics::tma::{}", recipe.id),
+        compatibility_rust_paths: vec![format!("cuda_device::tma::{}", recipe.id)],
+        dialect_op_type: recipe.dialect_op_type.clone(),
+        dialect_op_name: recipe.dialect_op_name.clone(),
+        dialect_operands: recipe
+            .dialect_operands
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        dialect_results: vec![],
+        llvm_symbol: Some(recipe.llvm_symbol.clone()),
+        resolved_llvm_symbol: None,
+        llvm_arguments: recipe
+            .llvm_arguments
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        llvm_results: vec![],
+        pure: false,
+        memory: "read_write".into(),
+        convergent: true,
+        execution_scope: "thread".into(),
+        minimum_ptx: "8.0".into(),
+        minimum_sm: Some("sm_90".into()),
+        ptx_result: "()".into(),
+        targets: "all".into(),
+        ptx_isa_version: "9.3".into(),
+        ptx_isa_section:
+        "9.7.9.26.5.3 Data Movement and Conversion Instructions: cp.reduce.async.bulk.tensor"
+            .into(),
+        ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-reduce-async-bulk-tensor".into(),
+        lowering: "generated_tma".into(),
+        backend_lowerings: vec![
+            OverlayBackendLowering {
+                backend: IntrinsicBackend::LlvmNvptx,
+                mechanism: BackendLoweringMechanism::TypedNvvm,
+                evidence_profile: admission
+                    .reduce_llvm_evidence_profile
+                    .as_ref()
+                    .expect("validated TMA reduction LLVM evidence profile")
+                    .clone(),
+                targets: None,
+                minimum_ptx: Some("8.0".into()),
+                minimum_sm: Some("sm_90".into()),
+            },
+            OverlayBackendLowering {
+                backend: IntrinsicBackend::LibNvvm,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: admission
+                    .reduce_libnvvm_evidence_profile
+                    .as_ref()
+                    .expect("validated TMA reduction libNVVM evidence profile")
+                    .clone(),
+                targets: None,
+                minimum_ptx: Some("8.0".into()),
+                minimum_sm: Some("sm_90".into()),
+            },
+        ],
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        scalar_conversion: None,
+        scalar_arithmetic: None,
+        scalar_math: None,
+        extended_minmax: None,
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        movmatrix: None,
+        mbarrier_extended: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        cluster_barrier: None,
+        wgmma_control: None,
+        special_register: None,
+        debug_control: None,
+        cluster_memory: None,
+        clc: None,
+        tma: Some(Tma {
+            operation: TmaOperation::Reduce,
+            reduction: Some(reduction),
+            adapter: TmaAdapter::ReductionPointersCoordinatesInjectDefaults,
+            runtime_validation: admission.runtime_validation,
+        }),
+        tcgen05: None,
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: InstructionPattern {
+            mnemonic: "cp".into(),
+            modifiers: recipe.modifiers,
+            operands: recipe.operands,
+        },
+        summary: recipe.summary,
+    })
+}
+
 struct TmaRecipe {
     operation: TmaOperation,
     abi_id: &'static str,
@@ -4445,6 +4779,7 @@ struct TmaRecipe {
 fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
     let (abi_id, id, operation_key, source_record, llvm_symbol, op_type, op_name) = match operation
     {
+        TmaOperation::Reduce => unreachable!("TMA reductions use tma_reduction_recipe"),
         TmaOperation::G2sTile1d => (
             "i0328",
             "cp_async_bulk_tensor_1d_g2s",
@@ -5442,7 +5777,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
         TMA_OPERATIONS.len()
     );
 
-    admission
+    let mut records = admission
         .variants
         .iter()
         .map(|variant| {
@@ -5550,6 +5885,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 clc: None,
                 tma: Some(Tma {
                     operation: recipe.operation,
+                    reduction: None,
                     adapter: recipe.adapter,
                     runtime_validation: admission.runtime_validation,
                 }),
@@ -5566,7 +5902,37 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 summary: recipe.summary.into(),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+
+    if !admission.reduce_variants.is_empty() {
+        ensure!(
+            admission.reduce_llvm_evidence_profile.is_some(),
+            "compact TMA reduction admission requires reduce_llvm_evidence_profile"
+        );
+        ensure!(
+            admission.reduce_libnvvm_evidence_profile.is_some(),
+            "compact TMA reduction admission requires reduce_libnvvm_evidence_profile"
+        );
+
+        let expected_reductions = tma_reduction_matrix();
+        ensure!(
+            admission.reduce_variants.len() == expected_reductions.len()
+                && admission
+                    .reduce_variants
+                    .iter()
+                    .zip(expected_reductions.iter())
+                    .all(|(variant, expected)| {
+                        variant.operation == expected.operation
+                            && variant.load_mode == expected.load_mode
+                            && variant.dimensions == expected.dimensions
+                    }),
+            "compact TMA reduction admission must list all 64 operations in canonical order"
+        );
+        for variant in &admission.reduce_variants {
+            records.push(expand_tma_reduction_variant(admission, variant)?);
+        }
+    }
+    Ok(records)
 }
 
 fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
@@ -5574,6 +5940,14 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
         .tma
         .as_ref()
         .with_context(|| format!("{} has no closed TMA contract", policy.id))?;
+    if tma.operation == TmaOperation::Reduce {
+        return validate_tma_reduction_policy(policy, declaration, tma);
+    }
+    ensure!(
+        tma.reduction.is_none(),
+        "{} non-reduction TMA operation carries a reduction contract",
+        policy.id
+    );
     let recipe = tma_recipe(tma.operation);
     ensure!(
         policy.id == recipe.id
@@ -5662,6 +6036,117 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
     ensure!(
         declaration.properties == expected_properties,
         "{} imported TMA declaration changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "TMA")?;
+    Ok(())
+}
+
+fn validate_tma_reduction_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    tma: &Tma,
+) -> Result<()> {
+    ensure!(
+        tma.operation == TmaOperation::Reduce,
+        "{} is not a TMA reduction",
+        policy.id
+    );
+    let reduction = tma
+        .reduction
+        .with_context(|| format!("{} has no TMA reduction contract", policy.id))?;
+    let recipe = tma_reduction_recipe(reduction)?;
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == tma_reduction_expected_abi_id(reduction)
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == recipe.source_record
+            && declaration.llvm_name == recipe.llvm_symbol,
+        "{} TMA reduction identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "tma"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::tma::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::tma::{}", recipe.id)],
+        "{} TMA reduction Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results.is_empty()
+            && declaration.arguments == recipe.llvm_arguments
+            && declaration.results.is_empty()
+            && declaration.selections.is_empty()
+            && policy.lowering == "generated_tma",
+        "{} TMA reduction carrier or LLVM adapter changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "thread"
+            && tma.adapter == TmaAdapter::ReductionPointersCoordinatesInjectDefaults
+            && tma.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} TMA reduction semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "8.0"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.9.26.5.3 Data Movement and Conversion Instructions: cp.reduce.async.bulk.tensor"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-reduce-async-bulk-tensor"
+            && policy.ptx_result == "()"
+            && policy.expected_ptx.mnemonic == "cp"
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands == recipe.operands,
+        "{} TMA reduction target or PTX contract changed",
+        policy.id
+    );
+    let valid_route = |backend, mechanism| {
+        policy.backend_lowerings.iter().any(|route| {
+            route.backend == backend
+                && route.mechanism == mechanism
+                && route.minimum_ptx.as_deref() == Some("8.0")
+                && route.minimum_sm.as_deref() == Some("sm_90")
+                && !route.evidence_profile.trim().is_empty()
+        })
+    };
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && valid_route(
+                IntrinsicBackend::LlvmNvptx,
+                BackendLoweringMechanism::TypedNvvm,
+            )
+            && valid_route(
+                IntrinsicBackend::LibNvvm,
+                BackendLoweringMechanism::InlinePtx,
+            ),
+        "{} TMA reduction backend route changed",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == tma_reduction_imported_properties(reduction.dimensions as usize),
+        "{} imported TMA reduction declaration changed",
         policy.id
     );
     ensure_no_other_family_contract(policy, "TMA")?;
@@ -9360,6 +9845,7 @@ fn validate_tcgen05_source_contract(
 }
 
 fn tma_imported_properties(operation: TmaOperation) -> Vec<String> {
+    assert_ne!(operation, TmaOperation::Reduce);
     let dimensions = operation.dimensions();
     if matches!(
         operation,
@@ -9498,6 +9984,15 @@ fn tma_imported_properties(operation: TmaOperation) -> Vec<String> {
     }
     properties.sort();
     properties
+}
+
+fn tma_reduction_imported_properties(dimensions: usize) -> Vec<String> {
+    vec![
+        format!("ImmArg<arg{}>", dimensions + 3),
+        "IntrConvergent".into(),
+        "ReadOnly<arg0>".into(),
+        "ReadOnly<arg1>".into(),
+    ]
 }
 
 fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
@@ -16999,16 +17494,16 @@ fn packed_conversion_overlay_record(
             (IntrinsicBackend::LlvmNvptx, llvm_evidence_profile),
             (IntrinsicBackend::LibNvvm, libnvvm_evidence_profile),
         ]
-        .into_iter()
-        .map(|(backend, evidence_profile)| OverlayBackendLowering {
-            backend,
-            mechanism: packed_conversion_backend_mechanism(&conversion, backend),
-            evidence_profile: evidence_profile.into(),
-            targets: None,
-            minimum_ptx: Some(minimum_ptx.into()),
-            minimum_sm: Some(minimum_sm.into()),
-        })
-        .collect(),
+            .into_iter()
+            .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                backend,
+                mechanism: packed_conversion_backend_mechanism(&conversion, backend),
+                evidence_profile: evidence_profile.into(),
+                targets: None,
+                minimum_ptx: Some(minimum_ptx.into()),
+                minimum_sm: Some(minimum_sm.into()),
+            })
+            .collect(),
         packed_atomic: None,
         redux: None,
         vote: None,
@@ -17494,19 +17989,19 @@ fn scalar_conversion_overlay_record(
             (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
             (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
         ]
-        .into_iter()
-        .map(|(backend, evidence_profile)| OverlayBackendLowering {
-            backend,
-            mechanism: match backend {
-                IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
-                IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
-            },
-            evidence_profile: evidence_profile.clone(),
-            targets: None,
-            minimum_ptx: Some(recipe.minimum_ptx.into()),
-            minimum_sm: Some(recipe.minimum_sm.into()),
-        })
-        .collect(),
+            .into_iter()
+            .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                backend,
+                mechanism: match backend {
+                    IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
+                    IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+                },
+                evidence_profile: evidence_profile.clone(),
+                targets: None,
+                minimum_ptx: Some(recipe.minimum_ptx.into()),
+                minimum_sm: Some(recipe.minimum_sm.into()),
+            })
+            .collect(),
         packed_atomic: None,
         redux: None,
         vote: None,
@@ -21215,9 +21710,9 @@ fn expand_register_mma_f8f6f4_admission(
                         b,
                         scalar,
                     ]
-                    .into_iter()
-                    .map(Into::into)
-                    .collect(),
+                        .into_iter()
+                        .map(Into::into)
+                        .collect(),
                     operands: contract
                         .ptx_register_counts
                         .map(|length| OperandPattern::RegisterList { length })
@@ -21357,7 +21852,7 @@ fn expand_register_mma_mxf8f6f4_admission(
                 targets: REGISTER_MMA_F8F6F4_TARGETS.into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                    "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
+                "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma".into(),
                 lowering: "generated_register_mma".into(),
                 backend_lowerings: vec![
@@ -21429,9 +21924,9 @@ fn expand_register_mma_mxf8f6f4_admission(
                         "f32",
                         "ue8m0",
                     ]
-                    .into_iter()
-                    .map(Into::into)
-                    .collect(),
+                        .into_iter()
+                        .map(Into::into)
+                        .collect(),
                     operands: vec![
                         OperandPattern::RegisterList { length: 4 },
                         OperandPattern::RegisterList { length: 4 },
@@ -21668,16 +22163,16 @@ fn expand_register_mma_fp8_admission(
                             (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
                             (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
                         ]
-                        .into_iter()
-                        .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                            backend,
-                            mechanism: BackendLoweringMechanism::InlinePtx,
-                            evidence_profile: evidence_profile.clone(),
-                            targets: None,
-                            minimum_ptx: Some(minimum_ptx.into()),
-                            minimum_sm: Some("sm_89".into()),
-                        })
-                        .collect(),
+                            .into_iter()
+                            .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                                backend,
+                                mechanism: BackendLoweringMechanism::InlinePtx,
+                                evidence_profile: evidence_profile.clone(),
+                                targets: None,
+                                minimum_ptx: Some(minimum_ptx.into()),
+                                minimum_sm: Some("sm_89".into()),
+                            })
+                            .collect(),
                         packed_atomic: None,
                         redux: None,
                         vote: None,
@@ -21864,16 +22359,16 @@ fn expand_register_mma_ampere_float_admission(
                     (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
                     (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
                 ]
-                .into_iter()
-                .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                    backend,
-                    mechanism: BackendLoweringMechanism::InlinePtx,
-                    evidence_profile: evidence_profile.clone(),
-                    targets: None,
-                    minimum_ptx: Some(recipe.minimum_ptx.into()),
-                    minimum_sm: Some(recipe.minimum_sm.into()),
-                })
-                .collect(),
+                    .into_iter()
+                    .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                        backend,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: evidence_profile.clone(),
+                        targets: None,
+                        minimum_ptx: Some(recipe.minimum_ptx.into()),
+                        minimum_sm: Some(recipe.minimum_sm.into()),
+                    })
+                    .collect(),
                 packed_atomic: None,
                 redux: None,
                 vote: None,
@@ -22696,8 +23191,8 @@ fn expand_sparse_mma_f8f6f4_admission(
                 runtime_validation: admission.runtime_validation,
             };
             let recipe = sparse_mma_recipe(&mma).with_context(|| {
-            "compact sparse f8f6f4 MMA admission requests a variant outside the closed recipe set"
-        })?;
+                "compact sparse f8f6f4 MMA admission requests a variant outside the closed recipe set"
+            })?;
             let summary = format!(
                 "Multiplies warp-distributed sparse {} A and {} B fragments and adds an f32 accumulator.",
                 sparse_mma_element_name(a_element),
@@ -22867,16 +23362,16 @@ fn sparse_mma_overlay_record(
             (IntrinsicBackend::LlvmNvptx, llvm_evidence_profile),
             (IntrinsicBackend::LibNvvm, libnvvm_evidence_profile),
         ]
-        .into_iter()
-        .map(|(backend, evidence_profile)| OverlayBackendLowering {
-            backend,
-            mechanism: BackendLoweringMechanism::InlinePtx,
-            evidence_profile: evidence_profile.into(),
-            targets: None,
-            minimum_ptx: Some(minimum_ptx.into()),
-            minimum_sm: minimum_sm.map(str::to_owned),
-        })
-        .collect(),
+            .into_iter()
+            .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                backend,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: evidence_profile.into(),
+                targets: None,
+                minimum_ptx: Some(minimum_ptx.into()),
+                minimum_sm: minimum_sm.map(str::to_owned),
+            })
+            .collect(),
         packed_atomic: None,
         redux: None,
         vote: None,
@@ -24298,8 +24793,8 @@ fn expand_cluster_barrier_admission(
                 targets: "all".into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                    "Parallel Synchronization and Communication Instructions: barrier.cluster"
-                        .into(),
+                "Parallel Synchronization and Communication Instructions: barrier.cluster"
+                    .into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster".into(),
                 lowering: "generated_cluster_barrier".into(),
                 backend_lowerings: vec![
@@ -26216,7 +26711,7 @@ fn expand_wgmma_control_admission(
                 targets: "sm_90a".into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                    "Asynchronous Warpgroup Level Matrix Instructions: WGMMA control".into(),
+                "Asynchronous Warpgroup Level Matrix Instructions: WGMMA control".into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions".into(),
                 lowering: "generated_wgmma_control".into(),
                 backend_lowerings: vec![
@@ -30363,7 +30858,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 63);
-        assert_eq!(overlay.intrinsics.len(), 922);
+        assert_eq!(overlay.intrinsics.len(), 986);
         assert_eq!(
             overlay
                 .intrinsics
@@ -30785,6 +31280,8 @@ mod tests {
         TmaAdmission {
             llvm_evidence_profile: "llvm-tma-test".into(),
             libnvvm_evidence_profile: "libnvvm-tma-test".into(),
+            reduce_llvm_evidence_profile: Some("llvm-tma-reduce-test".into()),
+            reduce_libnvvm_evidence_profile: Some("libnvvm-tma-reduce-test".into()),
             runtime_validation: RuntimeValidation::Unexecuted,
             variants: TMA_OPERATIONS
                 .into_iter()
@@ -30793,6 +31290,7 @@ mod tests {
                     operation,
                 })
                 .collect(),
+            reduce_variants: tma_reduction_admission_variants(),
         }
     }
 
@@ -33215,8 +33713,11 @@ scope = "system"
     #[test]
     fn compact_tma_admission_matches_llvm_and_fails_closed() {
         let records = expand_tma_admission(&test_tma_admission()).unwrap();
-        assert_eq!(records.len(), TMA_OPERATIONS.len());
-        assert!(records.iter().all(|record| {
+        assert_eq!(
+            records.len(),
+            TMA_OPERATIONS.len() + tma_reduction_matrix().len()
+        );
+        assert!(records.iter().take(TMA_OPERATIONS.len()).all(|record| {
             let operation = record.tma.as_ref().unwrap().operation;
             let recipe = tma_recipe(operation);
             record.backend_lowerings.iter().any(|route| {
@@ -33246,6 +33747,7 @@ scope = "system"
         assert_eq!(
             records
                 .iter()
+                .take(TMA_OPERATIONS.len())
                 .map(|record| (record.abi_id.as_str(), record.id.as_str()))
                 .collect::<Vec<_>>(),
             [
@@ -33302,6 +33804,28 @@ scope = "system"
             ]
         );
 
+        let reductions = &records[TMA_OPERATIONS.len()..];
+        assert_eq!(reductions.len(), 64);
+        assert_eq!(
+            (reductions[0].abi_id.as_str(), reductions[0].id.as_str()),
+            ("i0923", "cp_async_bulk_tensor_reduce_add_tile_1d")
+        );
+        assert_eq!(
+            (reductions[7].abi_id.as_str(), reductions[7].id.as_str()),
+            ("i0930", "cp_async_bulk_tensor_reduce_add_im2col_5d")
+        );
+        assert_eq!(
+            (reductions[63].abi_id.as_str(), reductions[63].id.as_str()),
+            ("i0986", "cp_async_bulk_tensor_reduce_xor_im2col_5d")
+        );
+        assert!(reductions.iter().all(|record| {
+            record.tma.as_ref().is_some_and(|tma| {
+                tma.operation == TmaOperation::Reduce
+                    && tma.reduction.is_some()
+                    && tma.adapter == TmaAdapter::ReductionPointersCoordinatesInjectDefaults
+            })
+        }));
+
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
@@ -33339,6 +33863,18 @@ scope = "system"
         wrong_abi.variants[0].abi_id = "i9999".into();
         assert!(expand_tma_admission(&wrong_abi).is_err());
 
+        let mut missing_reduction = test_tma_admission();
+        missing_reduction.reduce_variants.pop();
+        assert!(expand_tma_admission(&missing_reduction).is_err());
+
+        let mut reordered_reduction = test_tma_admission();
+        reordered_reduction.reduce_variants.swap(0, 1);
+        assert!(expand_tma_admission(&reordered_reduction).is_err());
+
+        let mut wrong_reduction_abi = test_tma_admission();
+        wrong_reduction_abi.reduce_variants[0].abi_id = "i9999".into();
+        assert!(expand_tma_admission(&wrong_reduction_abi).is_err());
+
         let mut executed = test_tma_admission();
         executed.runtime_validation = RuntimeValidation::Executed;
         assert!(expand_tma_admission(&executed).is_err());
@@ -33351,53 +33887,81 @@ scope = "system"
 
     #[test]
     fn tma_compact_schema_is_reserved_for_aggregation() {
-        let shard = |schema| OverlayShardFile {
-            schema,
-            family: "tma".into(),
-            intrinsics: vec![],
-            register_mma_int4: None,
-            register_mma_int8: None,
-            register_mma_b1: None,
-            register_mma_f8f6f4_f32: None,
-            register_mma_f8f6f4_f16: None,
-            register_mma_mxf8f6f4_f32: None,
-            register_mma_fp8: None,
-            register_mma_ampere_float: None,
-            sparse_mma_integer: None,
-            sparse_mma_f8f6f4_f32: None,
-            sparse_mma_f8f6f4_f16: None,
-            prmt: None,
-            packed_conversion_fp8: None,
-            packed_conversion_fp8_f16x2: None,
-            scalar_conversion: None,
-            scalar_arithmetic: None,
-            scalar_math: None,
-            extended_minmax: None,
-            cluster_sreg: None,
-            cluster_barrier: None,
-            mbarrier_extended: None,
-            special_registers: None,
-            debug_control: None,
-            threadfence: None,
-            cluster_memory: None,
-            stmatrix: None,
-            clc: None,
-            wgmma_controls: None,
-            tma: Some(test_tma_admission()),
-            tcgen05: None,
+        let shard = |schema: u32, include_reductions: bool| {
+            let mut admission = test_tma_admission();
+            if !include_reductions {
+                admission.reduce_variants.clear();
+            }
+            OverlayShardFile {
+                schema,
+                family: "tma".into(),
+                intrinsics: vec![],
+                register_mma_int4: None,
+                register_mma_int8: None,
+                register_mma_b1: None,
+                register_mma_f8f6f4_f32: None,
+                register_mma_f8f6f4_f16: None,
+                register_mma_mxf8f6f4_f32: None,
+                register_mma_fp8: None,
+                register_mma_ampere_float: None,
+                sparse_mma_integer: None,
+                sparse_mma_f8f6f4_f32: None,
+                sparse_mma_f8f6f4_f16: None,
+                prmt: None,
+                packed_conversion_fp8: None,
+                packed_conversion_fp8_f16x2: None,
+                scalar_conversion: None,
+                scalar_arithmetic: None,
+                scalar_math: None,
+                extended_minmax: None,
+                cluster_sreg: None,
+                cluster_barrier: None,
+                mbarrier_extended: None,
+                special_registers: None,
+                debug_control: None,
+                threadfence: None,
+                cluster_memory: None,
+                stmatrix: None,
+                clc: None,
+                wgmma_controls: None,
+                tma: Some(admission),
+                tcgen05: None,
+            }
         };
         let path = Path::new("intrinsics/overlay/tma.toml");
-        validate_overlay_shard_schema_with_max(&shard(TMA_SHARD_SCHEMA), path, TMA_SHARD_SCHEMA)
-            .unwrap();
+
+        validate_overlay_shard_schema_with_max(
+            &shard(TMA_SHARD_SCHEMA, false),
+            path,
+            TMA_REDUCTION_SHARD_SCHEMA,
+        )
+        .unwrap();
         assert!(
             validate_overlay_shard_schema_with_max(
-                &shard(TMA_SHARD_SCHEMA - 1),
+                &shard(TMA_SHARD_SCHEMA - 1, false),
                 path,
-                TMA_SHARD_SCHEMA,
+                TMA_REDUCTION_SHARD_SCHEMA,
             )
             .unwrap_err()
             .to_string()
-            .contains("requires overlay shard schema 61")
+            .contains("compact TMA admission requires overlay shard schema 61")
+        );
+
+        validate_overlay_shard_schema_with_max(
+            &shard(TMA_REDUCTION_SHARD_SCHEMA, true),
+            path,
+            TMA_REDUCTION_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(TMA_REDUCTION_SHARD_SCHEMA - 1, true),
+                path,
+                TMA_REDUCTION_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("compact TMA reduction admission requires overlay shard schema 62")
         );
     }
 

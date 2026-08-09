@@ -32,9 +32,10 @@ use crate::model::{
     Tcgen05Adapter, Tcgen05CpGroup, Tcgen05CpMember, Tcgen05LdMultiplicity, Tcgen05LdShape,
     Tcgen05Mma, Tcgen05MmaAlias, Tcgen05MmaBUsage, Tcgen05MmaForm, Tcgen05MmaKind,
     Tcgen05MmaSelectorLayout, Tcgen05Operation, Tcgen05SourceContract, TmaAdapter, TmaOperation,
-    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter,
-    WgmmaControlMode, WgmmaControlParticipation,
+    TmaReductionLoadMode, TmaReductionOperation, VoteAdapter, VoteMode, WarpBarrierAdapter,
+    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode,
+    WgmmaControlParticipation,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1194,6 +1195,15 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                                     !record.rust.safe
                                         && record.semantics.convergent
                                         && record.semantics.memory == "read_write"
+                                }
+                                (
+                                    TmaOperation::Reduce,
+                                    TmaAdapter::ReductionPointersCoordinatesInjectDefaults,
+                                ) => {
+                                    !record.rust.safe
+                                        && record.semantics.convergent
+                                        && record.semantics.memory == "read_write"
+                                        && tma.reduction.is_some()
                                 }
                                 (TmaOperation::CommitGroup, TmaAdapter::NoOperands) => {
                                     record.rust.safe
@@ -4560,7 +4570,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 hardware_target_label(&record.target.hardware),
                 record.target.minimum_ptx
             )
-            .unwrap();
+                .unwrap();
         } else {
             writeln!(
                 output,
@@ -4606,7 +4616,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     "/// {participation} PTX maps {contributing_lanes} lane-provided row addresses for this {:?} variant; addresses may alias, but each used address must be 16-byte aligned and have {readable_bytes} readable shared-memory bytes.",
                     variant.multiplicity
                 )
-                .unwrap();
+                    .unwrap();
                 if matches!(
                     ldmatrix.safety.address_contract,
                     crate::model::LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadableWithSm75Replication
@@ -4623,7 +4633,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     output,
                     "/// All 32 warp lanes must execute the same instruction. The first {address_lanes} lanes must provide valid, 16-byte-aligned shared-memory row addresses."
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str(
                     "/// Register operands must contain the packed b16 fragments required by the selected layout.\n/// This weak memory operation does not replace a required barrier or fence.\n",
                 );
@@ -4636,7 +4646,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     output,
                     "/// `_arg0`, `_arg1`, and `_arg2` hold this lane's {c_count}-register C, {a_count}-register A, and {b_count}-register B fragments; `_arg3` holds its sparse metadata."
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(
                     output,
                     "/// `_arg4` must be {}.",
@@ -4796,6 +4806,10 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                         "/// The source must name a live shared-memory tile, and the tensor map must be a live descriptor for this dimensionality.\n\
                          /// Keep both objects alive until the committed bulk-copy group completes.\n",
                     ),
+                    TmaAdapter::ReductionPointersCoordinatesInjectDefaults => output.push_str(
+                        "/// The source must name a live shared-memory tile, and the tensor map must describe a compatible global tensor destination for this dimensionality.\n\
+                         /// Keep both objects alive until the committed asynchronous reduction completes.\n",
+                    ),
                     TmaAdapter::DescriptorPointer
                     | TmaAdapter::DescriptorCoordinatesInjectDefaults
                     | TmaAdapter::DescriptorCoordinatesCacheHintInjectFlag => output.push_str(
@@ -4897,19 +4911,19 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     output,
                     "/// `_arg0` must point to {bytes} writable bytes in shared memory and be aligned to {bytes} bytes."
                 )
-                .unwrap();
+                    .unwrap();
                 if copy.source_size == CpAsyncSourceSize::Runtime {
                     writeln!(
                         output,
                         "/// `_arg2` must be at most {bytes}; `_arg1` must point to that many readable bytes in global memory and be aligned to {bytes} bytes."
                     )
-                    .unwrap();
+                        .unwrap();
                 } else {
                     writeln!(
                         output,
                         "/// `_arg1` must point to {bytes} readable bytes in global memory and be aligned to {bytes} bytes."
                     )
-                    .unwrap();
+                        .unwrap();
                 }
                 output.push_str(
                     "/// Both ranges must remain valid, the source must remain unchanged, and the destination must not be accessed until this copy completes.\n\
@@ -5017,7 +5031,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
             "    unreachable!(\"generated CUDA intrinsic `{}` executed outside device compilation\")",
             record.rust.canonical_path
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5232,7 +5246,7 @@ fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "/// `c`, `a`, and `b` must contain this lane's {c_count}-, {a_count}-, and {b_count}-register fragments; `metadata` must contain its sparse metadata."
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "/// {}", sparse_mma_metadata_rule(mma)).unwrap();
         writeln!(
             output,
@@ -5311,7 +5325,7 @@ fn render_compat_sreg(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5355,7 +5369,7 @@ fn render_compat_cluster_sreg(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5397,7 +5411,7 @@ fn render_compat_special_register_module(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5432,7 +5446,7 @@ fn render_compat_fence(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5477,7 +5491,7 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5513,7 +5527,7 @@ fn render_compat_prmt(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5651,7 +5665,7 @@ fn render_compat_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5742,7 +5756,7 @@ fn render_compat_stmatrix(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     output
@@ -5902,7 +5916,7 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
         let tma = record.tma.as_ref().expect("TMA contract");
         let operation = tma.operation;
         writeln!(output, "/// {}", record.summary).unwrap();
-        let dimensions = operation.dimensions();
+        let dimensions = tma.dimensions();
         let is_g2s = matches!(
             operation,
             TmaOperation::G2sTile1d
@@ -5921,6 +5935,7 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
                 | TmaOperation::S2gTile4d
                 | TmaOperation::S2gTile5d
         );
+        let is_reduction = operation == TmaOperation::Reduce;
         if !record.rust.safe {
             output.push_str("///\n/// # Safety\n");
             if is_g2s {
@@ -5930,6 +5945,10 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
             } else if is_s2g {
                 output.push_str(
                     "/// `src` and `tensor_map` must remain valid until the committed copy group completes.\n",
+                );
+            } else if is_reduction {
+                output.push_str(
+                    "/// `src` must name a live shared-memory tile and `tensor_map` must describe a compatible global destination until the committed reduction completes.\n",
                 );
             } else if matches!(
                 tma.adapter,
@@ -5978,7 +5997,7 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
             )
             .unwrap();
             writeln!(output, "    let _ = ({});", values.join(", ")).unwrap();
-        } else if is_s2g {
+        } else if is_s2g || is_reduction {
             let dimensions = dimensions.unwrap();
             let mut arguments = vec![
                 "src: *const u8".to_owned(),
@@ -6040,7 +6059,7 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
                         "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, new_address: *const u8) {{",
                         record.rust.name
                     )
-                    .unwrap();
+                        .unwrap();
                     output.push_str("    let _ = (tensor_map, new_address);\n");
                 }
                 TmaAdapter::DescriptorOrdinalAndU32 => {
@@ -6049,7 +6068,7 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
                         "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, ordinal: u32, new_value: u32) {{",
                         record.rust.name
                     )
-                    .unwrap();
+                        .unwrap();
                     output.push_str("    let _ = (tensor_map, ordinal, new_value);\n");
                 }
                 TmaAdapter::DescriptorOrdinalAndU64 => {
@@ -6058,7 +6077,7 @@ fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
                         "pub unsafe fn {}(tensor_map: *mut TmaDescriptor, ordinal: u32, new_value: u64) {{",
                         record.rust.name
                     )
-                    .unwrap();
+                        .unwrap();
                     output.push_str("    let _ = (tensor_map, ordinal, new_value);\n");
                 }
                 TmaAdapter::DescriptorAndImmediateU32 | TmaAdapter::DescriptorAndRuntimeU32 => {
@@ -6311,7 +6330,7 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                     "pub unsafe fn {}<const HALF_SPLIT_OFFSET: i32>(tmem_addr: u32, data: {data}) {{",
                     record.rust.name
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(
                     output,
                     "    unsafe {{ __{}(tmem_addr, HALF_SPLIT_OFFSET as i64, data) }}",
@@ -6339,14 +6358,14 @@ fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
                     "pub(crate) unsafe fn __{}(_tmem_addr: u32, _half_split_offset: i64, _data: {data}) {{",
                     record.rust.name
                 )
-                .unwrap();
+                    .unwrap();
             } else {
                 writeln!(
                     output,
                     "pub(crate) unsafe fn __{}(_tmem_addr: u32, _half_split_offset: i64) -> {result} {{",
                     record.rust.name
                 )
-                .unwrap();
+                    .unwrap();
             }
             writeln!(
                 output,
@@ -6591,26 +6610,26 @@ fn render_compat_cp_async_copy(catalog: &CatalogFile, hash: &str) -> String {
                 output,
                 "/// Bytes after `src_size` are filled with zero; `src_size` must be at most {bytes}."
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str("///\n/// # Safety\n");
         writeln!(
             output,
             "/// `shared_dst` must point to {bytes} writable bytes in shared memory and be aligned to {bytes} bytes."
         )
-        .unwrap();
+            .unwrap();
         if copy.source_size == CpAsyncSourceSize::Runtime {
             writeln!(
                 output,
                 "/// `global_src` must point to `src_size` readable bytes in global memory and be aligned to {bytes} bytes."
             )
-            .unwrap();
+                .unwrap();
         } else {
             writeln!(
                 output,
                 "/// `global_src` must point to {bytes} readable bytes in global memory and be aligned to {bytes} bytes."
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str(
             "/// Both ranges must remain valid, the source must remain unchanged, and the destination must not be accessed until this copy completes.\n\
@@ -6624,7 +6643,7 @@ fn render_compat_cp_async_copy(catalog: &CatalogFile, hash: &str) -> String {
                 "pub unsafe fn {}(_shared_dst: *mut u32, _global_src: *const u8, _src_size: u32) {{",
                 record.rust.name
             )
-            .unwrap();
+                .unwrap();
         } else {
             writeln!(
                 output,
@@ -6942,7 +6961,7 @@ fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAlu
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     render_compat_extended_minmax_into(&mut output, catalog, module);
@@ -6982,7 +7001,7 @@ fn render_compat_extended_minmax_into(output: &mut String, catalog: &CatalogFile
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
 }
@@ -7046,7 +7065,7 @@ fn render_compat_packed_conversion(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     if containing_module == "convert" {
@@ -7065,7 +7084,7 @@ fn render_compat_packed_conversion(
                 output,
                 "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
             )
-            .unwrap();
+                .unwrap();
             output.push_str("}\n\n");
         }
     }
@@ -7105,7 +7124,7 @@ fn render_compat_float(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     for record in scalar_maths(catalog) {
@@ -7127,7 +7146,7 @@ fn render_compat_float(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("}\n\n");
     }
     render_compat_extended_minmax_into(&mut output, catalog, "float");
@@ -7335,7 +7354,7 @@ fn render_dialect_elect(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<1>, NResultsInterface<2>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
@@ -7368,7 +7387,7 @@ fn render_dialect_sreg(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self {\n");
@@ -7406,7 +7425,7 @@ fn render_dialect_sync(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
@@ -7445,14 +7464,14 @@ fn render_dialect_vote(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
             "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, member_mask: Value, predicate: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {result_width}, Signedness::{result_signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![member_mask, predicate],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
@@ -7466,7 +7485,7 @@ fn render_dialect_vote(catalog: &CatalogFile, hash: &str) -> String {
                 record.dialect.op_name
             ),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in vote_intrinsics(catalog) {
@@ -7492,7 +7511,7 @@ fn render_dialect_active_mask(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
@@ -7504,7 +7523,7 @@ fn render_dialect_active_mask(catalog: &CatalogFile, hash: &str) -> String {
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        let valid = op.get_num_operands() == 0\n            && op.get_num_results() == 1\n            && op.get_result(0).get_type(ctx).deref(ctx)\n                .downcast_ref::<IntegerType>()\n                .is_some_and(|integer| integer.width() == 32);\n        if !valid {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
             format!("{} requires no operands and one i32 result", record.dialect.op_name)
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in active_masks(catalog) {
@@ -7675,7 +7694,7 @@ fn verify_cp_async_mbarrier(
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]\npub struct {};",
             record.dialect.op_name, record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
         if dynamic {
@@ -7694,7 +7713,7 @@ fn verify_cp_async_mbarrier(
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_cp_async_copy(ctx, self.get_operation(), {:?}, {dynamic})\n    }}\n}}\n",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
     }
     for record in cp_async_controls(catalog) {
         let control = record.cp_async_control.as_ref().unwrap();
@@ -7707,7 +7726,7 @@ fn verify_cp_async_mbarrier(
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]\npub struct {};",
             record.dialect.op_name, record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
         if has_immediate {
@@ -7726,7 +7745,7 @@ fn verify_cp_async_mbarrier(
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_cp_async_control(ctx, self.get_operation(), {:?}, {has_immediate})\n    }}\n}}\n",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
     }
     for record in cp_async_mbarriers(catalog) {
         writeln!(output, "/// {}", record.summary).unwrap();
@@ -7736,7 +7755,7 @@ fn verify_cp_async_mbarrier(
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],\n)]\npub struct {};",
             record.dialect.op_name, record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
             "    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n    pub fn build(ctx: &mut Context, barrier: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![barrier], vec![], 0)\n    }\n}\n\n",
@@ -7747,7 +7766,7 @@ fn verify_cp_async_mbarrier(
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_cp_async_mbarrier(ctx, self.get_operation(), {:?})\n    }}\n}}\n",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in cp_async_copies(catalog) {
@@ -7916,7 +7935,7 @@ fn verify_mbarrier_basic(
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]\npub struct {};",
             record.dialect.op_name, record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
         output.push_str(build);
@@ -7927,7 +7946,7 @@ fn verify_mbarrier_basic(
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_mbarrier_basic(ctx, self.get_operation(), {:?}, MbarrierBasicShape::{shape})\n    }}\n}}\n",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in mbarrier_basics(catalog) {
@@ -7955,13 +7974,13 @@ fn render_dialect_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
         "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],\n)]\npub struct {};\n",
         record.dialect.op_name, record.dialect.op_type
     )
-    .unwrap();
+        .unwrap();
     writeln!(
         output,
         "impl {} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, value: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![value],\n            vec![],\n            0,\n        )\n    }}\n}}\n",
         record.dialect.op_type
     )
-    .unwrap();
+        .unwrap();
     writeln!(
         output,
         "impl Verify for {} {{\n    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 1 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_i32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n\npub(super) fn register(ctx: &mut Context) {{\n    {}::register(ctx);\n}}\n",
@@ -7973,7 +7992,7 @@ fn render_dialect_movmatrix(catalog: &CatalogFile, hash: &str) -> String {
         ),
         record.dialect.op_type,
     )
-    .unwrap();
+        .unwrap();
     output
 }
 
@@ -8143,7 +8162,7 @@ fn verify_mbarrier_extended(
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]\npub struct {};",
             record.dialect.op_name, record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
         output.push_str(build);
@@ -8154,7 +8173,7 @@ fn verify_mbarrier_extended(
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_mbarrier_extended(ctx, self.get_operation(), {:?}, MbarrierExtendedShape::{shape})\n    }}\n}}\n",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in mbarrier_extended(catalog) {
@@ -8186,7 +8205,7 @@ fn render_dialect_warp_match(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
@@ -8205,7 +8224,7 @@ fn render_dialect_warp_match(catalog: &CatalogFile, hash: &str) -> String {
                 record.dialect.op_name
             ),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in warp_matches(catalog) {
@@ -8232,7 +8251,7 @@ fn render_dialect_warp_barrier(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
@@ -8248,7 +8267,7 @@ fn render_dialect_warp_barrier(catalog: &CatalogFile, hash: &str) -> String {
             ),
             format!("{} member mask must be i32", record.dialect.op_name),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in warp_barriers(catalog) {
@@ -8304,14 +8323,14 @@ fn render_dialect_warp_shuffle(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
             "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(\n        ctx: &mut Context,\n        member_mask: Value,\n        value: Value,\n        lane_or_delta: Value,\n    ) -> Ptr<Operation> {{\n        let result_ty: pliron::r#type::TypeHandle = {result_builder};\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty],\n            vec![member_mask, value, lane_or_delta],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
@@ -8325,7 +8344,7 @@ fn render_dialect_warp_shuffle(catalog: &CatalogFile, hash: &str) -> String {
                 record.dialect.op_name
             ),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in warp_shuffles(catalog) {
@@ -8358,14 +8377,14 @@ fn render_dialect_dotprod(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
             "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, a: Value, b: Value, c: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::{signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![a, b, c],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
@@ -8379,7 +8398,7 @@ fn render_dialect_dotprod(catalog: &CatalogFile, hash: &str) -> String {
                 record.dialect.op_name
             ),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in dot_products(catalog) {
@@ -8404,7 +8423,7 @@ fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         let result_signedness = match record.rust.result.as_str() {
@@ -8416,7 +8435,7 @@ fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::{result_signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![member_mask, value],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
@@ -8430,7 +8449,7 @@ fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
                 record.dialect.op_name
             ),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in redux(catalog) {
@@ -8743,7 +8762,7 @@ fn verify_compat_ldmatrix(
             definitions,
             "/// Compatibility carrier for `{op_name}`.\n#[pliron_op(\n    name = {op_name:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<{result_count}>],\n)]\npub struct {op_type};\n\nimpl {op_type} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n}}\n\nimpl Verify for {op_type} {{\n    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_compat_ldmatrix(ctx, self.get_operation(), {op_name:?}, {result_count})\n    }}\n}}\n"
         )
-        .unwrap();
+            .unwrap();
     }
     let register_start = output
         .find("pub(super) fn register(ctx: &mut Context) {")
@@ -8840,7 +8859,7 @@ fn verify_stmatrix_operands(
             record.dialect.op_name,
             count + 1
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
@@ -8852,7 +8871,7 @@ fn verify_stmatrix_operands(
             "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_stmatrix_operands(ctx, self.get_operation(), {:?}, {count})\n    }}\n}}\n",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in stmatrices(catalog) {
@@ -9080,7 +9099,7 @@ impl Verify for RegisterMmaOp {
             output,
             "            (Some(&{shape}), {operation}, {kind}, Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({operands}, {results}),"
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str(
         r#"            _ => return verify_err!(op.loc(), "nvvm.register_mma has a missing or unsupported variant"),
@@ -9164,17 +9183,17 @@ fn verify_compat_register_mma(
             output,
             "#[pliron_op(\n    name = {op_name:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]\npub struct {op_type};\n"
         )
-        .unwrap();
+            .unwrap();
         writeln!(
             output,
             "impl {op_type} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{ Self {{ op }} }}\n}}\n"
         )
-        .unwrap();
+            .unwrap();
         writeln!(
             output,
             "impl Verify for {op_type} {{\n    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_compat_register_mma(ctx, self.get_operation(), {op_name:?}, {operands}, {results})\n    }}\n}}\n"
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str(
         "pub(super) fn register(ctx: &mut Context) {\n    RegisterMmaShapeAttr::register(ctx);\n    RegisterMmaOperationAttr::register(ctx);\n    RegisterMmaKindAttr::register(ctx);\n    RegisterMmaAccumulatorAttr::register(ctx);\n    RegisterMmaElementAttr::register(ctx);\n    RegisterMmaLayoutAttr::register(ctx);\n    RegisterMmaOverflowAttr::register(ctx);\n    RegisterMmaOp::register(ctx);\n",
@@ -9328,7 +9347,7 @@ impl Verify for SparseMmaOp {
             output,
             "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => ({expected_operands}, {expected_results}, {selector_upper_exclusive}),"
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str(
         r#"            _ => return verify_err!(op.loc(), "nvvm.sparse_mma has a missing or unsupported variant"),
@@ -9600,14 +9619,14 @@ fn render_dialect_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{arity}>, NResultsInterface<1>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
             "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, {parameters}) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![{operands}],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
@@ -9621,7 +9640,7 @@ fn render_dialect_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
                 record.dialect.op_name
             ),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in packed_alus(catalog) {
@@ -9646,20 +9665,20 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
                     "///\n/// The first input becomes the low {} lane; the second becomes the high lane.",
                     packed_conversion_element(record)
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(
                     output,
                     "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
                     record.dialect.op_name
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
                 writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
                 writeln!(
                     output,
                     "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, low: Value, high: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {result_width}, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![low, high],\n            vec![],\n            0,\n        )\n    }}\n}}",
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
                 writeln!(
                     output,
@@ -9671,7 +9690,7 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
                         record.dialect.op_name,
                     ),
                 )
-                .unwrap();
+                    .unwrap();
             }
             PackedConversionSourceFormat::E4m3x2
             | PackedConversionSourceFormat::E5m2x2
@@ -9681,20 +9700,20 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
                     output,
                     "///\n/// The single input carries both packed lanes, and lane order is preserved."
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(
                     output,
                     "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],\n)]",
                     record.dialect.op_name
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
                 writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
                 writeln!(
                     output,
                     "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, packed: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {result_width}, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![packed],\n            vec![],\n            0,\n        )\n    }}\n}}",
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
                 writeln!(
                     output,
@@ -9705,7 +9724,7 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
                         record.dialect.op_name,
                     ),
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
     }
@@ -10918,7 +10937,7 @@ fn render_dialect_clc(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<2>, NResultsInterface<{result_count}>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
@@ -10945,7 +10964,7 @@ fn render_dialect_execution_control(catalog: &CatalogFile, hash: &str) -> String
             "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
@@ -10957,7 +10976,7 @@ fn render_dialect_execution_control(catalog: &CatalogFile, hash: &str) -> String
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str(
@@ -10989,7 +11008,7 @@ fn render_dialect_tma(catalog: &CatalogFile, hash: &str) -> String {
             "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
@@ -11296,7 +11315,7 @@ impl Verify for Tcgen05MmaOp {
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]",
             record.dialect.op_name
         )
-        .unwrap();
+            .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
@@ -11348,7 +11367,7 @@ fn render_importer_pure_value_dispatch(
             output,
             "            let (arg{index}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
         )
-        .unwrap();
+            .unwrap();
     }
     let arguments = (0..record.rust.arguments.len())
         .map(|index| format!("arg{index}"))
@@ -11375,7 +11394,7 @@ fn render_importer_pure_value_dispatch(
         "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
-    .unwrap();
+        .unwrap();
     output.push_str("        }\n");
 }
 
@@ -11418,7 +11437,7 @@ fn render_importer_scalar_conversion_dispatch(
         "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
-    .unwrap();
+        .unwrap();
     output.push_str("        }\n");
 }
 
@@ -11444,7 +11463,7 @@ fn render_importer_scalar_arithmetic_dispatch(
             output,
             "            let (arg{index}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
         )
-        .unwrap();
+            .unwrap();
     }
     let arguments = (0..arity)
         .map(|index| format!("arg{index}"))
@@ -11459,7 +11478,7 @@ fn render_importer_scalar_arithmetic_dispatch(
         scalar_arithmetic_subnormal_attr(record),
         scalar_arithmetic_saturation_attr(record),
     )
-    .unwrap();
+        .unwrap();
     output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
     writeln!(
         output,
@@ -11476,7 +11495,7 @@ fn render_importer_scalar_arithmetic_dispatch(
         "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
-    .unwrap();
+        .unwrap();
     output.push_str("        }\n");
 }
 
@@ -11499,7 +11518,7 @@ fn render_importer_scalar_math_dispatch(
         output,
         "            let (arg0, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;"
     )
-    .unwrap();
+        .unwrap();
     writeln!(
         output,
         "            let intrinsic = ScalarMathOp::build(ctx, arg0, {}, {}, {}, {});",
@@ -11525,7 +11544,7 @@ fn render_importer_scalar_math_dispatch(
         "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
-    .unwrap();
+        .unwrap();
     output.push_str("        }\n");
 }
 
@@ -11574,7 +11593,7 @@ fn render_importer_extended_minmax_dispatch(
         "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
-    .unwrap();
+        .unwrap();
     output.push_str("        }\n");
 }
 
@@ -11620,7 +11639,7 @@ fn render_importer_elect_dispatch(
         "            let elect = Operation::new(\n                ctx, {}::get_concrete_op_info(), vec![leader_ty, elected_ty],\n                vec![mask], vec![], 0,\n            );",
         record.dialect.op_type
     )
-    .unwrap();
+        .unwrap();
     output.push_str("            elect.deref_mut(ctx).set_loc(loc.clone());\n");
     writeln!(
         output,
@@ -11646,7 +11665,7 @@ fn render_importer_elect_dispatch(
         "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, tuple, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
-    .unwrap();
+        .unwrap();
     output.push_str("        }\n");
 }
 
@@ -11748,7 +11767,7 @@ fn render_importer_tcgen05_mma_dispatch(
             output,
             "            let kind = match generated_tcgen05_mma_selector(args.get({kind_argument}usize)) {{\n                Some(0) => Tcgen05MmaKindAttr::F16,\n                Some(1) => Tcgen05MmaKindAttr::Tf32,\n                Some(2) => Tcgen05MmaKindAttr::F8f6f4,\n                Some(3) => Tcgen05MmaKindAttr::I8,\n                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA kind must be a compile-time u32 constant in 0..=3\".to_owned())),\n            }};"
         )
-        .unwrap();
+            .unwrap();
         match mma.selector_layout {
             Tcgen05MmaSelectorLayout::Base {
                 collector_a_upper_exclusive,
@@ -11758,7 +11777,7 @@ fn render_importer_tcgen05_mma_dispatch(
                     output,
                     "            let cta_group = match generated_tcgen05_mma_selector(args.get({second_argument}usize)) {{\n                Some(1) => Tcgen05MmaCtaGroupAttr::Cg1,\n                Some(2) => Tcgen05MmaCtaGroupAttr::Cg2,\n                _ => {{\n                    return input_err!(\n                        loc.clone(),\n                        TranslationErr::unsupported(\n                            \"tcgen05 MMA CTA group must be the compile-time u32 constant 1 or 2\"\n                                .to_owned()\n                        )\n                    );\n                }}\n            }};"
                 )
-                .unwrap();
+                    .unwrap();
                 let collector_arms = if collector_a_upper_exclusive == 2 {
                     "                Some(0) => Tcgen05MmaCollectorAAttr::Discard,\n                Some(1) => Tcgen05MmaCollectorAAttr::LastUse,\n"
                 } else {
@@ -11768,19 +11787,19 @@ fn render_importer_tcgen05_mma_dispatch(
                     output,
                     "            let collector_a = match generated_tcgen05_mma_selector(args.get({third_argument}usize)) {{\n{collector_arms}                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA collector-A selector is outside its closed range\".to_owned())),\n            }};"
                 )
-                .unwrap();
+                    .unwrap();
             }
             Tcgen05MmaSelectorLayout::WarpSpecialized { .. } => {
                 writeln!(
                     output,
                     "            let b_buffer = match generated_tcgen05_mma_selector(args.get({second_argument}usize)) {{\n                Some(0) => Tcgen05MmaBBufferAttr::B0,\n                Some(1) => Tcgen05MmaBBufferAttr::B1,\n                Some(2) => Tcgen05MmaBBufferAttr::B2,\n                Some(3) => Tcgen05MmaBBufferAttr::B3,\n                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA B buffer must be a compile-time u32 constant in 0..=3\".to_owned())),\n            }};"
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(
                     output,
                     "            let b_usage = match generated_tcgen05_mma_selector(args.get({third_argument}usize)) {{\n                Some(0) => Tcgen05MmaBUsageAttr::Discard,\n                Some(1) => Tcgen05MmaBUsageAttr::LastUse,\n                Some(2) => Tcgen05MmaBUsageAttr::Fill,\n                Some(3) => Tcgen05MmaBUsageAttr::Use,\n                _ => return input_err!(loc.clone(), TranslationErr::unsupported(\"tcgen05 MMA B usage must be a compile-time u32 constant in 0..=3\".to_owned())),\n            }};"
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
     }
@@ -12182,7 +12201,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             record.dialect.op_type,
             intrinsic_marker(catalog, record)
         )
-        .unwrap();
+            .unwrap();
         output.push_str(
             "                prev_op, value_map, block_map, loc,\n            )?))\n        }\n",
         );
@@ -12215,7 +12234,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, active_mask, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in ldmatrix(catalog) {
@@ -12234,7 +12253,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "            let load = LdmatrixOp::build(ctx, address, {shape}, {multiplicity}, {layout}, {element}, {state_space});"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("            load.deref_mut(ctx).set_loc(loc.clone());\n");
         writeln!(
             output,
@@ -12251,14 +12270,14 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 output,
                 "            let (value, last_op) = helpers::bundle_generated_u32_results_as_array(ctx, load, {register_count}, loc.clone());"
             )
-            .unwrap();
+                .unwrap();
         }
         writeln!(
             output,
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in stmatrices(catalog) {
@@ -12282,7 +12301,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            let store = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
             record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         output.push_str("            store.deref_mut(ctx).set_loc(loc.clone());\n");
         writeln!(
             output,
@@ -12360,7 +12379,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "            let (operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), {adapter})?;"
         )
-        .unwrap();
+            .unwrap();
         output.push_str(
             "            let mma = Operation::new(ctx, RegisterMmaOp::get_concrete_op_info(), vec![result_ty; result_count], operands, vec![], 0);\n            mma.deref_mut(ctx).set_loc(loc.clone());\n            let mma = RegisterMmaOp::new(mma);\n",
         );
@@ -12368,7 +12387,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "            mma.set_attr_nvvm_register_mma_shape(ctx, {shape});\n            mma.set_attr_nvvm_register_mma_operation(ctx, {operation});\n            mma.set_attr_nvvm_register_mma_kind(ctx, {kind});\n            mma.set_attr_nvvm_register_mma_accumulator(ctx, {accumulator});\n            mma.set_attr_nvvm_register_mma_a_element(ctx, {a_element});\n            mma.set_attr_nvvm_register_mma_b_element(ctx, {b_element});\n            mma.set_attr_nvvm_register_mma_a_layout(ctx, {a_layout});\n            mma.set_attr_nvvm_register_mma_b_layout(ctx, {b_layout});\n            mma.set_attr_nvvm_register_mma_overflow(ctx, {overflow});"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("            let mma = mma.get_operation();\n");
         writeln!(
             output,
@@ -12384,7 +12403,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in sparse_mmas(catalog) {
@@ -12410,13 +12429,13 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            if !matches!(&args[4], mir::Operand::Constant(_)) {{\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        {:?}.to_owned()\n                    )\n                );\n            }}",
             sparse_mma_selector_error(record)
         )
-        .unwrap();
+            .unwrap();
         writeln!(
             output,
             "            let (mut operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), {})?;",
             sparse_mma_import_adapter(record)
         )
-        .unwrap();
+            .unwrap();
         output.push_str(
             "            let (metadata, last_op) = rvalue::translate_operand(\n                ctx, body, &args[3], value_map, block_ptr, Some(last_op), loc.clone(),\n            )?;\n            operands.push(metadata);\n            let (selector_value, last_op) = rvalue::translate_operand(\n                ctx, body, &args[4], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n            operands.push(selector_value);\n",
         );
@@ -12427,7 +12446,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "            mma.set_attr_nvvm_sparse_mma_shape(ctx, {shape});\n            mma.set_attr_nvvm_sparse_mma_accumulator(ctx, {accumulator});\n            mma.set_attr_nvvm_sparse_mma_a_element(ctx, {a_element});\n            mma.set_attr_nvvm_sparse_mma_b_element(ctx, {b_element});\n            mma.set_attr_nvvm_sparse_mma_a_layout(ctx, {a_layout});\n            mma.set_attr_nvvm_sparse_mma_b_layout(ctx, {b_layout});\n            mma.set_attr_nvvm_sparse_mma_overflow(ctx, {overflow});\n            mma.set_attr_nvvm_sparse_mma_metadata(ctx, {metadata});\n            mma.set_attr_nvvm_sparse_mma_selector(ctx, {selector});"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("            let mma = mma.get_operation();\n");
         writeln!(
             output,
@@ -12443,7 +12462,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in packed_atomics(catalog) {
@@ -12482,7 +12501,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, atom, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in redux(catalog) {
@@ -12523,7 +12542,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, reduction, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in vote_intrinsics(catalog) {
@@ -12564,7 +12583,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, vote, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in warp_matches(catalog) {
@@ -12601,7 +12620,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, warp_match, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in elect_intrinsics(catalog) {
@@ -12687,7 +12706,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, shuffle, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in dot_products(catalog) {
@@ -12727,7 +12746,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, dot, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in packed_alus(catalog) {
@@ -12778,7 +12797,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 output,
                 "            let (arg{index}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
             )
-            .unwrap();
+                .unwrap();
         }
         let arguments = (0..arity)
             .map(|index| format!("arg{index}"))
@@ -12804,7 +12823,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, prmt, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -12913,7 +12932,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, cluster, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str("        }\n");
     }
     for record in debug_controls(catalog) {
@@ -13046,7 +13065,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), {result_types}, vec![arg0, arg1], vec![], 0);",
             record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
         writeln!(
             output,
@@ -13062,7 +13081,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
                 format!("{} call without target block", record.rust.name)
             )
-            .unwrap();
+                .unwrap();
         } else {
             output.push_str("            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n");
             writeln!(
@@ -13346,7 +13365,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 output,
                 "            let ({argument_name}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
             )
-            .unwrap();
+                .unwrap();
         }
         writeln!(
             output,
@@ -13370,7 +13389,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, mbarrier, value_map, block_map, loc,\n                {:?},\n            )?))",
                 format!("{} call without target block", record.rust.name)
             )
-            .unwrap();
+                .unwrap();
         } else {
             output.push_str(
                 "            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, mbarrier, block_map, loc)))\n            } else {\n",
@@ -13421,7 +13440,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 output,
                 "            let ({argument_name}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{argument_index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
             )
-            .unwrap();
+                .unwrap();
         }
         let build_arguments = arguments
             .iter()
@@ -13451,7 +13470,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, extended, value_map, block_map, loc,\n                {:?},\n            )?))",
                 format!("{} call without target block", record.rust.name)
             )
-            .unwrap();
+                .unwrap();
         } else {
             output.push_str(
                 "            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, extended, block_map, loc)))\n            } else {\n",
@@ -13478,7 +13497,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "            let barrier = Operation::new(ctx, {}::get_concrete_op_info(), vec![], vec![], vec![], 0);",
             record.dialect.op_type
         )
-        .unwrap();
+            .unwrap();
         output.push_str("            barrier.deref_mut(ctx).set_loc(loc.clone());\n");
         writeln!(
             output,
@@ -13528,7 +13547,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 "            let control = Operation::new(ctx, {}::get_concrete_op_info(), vec![], vec![], vec![], 0);",
                 record.dialect.op_type
             )
-            .unwrap();
+                .unwrap();
         } else {
             output.push_str(
                 "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
@@ -13538,7 +13557,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 "            let control = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
                 record.dialect.op_type
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str("            control.deref_mut(ctx).set_loc(loc.clone());\n");
         writeln!(
@@ -13585,21 +13604,21 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                     "            Ok(Some(super::tma::emit_tma_g2s(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
                     operation.dimensions().unwrap()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::G2sTile2dMulticast => {
                 writeln!(
                     output,
                     "            Ok(Some(super::tma::emit_tma_g2s_multicast(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::G2sTile2dMulticastCg2 => {
                 writeln!(
                     output,
                     "            Ok(Some(super::tma::emit_tma_g2s_multicast_cg2(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::S2gTile1d
             | TmaOperation::S2gTile2d
@@ -13611,14 +13630,14 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                     "            Ok(Some(super::tma::emit_tma_s2g(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
                     operation.dimensions().unwrap()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::CommitGroup => {
                 writeln!(
                     output,
                     "            Ok(Some(super::tma::emit_tma_commit_group(\n                ctx, args, target, block_ptr, prev_op, block_map, loc, {marker:?},\n            )?))"
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::WaitGroup | TmaOperation::WaitGroupRead => {
                 writeln!(
@@ -13626,7 +13645,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                     "            Ok(Some(super::tma::emit_tma_wait_group(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
                     operation == TmaOperation::WaitGroupRead
                 )
-                .unwrap();
+                    .unwrap();
             }
             _ => {
                 let arity = record.dialect.operands.len();
@@ -13653,13 +13672,13 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                     "            let intrinsic = Operation::new(ctx, dialect_nvvm::ops::{}::get_concrete_op_info(), vec![], operands, vec![], 0);",
                     record.dialect.op_type
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
                 writeln!(
                     output,
                     "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {marker:?});"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str(
                     "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
                 );
@@ -13709,13 +13728,13 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 output,
                 "            let (operands, last_op) = import_generated_tcgen05_store_operands(\n                ctx, body, args, {count}, {has_half_split_offset}, block_ptr, prev_op, value_map, loc.clone(),\n            )?;"
             )
-            .unwrap();
+                .unwrap();
             writeln!(
                 output,
                 "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
                 record.dialect.op_type
             )
-            .unwrap();
+                .unwrap();
             output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
             writeln!(
                 output,
@@ -13775,10 +13794,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             )
             .unwrap();
             writeln!(
-                    output,
-                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), result_types, operands, vec![], 0);",
-                    record.dialect.op_type
-                )
+                output,
+                "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), result_types, operands, vec![], 0);",
+                record.dialect.op_type
+            )
                 .unwrap();
             output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
             writeln!(
@@ -13791,13 +13810,13 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 .push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
             if count == 1 {
                 output.push_str(
-                        "            let result = intrinsic.deref(ctx).get_result(0);\n            let value = intrinsic;\n",
-                    );
+                    "            let result = intrinsic.deref(ctx).get_result(0);\n            let value = intrinsic;\n",
+                );
             } else {
                 writeln!(
-                        output,
-                        "            let results: Vec<Value> = (0..{count}).map(|index| intrinsic.deref(ctx).get_result(index)).collect();"
-                    )
+                    output,
+                    "            let results: Vec<Value> = (0..{count}).map(|index| intrinsic.deref(ctx).get_result(index)).collect();"
+                )
                     .unwrap();
                 writeln!(
                     output,
@@ -13805,21 +13824,21 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 )
                 .unwrap();
                 output.push_str(
-                        "            let array = Operation::new(ctx, MirConstructArrayOp::get_concrete_op_info(), vec![array_ty.into()], results, vec![], 0);\n            array.deref_mut(ctx).set_loc(loc.clone());\n            array.insert_after(ctx, intrinsic);\n            let destination_rust_ty = match destination.ty(body.locals()) {\n                Ok(ty) => ty,\n                Err(error) => {\n                    return input_err!(\n                        loc,\n                        TranslationErr::unsupported(format!(\n                            \"failed to resolve destination type for intrinsic result: {error:?}\"\n                        ))\n                    );\n                }\n            };\n            let destination_ty = types::translate_type(ctx, &destination_rust_ty)?;\n            let array_result = array.deref(ctx).get_result(0);\n            let (result, value) = if destination_ty == array_result.get_type(ctx) {\n                (array_result, array)\n            } else {\n                let value = Operation::new(ctx, MirConstructStructOp::get_concrete_op_info(), vec![destination_ty], vec![array_result], vec![], 0);\n                value.deref_mut(ctx).set_loc(loc.clone());\n                value.insert_after(ctx, array);\n                (value.deref(ctx).get_result(0), value)\n            };\n",
-                    );
+                    "            let array = Operation::new(ctx, MirConstructArrayOp::get_concrete_op_info(), vec![array_ty.into()], results, vec![], 0);\n            array.deref_mut(ctx).set_loc(loc.clone());\n            array.insert_after(ctx, intrinsic);\n            let destination_rust_ty = match destination.ty(body.locals()) {\n                Ok(ty) => ty,\n                Err(error) => {\n                    return input_err!(\n                        loc,\n                        TranslationErr::unsupported(format!(\n                            \"failed to resolve destination type for intrinsic result: {error:?}\"\n                        ))\n                    );\n                }\n            };\n            let destination_ty = types::translate_type(ctx, &destination_rust_ty)?;\n            let array_result = array.deref(ctx).get_result(0);\n            let (result, value) = if destination_ty == array_result.get_type(ctx) {\n                (array_result, array)\n            } else {\n                let value = Operation::new(ctx, MirConstructStructOp::get_concrete_op_info(), vec![destination_ty], vec![array_result], vec![], 0);\n                value.deref_mut(ctx).set_loc(loc.clone());\n                value.insert_after(ctx, array);\n                (value.deref(ctx).get_result(0), value)\n            };\n",
+                );
             }
             writeln!(
-                    output,
-                    "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
-                    format!("{} call without target block", record.rust.name)
-                )
+                output,
+                "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
+                format!("{} call without target block", record.rust.name)
+            )
                 .unwrap();
         } else {
             writeln!(
-                    output,
-                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
-                    record.dialect.op_type
-                )
+                output,
+                "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                record.dialect.op_type
+            )
                 .unwrap();
             output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
             writeln!(
@@ -13829,8 +13848,8 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             )
             .unwrap();
             output.push_str(
-                    "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
-                );
+                "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+            );
             writeln!(
                 output,
                 "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
@@ -14227,7 +14246,7 @@ fn bundle_generated_mma_results(
             "        assert!(matches!(classify_raw_intrinsic_path(\"cuda_intrinsics\", {:?}.into()), RawIntrinsicIdentity::Known(_)));",
             record.rust.canonical_path
         )
-        .unwrap();
+            .unwrap();
         writeln!(
             output,
             "        assert!(!is_generated_intrinsic_path({:?}));",
@@ -14240,7 +14259,7 @@ fn bundle_generated_mma_results(
                 "        assert!(is_generated_intrinsic_path({compatibility_path:?}));\n        assert!(!is_raw_generated_intrinsic_path({compatibility_path:?}));\n        assert_eq!(generated_intrinsic_marker({compatibility_path:?}), Some({:?}));",
                 intrinsic_marker(catalog, record)
             )
-            .unwrap();
+                .unwrap();
         }
         writeln!(
             output,
@@ -14248,7 +14267,7 @@ fn bundle_generated_mma_results(
             catalog.intrinsic_abi + 1,
             record.rust.abi_id
         )
-        .unwrap();
+            .unwrap();
         output.push_str("    }\n");
     }
     output.push_str(
@@ -14570,7 +14589,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if tma_intrinsics(catalog).next().is_some() {
         output = output.replace(
             "prmt::convert_generated_prmt, warp::{",
-            "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig}, warp::{",
+            "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_reduce_s2g, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig, ReduceConfig}, warp::{",
         );
     }
     if execution_controls(catalog).next().is_some() {
@@ -15101,7 +15120,7 @@ fn convert_generated_tcgen05_load(
                 record.scalar_width().unwrap(),
                 record.llvm_identifier()
             )
-            .unwrap();
+                .unwrap();
         } else {
             output.push_str("        match context::lowering_options(ctx).intrinsic_backend {\n");
             for (backend, backend_variant) in [
@@ -15120,7 +15139,7 @@ fn convert_generated_tcgen05_load(
                         record.scalar_width().unwrap(),
                         record.llvm_identifier()
                     )
-                    .unwrap(),
+                        .unwrap(),
                     BackendLoweringMechanism::InlinePtx => writeln!(
                         output,
                         "                convert_sreg_read_inline(ctx, rewriter, self.get_operation(), {}, {:?}, {:?}, {})",
@@ -15129,7 +15148,7 @@ fn convert_generated_tcgen05_load(
                         special_register_output_constraint(record),
                         special_register_asm_kind(record),
                     )
-                    .unwrap(),
+                        .unwrap(),
                 }
                 output.push_str("            }\n");
             }
@@ -15167,7 +15186,7 @@ fn convert_generated_tcgen05_load(
                 output,
                 "                (Some(&{shape}), Some(&{multiplicity}), Some(&{layout}), Some(&{element}), Some(&{state_space})) => ({register_count}, {instruction_head:?}, {intrinsic_name:?}),"
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str(
             "                _ => return pliron::input_err!(\n                    self.get_operation().deref(ctx).loc(),\n                    \"nvvm.ldmatrix variant has no generated lowering recipe\",\n                ),\n            }\n        };\n        convert_generated_ldmatrix(ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2)\n    }\n}\n\n",
@@ -15188,7 +15207,7 @@ fn convert_generated_tcgen05_load(
                 output,
                 "#[op_interface_impl]\nimpl MirToLlvmConversion for {op_type} {{\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_ldmatrix(\n            ctx, rewriter, self.get_operation(), {register_count}, {instruction_head:?}, {intrinsic_name:?},\n        )\n    }}\n}}\n"
             )
-            .unwrap();
+                .unwrap();
         }
     }
     for record in stmatrices(catalog) {
@@ -15206,7 +15225,7 @@ fn convert_generated_tcgen05_load(
             output,
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_stmatrix(\n            ctx, rewriter, self.get_operation(), {count}, {transposed}, {intrinsic_name:?},\n        )\n    }}\n}}\n"
         )
-        .unwrap();
+            .unwrap();
     }
     if let Some(record) = movmatrix(catalog).next() {
         writeln!(
@@ -15215,7 +15234,7 @@ fn convert_generated_tcgen05_load(
             record.dialect.op_type,
             movmatrix_template(record),
         )
-        .unwrap();
+            .unwrap();
     }
     if register_mmas(catalog).next().is_some() {
         output.push_str(
@@ -15243,7 +15262,7 @@ fn convert_generated_tcgen05_load(
                 register_mma_template(record),
                 register_mma_constraints(record),
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.register_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_register_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
@@ -15261,7 +15280,7 @@ fn convert_generated_tcgen05_load(
                 register_mma_template(record),
                 register_mma_constraints(record),
             )
-            .unwrap();
+                .unwrap();
         }
     }
     if sparse_mmas(catalog).next().is_some() {
@@ -15289,7 +15308,7 @@ fn convert_generated_tcgen05_load(
                 sparse_mma_template(record),
                 sparse_mma_constraints(record),
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.sparse_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_sparse_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
@@ -15377,7 +15396,7 @@ fn convert_generated_tcgen05_load(
                 scalar_arithmetic_llvm_mechanism(record)
                     == BackendLoweringMechanism::InlinePtx,
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_arithmetic variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_arithmetic(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3,\n        )\n    }\n}\n\n",
@@ -15431,7 +15450,7 @@ fn convert_generated_tcgen05_load(
                 extended_minmax_ptx_mnemonic(record),
                 extended_minmax_carrier(record),
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.extended_minmax variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_extended_minmax(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1,\n        )\n    }\n}\n\n",
@@ -15496,7 +15515,7 @@ fn convert_generated_tcgen05_load(
                 cluster_barrier_template(wait)
             )
         )
-        .unwrap();
+            .unwrap();
         output.push_str(
             "            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
         );
@@ -15560,7 +15579,7 @@ fn convert_generated_tcgen05_load(
                 record.llvm_identifier(),
                 wgmma_control_template(record),
             )
-            .unwrap();
+                .unwrap();
         }
     }
     if packed_atomics(catalog).next().is_some() {
@@ -15645,7 +15664,7 @@ fn convert_generated_tcgen05_load(
             "        {helper}(ctx, rewriter, self.get_operation(), operands_info, {:?}, value_ty.into())",
             record.llvm_identifier()
         )
-        .unwrap();
+            .unwrap();
         output.push_str("    }\n}\n\n");
     }
     for record in elect_intrinsics(catalog) {
@@ -15675,7 +15694,7 @@ fn convert_generated_tcgen05_load(
                     "                convert_elect_sync_typed(ctx, rewriter, self.get_operation(), operands_info, {:?})",
                     record.llvm_identifier()
                 )
-                .unwrap(),
+                    .unwrap(),
                 BackendLoweringMechanism::InlinePtx => output.push_str(
                     "                convert_elect_sync_inline(ctx, rewriter, self.get_operation(), operands_info)\n",
                 ),
@@ -15727,7 +15746,7 @@ fn convert_generated_tcgen05_load(
                     record.llvm_identifier(),
                     shuffle.clamp,
                 )
-                .unwrap();
+                    .unwrap();
             }
             WarpShuffleValueKind::I64 => {
                 debug_assert_eq!(
@@ -15745,7 +15764,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_shuffle_i64(ctx, rewriter, self.get_operation(), operands_info, {mode:?}, {})",
                     shuffle.clamp,
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -15801,7 +15820,7 @@ fn convert_generated_tcgen05_load(
                     packed_conversion_ptx_mnemonic(record),
                     packed_conversion_result_width(record),
                 )
-                .unwrap();
+                    .unwrap();
             }
             PackedConversionSourceFormat::E4m3x2
             | PackedConversionSourceFormat::E5m2x2
@@ -15814,7 +15833,7 @@ fn convert_generated_tcgen05_load(
                     packed_conversion_result_width(record),
                     packed_conversion_source_width(record),
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -15841,7 +15860,7 @@ fn convert_generated_tcgen05_load(
             copy.copy_size.bytes(),
             record.llvm_identifier(),
         )
-        .unwrap();
+            .unwrap();
         output.push_str("    }\n}\n\n");
     }
     for record in cp_async_controls(catalog) {
@@ -15864,7 +15883,7 @@ fn convert_generated_tcgen05_load(
             "        convert_generated_cp_async_control(ctx, rewriter, self.get_operation(), {operation:?}, {:?})",
             record.llvm_identifier(),
         )
-        .unwrap();
+            .unwrap();
         output.push_str("    }\n}\n\n");
     }
     for record in cp_async_mbarriers(catalog) {
@@ -15891,7 +15910,7 @@ fn convert_generated_tcgen05_load(
             "        convert_generated_cp_async_mbarrier(ctx, rewriter, self.get_operation(), {operation:?}, {state_space:?}, {:?})",
             record.llvm_identifier(),
         )
-        .unwrap();
+            .unwrap();
         output.push_str("    }\n}\n\n");
     }
     for record in mbarrier_basics(catalog) {
@@ -15946,7 +15965,7 @@ fn convert_generated_tcgen05_load(
             "        if operands.len() != 2 {{\n            return pliron::input_err_noloc!({:?}, operands.len());\n        }}",
             format!("{} requires 2 operands, got {{}}", record.rust.name)
         )
-        .unwrap();
+            .unwrap();
         output.push_str(
             "        let shared_pointer = cast_to_shared_addrspace(ctx, rewriter, operands[0]);\n        let rank = operands[1];\n",
         );
@@ -15956,14 +15975,14 @@ fn convert_generated_tcgen05_load(
                     output,
                     "        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, i64_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        let mapped = asm.deref(ctx).get_result(0);\n        let shared_pointer_ty = llvm_types::PointerType::get(ctx, 3);\n        let int_to_ptr = llvm_ops::IntToPtrOp::new(ctx, mapped, shared_pointer_ty.into());\n        rewriter.insert_operation(ctx, int_to_ptr.get_operation());\n        rewriter.replace_operation(ctx, op, int_to_ptr.get_operation());\n        Ok(())"
                 )
-                .unwrap();
+                    .unwrap();
             }
             ClusterMemoryOperation::ReadU32 => {
                 writeln!(
                     output,
                     "        let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, i32_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        rewriter.replace_operation(ctx, op, asm);\n        Ok(())"
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -16011,7 +16030,7 @@ fn convert_generated_tcgen05_load(
                 operand_count
             )
         )
-        .unwrap();
+            .unwrap();
         if matches!(
             contract.adapter,
             MbarrierExtendedAdapter::PointerTxCountBytesToTokenDroppingTxCount
@@ -16028,7 +16047,7 @@ fn convert_generated_tcgen05_load(
                     output,
                     "        let result_ty = IntegerType::get(ctx, 64, Signedness::Signless);\n        let asm = inline_asm_convergent(ctx, rewriter, result_ty.into(), operands, {template:?}, {constraints:?});\n        rewriter.replace_operation(ctx, op, asm);\n        Ok(())"
                 )
-                .unwrap();
+                    .unwrap();
             }
             MbarrierExtendedAdapter::PointerTokenToPredicate
             | MbarrierExtendedAdapter::PointerParityToPredicate => {
@@ -16036,7 +16055,7 @@ fn convert_generated_tcgen05_load(
                     output,
                     "        let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n        let asm = inline_asm_convergent(ctx, rewriter, result_ty.into(), operands, {template:?}, {constraints:?});\n        let asm_result = asm.deref(ctx).get_result(0);\n        let result = trunc_to_i1(ctx, rewriter, asm_result);\n        let DefiningEntity::Op(result_op) = result.defining_entity() else {{ unreachable!() }};\n        rewriter.replace_operation(ctx, op, result_op);\n        Ok(())"
                 )
-                .unwrap();
+                    .unwrap();
             }
             MbarrierExtendedAdapter::RawClusterAddressToVoid
             | MbarrierExtendedAdapter::ZeroOperandsToVoid
@@ -16045,7 +16064,7 @@ fn convert_generated_tcgen05_load(
                     output,
                     "        let void_ty = llvm_types::VoidType::get(ctx);\n        inline_asm_convergent(ctx, rewriter, void_ty.into(), operands, {template:?}, {constraints:?});\n        rewriter.erase_operation(ctx, op);\n        Ok(())"
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -16070,7 +16089,7 @@ fn convert_generated_tcgen05_load(
             record.llvm_identifier(),
             dot_product_ptx(record),
         )
-        .unwrap();
+            .unwrap();
         output.push_str("    }\n}\n\n");
     }
     for record in clc_intrinsics(catalog) {
@@ -16090,7 +16109,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_generated_clc_try_cancel(ctx, rewriter, self.get_operation(), operands_info, {:?})",
                     record.llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             ClcOperation::QueryIsCanceled
             | ClcOperation::QueryGetFirstCtaidX
@@ -16102,7 +16121,7 @@ fn convert_generated_tcgen05_load(
                     record.llvm_identifier(),
                     record.clc.as_ref().unwrap().operation == ClcOperation::QueryIsCanceled
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -16134,7 +16153,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_counted_barrier(ctx, rewriter, self.get_operation(), operands_info, {:?}, {template:?})",
                     record.llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             ExecutionControlOperation::GridDependencyLaunchDependents
             | ExecutionControlOperation::GridDependencyWait => {
@@ -16148,7 +16167,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_grid_dependency(ctx, rewriter, self.get_operation(), operands_info, {:?}, {template:?})",
                     record.llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             ExecutionControlOperation::SetMaxNRegInc | ExecutionControlOperation::SetMaxNRegDec => {
                 let direction = match operation {
@@ -16164,7 +16183,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_setmaxnreg(ctx, rewriter, self.get_operation(), operands_info, register_count, {:?}, {direction:?})",
                     record.llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -16191,7 +16210,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_g2s(ctx, rewriter, self.get_operation(), operands_info, {}, false)",
                     operation.dimensions().unwrap()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::G2sTile2dMulticast => output.push_str(
                 "        convert_g2s(ctx, rewriter, self.get_operation(), operands_info, 2, true)\n",
@@ -16209,7 +16228,35 @@ fn convert_generated_tcgen05_load(
                     "        convert_s2g(ctx, rewriter, self.get_operation(), operands_info, {})",
                     operation.dimensions().unwrap()
                 )
-                .unwrap();
+                    .unwrap();
+            }
+            TmaOperation::Reduce => {
+                let reduction = record
+                    .tma
+                    .as_ref()
+                    .and_then(|tma| tma.reduction.as_ref())
+                    .expect("TMA reduction contract");
+                let reduction_name = match reduction.operation {
+                    TmaReductionOperation::Add => "add",
+                    TmaReductionOperation::And => "and",
+                    TmaReductionOperation::Dec => "dec",
+                    TmaReductionOperation::Inc => "inc",
+                    TmaReductionOperation::Max => "max",
+                    TmaReductionOperation::Min => "min",
+                    TmaReductionOperation::Or => "or",
+                    TmaReductionOperation::Xor => "xor",
+                };
+                let load_mode = match reduction.load_mode {
+                    TmaReductionLoadMode::Tile => "tile",
+                    TmaReductionLoadMode::Im2col => "im2col",
+                };
+                writeln!(
+                    output,
+                    "        convert_reduce_s2g(ctx, rewriter, self.get_operation(), operands_info, ReduceConfig::new({}, {reduction_name:?}, {load_mode:?}, {:?}))",
+                    reduction.dimensions,
+                    record.resolved_llvm_identifier()
+                )
+                    .unwrap();
             }
             TmaOperation::CommitGroup | TmaOperation::WaitGroup | TmaOperation::WaitGroupRead => {
                 let operation_name = match operation {
@@ -16223,7 +16270,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_control(ctx, rewriter, self.get_operation(), operands_info, {operation_name:?}, {:?})",
                     record.resolved_llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::PrefetchTensorMap => {
                 writeln!(
@@ -16231,7 +16278,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_prefetch_tensormap(ctx, rewriter, self.get_operation(), operands_info, {:?})",
                     record.resolved_llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::PrefetchTile1d
             | TmaOperation::PrefetchTile2d
@@ -16257,7 +16304,7 @@ fn convert_generated_tcgen05_load(
                     operation.uses_prefetch_cache_hint(),
                     record.resolved_llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::ReplaceBoxDim
             | TmaOperation::ReplaceElementStride
@@ -16301,7 +16348,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_tensormap_replace(ctx, rewriter, self.get_operation(), operands_info, {:?}, {field:?}, {value_kind:?}, {ordinal}, {immediate})",
                     record.resolved_llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
             TmaOperation::FenceProxyTensorMapAcquireCluster
             | TmaOperation::FenceProxyTensorMapAcquireCta
@@ -16327,7 +16374,7 @@ fn convert_generated_tcgen05_load(
                     "        convert_tensormap_fence(ctx, rewriter, self.get_operation(), operands_info, {:?}, {acquire}, {scope:?})",
                     record.resolved_llvm_identifier()
                 )
-                .unwrap();
+                    .unwrap();
             }
         }
         output.push_str("    }\n}\n\n");
@@ -16351,14 +16398,14 @@ fn convert_generated_tcgen05_load(
                 "        convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), {}, {count}, {integer_results}, {template:?}, {constraints:?})",
                 record.dialect.operands.len()
             )
-            .unwrap();
+                .unwrap();
         } else {
             writeln!(
                 output,
                 "        convert_generated_tcgen05_void(ctx, rewriter, self.get_operation(), {}, {template:?}, {constraints:?})",
                 record.dialect.operands.len()
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str("    }\n}\n\n");
     }
@@ -16558,7 +16605,7 @@ impl MirToLlvmConversion for Tcgen05MmaOp {
                 "                call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![barrier_id])?;",
                 record.llvm_identifier()
             )
-            .unwrap();
+                .unwrap();
             output.push_str(
                 "            }\n            IntrinsicBackend::LibNvvm => {\n                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], \"bar.sync 0;\", \"~{memory}\");\n            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
             );
@@ -16666,7 +16713,7 @@ fn generated_selection_alternatives(selections: &[CatalogSelection]) -> String {
             selection.predicates,
             generated_selection_constraints(selection),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push(']');
     output
@@ -17150,7 +17197,7 @@ impl GeneratedIntrinsicTarget {
             generated_selection_alternatives(&record.selections),
             llvm_facts,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str(
         "];\n\npub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGETS.iter().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n        GeneratedIntrinsicVariant::RegisterMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow } => {\n            let Some(op) = Operation::get_op::<RegisterMmaOp>(operation, ctx) else { return false; };\n            let shape_matches = match shape {\n                GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k8),\n                GeneratedRegisterMmaShape::M16n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k16),\n                GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F32),\n                GeneratedRegisterMmaAccumulator::F64 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F64),\n                GeneratedRegisterMmaAccumulator::S32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::S32),\n            };\n            let element_matches = |expected, actual: Option<&RegisterMmaElementAttr>| match expected {\n                GeneratedRegisterMmaElement::Bf16 => actual == Some(&RegisterMmaElementAttr::Bf16),\n                GeneratedRegisterMmaElement::F16 => actual == Some(&RegisterMmaElementAttr::F16),\n                GeneratedRegisterMmaElement::Tf32 => actual == Some(&RegisterMmaElementAttr::Tf32),\n                GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8 => actual == Some(&RegisterMmaElementAttr::S8),\n                GeneratedRegisterMmaElement::U8 => actual == Some(&RegisterMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&RegisterMmaLayoutAttr>| match expected {\n                GeneratedRegisterMmaLayout::Row => actual == Some(&RegisterMmaLayoutAttr::Row),\n                GeneratedRegisterMmaLayout::Col => actual == Some(&RegisterMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedRegisterMmaOverflow::NotApplicable => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::NotApplicable),\n                GeneratedRegisterMmaOverflow::Wrapping => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Wrapping),\n                GeneratedRegisterMmaOverflow::Satfinite => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Satfinite),\n            };\n            shape_matches && accumulator_matches\n                && element_matches(a_element, op.get_attr_nvvm_register_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_register_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_register_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_register_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n        }\n    }\n}\n",
@@ -17463,7 +17510,7 @@ impl GeneratedIntrinsicTarget {
             generated_backend_requirements(record),
             generated_selection_alternatives(&record.selections),
         )
-        .unwrap();
+            .unwrap();
         match &record.llvm {
             Some(llvm) => {
                 writeln!(
@@ -17524,12 +17571,13 @@ fn render_special_register_probe(
 }
 
 fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
-    let operation = record.tma.as_ref().expect("TMA contract").operation;
+    let tma = record.tma.as_ref().expect("TMA contract");
+    let operation = tma.operation;
     let llvm = llvm(record);
     let symbol = llvm.resolved_symbol.as_ref().unwrap_or(&llvm.symbol);
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
-    if let Some(dimensions) = operation.dimensions() {
+    if let Some(dimensions) = tma.dimensions() {
         let is_g2s = matches!(
             operation,
             TmaOperation::G2sTile1d
@@ -17565,7 +17613,7 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
                 output,
                 "declare void @{symbol}(ptr addrspace(7), ptr addrspace(3), ptr{declaration_coordinates}, i16, i64, i1, i1, i32) #0\n"
             )
-            .unwrap();
+                .unwrap();
             let parameters = if coordinate_parameters.is_empty() {
                 String::new()
             } else {
@@ -17577,7 +17625,7 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
                 "define void @probe_{}(ptr %dst_generic, ptr %barrier_generic, ptr %tensor_map{parameters}{mask_parameter}) #0 {{",
                 record.id
             )
-            .unwrap();
+                .unwrap();
             output.push_str(
                 "  %dst = addrspacecast ptr %dst_generic to ptr addrspace(7)\n  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n",
             );
@@ -17596,7 +17644,7 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
                 output,
                 "  call void @{symbol}(ptr addrspace(7) %dst, ptr addrspace(3) %barrier, ptr %tensor_map{arguments}, i16 {mask}, i64 0, i1 {multicast}, i1 false, i32 {group}) #0"
             )
-            .unwrap();
+                .unwrap();
         } else {
             let declaration_coordinates = if coordinates.is_empty() {
                 String::new()
@@ -17607,7 +17655,7 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
                 output,
                 "declare void @{symbol}(ptr addrspace(3), ptr{declaration_coordinates}, i64, i1) #0\n"
             )
-            .unwrap();
+                .unwrap();
             let parameters = if coordinate_parameters.is_empty() {
                 String::new()
             } else {
@@ -17629,7 +17677,7 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
                 output,
                 "  call void @{symbol}(ptr addrspace(3) %src, ptr %tensor_map{arguments}, i64 0, i1 false) #0"
             )
-            .unwrap();
+                .unwrap();
         }
         output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
     } else if operation == TmaOperation::PrefetchTensorMap {
@@ -17695,7 +17743,7 @@ fn render_tma_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str
             output,
             "  call void @{symbol}(ptr %tensor_map{arguments}, i64 {cache_hint}, i1 {use_cache_hint}) #0"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
     } else if matches!(
         operation,
@@ -18230,7 +18278,7 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
             output,
             "  %result = call {result_ty} asm sideeffect {template:?}, {constraints:?}({arguments}) #0"
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
     output
@@ -18293,7 +18341,7 @@ fn render_elect_probe(
                     output,
                     "  %raw = call {{ i32, i32 }} asm sideeffect \"{{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }}\", \"=r,=r,r\"(i32 {mask}) #0"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str(
                     "  %leader = extractvalue { i32, i32 } %raw, 0\n\
                      \x20 %predicate.i32 = extractvalue { i32, i32 } %raw, 1\n\
@@ -18345,7 +18393,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                     output,
                     "  %mapped_integer = call i64 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %source, i32 %rank) #0"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str(
                     "  %mapped = inttoptr i64 %mapped_integer to ptr addrspace(3)\n  ret ptr addrspace(3) %mapped\n}\n\nattributes #0 = { convergent }\n",
                 );
@@ -18364,7 +18412,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                     output,
                     "  %value = call i32 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %source, i32 %rank) #0"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str("  ret i32 %value\n}\n\nattributes #0 = { convergent }\n");
             }
         }
@@ -18586,7 +18634,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                     output,
                     "  %token = call i64 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %barrier, i32 %bytes) #0"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str("  ret i64 %token\n}\n\nattributes #0 = { convergent }\n");
             }
             MbarrierExtendedAdapter::PointerTokenToPredicate => {
@@ -18603,7 +18651,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                     output,
                     "  %result_i32 = call i32 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %barrier, i64 %token) #0"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str(
                     "  %result = trunc i32 %result_i32 to i1\n  ret i1 %result\n}\n\nattributes #0 = { convergent }\n",
                 );
@@ -18622,7 +18670,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                     output,
                     "  %result_i32 = call i32 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %barrier, i32 %parity) #0"
                 )
-                .unwrap();
+                    .unwrap();
                 output.push_str(
                     "  %result = trunc i32 %result_i32 to i1\n  ret i1 %result\n}\n\nattributes #0 = { convergent }\n",
                 );
@@ -18716,7 +18764,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 packed_conversion_ptx_mnemonic(record),
                 packed_conversion_constraint(record),
             )
-            .unwrap();
+                .unwrap();
         } else {
             // A packed source arrives in one integer register, so the probe
             // takes a single operand and needs no reordering.
@@ -18751,7 +18799,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             output,
             "  %old = call i32 asm sideeffect \"atom.global.add.noftz.{format} $0, [$1], $2;\", \"=r,l,r,~{{memory}}\"(ptr %address, i32 %addend)"
         )
-        .unwrap();
+            .unwrap();
         output.push_str("  ret i32 %old\n}\n");
     } else if let Some(copy) = &record.cp_async_copy {
         let dynamic_source_size = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -18773,7 +18821,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 "define void @probe_{}_register(ptr %shared_generic, ptr %global_generic, i32 %source_size) {{",
                 record.id
             )
-            .unwrap();
+                .unwrap();
             output.push_str(
                 "  %shared = addrspacecast ptr %shared_generic to ptr addrspace(3)\n  %global = addrspacecast ptr %global_generic to ptr addrspace(1)\n",
             );
@@ -18782,7 +18830,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 "  call void @{}(ptr addrspace(3) %shared, ptr addrspace(1) %global, i32 %source_size)",
                 llvm(record).symbol
             )
-            .unwrap();
+                .unwrap();
             output.push_str("  ret void\n}\n");
             writeln!(
                 output,
@@ -19063,7 +19111,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 output,
                 "  %result = call i64 asm sideeffect {asm:?}, \"=l,l,r,r\"(i64 %value, i32 %lane, i32 %member_mask) #0"
             )
-            .unwrap();
+                .unwrap();
             output.push_str("  ret i64 %result\n}\n\nattributes #0 = { convergent }\n");
         } else {
             debug_assert_eq!(
@@ -19116,7 +19164,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                     llvm(record).symbol,
                     warp_shuffle.clamp,
                 )
-                .unwrap();
+                    .unwrap();
                 writeln!(output, "  ret {value_ty} %result\n}}").unwrap();
             }
         }
@@ -19177,7 +19225,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 sparse_mma_template(record),
                 sparse_mma_constraints(record),
             )
-            .unwrap();
+                .unwrap();
             writeln!(output, "  ret {result} %result\n}}").unwrap();
         }
         output.push_str("\nattributes #0 = { convergent }\n");
@@ -19504,7 +19552,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             record.backend.version,
             record.backend.sha256,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Compiler identity and compatibility paths\n\n");
     for record in &catalog.intrinsics {
@@ -19549,7 +19597,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 record.id,
                 expected_ptx_head(record),
             )
-            .unwrap();
+                .unwrap();
         } else {
             writeln!(
                 output,
@@ -19557,7 +19605,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 record.id,
                 expected_ptx_head(record),
             )
-            .unwrap();
+                .unwrap();
         }
     }
     output.push_str("\n## Sparse-MMA contracts\n\n");
@@ -19580,7 +19628,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             sparse_mma_ptx_head(record),
             sparse_mma_selector_description(record),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Packed-atomic contracts\n\n");
     for record in packed_atomics(catalog) {
@@ -19596,7 +19644,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             packed.native_minimum_sm,
             hardware_target_label(&record.target.hardware),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Redux contracts\n\n");
     for record in redux(catalog) {
@@ -19605,7 +19653,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}`: raw and dialect operands are `[member_mask, value]`, adapted to LLVM `(value, membermask)`. The executing lane must be named in the mask, and every non-exited named lane must execute the same instruction with the same qualifiers and mask.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Packed-ALU contracts\n\n");
     for record in packed_alus(catalog) {
@@ -19639,7 +19687,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             packed.native_minimum_sm,
             hardware_target_label(&record.target.hardware),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Packed-conversion contract\n\n");
     for record in packed_conversions(catalog) {
@@ -19663,7 +19711,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 llvm(record).symbol,
                 packed_conversion_ptx_mnemonic(record),
             )
-            .unwrap();
+                .unwrap();
         } else {
             writeln!(
                 output,
@@ -19672,7 +19720,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 packed_conversion_destination(record),
                 packed_conversion_ptx_mnemonic(record),
             )
-            .unwrap();
+                .unwrap();
         }
     }
     output.push_str("\n## Scalar TF32-conversion contract\n\n");
@@ -19683,7 +19731,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             record.id,
             scalar_conversion_ptx_mnemonic(record),
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Explicit-rounding scalar-arithmetic contracts\n\n");
     for record in scalar_arithmetics(catalog) {
@@ -19706,7 +19754,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` keeps raw and dialect operands in `[member_mask, predicate]` order. The executing lane must be named in the mask, and every non-exited named lane must execute the same `vote.sync` instruction with the same qualifiers and mask. On `sm_6x` and earlier, all named lanes must execute in convergence and no unnamed lane may be active. Both immediate and register member masks are admitted.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Active-mask contract\n\n");
     for record in active_masks(catalog) {
@@ -19715,7 +19763,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` observes the lanes active at the instruction. LLVM uses the typed intrinsic; libNVVM uses reviewed convergent, side-effecting inline PTX because that backend does not select the intrinsic.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Warp-match contracts\n\n");
     for record in warp_matches(catalog) {
@@ -19730,7 +19778,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` keeps operands in `[member_mask, value]` order and {adapter}. The executing lane must be named in the mask, and every non-exited named lane must execute the same `match.sync` operation with the same qualifiers and mask. All register/immediate value and mask forms are admitted.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Warp-barrier contract\n\n");
     for record in warp_barriers(catalog) {
@@ -19739,7 +19787,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` passes the 32-bit member mask directly to the typed LLVM intrinsic on both backends. The executing lane must be named in the mask, and every non-exited named lane must execute the same `bar.warp.sync` operation with the same mask. On `sm_6x` and earlier, all named lanes must execute the barrier in convergence, and no unnamed lane may be active when it executes. The barrier orders memory accesses among participating lanes. Both immediate and register masks are admitted.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Warp-shuffle contracts\n\n");
     for record in warp_shuffles(catalog) {
@@ -19758,7 +19806,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             record.id,
             shuffle.clamp,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Cluster-barrier contracts\n\n");
     for record in cluster_barriers(catalog) {
@@ -19778,7 +19826,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` has {ordering} ordering. Each non-exited cluster thread must arrive exactly once before completion, then execute the matching wait. {alignment}",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     if cluster_barriers(catalog).next().is_some() {
         output.push_str(
@@ -19795,7 +19843,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                         "- `{}` keeps LLVM 22's address-space-7 result as source identity only. Both backends use exact convergent `mapa.shared::cluster.u64` inline PTX and preserve the established shared-address carrier; an ordinary pointer dereference is not a remote cluster load.",
                         record.id
                     )
-                    .unwrap();
+                        .unwrap();
                 }
                 ClusterMemorySourceContract::PtxNativeMapaThenWeakClusterLoad => {
                     writeln!(
@@ -19803,7 +19851,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                         "- `{}` has no one-to-one LLVM intrinsic. Both backends use one convergent `mapa.shared::cluster.u64` plus `ld.shared::cluster.u32` block with a compiler memory clobber.",
                         record.id
                     )
-                    .unwrap();
+                        .unwrap();
                 }
             }
         }
@@ -19816,7 +19864,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 "- `{}` transposes one packed b16 fragment in registers. All warp lanes must execute the same instruction, and no lane may have exited.",
                 record.id,
             )
-            .unwrap();
+                .unwrap();
         }
     }
     if mbarrier_extended(catalog).next().is_some() {
@@ -19834,7 +19882,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 "- `{}` keeps its established CUDA-device signature and exact convergent inline-PTX memory clobber. Its source identity is {source}.",
                 record.id,
             )
-            .unwrap();
+                .unwrap();
         }
     }
     if wgmma_controls(catalog).next().is_some() {
@@ -19856,7 +19904,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 "- `{}` must be executed by all four warps in the warpgroup with the same control flow. {detail}",
                 record.id,
             )
-            .unwrap();
+                .unwrap();
         }
     }
     if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
@@ -19871,7 +19919,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 "- `{}` inserts the fixed barrier ID `0`. Every active CTA thread must reach the same barrier; divergent use can deadlock the CTA.",
                 record.id,
             )
-            .unwrap();
+                .unwrap();
         } else {
             let level = threadfence_ptx_level(record)
                 .expect("resolver admitted an unknown generated synchronization record");
@@ -19880,7 +19928,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 "- `{}` emits `membar.{level}` through the reviewed typed NVVM route on both backends.",
                 record.id,
             )
-            .unwrap();
+                .unwrap();
         }
     }
     output.push_str("\n## cp.async mbarrier contracts\n\n");
@@ -19903,7 +19951,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` uses {address} addressing and {counting}. It associates only the executing thread's prior `cp.async` operations with a live, eight-byte-aligned shared-memory barrier. LLVM-NVPTX uses the typed intrinsic; libNVVM uses reviewed convergent, side-effecting inline PTX with a memory clobber.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Basic mbarrier contracts\n\n");
     for record in mbarrier_basics(catalog) {
@@ -19932,7 +19980,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` {contract}. It lowers through {mechanism}; generic MIR pointers are normalized to shared address space during lowering.",
             record.id,
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Imported LLVM properties and result facts\n\n");
     for record in &catalog.intrinsics {
@@ -19942,7 +19990,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 "- `{}`: PTX-native source; no LLVM record, symbol, properties, or selection facts.",
                 record.id
             )
-            .unwrap();
+                .unwrap();
             continue;
         };
         let properties = record
@@ -19994,7 +20042,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 &selection_predicates
             }
         )
-        .unwrap();
+            .unwrap();
     }
     output.push_str("\n## Backend-specific lowering evidence\n\n");
     for record in &catalog.intrinsics {
@@ -20081,7 +20129,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 lowering.version,
                 lowering.sha256,
             )
-            .unwrap();
+                .unwrap();
             for stage in &lowering.stages {
                 let tool = match (
                     stage.tool_path.as_deref(),
@@ -20289,7 +20337,7 @@ mod tests {
     fn catalog_with_tma() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tma(&repo_root).unwrap();
-        assert_eq!(tma_intrinsics(&catalog).count(), 47);
+        assert_eq!(tma_intrinsics(&catalog).count(), 111);
         catalog
     }
 
@@ -22244,7 +22292,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 922);
+        assert_eq!(catalog.intrinsics.len(), 986);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records
@@ -23456,6 +23504,12 @@ mod tests {
         ));
         assert!(compatibility.contains("pub fn cp_async_bulk_commit_group()"));
         assert!(compatibility.contains("pub fn cp_async_bulk_wait_group(n: u32)"));
+        assert!(compatibility.contains(
+            "pub unsafe fn cp_async_bulk_tensor_reduce_add_tile_2d(src: *const u8, tensor_map: *const TmaDescriptor, coord0: i32, coord1: i32)"
+        ));
+        assert!(compatibility.contains(
+            "pub unsafe fn cp_async_bulk_tensor_reduce_xor_im2col_5d(src: *const u8, tensor_map: *const TmaDescriptor, coord0: i32, coord1: i32, coord2: i32, coord3: i32, coord4: i32)"
+        ));
         for dimensions in 1..=5 {
             assert!(compatibility.contains(&format!(
                 "pub unsafe fn cp_async_bulk_prefetch_tensor_{dimensions}d_l2("
@@ -23478,8 +23532,8 @@ mod tests {
         assert!(compatibility.contains("pub fn fence_proxy_tensormap_generic_release_system()"));
 
         let dialect = render_dialect_tma(&catalog, "test-hash");
-        assert_eq!(dialect.matches("pub struct ").count(), 47);
-        assert_eq!(dialect.matches("NResultsInterface<0>").count(), 47);
+        assert_eq!(dialect.matches("pub struct ").count(), 111);
+        assert_eq!(dialect.matches("NResultsInterface<0>").count(), 111);
         assert!(dialect.contains("NOpdsInterface<10>"));
         assert!(dialect.contains("CpAsyncBulkWaitGroupReadOp::register(ctx)"));
         assert!(
@@ -23505,11 +23559,15 @@ mod tests {
         assert!(importer.contains("require_arity(name, args.len(), 1, &loc)?;"));
         assert!(importer.contains("args.first(), Some(mir::Operand::Constant(_))"));
         assert!(importer.contains("\"v1:i0328\""));
+        assert!(importer.contains("cp_async_bulk_tensor_reduce_add_tile_2d"));
+        assert!(importer.contains(
+            "dialect_nvvm::ops::CpAsyncBulkTensorReduceAddTile2dOp::get_concrete_op_info()"
+        ));
 
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(lowering.contains("CpAsyncBulkTensorG2sTile1dOp"));
         assert!(lowering.contains(
-            "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig}"
+            "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_reduce_s2g, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig, ReduceConfig}"
         ));
         assert!(
             lowering.contains(
@@ -23521,6 +23579,9 @@ mod tests {
         );
         assert!(lowering.contains(
             "convert_control(ctx, rewriter, self.get_operation(), operands_info, \"commit_group\", \"llvm_nvvm_cp_async_bulk_commit_group\")"
+        ));
+        assert!(lowering.contains(
+            "convert_reduce_s2g(ctx, rewriter, self.get_operation(), operands_info, ReduceConfig::new(2, \"add\", \"tile\", \"llvm_nvvm_cp_async_bulk_tensor_reduce_add_tile_2d\"))"
         ));
         assert!(lowering.contains(
             "convert_prefetch_tile(ctx, rewriter, self.get_operation(), operands_info, PrefetchTileConfig::new(5, false, false, \"llvm_nvvm_cp_async_bulk_tensor_prefetch_tile_5d\"))"
@@ -23548,6 +23609,17 @@ mod tests {
             .unwrap();
         let s2g_probe = render_probe(&catalog, s2g, "test-hash");
         assert!(s2g_probe.contains("ptr %tensor_map, i32 %coord0, i32 %coord1, i64 0, i1 false"));
+
+        let reduce = tma_intrinsics(&catalog)
+            .find(|record| record.id == "cp_async_bulk_tensor_reduce_add_tile_2d")
+            .unwrap();
+        let reduce_probe = render_probe(&catalog, reduce, "test-hash");
+        assert!(reduce_probe.contains(
+            "declare void @llvm.nvvm.cp.async.bulk.tensor.reduce.add.tile.2d(ptr addrspace(3), ptr, i32, i32, i64, i1)"
+        ));
+        assert!(reduce_probe.contains(
+            "call void @llvm.nvvm.cp.async.bulk.tensor.reduce.add.tile.2d(ptr addrspace(3) %src, ptr %tensor_map, i32 %coord0, i32 %coord1, i64 0, i1 false)"
+        ));
 
         for stem in [
             "cp_async_bulk_prefetch_tensor_1d_l2",
@@ -23757,21 +23829,21 @@ mod tests {
             raw.matches(
                 "/// One thread in the CTA pair issues this instruction; the peer CTA must be active and must not have exited.\n",
             )
-            .count(),
+                .count(),
             4
         );
         assert_eq!(
             raw.matches(
                 "/// The same thread that issued the tracked asynchronous tcgen05 operations must issue this commit.\n",
             )
-            .count(),
+                .count(),
             6
         );
         assert_eq!(
             raw.matches(
                 "/// Completion must be tracked by a matching commit from that same thread and observed through the selected mbarrier before relying on shifted data.\n",
             )
-            .count(),
+                .count(),
             2
         );
         assert_eq!(

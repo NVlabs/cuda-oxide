@@ -519,9 +519,15 @@ pub struct ClcAdmissionVariant {
 pub struct TmaAdmission {
     pub llvm_evidence_profile: String,
     pub libnvvm_evidence_profile: String,
+    #[serde(default)]
+    pub reduce_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub reduce_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<TmaAdmissionVariant>,
+    #[serde(rename = "reduce_variant", default)]
+    pub reduce_variants: Vec<TmaReductionAdmissionVariant>,
 }
 
 /// One reviewed TMA operation and its reserved ABI ID.
@@ -530,6 +536,16 @@ pub struct TmaAdmission {
 pub struct TmaAdmissionVariant {
     pub abi_id: String,
     pub operation: TmaOperation,
+}
+
+/// One reviewed tensor-reduction operation and its reserved ABI ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TmaReductionAdmissionVariant {
+    pub abi_id: String,
+    pub operation: TmaReductionOperation,
+    pub load_mode: TmaReductionLoadMode,
+    pub dimensions: u8,
 }
 
 /// Compact admission for the existing Tensor Core Generation 5 operations.
@@ -1134,8 +1150,19 @@ pub enum ClcAdapter {
 #[serde(deny_unknown_fields)]
 pub struct Tma {
     pub operation: TmaOperation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduction: Option<TmaReduction>,
     pub adapter: TmaAdapter,
     pub runtime_validation: RuntimeValidation,
+}
+
+impl Tma {
+    pub const fn dimensions(&self) -> Option<usize> {
+        match &self.reduction {
+            Some(reduction) => Some(reduction.dimensions as usize),
+            None => self.operation.dimensions(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1153,6 +1180,7 @@ pub enum TmaOperation {
     S2gTile3d,
     S2gTile4d,
     S2gTile5d,
+    Reduce,
     CommitGroup,
     WaitGroup,
     WaitGroupRead,
@@ -1203,7 +1231,8 @@ impl TmaOperation {
             Self::G2sTile3d | Self::S2gTile3d => Some(3),
             Self::G2sTile4d | Self::S2gTile4d => Some(4),
             Self::G2sTile5d | Self::S2gTile5d => Some(5),
-            Self::CommitGroup
+            Self::Reduce
+            | Self::CommitGroup
             | Self::WaitGroup
             | Self::WaitGroupRead
             | Self::PrefetchTensorMap
@@ -1268,12 +1297,42 @@ impl TmaOperation {
     }
 }
 
+/// Closed identity for one TMA tensor-reduction operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TmaReduction {
+    pub operation: TmaReductionOperation,
+    pub load_mode: TmaReductionLoadMode,
+    pub dimensions: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TmaReductionOperation {
+    Add,
+    And,
+    Dec,
+    Inc,
+    Max,
+    Min,
+    Or,
+    Xor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TmaReductionLoadMode {
+    Tile,
+    Im2col,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TmaAdapter {
     G2sPointersCoordinatesBarrierInjectDefaults,
     G2sPointersCoordinatesBarrierMaskInjectDefaults,
     S2gPointersCoordinatesInjectDefaults,
+    ReductionPointersCoordinatesInjectDefaults,
     NoOperands,
     CompileTimeConstantMaxPending,
     DescriptorPointer,
@@ -3792,14 +3851,14 @@ mod tests {
             serde_json::from_str::<LdmatrixAddressContract>(
                 r#""warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable""#
             )
-            .unwrap(),
+                .unwrap(),
             LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadable
         );
         assert_eq!(
             serde_json::from_str::<LdmatrixAddressContract>(
                 r#""warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_thirty_two_bytes_readable""#
             )
-            .unwrap(),
+                .unwrap(),
             LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedThirtyTwoBytesReadable
         );
     }

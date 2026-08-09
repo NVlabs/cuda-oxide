@@ -6424,3 +6424,451 @@ status = "active"
 catalog_id = "cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint"
 operation_key = "memory.prefetch.async.bulk.tensor.global.tile.gather4.2d.l2.cache_hint"
 raw_rust_signature = { safe = false, arguments = ["*const u8", "i32", "i32", "i32", "i32", "i32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0923"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.add.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0924"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.add.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0925"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.add.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0926"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.add.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0927"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.add.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0928"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.add.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0929"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.add.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0930"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_add_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.add.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0931"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.and.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0932"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.and.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0933"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.and.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0934"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.and.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0935"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.and.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0936"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.and.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0937"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.and.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0938"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_and_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.and.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0939"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0940"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0941"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0942"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0943"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0944"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0945"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0946"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_dec_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.dec.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0947"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0948"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0949"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0950"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0951"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0952"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0953"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0954"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_inc_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.inc.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0955"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.max.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0956"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.max.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0957"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.max.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0958"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.max.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0959"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.max.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0960"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.max.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0961"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.max.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0962"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_max_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.max.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0963"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.min.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0964"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.min.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0965"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.min.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0966"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.min.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0967"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.min.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0968"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.min.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0969"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.min.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0970"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_min_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.min.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0971"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.or.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0972"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.or.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0973"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.or.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0974"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.or.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0975"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.or.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0976"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.or.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0977"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.or.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0978"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_or_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.or.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0979"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_tile_1d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.tile.1d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0980"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_tile_2d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.tile.2d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0981"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_tile_3d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.tile.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0982"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_tile_4d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.tile.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0983"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_tile_5d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.tile.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0984"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_im2col_3d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.im2col.3d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0985"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_im2col_4d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.im2col.4d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0986"
+status = "active"
+catalog_id = "cp_async_bulk_tensor_reduce_xor_im2col_5d"
+operation_key = "memory.reduce.async.bulk.tensor.xor.im2col.5d"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
