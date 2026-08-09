@@ -49,6 +49,7 @@ use pliron::identifier::Legaliser;
 use pliron::op::Op;
 use pliron::printable::Printable;
 use rustc_public::mir::mono::Instance;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 fn stderr_pipeline_trace(message: &str) {
@@ -104,6 +105,15 @@ pub enum CompilationArtifactKind {
     Cubin,
 }
 
+/// Launch bounds attached to one kernel entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KernelLaunchBounds {
+    /// Maximum threads per block declared by `#[launch_bounds]`.
+    pub max_threads: u32,
+    /// Requested minimum resident blocks per SM, when explicitly provided.
+    pub min_blocks: Option<u32>,
+}
+
 /// Output paths, target, and artifact format from successful compilation.
 pub struct CompilationResult {
     /// Path to generated LLVM IR (`.ll` file).
@@ -119,6 +129,8 @@ pub struct CompilationResult {
     /// Floating-point contraction policy that later compilation stages must
     /// preserve.
     pub allow_fma_contraction: bool,
+    /// Per-kernel source launch bounds preserved for post-link diagnostics.
+    pub kernel_launch_bounds: BTreeMap<String, KernelLaunchBounds>,
 }
 
 /// Configuration for the compilation pipeline.
@@ -266,6 +278,7 @@ pub fn run_pipeline(
     let module_op_ptr = module.get_operation();
 
     let mut legaliser = Legaliser::default();
+    let mut kernel_launch_bounds = BTreeMap::new();
 
     // Step 3: Translate all functions
     for func in functions {
@@ -318,6 +331,12 @@ pub fn run_pipeline(
 
         verify_operation(&ctx, func_op_ptr, &func.export_name)?;
 
+        if func.is_kernel
+            && let Some(bounds) = launch_bounds_from_mir_func(&ctx, func_op_ptr)
+        {
+            kernel_launch_bounds.insert(func.export_name.clone(), bounds);
+        }
+
         // Append to module
         append_to_module(&ctx, module_op_ptr, func_op_ptr);
     }
@@ -367,6 +386,7 @@ pub fn run_pipeline(
                 ptx_path,
                 target: generated.target,
                 allow_fma_contraction: config.allow_fma_contraction,
+                kernel_launch_bounds,
             })
         }
         ModuleArtifactKind::Ptx => Ok(CompilationResult {
@@ -376,8 +396,32 @@ pub fn run_pipeline(
             ptx_path,
             target: generated.target,
             allow_fma_contraction: config.allow_fma_contraction,
+            kernel_launch_bounds,
         }),
     }
+}
+
+fn launch_bounds_from_mir_func(
+    ctx: &Context,
+    func_op: pliron::context::Ptr<pliron::operation::Operation>,
+) -> Option<KernelLaunchBounds> {
+    use pliron::builtin::attributes::IntegerAttr;
+
+    let max_key: pliron::identifier::Identifier = "maxntid".try_into().ok()?;
+    let min_key: pliron::identifier::Identifier = "minctasm".try_into().ok()?;
+    let attributes = &func_op.deref(ctx).attributes;
+    let max_threads = attributes
+        .get::<IntegerAttr>(&max_key)
+        .and_then(|attribute| u32::try_from(attribute.value().to_u64()).ok())?;
+    let min_blocks = attributes
+        .get::<IntegerAttr>(&min_key)
+        .and_then(|attribute| u32::try_from(attribute.value().to_u64()).ok())
+        .filter(|value| *value != 0);
+
+    Some(KernelLaunchBounds {
+        max_threads,
+        min_blocks,
+    })
 }
 
 /// Ensures the configured output directory exists before any emission step.

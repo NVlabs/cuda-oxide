@@ -724,6 +724,7 @@ impl CodegenBackend for CudaCodegenBackend {
                         }
                         if let Some(artifact) = result.artifact.as_ref() {
                             match write_device_artifact_object(
+                                tcx,
                                 &device_config.output_dir,
                                 &device_config.output_name,
                                 tcx.sess.target.llvm_target.as_ref(),
@@ -825,6 +826,7 @@ impl CodegenBackend for CudaCodegenBackend {
 
 #[allow(clippy::too_many_arguments)]
 fn write_device_artifact_object(
+    tcx: TyCtxt<'_>,
     output_dir: &Path,
     output_name: &str,
     host_target: &str,
@@ -835,17 +837,22 @@ fn write_device_artifact_object(
     materialization_request: Option<materialize::MaterializationRequest>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let bundle_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| output_name.to_string());
-    let materialized_artifact;
-    let (artifact, was_materialized) = match materialize_artifact_for_embedding(
+    let materialized_artifact = materialize_artifact_for_embedding(
         materialization_request,
         &bundle_name,
         result,
         artifact,
-    )? {
-        Some(cubin) => {
-            materialized_artifact = cubin;
-            (&materialized_artifact, true)
-        }
+    )?;
+    if let Some(materialized) = materialized_artifact.as_ref() {
+        emit_launch_bounds_spill_warnings(
+            tcx,
+            result,
+            functions,
+            &materialized.resource_usage,
+        );
+    }
+    let (artifact, was_materialized) = match materialized_artifact.as_ref() {
+        Some(materialized) => (&materialized.artifact, true),
         None => (artifact, false),
     };
     let payload_kind = match artifact.kind {
@@ -962,12 +969,17 @@ fn embedded_compile_options(
 /// produced NVVM IR or LTOIR; accepting PTX or an already-built cubin would
 /// bypass the wrapper's provenance-checked finalization recipe. See
 /// `materialize` for the trade-offs.
+struct MaterializedDeviceArtifact {
+    artifact: device_codegen::DeviceCodegenArtifact,
+    resource_usage: Vec<cuda_artifact_finalizer::KernelResourceUsage>,
+}
+
 fn materialize_artifact_for_embedding(
     request: Option<materialize::MaterializationRequest>,
     bundle_name: &str,
     result: &device_codegen::DeviceCodegenResult,
     artifact: &device_codegen::DeviceCodegenArtifact,
-) -> Result<Option<device_codegen::DeviceCodegenArtifact>, Box<dyn std::error::Error>> {
+) -> Result<Option<MaterializedDeviceArtifact>, Box<dyn std::error::Error>> {
     let Some(request) = request else {
         return Ok(None);
     };
@@ -1002,11 +1014,60 @@ fn materialize_artifact_for_embedding(
             return Err(Box::new(materialize::MaterializeError::CubinInput));
         }
     };
-    Ok(Some(device_codegen::DeviceCodegenArtifact {
-        kind: device_codegen::DeviceCodegenArtifactKind::Cubin,
-        name: format!("{bundle_name}.cubin"),
-        bytes: cubin,
+    Ok(Some(MaterializedDeviceArtifact {
+        artifact: device_codegen::DeviceCodegenArtifact {
+            kind: device_codegen::DeviceCodegenArtifactKind::Cubin,
+            name: format!("{bundle_name}.cubin"),
+            bytes: cubin.bytes,
+        },
+        resource_usage: cubin.resource_usage,
     }))
+}
+
+fn emit_launch_bounds_spill_warnings(
+    tcx: TyCtxt<'_>,
+    result: &device_codegen::DeviceCodegenResult,
+    functions: &[collector::CollectedFunction<'_>],
+    resource_usage: &[cuda_artifact_finalizer::KernelResourceUsage],
+) {
+    for usage in resource_usage.iter().filter(|usage| usage.has_spills()) {
+        let Some(bounds) = result.kernel_launch_bounds.get(&usage.kernel) else {
+            continue;
+        };
+        let Some(function) = functions
+            .iter()
+            .find(|function| function.is_kernel && function.export_name == usage.kernel)
+        else {
+            continue;
+        };
+
+        let launch_bounds = match bounds.min_blocks {
+            Some(min_blocks) => {
+                format!("#[launch_bounds({}, {})]", bounds.max_threads, min_blocks)
+            }
+            None => format!("#[launch_bounds({})]", bounds.max_threads),
+        };
+        let mut diagnostic = tcx.dcx().struct_span_warn(
+            tcx.def_span(function.instance.def_id()),
+            format!(
+                "kernel `{}` compiled with `{launch_bounds}` and spills registers",
+                usage.kernel
+            ),
+        );
+        diagnostic.note(format!(
+            "ptxas reports {} bytes spill stores and {} bytes spill loads",
+            usage.spill_store_bytes, usage.spill_load_bytes
+        ));
+        if let Some(registers) = usage.registers {
+            diagnostic.note(format!("ptxas allocated {registers} registers per thread"));
+        }
+        if bounds.min_blocks.is_some() {
+            diagnostic.help("relax `min_blocks_per_sm` or reduce register pressure");
+        } else {
+            diagnostic.help("relax the launch bound or reduce register pressure");
+        }
+        diagnostic.emit();
+    }
 }
 
 fn write_filtered_artifact_anchor_object(
