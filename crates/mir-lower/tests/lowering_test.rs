@@ -10469,3 +10469,95 @@ fn test_fence_uses_membar_intrinsic_only_for_seqcst() -> Result<(), anyhow::Erro
     }
     Ok(())
 }
+
+/// An 8-bit `bswap` takes an early bitcast path, since Rust's semantics for a
+/// single byte are identity and LLVM has no useful intrinsic for it. That path
+/// returned before reaching the cast every other arm goes through, so a result
+/// type that was not an 8-bit integer produced `bitcast i8 to <aggregate>`,
+/// which LLVM rejects when the module is read back.
+///
+/// The importer hands the call the type of the destination *local* rather than
+/// of the projected place it writes, so `RET.1 = bswap(x)` on a
+/// `(f64, u8)` return arrives here carrying the whole tuple. Lowering cannot
+/// repair that, and refusing it is what keeps the emitted module valid.
+#[test]
+fn bswap8_with_an_aggregate_result_is_refused_rather_than_bitcast() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirTupleType;
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::builtin::attributes::TypeAttr;
+    use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let f64_ty = pliron::builtin::types::FP64Type::get(&ctx);
+    let tuple_ty = MirTupleType::get(&mut ctx, vec![f64_ty.into(), u8_ty.into()]);
+
+    let module = ModuleOp::new(&mut ctx, "m".try_into().unwrap());
+    let module_ptr = module.get_operation();
+    let module_block = module
+        .get_operation()
+        .deref(&ctx)
+        .get_region(0)
+        .deref(&ctx)
+        .iter(&ctx)
+        .next()
+        .unwrap();
+
+    let func_ty = FunctionType::get(&ctx, vec![u8_ty.into()], vec![]);
+    let func_op = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func = mir::MirFuncOp::new(&mut ctx, func_op, TypeAttr::new(func_ty.into()));
+    func.set_symbol_name(&mut ctx, "f".try_into().unwrap());
+    {
+        let region = func.get_operation().deref(&ctx).get_region(0);
+        let block = BasicBlock::new(&mut ctx, None, vec![u8_ty.into()]);
+        block.insert_at_back(region, &ctx);
+        let arg = block.deref(&ctx).get_argument(0);
+
+        // The tuple result is the whole point: an 8-bit operand with a result
+        // the bitcast cannot legally produce.
+        let call_ptr = Operation::new(
+            &mut ctx,
+            mir::MirCallOp::get_concrete_op_info(),
+            vec![tuple_ty.into()],
+            vec![arg],
+            vec![],
+            0,
+        );
+        let call = mir::MirCallOp::new(call_ptr);
+        call.set_attr_callee(
+            &ctx,
+            StringAttr::new(dialect_mir::rust_intrinsics::CALLEE_BSWAP.to_string()),
+        );
+        call_ptr.insert_at_back(block, &ctx);
+
+        let ret_op = Operation::new(
+            &mut ctx,
+            mir::MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        ret_op.insert_at_back(block, &ctx);
+    }
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let result = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr);
+    assert!(
+        result.is_err(),
+        "an 8-bit bswap with a tuple result must be refused, not lowered to a bitcast"
+    );
+    Ok(())
+}
