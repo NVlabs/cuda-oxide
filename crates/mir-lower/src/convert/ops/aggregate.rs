@@ -1855,7 +1855,8 @@ mod tests {
     use dialect_mir::attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr};
     use dialect_mir::ops as mir;
     use dialect_mir::types::{
-        EnumEncoding, EnumVariant, MirPtrType, MirSliceType, MirStructType, MirTupleType,
+        EnumEncoding, EnumVariant, MirArrayType, MirPtrType, MirSliceType, MirStructType,
+        MirTupleType,
     };
     use llvm_export::types as llvm_types;
     use pliron::builtin::attributes::IntegerAttr;
@@ -3233,6 +3234,96 @@ mod tests {
             count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
             2,
             "construction and extraction must cast the nested shared pointer leaf"
+        );
+        assert_eq!(count_ops::<MirConstructEnumOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<MirEnumPayloadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn bounded_shared_pointer_array_niche_payload_round_trips_through_recursive_storage() {
+        let mut ctx = make_ctx();
+        let logical: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, true).into();
+        let pointers: TypeHandle = MirArrayType::get(&mut ctx, shared, 2).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OptionSharedPointerArray".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![pointers], vec![0], vec![16]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                carrier_address_space: llvm_types::address_space::GENERIC,
+                niche_start: 0,
+                niche_variant_start: 0,
+                niche_variant_end: 0,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![pointers], vec![pointers]);
+        let array = block.deref(&ctx).get_argument(0);
+        let construct = Operation::new(
+            &mut ctx,
+            MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![array],
+            vec![],
+            0,
+        );
+        MirConstructEnumOp::new(construct)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(1));
+        construct.insert_at_back(block, &ctx);
+        let option = construct.deref(&ctx).get_result(0);
+
+        let discriminant = Operation::new(
+            &mut ctx,
+            mir::MirGetDiscriminantOp::get_concrete_op_info(),
+            vec![logical],
+            vec![option],
+            vec![],
+            0,
+        );
+        discriminant.insert_at_back(block, &ctx);
+
+        let payload = Operation::new(
+            &mut ctx,
+            MirEnumPayloadOp::get_concrete_op_info(),
+            vec![pointers],
+            vec![option],
+            vec![],
+            0,
+        );
+        let payload_op = MirEnumPayloadOp::new(payload);
+        payload_op.set_attr_payload_variant_index(&ctx, VariantIndexAttr(1));
+        payload_op.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+        payload.insert_at_back(block, &ctx);
+        let result = payload.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![result]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            4,
+            "construction and extraction must cast both shared-pointer array elements"
+        );
+        assert_eq!(
+            count_ops::<llvm::PtrToIntOp>(&ctx, &body),
+            1,
+            "niche discrimination must inspect the generic first-pointer carrier"
         );
         assert_eq!(count_ops::<MirConstructEnumOp>(&ctx, &body), 0);
         assert_eq!(count_ops::<MirEnumPayloadOp>(&ctx, &body), 0);

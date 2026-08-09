@@ -20,10 +20,11 @@
 //! back into the shared space through the generic space, so the
 //! expose/recover round trip stores through the recovered pointer.
 //!
-//! It also constructs and matches an enum payload containing a shared pointer
-//! nested through two ordinary Rust structs. The enum's physical storage must
-//! recursively replace the semantic shared pointer leaf with a target-stable
-//! generic pointer, then restore address space 3 when extracting the payload.
+//! It also constructs and matches enum payloads containing shared pointers:
+//! one nested through two ordinary Rust structs, and one `Option` containing a
+//! bounded array of two shared references. Their physical storage must
+//! recursively replace semantic shared-pointer leaves with target-stable
+//! generic pointers, then restore address space 3 when extracting the payload.
 //!
 //! Finally the kernel validates `SharedArray::as_raw_mut_ptr`: 32 threads
 //! derive pointers from one raw shared-array address, write disjoint elements,
@@ -59,6 +60,10 @@ enum SharedPointerPayload {
     Pointer(SharedPointerOuter),
 }
 
+struct SharedPointerArrayWrapper {
+    pointers: [&'static SharedArray<f32, 1>; 2],
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -90,6 +95,36 @@ mod kernels {
                 extracted.inner.pointer.addr()
             }
             SharedPointerPayload::Pointer(_) => 0,
+        }
+    }
+
+    #[inline(never)]
+    #[device]
+    fn shared_pointer_array_enum_matches(
+        use_pointer: bool,
+        pointer: *mut SharedArray<f32, 1>,
+    ) -> usize {
+        let shared: &'static SharedArray<f32, 1> = unsafe { &*pointer };
+        let payload = if use_pointer {
+            Some(SharedPointerArrayWrapper {
+                pointers: [shared, shared],
+            })
+        } else {
+            None
+        };
+
+        match payload {
+            Some(extracted) => {
+                let expected = pointer.addr();
+                let first = (extracted.pointers[0] as *const SharedArray<f32, 1>).addr();
+                let second = (extracted.pointers[1] as *const SharedArray<f32, 1>).addr();
+                if first == expected && second == expected {
+                    1
+                } else {
+                    0
+                }
+            }
+            None => 0,
         }
     }
 
@@ -127,6 +162,12 @@ mod kernels {
                 } else {
                     0.0
                 };
+
+                // A bounded array of shared references inside an Option uses
+                // the same generic physical representation recursively. Both
+                // array elements must survive construction and extraction.
+                *out.get_unchecked_mut(5) =
+                    shared_pointer_array_enum_matches(seed != 0.0, raw) as f32;
 
                 // The exposed integer is a generic address, so casting it
                 // back into the shared space must recover the original
@@ -203,12 +244,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         block_dim: (32, 1, 1),
         shared_mem_bytes: 0,
     };
-    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 5)?;
+    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 6)?;
     let seed: f32 = 7.0;
 
     // SAFETY: one 32-thread block writes 32 distinct shared elements, then
     // thread 0 reads them after a block-wide barrier. Only thread 0 writes the
-    // five output elements.
+    // six output elements.
     unsafe { module.sharedarray_late_use(stream.as_ref(), cfg, seed, &mut out) }?;
 
     let result = out.to_host_vec(&stream)?;
@@ -235,8 +276,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         std::process::exit(1);
     }
+    if (result[5] - 1.0).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: bounded shared-pointer array enum did not round-trip"
+        );
+        std::process::exit(1);
+    }
     println!(
-        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, nested shared pointer enum round-tripped, integer address cast back to the shared pointer",
+        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, nested and bounded-array shared pointer enums round-tripped, integer address cast back to the shared pointer",
         result[0]
     );
 

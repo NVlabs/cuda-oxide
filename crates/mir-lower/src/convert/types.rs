@@ -110,7 +110,9 @@ use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
 use pliron::r#type::{TypeHandle, type_cast};
 
-use super::enum_payload_storage::enum_payload_storage_type;
+use super::enum_payload_storage::{
+    MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES, enum_payload_storage_type,
+};
 use crate::type_conversion_interface::MirTypeConversion;
 
 // =============================================================================
@@ -804,49 +806,92 @@ fn collect_llvm_pointer_storage(
     base_offset: u64,
     out: &mut Vec<LlvmPointerStorage>,
 ) -> Option<()> {
-    let ty_ref = ty.deref(ctx);
-    if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
-        let (size, _) = llvm_type_size_align(ctx, ty)?;
-        out.push(LlvmPointerStorage {
-            offset: base_offset,
-            size,
-            address_space: pointer.address_space(),
-        });
-        return Some(());
-    }
-    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
-        // Expanding an arbitrary array into one record per pointer would let
-        // a valid but enormous type consume unbounded verifier memory. This
-        // repair needs only fixed structs; keep pointer arrays fail-closed.
-        return (!llvm_type_contains_pointer(ctx, array.elem_type())).then_some(());
-    }
-    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
-        // Pointer vectors have the same unbounded-expansion problem as arrays
-        // and also carry vector-specific ABI alignment. Reject rather than
-        // approximating either property.
-        return (!llvm_type_contains_pointer(ctx, vector.elem_type())).then_some(());
-    }
-    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
-        let fields: Vec<_> = struct_ty.fields().collect();
-        let mut end = 0u64;
-        for field in fields {
-            let (field_size, field_align) = llvm_type_size_align(ctx, field)?;
-            let field_align = field_align.max(1);
-            let remainder = end % field_align;
-            let field_offset = if remainder == 0 {
-                end
-            } else {
-                end.checked_add(field_align - remainder)?
-            };
-            collect_llvm_pointer_storage(ctx, field, base_offset.checked_add(field_offset)?, out)?;
-            end = field_offset.checked_add(field_size)?;
+    fn collect(
+        ctx: &Context,
+        ty: TypeHandle,
+        base_offset: u64,
+        out: &mut Vec<LlvmPointerStorage>,
+        inside_pointer_array: bool,
+        remaining_array_pointer_leaves: &mut u64,
+    ) -> Option<()> {
+        let ty_ref = ty.deref(ctx);
+        if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
+            if inside_pointer_array {
+                *remaining_array_pointer_leaves =
+                    (*remaining_array_pointer_leaves).checked_sub(1)?;
+            }
+            let (size, _) = llvm_type_size_align(ctx, ty)?;
+            out.push(LlvmPointerStorage {
+                offset: base_offset,
+                size,
+                address_space: pointer.address_space(),
+            });
+            return Some(());
         }
-        return Some(());
+        if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+            let element_ty = array.elem_type();
+            if !llvm_type_contains_pointer(ctx, element_ty) {
+                return Some(());
+            }
+            let (element_size, _) = llvm_type_size_align(ctx, element_ty)?;
+            for index in 0..array.size() {
+                let element_offset = element_size.checked_mul(index)?;
+                collect(
+                    ctx,
+                    element_ty,
+                    base_offset.checked_add(element_offset)?,
+                    out,
+                    true,
+                    remaining_array_pointer_leaves,
+                )?;
+            }
+            return Some(());
+        }
+        if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+            // Pointer vectors carry vector-specific ABI alignment and cast
+            // semantics. Keep them fail-closed rather than treating them like
+            // fixed arrays.
+            return (!llvm_type_contains_pointer(ctx, vector.elem_type())).then_some(());
+        }
+        if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+            let fields: Vec<_> = struct_ty.fields().collect();
+            let mut end = 0u64;
+            for field in fields {
+                let (field_size, field_align) = llvm_type_size_align(ctx, field)?;
+                let field_align = field_align.max(1);
+                let remainder = end % field_align;
+                let field_offset = if remainder == 0 {
+                    end
+                } else {
+                    end.checked_add(field_align - remainder)?
+                };
+                collect(
+                    ctx,
+                    field,
+                    base_offset.checked_add(field_offset)?,
+                    out,
+                    inside_pointer_array,
+                    remaining_array_pointer_leaves,
+                )?;
+                end = field_offset.checked_add(field_size)?;
+            }
+            return Some(());
+        }
+
+        // All pointer-bearing LLVM types understood by this lowering are
+        // handled above. Unknown pointer containers must fail closed.
+        (!llvm_type_contains_pointer(ctx, ty)).then_some(())
     }
 
-    // All pointer-bearing LLVM types understood by this lowering are handled
-    // above. Unknown pointer containers must fail closed.
-    (!llvm_type_contains_pointer(ctx, ty)).then_some(())
+    let mut remaining_array_pointer_leaves = MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES;
+    collect(
+        ctx,
+        ty,
+        base_offset,
+        out,
+        false,
+        &mut remaining_array_pointer_leaves,
+    )
 }
 
 /// Analyze how a slotless incoming pointer-bearing field overlaps the enum's
@@ -1513,8 +1558,9 @@ pub(crate) fn build_enum_slot_map(
         let llvm_ty = field_llvm_types[flat];
         // Enum payload storage uses one target-stable physical view. Shared
         // pointer leaves become generic pointers recursively through LLVM
-        // structs (MIR structs/tuples), while bool leaves become canonical i8
-        // bytes. Unsupported pointer arrays/vectors fail closed here.
+        // structs (MIR structs/tuples) and bounded arrays, while bool leaves
+        // become canonical i8 bytes. Oversized shared-pointer arrays and
+        // pointer vectors fail closed here.
         let storage_ty = enum_payload_storage_type(ctx, llvm_ty).map_err(|error| {
             anyhow::anyhow!("enum slot map: `{}` field {}: {error}", name, flat)
         })?;
@@ -3410,7 +3456,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_shared_pointer_array_payload() {
+    fn enum_slot_map_genericizes_bounded_shared_pointer_array_payload() {
         let mut ctx = make_ctx();
         let discr = mir_uint(&mut ctx, 32);
         let u32_ty = mir_uint(&mut ctx, 32);
@@ -3438,13 +3484,90 @@ mod tests {
         )
         .into();
 
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a bounded shared-pointer array should use generic physical storage");
+        let field_slot = map.field_slots[0].expect("bounded pointer array should own a slot");
+        let stored_ty = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .map(|struct_ty| struct_ty.field_type(field_slot as usize))
+            .expect("field slot must exist");
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::GENERIC
+            ),
+            "physical array payload must contain generic pointers"
+        );
+        assert!(
+            !llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::SHARED
+            ),
+            "physical array payload must not retain target-dependent AS3 pointers"
+        );
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                map.field_llvm_types[0],
+                llvm_types::address_space::SHARED
+            ),
+            "semantic array payload must retain shared address-space semantics"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_oversized_shared_pointer_array_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let count = MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES + 1;
+        let pointers: TypeHandle = MirArrayType::get(&mut ctx, shared, count).into();
+        let payload_size = count * 8;
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OversizedSharedPointerArrayPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout(
+                    "Pointers".into(),
+                    vec![pointers],
+                    vec![8],
+                    vec![payload_size],
+                ),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8 + payload_size,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
         let error = build_enum_slot_map(&mut ctx, enum_ty)
             .err()
-            .expect("arrays of shared pointers remain an explicit boundary");
+            .expect("an oversized shared-pointer array must remain fail-closed");
         assert!(
             error
                 .to_string()
                 .contains("arrays containing shared-memory pointers are not supported"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains(&format!(
+                "supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
             "{error}"
         );
     }
