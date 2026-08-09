@@ -719,8 +719,9 @@ pub fn translate_statement(
                         // which use the same helper. The store target of an
                         // assignment is always a mutable place, so the
                         // helper's mutable-address request is correct here.
-                        // `ConstantIndex { from_end: true, .. }` is rejected
-                        // loudly by the walker itself.
+                        // `ConstantIndex { from_end: true, .. }` is accepted
+                        // by the walker only when it follows a fat-slice deref,
+                        // which supplies the runtime length metadata.
                         store_through_place_address(
                             ctx,
                             body,

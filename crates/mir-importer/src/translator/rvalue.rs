@@ -2957,9 +2957,7 @@ fn classify_place_read_strategy(
                             .into();
                         }
                         mir::ProjectionElem::Index(_)
-                        | mir::ProjectionElem::ConstantIndex {
-                            from_end: false, ..
-                        } => {
+                        | mir::ProjectionElem::ConstantIndex { .. } => {
                             current_ptr_ty = dialect_mir::types::MirPtrType::get_generic(
                                 ctx, elem_ty, /* is_mutable */ false,
                             )
@@ -3031,7 +3029,10 @@ fn classify_place_read_strategy(
             }
 
             mir::ProjectionElem::ConstantIndex { from_end, .. } => {
-                if *from_end {
+                // rustc emits from-end ConstantIndex only for runtime-length
+                // slices. Require the immediately preceding fat-slice deref;
+                // arrays never reach stable MIR with `from_end=true`.
+                if *from_end && !entered_as_slice_data {
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
                 let Some((mut pointee_kind, addr_space)) =
@@ -4058,14 +4059,108 @@ fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
         .any(|child| enum_payload_needs_storage_coercion(ctx, child))
 }
 
+/// Extract the runtime element count from a slice-shaped fat value.
+///
+/// CUDA Oxide models slices as `(data_ptr, len)`, with the length in field 1.
+/// The extraction must use the fat value itself: inferring a length from the
+/// data pointer's pointee type is wrong for slices whose elements are arrays.
+fn emit_slice_len_extract(
+    ctx: &mut Context,
+    slice_value: Value,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    let usize_ty = types::get_usize_type(ctx);
+    let op = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+    MirExtractFieldOp::new(op).set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+    match prev_op {
+        Some(prev) => op.insert_after(ctx, prev),
+        None => op.insert_at_front(block_ptr, ctx),
+    }
+    (op.deref(ctx).get_result(0), op)
+}
+
+/// Materialize the zero-based index for
+/// `ConstantIndex { offset, from_end: true }` on a runtime-length slice.
+///
+/// rustc defines the offset as 1-based from the end, so the index is
+/// `slice_len - offset`. The MIR pattern-length test dominates this place,
+/// therefore the subtraction cannot underflow on an executed path.
+fn emit_from_end_slice_index(
+    ctx: &mut Context,
+    slice_len: Value,
+    offset: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Ptr<Operation>)> {
+    let usize_ty = types::get_usize_type(ctx);
+    let usize_handle = usize_ty.to_handle();
+    if slice_len.get_type(ctx) != usize_handle {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "from-end ConstantIndex expected slice length of type {}, got {}",
+                usize_handle.disp(ctx),
+                slice_len.get_type(ctx).disp(ctx)
+            ))
+        );
+    }
+
+    let width = NonZeroUsize::new(
+        usize::try_from(usize_ty.deref(ctx).width()).expect("usize width must fit usize"),
+    )
+    .expect("usize integer width must be non-zero");
+    let offset_attr =
+        pliron::builtin::attributes::IntegerAttr::new(usize_ty, APInt::from_u64(offset, width));
+    let offset_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![usize_handle],
+        vec![],
+        vec![],
+        0,
+    );
+    offset_op.deref_mut(ctx).set_loc(loc.clone());
+    MirConstantOp::new(offset_op).set_attr_value(ctx, offset_attr);
+    match prev_op {
+        Some(prev) => offset_op.insert_after(ctx, prev),
+        None => offset_op.insert_at_front(block_ptr, ctx),
+    }
+    let offset_value = offset_op.deref(ctx).get_result(0);
+
+    let sub_op = Operation::new(
+        ctx,
+        MirSubOp::get_concrete_op_info(),
+        vec![usize_handle],
+        vec![slice_len, offset_value],
+        vec![],
+        0,
+    );
+    sub_op.deref_mut(ctx).set_loc(loc);
+    sub_op.insert_after(ctx, offset_op);
+
+    Ok((sub_op.deref(ctx).get_result(0), sub_op))
+}
+
 /// Compute the in-memory address of `place` starting from its alloca `slot`.
 ///
 /// Walks the projection chain and emits the correct pliron ops for each
 /// element:
 ///
 /// - `Field(idx, _)`   → [`MirFieldAddrOp`]
-/// - `ConstantIndex {offset, from_end: false, ..}` → `MirConstantOp` + [`MirArrayElementAddrOp`]
-///   (array pointee) or `MirConstantOp` + [`MirPtrOffsetOp`] (slice data pointer)
+/// - `ConstantIndex {offset, from_end, ..}` → an element address. Forward
+///   indexes materialize `offset` directly; from-end indexes on slices extract
+///   the fat-pointer length and materialize `len - offset` at runtime.
 /// - `Index(local)`    → `load_local(local)` + [`MirArrayElementAddrOp`]
 ///   (array pointee) or `load_local(local)` + [`MirPtrOffsetOp`] (slice data pointer)
 /// - `Deref`           → `MirLoadOp` of the pointer (the loaded pointer IS
@@ -4083,8 +4178,9 @@ fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
 /// semantic (see [`enum_payload_needs_storage_coercion`]) also punts, so the
 /// caller's value-copy fallback handles the read soundly instead of handing
 /// out an address that cannot honor the storage coercion.
-/// `Subslice` and from-end `ConstantIndex` are NOT handled; the walker punts
-/// on them (returns `Ok(None)`).
+/// `Subslice` is not handled. From-end `ConstantIndex` is accepted only when
+/// the immediately preceding fat-slice deref supplied runtime length metadata;
+/// other bases punt instead of guessing a length.
 ///
 /// Returns `Ok(Some((addr, last_op)))` on success, `Ok(None)` if the
 /// projection chain contains an element this helper doesn't know how to
@@ -4110,6 +4206,7 @@ fn translate_place_addr_from_slot(
     let mut current = slot;
     let mut current_prev_op = prev_op;
     let mut current_is_slice_data = false;
+    let mut current_slice_len: Option<Value> = None;
     // Set by a `Downcast` and consumed by the `Field` that follows it, which
     // is the only projection pair that can name an enum payload.
     let mut pending_variant: Option<usize> = None;
@@ -4122,6 +4219,7 @@ fn translate_place_addr_from_slot(
         // true only when the previous step handed us a slice DATA pointer, and
         // no later projection arm can accidentally leak it forward.
         let entered_as_slice_data = current_is_slice_data;
+        let entered_slice_len = current_slice_len.take();
         current_is_slice_data = false;
 
         // A `Downcast` names a variant only for the `Field` IMMEDIATELY
@@ -4323,12 +4421,25 @@ fn translate_place_addr_from_slot(
                             // type-only check would otherwise mistake the
                             // data pointer for a pointer to one array object
                             // and index inside row 0.
-                            mir::ProjectionElem::Index(_)
-                            | mir::ProjectionElem::ConstantIndex {
-                                from_end: false, ..
-                            } => {
+                            mir::ProjectionElem::Index(_) => {
                                 current = data_ptr;
                                 current_is_slice_data = true;
+                                continue;
+                            }
+                            mir::ProjectionElem::ConstantIndex { from_end, .. } => {
+                                current = data_ptr;
+                                current_is_slice_data = true;
+                                if *from_end {
+                                    let (len, len_op) = emit_slice_len_extract(
+                                        ctx,
+                                        fat_val,
+                                        block_ptr,
+                                        current_prev_op,
+                                        loc.clone(),
+                                    );
+                                    current_prev_op = Some(len_op);
+                                    current_slice_len = Some(len);
+                                }
                                 continue;
                             }
                             // Unknown continuation: keep the conservative
@@ -4481,9 +4592,6 @@ fn translate_place_addr_from_slot(
                 min_length: _,
                 from_end,
             } => {
-                if *from_end {
-                    return Ok(None);
-                }
                 let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
@@ -4492,25 +4600,50 @@ fn translate_place_addr_from_slot(
                     pointee_kind = PointeeKind::Direct;
                 }
 
-                let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
-                let index_apint = APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
-                let const_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, index_apint);
-                let const_op_ptr = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![i64_ty.into()],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                const_op_ptr.deref_mut(ctx).set_loc(loc.clone());
-                MirConstantOp::new(const_op_ptr).set_attr_value(ctx, const_attr);
-                match current_prev_op {
-                    Some(p) => const_op_ptr.insert_after(ctx, p),
-                    None => const_op_ptr.insert_at_front(block_ptr, ctx),
-                }
-                current_prev_op = Some(const_op_ptr);
-                let index_val = const_op_ptr.deref(ctx).get_result(0);
+                let index_val = if *from_end {
+                    // Never derive this from the pointee type. For
+                    // `&[[T; N]]`, the pointee array length N is the row
+                    // width, while this index selects a row from the outer
+                    // runtime-length slice.
+                    if !entered_as_slice_data {
+                        return Ok(None);
+                    }
+                    let Some(slice_len) = entered_slice_len else {
+                        return Ok(None);
+                    };
+                    let (index, sub_op) = emit_from_end_slice_index(
+                        ctx,
+                        slice_len,
+                        *offset,
+                        block_ptr,
+                        current_prev_op,
+                        loc.clone(),
+                    )?;
+                    current_prev_op = Some(sub_op);
+                    index
+                } else {
+                    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+                    let index_apint =
+                        APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+                    let const_attr =
+                        pliron::builtin::attributes::IntegerAttr::new(i64_ty, index_apint);
+                    let const_op_ptr = Operation::new(
+                        ctx,
+                        MirConstantOp::get_concrete_op_info(),
+                        vec![i64_ty.into()],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    const_op_ptr.deref_mut(ctx).set_loc(loc.clone());
+                    MirConstantOp::new(const_op_ptr).set_attr_value(ctx, const_attr);
+                    match current_prev_op {
+                        Some(p) => const_op_ptr.insert_after(ctx, p),
+                        None => const_op_ptr.insert_at_front(block_ptr, ctx),
+                    }
+                    current_prev_op = Some(const_op_ptr);
+                    const_op_ptr.deref(ctx).get_result(0)
+                };
 
                 let (addr_op, next_current) = emit_indexed_element_addr(
                     ctx,
@@ -4580,8 +4713,8 @@ fn translate_place_addr_from_slot(
                 pending_variant = Some(variant_idx.to_index());
             }
 
-            // Remaining projection kinds (Subslice, from-end ConstantIndex,
-            // ...) aren't lowered to addresses here yet. Punt to the caller,
+            // Remaining projection kinds (Subslice, ...) aren't lowered to
+            // addresses here yet. Punt to the caller,
             // which decides between a value fallback (shared borrows) and a
             // hard error (mutable borrows).
             _ => return Ok(None),
