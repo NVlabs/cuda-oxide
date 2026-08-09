@@ -612,6 +612,39 @@ impl<'a> ModuleExportState<'a> {
             self.device_functions.push(fixed_func_name.clone());
         }
 
+        // A kernel receives its parameters in `.param` space, filled by the
+        // host at launch. Shared and local memory are allocated per block and
+        // per thread by the device, so the host has no address in either to
+        // pass. Carrying one of those state spaces into the entry signature
+        // produces a module that ptxas assembles and the driver then refuses,
+        // which takes every other kernel in the module down with it.
+        //
+        // Global and constant are left alone: the host allocates there, so a
+        // pointer parameter in those spaces is something it can supply, and
+        // the codegen tests rely on it. A device function may carry any state
+        // space on its parameters, which is why this is checked for kernels
+        // alone.
+        if is_kernel {
+            for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
+                let arg_ref = arg_ty.deref(self.ctx);
+                let Some(pointer) = arg_ref.downcast_ref::<PointerType>() else {
+                    continue;
+                };
+                let space = match pointer.address_space() {
+                    3 => "shared",
+                    5 => "local",
+                    _ => continue,
+                };
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` parameter {index} is a pointer into {space} \
+                     memory (address space {}); {space} memory is allocated by the device at \
+                     launch, so the host has no address to pass, and the driver refuses a \
+                     module whose entry declares one",
+                    pointer.address_space()
+                ));
+            }
+        }
+
         let ret_ty = func_ty.result_type();
 
         // Check if function has a body
