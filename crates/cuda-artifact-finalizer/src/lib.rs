@@ -10,14 +10,16 @@
 //! build-time materialization and runtime fallback use the same typed target,
 //! FMA, debug, input-order, validation, and provenance rules.
 
+mod diagnostics;
 mod link;
 mod nvvm;
 mod options;
 mod provenance;
 mod validation;
 
+pub use diagnostics::KernelResourceUsage;
 pub use libnvvm_sys::{CudaArch, CudaArchParseError, LibdeviceNotFound, NvvmError, find_libdevice};
-pub use link::LtoLinker;
+pub use link::{LinkReport, LtoLinker};
 pub use nvjitlink_sys::NvJitLinkError;
 pub use nvvm::NvvmCompiler;
 pub use options::{DebugPolicy, FinalizationOptions, FinalizerOutput, NamedInput};
@@ -134,6 +136,24 @@ impl Finalizer {
         )
     }
 
+    /// Compile NVVM IR to cubin and collect ptxas resource diagnostics.
+    pub fn materialize_nvvm_ir_with_report(
+        &self,
+        module_name: &str,
+        nvvm_ir: &[u8],
+        options: &FinalizationOptions,
+    ) -> Result<LinkReport, FinalizerError> {
+        let ltoir = self
+            .compiler
+            .compile_nvvm_ir_to_ltoir(module_name, nvvm_ir, options)?;
+        let ltoir_name = format!("{module_name}.ltoir");
+        self.linker.link_ltoir_with_report(
+            &[NamedInput::new(&ltoir_name, &ltoir)],
+            options,
+            FinalizerOutput::Cubin,
+        )
+    }
+
     /// Link ordered LTOIR modules to cubin or PTX.
     pub fn link_ltoir(
         &self,
@@ -142,6 +162,16 @@ impl Finalizer {
         output: FinalizerOutput,
     ) -> Result<Vec<u8>, FinalizerError> {
         self.linker.link_ltoir(inputs, options, output)
+    }
+
+    /// Link ordered LTOIR modules while collecting ptxas resource diagnostics.
+    pub fn link_ltoir_with_report(
+        &self,
+        inputs: &[NamedInput<'_>],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<LinkReport, FinalizerError> {
+        self.linker.link_ltoir_with_report(inputs, options, output)
     }
 
     /// Compiler component, including exact libdevice bytes and provenance.

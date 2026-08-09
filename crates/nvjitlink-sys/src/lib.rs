@@ -327,6 +327,18 @@ impl LibNvJitLink {
 // Linker (RAII)
 // ============================================================================
 
+/// Linked image plus nvJitLink's best-effort informational log.
+///
+/// The log is populated when the selected nvJitLink options request
+/// informational output, for example `-verbose` or `-Xptxas=-v`.
+#[derive(Debug)]
+pub struct LinkOutput {
+    /// Complete cubin or PTX bytes returned by nvJitLink.
+    pub image: Vec<u8>,
+    /// Informational messages emitted by nvJitLink and its compiler stages.
+    pub info_log: Option<String>,
+}
+
 /// RAII wrapper around an `nvJitLinkHandle`.
 ///
 /// Typical usage:
@@ -423,6 +435,15 @@ impl<'a> Linker<'a> {
     /// If `CUDA_OXIDE_VERBOSE` is set in the environment, the nvJitLink
     /// info log (timings, sm_XY chosen, etc.) is forwarded to `stderr`.
     pub fn finish(self) -> Result<Vec<u8>, NvJitLinkError> {
+        Ok(self.finish_with_info_log()?.image)
+    }
+
+    /// Drive the link and return the cubin together with the nvJitLink info log.
+    ///
+    /// Unlike [`Self::finish`], this preserves informational compiler output for
+    /// callers that need structured post-link diagnostics. The raw log remains
+    /// best-effort: nvJitLink is allowed to produce no informational messages.
+    pub fn finish_with_info_log(self) -> Result<LinkOutput, NvJitLinkError> {
         let r = unsafe { (self.nvj.complete)(self.handle) };
         check(self.nvj, &self, r, "nvJitLinkComplete")?;
 
@@ -430,19 +451,19 @@ impl<'a> Linker<'a> {
         let r = unsafe { (self.nvj.get_linked_cubin_size)(self.handle, &mut size) };
         check(self.nvj, &self, r, "nvJitLinkGetLinkedCubinSize")?;
 
-        let mut buf = vec![0u8; size];
+        let mut image = vec![0u8; size];
         let r =
-            unsafe { (self.nvj.get_linked_cubin)(self.handle, buf.as_mut_ptr() as *mut c_void) };
+            unsafe { (self.nvj.get_linked_cubin)(self.handle, image.as_mut_ptr() as *mut c_void) };
         check(self.nvj, &self, r, "nvJitLinkGetLinkedCubin")?;
 
-        // Forward the info log if anyone is listening (helpful with `-verbose`).
-        if let Some(info) = self.try_info_log()
+        let info_log = self.try_info_log();
+        if let Some(info) = info_log.as_deref()
             && std::env::var_os("CUDA_OXIDE_VERBOSE").is_some()
         {
             eprintln!("--- nvJitLink info log ---\n{info}");
         }
 
-        Ok(buf)
+        Ok(LinkOutput { image, info_log })
     }
 
     /// Drive the link and return linked PTX text.
@@ -455,6 +476,11 @@ impl<'a> Linker<'a> {
     /// The PTX functions are optional so older nvJitLink versions can still
     /// produce cubins.
     pub fn finish_ptx(self) -> Result<Vec<u8>, NvJitLinkError> {
+        Ok(self.finish_ptx_with_info_log()?.image)
+    }
+
+    /// Drive the link and return linked PTX together with the nvJitLink info log.
+    pub fn finish_ptx_with_info_log(self) -> Result<LinkOutput, NvJitLinkError> {
         let get_size = self
             .nvj
             .get_linked_ptx_size
@@ -471,17 +497,18 @@ impl<'a> Linker<'a> {
         let r = unsafe { get_size(self.handle, &mut size) };
         check(self.nvj, &self, r, "nvJitLinkGetLinkedPtxSize")?;
 
-        let mut buf = vec![0u8; size];
-        let r = unsafe { get(self.handle, buf.as_mut_ptr() as *mut c_char) };
+        let mut image = vec![0u8; size];
+        let r = unsafe { get(self.handle, image.as_mut_ptr() as *mut c_char) };
         check(self.nvj, &self, r, "nvJitLinkGetLinkedPtx")?;
 
-        if let Some(info) = self.try_info_log()
+        let info_log = self.try_info_log();
+        if let Some(info) = info_log.as_deref()
             && std::env::var_os("CUDA_OXIDE_VERBOSE").is_some()
         {
             eprintln!("--- nvJitLink info log ---\n{info}");
         }
 
-        Ok(buf)
+        Ok(LinkOutput { image, info_log })
     }
 
     /// Best-effort retrieval of the error log.

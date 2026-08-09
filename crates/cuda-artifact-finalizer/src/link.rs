@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use crate::diagnostics::{KernelResourceUsage, parse_ptxas_resource_usage};
 use crate::nvvm::{loaded_tool_digest, report_changed_tool};
 use crate::options::{FinalizationOptions, FinalizerOutput, NamedInput};
 use crate::provenance::{
@@ -11,7 +12,7 @@ use crate::provenance::{
 };
 use crate::validation::is_valid_cubin;
 use crate::{FinalizerError, validate_name};
-use nvjitlink_sys::{InputType, LibNvJitLink, Linker};
+use nvjitlink_sys::{InputType, LibNvJitLink, LinkOutput, Linker};
 use std::sync::{Arc, Mutex, OnceLock};
 
 struct LoadedLinkerTool {
@@ -21,6 +22,17 @@ struct LoadedLinkerTool {
 
 static LINKER_TOOL: OnceLock<Arc<LoadedLinkerTool>> = OnceLock::new();
 static LINKER_TOOL_LOAD: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Final linker output plus resource diagnostics collected from ptxas.
+#[derive(Debug)]
+pub struct LinkReport {
+    /// Complete cubin or PTX image.
+    pub image: Vec<u8>,
+    /// Raw nvJitLink informational output, when available.
+    pub info_log: Option<String>,
+    /// Per-kernel ptxas resource usage parsed from the informational output.
+    pub resource_usage: Vec<KernelResourceUsage>,
+}
 
 /// Driver-independent ordered LTOIR linker.
 #[derive(Clone)]
@@ -60,13 +72,39 @@ impl LtoLinker {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Result<Vec<u8>, FinalizerError> {
+        Ok(self.link_ltoir_impl(inputs, options, output, false)?.image)
+    }
+
+    /// Link LTOIR while collecting non-semantic ptxas resource diagnostics.
+    ///
+    /// For cubin output this requests nvJitLink verbose output and `ptxas -v`.
+    /// Those reporting flags are intentionally excluded from artifact digests.
+    pub fn link_ltoir_with_report(
+        &self,
+        inputs: &[NamedInput<'_>],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<LinkReport, FinalizerError> {
+        self.link_ltoir_impl(inputs, options, output, true)
+    }
+
+    fn link_ltoir_impl(
+        &self,
+        inputs: &[NamedInput<'_>],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+        collect_resource_usage: bool,
+    ) -> Result<LinkReport, FinalizerError> {
         validate_inputs(inputs)?;
         with_revalidated_tool_identity(
             "nvJitLink",
             self.tool.digest,
             || current_linker_tool_digest(&self.tool),
             || {
-                let option_storage = options.nvjitlink_options(output);
+                let mut option_storage = options.nvjitlink_options(output);
+                if collect_resource_usage {
+                    option_storage.extend(options.nvjitlink_diagnostic_options(output));
+                }
                 let option_refs = option_storage
                     .iter()
                     .map(String::as_str)
@@ -75,9 +113,10 @@ impl LtoLinker {
                 for input in inputs {
                     linker.add(InputType::Ltoir, input.bytes, input.name)?;
                 }
-                let image = match output {
-                    FinalizerOutput::Cubin => linker.finish()?,
-                    FinalizerOutput::Ptx => linker.finish_ptx()?,
+
+                let LinkOutput { image, info_log } = match output {
+                    FinalizerOutput::Cubin => linker.finish_with_info_log()?,
+                    FinalizerOutput::Ptx => linker.finish_ptx_with_info_log()?,
                 };
                 if output == FinalizerOutput::Cubin && !is_valid_cubin(&image) {
                     return Err(FinalizerError::InvalidCubin);
@@ -85,7 +124,20 @@ impl LtoLinker {
                 if output == FinalizerOutput::Ptx && image.is_empty() {
                     return Err(FinalizerError::EmptyPtx);
                 }
-                Ok(image)
+
+                let resource_usage = if collect_resource_usage {
+                    info_log
+                        .as_deref()
+                        .map(parse_ptxas_resource_usage)
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                Ok(LinkReport {
+                    image,
+                    info_log,
+                    resource_usage,
+                })
             },
         )
     }
