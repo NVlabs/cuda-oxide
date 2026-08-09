@@ -3068,8 +3068,53 @@ fn classify_place_read_strategy(
                 );
             }
 
-            // Enum payload addressing and subslices are value projections, not
-            // final load addresses.
+            mir::ProjectionElem::Subslice { from, to, from_end } => {
+                // PlaceElem::Subslice uses from_end=false for arrays and
+                // from_end=true for slices. A slice subslice is unsized and
+                // therefore is not a final load address; references/raw
+                // pointers to it are handled by the address walker directly.
+                if *from_end {
+                    return Ok(PlaceReadStrategy::ValueFallback);
+                }
+
+                let (element_ty, array_len, addr_space) = {
+                    let ptr_ty = current_ptr_ty.deref(ctx);
+                    let Some(ptr_ty) = ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>()
+                    else {
+                        return Ok(PlaceReadStrategy::ValueFallback);
+                    };
+                    let array_ty = ptr_ty.pointee.deref(ctx);
+                    let Some(array_ty) =
+                        array_ty.downcast_ref::<dialect_mir::types::MirArrayType>()
+                    else {
+                        return Ok(PlaceReadStrategy::ValueFallback);
+                    };
+                    (
+                        array_ty.element_type(),
+                        array_ty.size(),
+                        ptr_ty.address_space,
+                    )
+                };
+                let Some(projected_len) = to.checked_sub(*from) else {
+                    return Ok(PlaceReadStrategy::ValueFallback);
+                };
+                if *to > array_len {
+                    return Ok(PlaceReadStrategy::ValueFallback);
+                }
+
+                let projected_array_ty: TypeHandle =
+                    dialect_mir::types::MirArrayType::get(ctx, element_ty, projected_len).into();
+                current_ptr_ty = dialect_mir::types::MirPtrType::get(
+                    ctx,
+                    projected_array_ty,
+                    /* is_mutable */ false,
+                    addr_space,
+                )
+                .into();
+            }
+
+            // Enum payload addressing is a value projection, not a final load
+            // address. Other unknown projections stay on the conservative path.
             mir::ProjectionElem::Downcast(_) => return Ok(PlaceReadStrategy::ValueFallback),
             _ => return Ok(PlaceReadStrategy::ValueFallback),
         }
@@ -4075,6 +4120,319 @@ fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
         .any(|child| enum_payload_needs_storage_coercion(ctx, child))
 }
 
+/// Emit a `usize` constant and insert it after `prev_op`.
+fn emit_usize_constant(
+    ctx: &mut Context,
+    value: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    use pliron::builtin::attributes::IntegerAttr;
+
+    let usize_ty = types::get_usize_type(ctx);
+    let attr = IntegerAttr::new(
+        IntegerType::get(ctx, 64, Signedness::Unsigned),
+        APInt::from_u64(value, NonZeroUsize::new(64).unwrap()),
+    );
+    let op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+    MirConstantOp::new(op).set_attr_value(ctx, attr);
+    match prev_op {
+        Some(prev) => op.insert_after(ctx, prev),
+        None => op.insert_at_front(block_ptr, ctx),
+    }
+    (op.deref(ctx).get_result(0), op)
+}
+
+/// Compute the address of a sized array subslice.
+///
+/// For `Subslice { from, to, from_end: false }`, rustc codegen takes the
+/// address of element `from` and re-types that address as `[T; to - from]`.
+#[allow(clippy::too_many_arguments)]
+fn emit_array_subslice_address(
+    ctx: &mut Context,
+    array_ptr: Value,
+    from: u64,
+    to: u64,
+    is_mutable: bool,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Ptr<Operation>)> {
+    use dialect_mir::ops::MirArrayElementAddrOp;
+
+    let (element_ty, array_len, addr_space) = {
+        let ptr_ty = array_ptr.get_type(ctx);
+        let ptr_ty = ptr_ty.deref(ctx);
+        let Some(ptr_ty) = ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>() else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported("Subslice base is not a pointer".to_string())
+            );
+        };
+        let array_ty = ptr_ty.pointee.deref(ctx);
+        let Some(array_ty) = array_ty.downcast_ref::<dialect_mir::types::MirArrayType>() else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "array Subslice base pointer does not point to MirArrayType".to_string()
+                )
+            );
+        };
+        (
+            array_ty.element_type(),
+            array_ty.size(),
+            ptr_ty.address_space,
+        )
+    };
+
+    let Some(projected_len) = to.checked_sub(from) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "array Subslice has inverted bounds: from={from}, to={to}"
+            ))
+        );
+    };
+    if to > array_len {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "array Subslice end {to} exceeds array length {array_len}"
+            ))
+        );
+    }
+
+    let (from_value, from_op) = emit_usize_constant(ctx, from, block_ptr, prev_op, loc.clone());
+    let elem_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into();
+    let addr_op = Operation::new(
+        ctx,
+        MirArrayElementAddrOp::get_concrete_op_info(),
+        vec![elem_ptr_ty],
+        vec![array_ptr, from_value],
+        vec![],
+        0,
+    );
+    addr_op.deref_mut(ctx).set_loc(loc.clone());
+    addr_op.insert_after(ctx, from_op);
+    let elem_ptr = addr_op.deref(ctx).get_result(0);
+
+    let projected_array_ty: TypeHandle =
+        dialect_mir::types::MirArrayType::get(ctx, element_ty, projected_len).into();
+    let projected_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get(ctx, projected_array_ty, is_mutable, addr_space).into();
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![projected_ptr_ty],
+        vec![elem_ptr],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    cast_op.insert_after(ctx, addr_op);
+
+    Ok((cast_op.deref(ctx).get_result(0), cast_op))
+}
+
+/// Build the fat value for a slice subslice from the original fat slice.
+///
+/// rustc's semantics for `from_end=true` are
+/// `slice[from..slice.len() - to]`: advance the data pointer by `from` and
+/// replace the metadata with `len - (from + to)`.
+#[allow(clippy::too_many_arguments)]
+fn emit_slice_subslice_value(
+    ctx: &mut Context,
+    slice_value: Value,
+    element_ty: TypeHandle,
+    is_mutable: bool,
+    from: u64,
+    to: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Ptr<Operation>)> {
+    use dialect_mir::ops::MirConstructSliceOp;
+
+    let Some(trim) = from.checked_add(to) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported("Subslice bounds overflow usize metadata".to_string())
+        );
+    };
+
+    let data_ptr_ty: TypeHandle =
+        dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, is_mutable).into();
+    let extract_ptr = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![data_ptr_ty],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    extract_ptr.deref_mut(ctx).set_loc(loc.clone());
+    MirExtractFieldOp::new(extract_ptr)
+        .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(0));
+    match prev_op {
+        Some(prev) => extract_ptr.insert_after(ctx, prev),
+        None => extract_ptr.insert_at_front(block_ptr, ctx),
+    }
+    let data_ptr = extract_ptr.deref(ctx).get_result(0);
+
+    let usize_ty = types::get_usize_type(ctx);
+    let extract_len = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    extract_len.deref_mut(ctx).set_loc(loc.clone());
+    MirExtractFieldOp::new(extract_len)
+        .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+    extract_len.insert_after(ctx, extract_ptr);
+    let len = extract_len.deref(ctx).get_result(0);
+
+    let (from_value, from_op) =
+        emit_usize_constant(ctx, from, block_ptr, Some(extract_len), loc.clone());
+    let offset_op = Operation::new(
+        ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![data_ptr_ty],
+        vec![data_ptr, from_value],
+        vec![],
+        0,
+    );
+    offset_op.deref_mut(ctx).set_loc(loc.clone());
+    offset_op.insert_after(ctx, from_op);
+    let new_data = offset_op.deref(ctx).get_result(0);
+
+    let (trim_value, trim_op) =
+        emit_usize_constant(ctx, trim, block_ptr, Some(offset_op), loc.clone());
+    let sub_op = Operation::new(
+        ctx,
+        MirSubOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![len, trim_value],
+        vec![],
+        0,
+    );
+    sub_op.deref_mut(ctx).set_loc(loc.clone());
+    sub_op.insert_after(ctx, trim_op);
+    let new_len = sub_op.deref(ctx).get_result(0);
+
+    let slice_ty = dialect_mir::types::MirSliceType::get(ctx, element_ty);
+    let construct = Operation::new(
+        ctx,
+        MirConstructSliceOp::get_concrete_op_info(),
+        vec![slice_ty.into()],
+        vec![new_data, new_len],
+        vec![],
+        0,
+    );
+    construct.deref_mut(ctx).set_loc(loc);
+    construct.insert_after(ctx, sub_op);
+
+    Ok((construct.deref(ctx).get_result(0), construct))
+}
+
+/// Materialize a sized array subslice from an SSA array value.
+fn emit_array_subslice_value(
+    ctx: &mut Context,
+    array_value: Value,
+    from: u64,
+    to: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let (element_ty, array_len) = {
+        let array_ty = array_value.get_type(ctx);
+        let array_ty = array_ty.deref(ctx);
+        let Some(array_ty) = array_ty.downcast_ref::<dialect_mir::types::MirArrayType>() else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported("Subslice value base is not MirArrayType".to_string())
+            );
+        };
+        (array_ty.element_type(), array_ty.size())
+    };
+
+    let Some(projected_len) = to.checked_sub(from) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "array Subslice has inverted bounds: from={from}, to={to}"
+            ))
+        );
+    };
+    if to > array_len {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "array Subslice end {to} exceeds array length {array_len}"
+            ))
+        );
+    }
+
+    let mut elements = Vec::with_capacity(projected_len as usize);
+    let mut current_prev = prev_op;
+    for index in from..to {
+        let field_index = u32::try_from(index).map_err(|_| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "array Subslice index {index} exceeds dialect field-index range"
+            )))
+        })?;
+        let extract = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![element_ty],
+            vec![array_value],
+            vec![],
+            0,
+        );
+        extract.deref_mut(ctx).set_loc(loc.clone());
+        MirExtractFieldOp::new(extract)
+            .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(field_index));
+        match current_prev {
+            Some(prev) => extract.insert_after(ctx, prev),
+            None => extract.insert_at_front(block_ptr, ctx),
+        }
+        elements.push(extract.deref(ctx).get_result(0));
+        current_prev = Some(extract);
+    }
+
+    let projected_array_ty: TypeHandle =
+        dialect_mir::types::MirArrayType::get(ctx, element_ty, projected_len).into();
+    let construct = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![projected_array_ty],
+        elements,
+        vec![],
+        0,
+    );
+    construct.deref_mut(ctx).set_loc(loc);
+    match current_prev {
+        Some(prev) => construct.insert_after(ctx, prev),
+        None => construct.insert_at_front(block_ptr, ctx),
+    }
+
+    Ok((construct.deref(ctx).get_result(0), Some(construct)))
+}
+
 /// Compute the in-memory address of `place` starting from its alloca `slot`.
 ///
 /// Walks the projection chain and emits the correct pliron ops for each
@@ -4100,8 +4458,11 @@ fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
 /// semantic (see [`enum_payload_needs_storage_coercion`]) also punts, so the
 /// caller's value-copy fallback handles the read soundly instead of handing
 /// out an address that cannot honor the storage coercion.
-/// `Subslice` and from-end `ConstantIndex` are NOT handled; the walker punts
-/// on them (returns `Ok(None)`).
+/// `Subslice` is handled for both sized arrays and slice fat pointers. Array
+/// subslices keep an in-memory address; slice subslices advance the data
+/// pointer and rebuild metadata as `len - (from + to)`, and can continue into
+/// element Index/ConstantIndex projections. From-end `ConstantIndex` remains
+/// unsupported.
 ///
 /// Returns `Ok(Some((addr, last_op)))` on success, `Ok(None)` if the
 /// projection chain contains an element this helper doesn't know how to
@@ -4127,6 +4488,11 @@ fn translate_place_addr_from_slot(
     let mut current = slot;
     let mut current_prev_op = prev_op;
     let mut current_is_slice_data = false;
+    // A fat-slice Deref may lower the immediately following Subslice while its
+    // length metadata is still available. The next loop iteration then skips
+    // that already-consumed projection and preserves slice-data provenance for
+    // a following Index/ConstantIndex.
+    let mut consumed_slice_subslice = false;
     // Set by a `Downcast` and consumed by the `Field` that follows it, which
     // is the only projection pair that can name an enum payload.
     let mut pending_variant: Option<usize> = None;
@@ -4224,6 +4590,66 @@ fn translate_place_addr_from_slot(
                             None => fat_load.insert_at_front(block_ptr, ctx),
                         }
                         let fat_val = fat_load.deref(ctx).get_result(0);
+
+                        if let mir::ProjectionElem::Subslice { from, to, from_end } =
+                            &projection[proj_idx + 1]
+                        {
+                            // Slice Subslice needs both halves of the fat value,
+                            // so lower it here before Deref would discard length
+                            // metadata. Optimized MIR can continue with an
+                            // Index/ConstantIndex, e.g. `(*s)[1:-1][0 of 1]`.
+                            if !*from_end {
+                                return Ok(None);
+                            }
+                            let (subslice, last_op) = emit_slice_subslice_value(
+                                ctx,
+                                fat_val,
+                                elem_ty,
+                                is_mutable,
+                                *from,
+                                *to,
+                                block_ptr,
+                                Some(fat_load),
+                                loc.clone(),
+                            )?;
+
+                            if proj_idx + 2 == projection.len() {
+                                return Ok(Some((subslice, Some(last_op))));
+                            }
+
+                            match &projection[proj_idx + 2] {
+                                mir::ProjectionElem::Index(_)
+                                | mir::ProjectionElem::ConstantIndex {
+                                    from_end: false, ..
+                                } => {
+                                    let data_ptr_ty: TypeHandle =
+                                        dialect_mir::types::MirPtrType::get_generic(
+                                            ctx, elem_ty, is_mutable,
+                                        )
+                                        .into();
+                                    let extract_ptr = Operation::new(
+                                        ctx,
+                                        MirExtractFieldOp::get_concrete_op_info(),
+                                        vec![data_ptr_ty],
+                                        vec![subslice],
+                                        vec![],
+                                        0,
+                                    );
+                                    extract_ptr.deref_mut(ctx).set_loc(loc.clone());
+                                    MirExtractFieldOp::new(extract_ptr).set_attr_index(
+                                        ctx,
+                                        dialect_mir::attributes::FieldIndexAttr(0),
+                                    );
+                                    extract_ptr.insert_after(ctx, last_op);
+                                    current = extract_ptr.deref(ctx).get_result(0);
+                                    current_prev_op = Some(extract_ptr);
+                                    current_is_slice_data = true;
+                                    consumed_slice_subslice = true;
+                                    continue;
+                                }
+                                _ => return Ok(None),
+                            }
+                        }
 
                         // Extract the data pointer (field 0 of the pair).
                         // Its pointee is the slice's element type: the
@@ -4587,6 +5013,31 @@ fn translate_place_addr_from_slot(
                 current_prev_op = Some(addr_op);
             }
 
+            mir::ProjectionElem::Subslice { from, to, from_end } => {
+                if *from_end && consumed_slice_subslice {
+                    consumed_slice_subslice = false;
+                    current_is_slice_data = true;
+                    continue;
+                }
+                // A slice Subslice must be lowered while the fat-pointer
+                // metadata is available in the preceding Deref arm.
+                if *from_end {
+                    return Ok(None);
+                }
+                let (subslice_ptr, last_op) = emit_array_subslice_address(
+                    ctx,
+                    current,
+                    *from,
+                    *to,
+                    is_mutable,
+                    block_ptr,
+                    current_prev_op,
+                    loc.clone(),
+                )?;
+                current = subslice_ptr;
+                current_prev_op = Some(last_op);
+            }
+
             // Enum-variant downcast (`(x as Variant).field`). The downcast
             // itself moves no address: a payload shares the enum's storage, so
             // the variant only decides which field the next `Field` names.
@@ -4597,8 +5048,8 @@ fn translate_place_addr_from_slot(
                 pending_variant = Some(variant_idx.to_index());
             }
 
-            // Remaining projection kinds (Subslice, from-end ConstantIndex,
-            // ...) aren't lowered to addresses here yet. Punt to the caller,
+            // Remaining projection kinds (notably from-end ConstantIndex)
+            // aren't lowered to addresses here yet. Punt to the caller,
             // which decides between a value fallback (shared borrows) and a
             // hard error (mutable borrows).
             _ => return Ok(None),
@@ -4992,17 +5443,46 @@ pub fn translate_place_iterative(
     // Type inferred from ProjectionElem::Downcast pattern
     let mut pending_downcast = None;
 
+    // When Deref of a slice is immediately followed by Subslice, keep the fat
+    // value intact for one iteration so Subslice can update both data and len.
+    // The ordinary Deref helper intentionally drops len and returns only the
+    // data pointer because Index/ConstantIndex do not need metadata.
+    let mut preserved_slice_deref_mutability: Option<bool> = None;
+
     // Process each projection element iteratively
-    for projection in &place.projection {
+    for (proj_idx, projection) in place.projection.iter().enumerate() {
         match projection {
             ProjectionElem::Deref => {
-                (current_value, current_prev_op) = apply_deref_projection(
-                    ctx,
-                    current_value,
-                    block_ptr,
-                    current_prev_op,
-                    loc.clone(),
-                )?;
+                let next_is_slice_subslice = matches!(
+                    place.projection.get(proj_idx + 1),
+                    Some(ProjectionElem::Subslice { from_end: true, .. })
+                );
+                let current_is_fat_slice = current_value
+                    .get_type(ctx)
+                    .deref(ctx)
+                    .is::<dialect_mir::types::MirSliceType>();
+                let slice_deref_mutability =
+                    get_static_pointer_info(&current_rust_ty).and_then(|(pointee, is_mutable)| {
+                        rust_ty_is_slice(&pointee).then_some(is_mutable)
+                    });
+
+                if next_is_slice_subslice
+                    && current_is_fat_slice
+                    && slice_deref_mutability.is_some()
+                {
+                    // Preserve the fat pair. The following Subslice consumes
+                    // both data and len and advances `current_rust_ty` normally.
+                    preserved_slice_deref_mutability = slice_deref_mutability;
+                } else {
+                    (current_value, current_prev_op) = apply_deref_projection(
+                        ctx,
+                        current_value,
+                        block_ptr,
+                        current_prev_op,
+                        loc.clone(),
+                    )?;
+                    preserved_slice_deref_mutability = None;
+                }
                 pending_downcast = None;
             }
 
@@ -5353,6 +5833,93 @@ pub fn translate_place_iterative(
                             ))
                         );
                     }
+                }
+                pending_downcast = None;
+            }
+
+            ProjectionElem::Subslice { from, to, from_end } => {
+                if *from_end {
+                    let Some(is_mutable) = preserved_slice_deref_mutability.take() else {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(
+                                "slice Subslice reached iterative lowering without preserved fat-pointer metadata"
+                                    .to_string()
+                            )
+                        );
+                    };
+                    let element_ty = {
+                        let current_ty = current_value.get_type(ctx);
+                        let current_ty = current_ty.deref(ctx);
+                        let Some(slice_ty) =
+                            current_ty.downcast_ref::<dialect_mir::types::MirSliceType>()
+                        else {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(
+                                    "slice Subslice preserved value is not MirSliceType"
+                                        .to_string()
+                                )
+                            );
+                        };
+                        slice_ty.element_type()
+                    };
+
+                    let (subslice, last_op) = emit_slice_subslice_value(
+                        ctx,
+                        current_value,
+                        element_ty,
+                        is_mutable,
+                        *from,
+                        *to,
+                        block_ptr,
+                        current_prev_op,
+                        loc.clone(),
+                    )?;
+                    current_value = subslice;
+                    current_prev_op = Some(last_op);
+
+                    // A subsequent element projection needs only the adjusted
+                    // data pointer. Keep a terminal Subslice as a fat value so
+                    // PtrMetadata/borrow users can observe the rebuilt length.
+                    if matches!(
+                        place.projection.get(proj_idx + 1),
+                        Some(ProjectionElem::Index(_))
+                            | Some(ProjectionElem::ConstantIndex {
+                                from_end: false,
+                                ..
+                            })
+                    ) {
+                        let data_ptr_ty: TypeHandle = dialect_mir::types::MirPtrType::get_generic(
+                            ctx, element_ty, is_mutable,
+                        )
+                        .into();
+                        let extract_ptr = Operation::new(
+                            ctx,
+                            MirExtractFieldOp::get_concrete_op_info(),
+                            vec![data_ptr_ty],
+                            vec![current_value],
+                            vec![],
+                            0,
+                        );
+                        extract_ptr.deref_mut(ctx).set_loc(loc.clone());
+                        MirExtractFieldOp::new(extract_ptr)
+                            .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(0));
+                        extract_ptr.insert_after(ctx, last_op);
+                        current_value = extract_ptr.deref(ctx).get_result(0);
+                        current_prev_op = Some(extract_ptr);
+                    }
+                } else {
+                    (current_value, current_prev_op) = emit_array_subslice_value(
+                        ctx,
+                        current_value,
+                        *from,
+                        *to,
+                        block_ptr,
+                        current_prev_op,
+                        loc.clone(),
+                    )?;
+                    preserved_slice_deref_mutability = None;
                 }
                 pending_downcast = None;
             }
