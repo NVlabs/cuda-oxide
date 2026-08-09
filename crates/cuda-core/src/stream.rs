@@ -80,6 +80,23 @@ impl CudaStream {
         &self.ctx
     }
 
+    /// Returns the priority this stream actually runs at.
+    ///
+    /// Wraps `cuStreamGetPriority`. This is the value to read after
+    /// [`CudaContext::new_stream_with_priority`](crate::context::CudaContext::new_stream_with_priority),
+    /// which clamps an out-of-range request to the device's range without
+    /// reporting it. Lower numbers are higher priorities. The default stream
+    /// and any stream from [`CudaContext::new_stream`](crate::context::CudaContext::new_stream)
+    /// report `0`.
+    pub fn priority(&self) -> Result<i32, DriverError> {
+        self.ctx.bind_to_thread()?;
+        let mut priority = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuStreamGetPriority(self.cu_stream, priority.as_mut_ptr()).result()?;
+            Ok(priority.assume_init())
+        }
+    }
+
     /// Blocks the calling thread until all work enqueued on this stream
     /// completes.
     pub fn synchronize(&self) -> Result<(), DriverError> {

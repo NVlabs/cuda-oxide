@@ -88,6 +88,66 @@ impl PartialEq for CudaContext {
 }
 impl Eq for CudaContext {}
 
+/// The device's meaningful stream priorities, from
+/// [`CudaContext::stream_priority_range`].
+///
+/// CUDA orders priorities the opposite way round to intuition: **a lower
+/// number is a higher priority**, so the range runs from
+/// [`greatest`](Self::greatest) up to [`least`](Self::least) and
+/// `greatest <= least` always holds.
+///
+/// A priority outside the range is not refused when a stream is created. The
+/// driver clamps it to the nearest end and reports nothing, so a caller that
+/// wants to know what it will get should ask [`clamp`](Self::clamp) rather
+/// than assume the request survived.
+///
+/// A device without priority support reports `0` for both ends, which
+/// [`is_supported`](Self::is_supported) reads as unsupported. Creating a
+/// stream still succeeds there; every priority simply collapses to the same
+/// one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamPriorityRange {
+    /// Numerically largest value, the *lowest* priority.
+    least: i32,
+    /// Numerically smallest value, the *highest* priority.
+    greatest: i32,
+}
+
+impl StreamPriorityRange {
+    /// The lowest priority, which is the numerically largest value.
+    pub fn least(&self) -> i32 {
+        self.least
+    }
+
+    /// The highest priority, which is the numerically smallest value.
+    pub fn greatest(&self) -> i32 {
+        self.greatest
+    }
+
+    /// Whether this device implements stream priorities at all.
+    ///
+    /// False when the driver reports `0` for both ends, which is how
+    /// `cuCtxGetStreamPriorityRange` answers on a device without support.
+    /// A device with support always reports a range wider than one value.
+    pub fn is_supported(&self) -> bool {
+        self.least != self.greatest
+    }
+
+    /// Whether `priority` lies inside the range, and so survives stream
+    /// creation unchanged.
+    pub fn contains(&self, priority: i32) -> bool {
+        (self.greatest..=self.least).contains(&priority)
+    }
+
+    /// The value the driver will actually apply for a request of `priority`.
+    ///
+    /// Answers the silent clamp in
+    /// [`CudaContext::new_stream_with_priority`] ahead of the call.
+    pub fn clamp(&self, priority: i32) -> i32 {
+        priority.clamp(self.greatest, self.least)
+    }
+}
+
 /// Context scheduling policy (`CU_CTX_SCHED_*`), governing how the driver
 /// waits when the calling host thread blocks on GPU work (a stream or
 /// context synchronize).
@@ -260,17 +320,58 @@ impl CudaContext {
     /// context is synchronized to establish a clean ordering baseline if
     /// `event_tracking` is enabled.
     pub fn new_stream(self: &Arc<Self>) -> Result<Arc<CudaStream>, DriverError> {
+        self.create_stream(None)
+    }
+
+    /// Creates a new non-blocking stream at `priority` in this context.
+    ///
+    /// As [`new_stream`](Self::new_stream), with the stream created through
+    /// `cuStreamCreateWithPriority`.
+    ///
+    /// **Lower numbers are higher priorities**, and a value outside the
+    /// device's range is **clamped silently** to the nearest end of it rather
+    /// than refused, so passing [`i32::MIN`] yields the greatest priority the
+    /// device supports and reports nothing. Read
+    /// [`CudaStream::priority`] back to see what the driver applied, or
+    /// consult [`stream_priority_range`](Self::stream_priority_range) first.
+    ///
+    /// Priority orders **compute kernels only**. Host-to-device and
+    /// device-to-host transfers are unaffected, so a high-priority stream does
+    /// not jump a queue of copies. On a device without priority support every
+    /// priority collapses to the single value 0 and the stream still works.
+    pub fn new_stream_with_priority(
+        self: &Arc<Self>,
+        priority: i32,
+    ) -> Result<Arc<CudaStream>, DriverError> {
+        self.create_stream(Some(priority))
+    }
+
+    /// Shared body of [`new_stream`](Self::new_stream) and
+    /// [`new_stream_with_priority`](Self::new_stream_with_priority).
+    ///
+    /// `None` takes `cuStreamCreate`, which is what the driver documents as
+    /// equivalent to a priority of 0, rather than passing 0 explicitly: on a
+    /// device whose range does not contain 0 those are different requests.
+    fn create_stream(
+        self: &Arc<Self>,
+        priority: Option<i32>,
+    ) -> Result<Arc<CudaStream>, DriverError> {
         self.bind_to_thread()?;
         let prev = self.num_streams.fetch_add(1, Ordering::Relaxed);
         if prev == 0 && self.event_tracking.load(Ordering::Relaxed) {
             self.synchronize()?;
         }
+        let flags = cuda_bindings::CUstream_flags_enum_CU_STREAM_NON_BLOCKING;
         let mut cu_stream = MaybeUninit::uninit();
         let cu_stream = unsafe {
-            cuda_bindings::cuStreamCreate(
-                cu_stream.as_mut_ptr(),
-                cuda_bindings::CUstream_flags_enum_CU_STREAM_NON_BLOCKING,
-            )
+            match priority {
+                Some(priority) => cuda_bindings::cuStreamCreateWithPriority(
+                    cu_stream.as_mut_ptr(),
+                    flags,
+                    priority,
+                ),
+                None => cuda_bindings::cuStreamCreate(cu_stream.as_mut_ptr(), flags),
+            }
             .result()?;
             cu_stream.assume_init()
         };
@@ -278,6 +379,25 @@ impl CudaContext {
             cu_stream,
             ctx: self.clone(),
         }))
+    }
+
+    /// Returns the device's meaningful stream priority range.
+    ///
+    /// Wraps `cuCtxGetStreamPriorityRange`. See [`StreamPriorityRange`] for
+    /// the ordering convention and for what a device without priority support
+    /// reports.
+    pub fn stream_priority_range(&self) -> Result<StreamPriorityRange, DriverError> {
+        self.bind_to_thread()?;
+        let mut least = MaybeUninit::uninit();
+        let mut greatest = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuCtxGetStreamPriorityRange(least.as_mut_ptr(), greatest.as_mut_ptr())
+                .result()?;
+            Ok(StreamPriorityRange {
+                least: least.assume_init(),
+                greatest: greatest.assume_init(),
+            })
+        }
     }
 
     /// Queries the device's marketing name (e.g. `"NVIDIA GeForce RTX 5090"`).
