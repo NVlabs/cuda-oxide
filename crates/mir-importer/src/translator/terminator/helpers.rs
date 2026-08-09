@@ -222,6 +222,67 @@ pub fn store_result_to_place(
             ))
         }
 
+        [
+            mir::ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end,
+            },
+        ] => {
+            if *from_end {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "ConstantIndex with from_end=true is not supported for a call destination"
+                            .to_string()
+                    )
+                );
+            }
+            let Some(arr_ptr) = value_map.get_slot(destination.local) else {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Local {:?} has no alloca slot for an array element destination",
+                        destination.local
+                    ))
+                );
+            };
+            let (element_ty, address_space) = slot_array_element_ty(ctx, arr_ptr, &loc)?;
+
+            let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+            let index_attr = pliron::builtin::attributes::IntegerAttr::new(
+                i64_ty,
+                pliron::utils::apint::APInt::from_i64(
+                    *offset as i64,
+                    std::num::NonZeroUsize::new(64).unwrap(),
+                ),
+            );
+            let const_op = Operation::new(
+                ctx,
+                dialect_mir::ops::MirConstantOp::get_concrete_op_info(),
+                vec![i64_ty.into()],
+                vec![],
+                vec![],
+                0,
+            );
+            const_op.deref_mut(ctx).set_loc(loc.clone());
+            dialect_mir::ops::MirConstantOp::new(const_op).set_attr_value(ctx, index_attr);
+            const_op.insert_after(ctx, prev_op);
+            let index_value = const_op.deref(ctx).get_result(0);
+
+            Ok(emit_array_element_store(
+                ctx,
+                arr_ptr,
+                index_value,
+                value,
+                element_ty,
+                address_space,
+                block_ptr,
+                Some(const_op),
+                loc,
+            ))
+        }
+
         projection => input_err!(
             loc,
             TranslationErr::unsupported(format!(
