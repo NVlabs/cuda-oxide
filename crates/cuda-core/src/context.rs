@@ -88,6 +88,108 @@ impl PartialEq for CudaContext {
 }
 impl Eq for CudaContext {}
 
+/// A per-context device limit (`CU_LIMIT_*`), read with
+/// [`CudaContext::limit`] and written with [`CudaContext::set_limit`].
+///
+/// Every limit is state on the device's **primary** context, so it is shared
+/// by every [`CudaContext`] for that device, by any runtime-API user of the
+/// same device in this process, and across library boundaries. A limit set
+/// here is not scoped to the handle that set it.
+///
+/// The driver is free to clamp or round a request. Read the limit back after
+/// setting it to observe what was actually applied.
+///
+/// # Ordering constraints
+///
+/// [`PrintfFifoSize`](Self::PrintfFifoSize) and
+/// [`MallocHeapSize`](Self::MallocHeapSize) must be set **before the first
+/// kernel launch in the process that uses `printf` or device `malloc`**;
+/// afterwards the driver rejects the write with `CUDA_ERROR_INVALID_VALUE`.
+/// Because the limit lives on the shared primary context, "first launch"
+/// counts launches made through any handle, not just this one.
+///
+/// # Omitted variants
+///
+/// `CU_LIMIT_SHMEM_SIZE`, `CU_LIMIT_CIG_ENABLED` and
+/// `CU_LIMIT_CIG_SHMEM_FALLBACK_ENABLED` are absent. The first two are
+/// query-only, all three concern CIG (graphics-interop) contexts, and none
+/// predates CUDA 12.5, so naming them would need a header probe and a `cfg`
+/// in the manner of `cuda_has_cuEventElapsedTime_v2`. The seven variants
+/// below have been present since CUDA 11 and are the ones
+/// `cuCtxSetLimit`'s own documentation specifies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextLimit {
+    /// Stack size in bytes for each GPU thread (`CU_LIMIT_STACK_SIZE`).
+    ///
+    /// The driver raises this on its own whenever a launched kernel needs a
+    /// larger frame and **does not lower it again**, so a read reflects the
+    /// high-water mark of everything launched in this context so far. The
+    /// reservation scales as roughly `bytes * mp_count * threads_per_mp` and
+    /// is invisible to the allocation APIs: it simply reduces the device
+    /// memory a later allocation can obtain. Lowering it after a deep-frame
+    /// kernel has raised it is how that memory is handed back.
+    StackSize,
+    /// Size in bytes of the FIFO backing the device `printf`
+    /// (`CU_LIMIT_PRINTF_FIFO_SIZE`).
+    ///
+    /// The FIFO is circular: once a launch fills it, the **oldest** output is
+    /// overwritten and lost silently, with no error and no marker in the
+    /// stream the host prints. Raising this is the only fix for a kernel
+    /// whose output is truncated. Subject to the ordering constraint above.
+    PrintfFifoSize,
+    /// Size in bytes of the heap backing device `malloc` and `free`
+    /// (`CU_LIMIT_MALLOC_HEAP_SIZE`). Subject to the ordering constraint
+    /// above.
+    MallocHeapSize,
+    /// Maximum grid nesting depth at which a device-runtime thread may call
+    /// `cudaDeviceSynchronize` (`CU_LIMIT_DEV_RUNTIME_SYNC_DEPTH`).
+    ///
+    /// Applies only to devices of compute capability below 9.0; elsewhere the
+    /// driver returns `CUDA_ERROR_UNSUPPORTED_LIMIT`. Each level of depth
+    /// reserves device memory, so a request the driver cannot back fails with
+    /// `CUDA_ERROR_OUT_OF_MEMORY` and leaves the limit settable at a lower
+    /// value.
+    DevRuntimeSyncDepth,
+    /// Maximum number of outstanding device-runtime launches from this
+    /// context (`CU_LIMIT_DEV_RUNTIME_PENDING_LAUNCH_COUNT`), default 2048.
+    ///
+    /// Reserves device memory in proportion, and fails the same way as
+    /// [`DevRuntimeSyncDepth`](Self::DevRuntimeSyncDepth) when the
+    /// reservation cannot be met.
+    DevRuntimePendingLaunchCount,
+    /// L2 fetch granularity in bytes, 0 to 128
+    /// (`CU_LIMIT_MAX_L2_FETCH_GRANULARITY`). A hint: the platform may ignore
+    /// or clamp it, and a read need not return what was written.
+    MaxL2FetchGranularity,
+    /// Bytes of L2 set aside for persisting lines
+    /// (`CU_LIMIT_PERSISTING_L2_CACHE_SIZE`). A hint, with the same caveat as
+    /// [`MaxL2FetchGranularity`](Self::MaxL2FetchGranularity).
+    PersistingL2CacheSize,
+}
+
+impl ContextLimit {
+    /// Maps to the raw `CUlimit` the driver expects.
+    fn to_raw(self) -> cuda_bindings::CUlimit {
+        match self {
+            ContextLimit::StackSize => cuda_bindings::CUlimit_enum_CU_LIMIT_STACK_SIZE,
+            ContextLimit::PrintfFifoSize => cuda_bindings::CUlimit_enum_CU_LIMIT_PRINTF_FIFO_SIZE,
+            ContextLimit::MallocHeapSize => cuda_bindings::CUlimit_enum_CU_LIMIT_MALLOC_HEAP_SIZE,
+            ContextLimit::DevRuntimeSyncDepth => {
+                cuda_bindings::CUlimit_enum_CU_LIMIT_DEV_RUNTIME_SYNC_DEPTH
+            }
+            ContextLimit::DevRuntimePendingLaunchCount => {
+                cuda_bindings::CUlimit_enum_CU_LIMIT_DEV_RUNTIME_PENDING_LAUNCH_COUNT
+            }
+            ContextLimit::MaxL2FetchGranularity => {
+                cuda_bindings::CUlimit_enum_CU_LIMIT_MAX_L2_FETCH_GRANULARITY
+            }
+            ContextLimit::PersistingL2CacheSize => {
+                cuda_bindings::CUlimit_enum_CU_LIMIT_PERSISTING_L2_CACHE_SIZE
+            }
+        }
+    }
+}
+
 /// Context scheduling policy (`CU_CTX_SCHED_*`), governing how the driver
 /// waits when the calling host thread blocks on GPU work (a stream or
 /// context synchronize).
@@ -408,49 +510,61 @@ impl CudaContext {
         )
     }
 
-    /// Queries the per-thread device stack size, in bytes.
+    /// Reads a device limit off this context.
     ///
-    /// Wraps `cuCtxGetLimit(CU_LIMIT_STACK_SIZE, ..)`. The driver raises this
-    /// limit on its own whenever a launched kernel needs a larger frame, and
-    /// **does not lower it again afterwards**, so the value read here reflects
-    /// the high-water mark of everything launched in this context so far.
-    pub fn stack_size(&self) -> Result<usize, DriverError> {
+    /// Wraps `cuCtxGetLimit`. See [`ContextLimit`] for what each limit means,
+    /// which of them the driver treats as a hint, and why the value read back
+    /// need not equal the value written.
+    pub fn limit(&self, limit: ContextLimit) -> Result<usize, DriverError> {
         self.bind_to_thread()?;
         let mut value = MaybeUninit::uninit();
         unsafe {
-            cuda_bindings::cuCtxGetLimit(
-                value.as_mut_ptr(),
-                cuda_bindings::CUlimit_enum_CU_LIMIT_STACK_SIZE,
-            )
-            .result()?;
+            cuda_bindings::cuCtxGetLimit(value.as_mut_ptr(), limit.to_raw()).result()?;
             Ok(value.assume_init())
         }
     }
 
+    /// Writes a device limit on this context.
+    ///
+    /// Wraps `cuCtxSetLimit`. The limit is state on the device's primary
+    /// context and therefore shared process-wide; see [`ContextLimit`] for the
+    /// per-limit restrictions, including the launch-ordering constraint on
+    /// [`PrintfFifoSize`](ContextLimit::PrintfFifoSize) and
+    /// [`MallocHeapSize`](ContextLimit::MallocHeapSize).
+    ///
+    /// The driver may clamp or round the request, so call
+    /// [`limit`](Self::limit) afterwards to observe what was applied. A write
+    /// takes effect immediately and may block until previously submitted work
+    /// completes.
+    pub fn set_limit(&self, limit: ContextLimit, value: usize) -> Result<(), DriverError> {
+        self.bind_to_thread()?;
+        unsafe { cuda_bindings::cuCtxSetLimit(limit.to_raw(), value) }.result()
+    }
+
+    /// Queries the per-thread device stack size, in bytes.
+    ///
+    /// Equivalent to [`limit`](Self::limit) with
+    /// [`ContextLimit::StackSize`], whose documentation describes how the
+    /// driver maintains this value.
+    pub fn stack_size(&self) -> Result<usize, DriverError> {
+        self.limit(ContextLimit::StackSize)
+    }
+
     /// Sets the per-thread device stack size, in bytes.
     ///
-    /// Wraps `cuCtxSetLimit(CU_LIMIT_STACK_SIZE, ..)`. The limit is state on
-    /// the device's primary context, shared by every [`CudaContext`] for this
-    /// device and by any runtime-API user of the same device. The driver
-    /// reserves `bytes` for *every* thread that can be resident on the device,
-    /// so the reservation scales as roughly `bytes * mp_count * threads_per_mp`,
-    /// using [`multiprocessor_count`](Self::multiprocessor_count) and
+    /// Equivalent to [`set_limit`](Self::set_limit) with
+    /// [`ContextLimit::StackSize`]. The driver reserves `bytes` for *every*
+    /// thread that can be resident on the device, so the reservation scales as
+    /// roughly `bytes * mp_count * threads_per_mp`, using
+    /// [`multiprocessor_count`](Self::multiprocessor_count) and
     /// [`max_threads_per_multiprocessor`](Self::max_threads_per_multiprocessor).
-    /// That reservation is invisible to allocation APIs: it simply reduces the
-    /// device memory a subsequent allocation can obtain. Lowering the limit
-    /// after a deep-frame kernel has raised it is the way to hand that memory
-    /// back.
     ///
     /// CUDA may clamp or round the request; call
     /// [`stack_size`](Self::stack_size) afterwards to observe what the driver
     /// actually applied. The call takes effect immediately and may block until
     /// previously submitted work completes.
     pub fn set_stack_size(&self, bytes: usize) -> Result<(), DriverError> {
-        self.bind_to_thread()?;
-        unsafe {
-            cuda_bindings::cuCtxSetLimit(cuda_bindings::CUlimit_enum_CU_LIMIT_STACK_SIZE, bytes)
-        }
-        .result()
+        self.set_limit(ContextLimit::StackSize, bytes)
     }
 
     /// Sets the context's scheduling policy (`CU_CTX_SCHED_*`).
