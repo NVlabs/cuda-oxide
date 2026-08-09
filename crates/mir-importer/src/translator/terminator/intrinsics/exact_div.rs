@@ -18,7 +18,6 @@
 
 use super::super::helpers;
 use crate::error::TranslationResult;
-use crate::translator::types;
 use crate::translator::values::ValueMap;
 use dialect_mir::rust_intrinsics;
 use pliron::basic_block::BasicBlock;
@@ -66,7 +65,7 @@ pub fn emit_rust_exact_div_intrinsic(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    let return_type = types::translate_type(ctx, &body.locals()[destination.local].ty)?;
+    let return_type = helpers::destination_type(ctx, body, destination)?;
     helpers::emit_function_call(
         ctx,
         body,

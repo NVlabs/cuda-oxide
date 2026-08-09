@@ -1243,7 +1243,7 @@ fn emit_array_element_store(
 /// other sources (loads, field-addr ops, ...), which may be immutable.
 /// Derived addresses inherit the base pointer's mutability to keep pliron
 /// type checking consistent.
-fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
+pub(crate) fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
     ty_ref
@@ -1253,7 +1253,7 @@ fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
 
 /// Return the address space of a pointer value. Defaults to 0 (the generic
 /// address space) if the value is not a [`MirPtrType`].
-fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
+pub(crate) fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
     ty_ref
@@ -1274,7 +1274,7 @@ fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
 /// could silently address another variant's payload. This mirrors the
 /// enum-pointee guard in the address walker's `Field` arm: an equally loud
 /// failure at the only layer that can still tell the two index spaces apart.
-fn reject_raw_field_index_on_enum_pointee(
+pub(crate) fn reject_raw_field_index_on_enum_pointee(
     ctx: &Context,
     base_ptr: Value,
     projection: &[mir::ProjectionElem],

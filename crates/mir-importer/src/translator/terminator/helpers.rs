@@ -57,6 +57,143 @@ pub fn emit_goto(
     goto_op
 }
 
+/// The type a call writes through `destination`, honouring any projection.
+///
+/// `body.locals()[destination.local].ty` answers for a bare local and is wrong
+/// for a projected one: it gives the pointer for `(*p)` and the whole aggregate
+/// for `x.0`. `Place::ty` walks the projection, which is what the result of the
+/// call actually has to be.
+pub fn destination_type(
+    ctx: &mut Context,
+    body: &mir::Body,
+    destination: &mir::Place,
+) -> TranslationResult<pliron::r#type::TypeHandle> {
+    let rust_ty = destination.ty(body.locals()).map_err(|e| {
+        pliron::input_error_noloc!(TranslationErr::unsupported(format!(
+            "Failed to query call destination type: {:?}",
+            e
+        )))
+    })?;
+    crate::translator::types::translate_type(ctx, &rust_ty)
+}
+
+/// Writes `value` into `destination`, honouring a projection on it.
+///
+/// A bare local goes to its slot, as before. A projected destination needs the
+/// address of the place rather than of the local, because storing to the local
+/// would overwrite the whole aggregate (or the pointer itself) instead of the
+/// part the call names.
+///
+/// Only the single-element projections a call destination is observed to carry
+/// are modelled. Anything else is refused rather than written to the wrong
+/// place, since a store aimed at the wrong address is a miscompile and an
+/// unsupported-construct error is not.
+pub fn store_result_to_place(
+    ctx: &mut Context,
+    body: &mir::Body,
+    destination: &mir::Place,
+    value: Value,
+    value_map: &mut ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Ptr<Operation>,
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use crate::translator::statement::{
+        pointer_address_space, pointer_is_mutable, reject_raw_field_index_on_enum_pointee,
+    };
+    use dialect_mir::ops::{MirFieldAddrOp, MirStoreOp};
+
+    match destination.projection.as_slice() {
+        [] => Ok(value_map
+            .store_local(ctx, destination.local, value, block_ptr, Some(prev_op))
+            .unwrap_or(prev_op)),
+
+        [mir::ProjectionElem::Deref] => {
+            let base_place = mir::Place {
+                local: destination.local,
+                projection: vec![],
+            };
+            let (ptr_val, after_ptr) = rvalue::translate_place(
+                ctx,
+                body,
+                &base_place,
+                value_map,
+                block_ptr,
+                Some(prev_op),
+                loc.clone(),
+            )?;
+            let store_op = Operation::new(
+                ctx,
+                MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![ptr_val, value],
+                vec![],
+                0,
+            );
+            store_op.deref_mut(ctx).set_loc(loc);
+            store_op.insert_after(ctx, after_ptr.unwrap_or(prev_op));
+            Ok(store_op)
+        }
+
+        [mir::ProjectionElem::Field(field_idx, field_ty)] => {
+            let Some(slot) = value_map.get_slot(destination.local) else {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Local {:?} has no alloca slot for a field destination",
+                        destination.local
+                    ))
+                );
+            };
+            reject_raw_field_index_on_enum_pointee(ctx, slot, &destination.projection, &loc)?;
+
+            let field_type = crate::translator::types::translate_type(ctx, field_ty)?;
+            let field_ptr_ty = dialect_mir::types::MirPtrType::get(
+                ctx,
+                field_type,
+                pointer_is_mutable(ctx, slot),
+                pointer_address_space(ctx, slot),
+            )
+            .into();
+            let field_addr_op = Operation::new(
+                ctx,
+                MirFieldAddrOp::get_concrete_op_info(),
+                vec![field_ptr_ty],
+                vec![slot],
+                vec![],
+                0,
+            );
+            field_addr_op.deref_mut(ctx).set_loc(loc.clone());
+            MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
+                ctx,
+                dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+            );
+            field_addr_op.insert_after(ctx, prev_op);
+            let field_ptr = field_addr_op.deref(ctx).get_result(0);
+
+            let store_op = Operation::new(
+                ctx,
+                MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![field_ptr, value],
+                vec![],
+                0,
+            );
+            store_op.deref_mut(ctx).set_loc(loc);
+            store_op.insert_after(ctx, field_addr_op);
+            Ok(store_op)
+        }
+
+        projection => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "call destination with projection {:?} is not supported",
+                projection
+            ))
+        ),
+    }
+}
+
 /// Stores `result_value` into `destination`'s slot and emits a branch to
 /// `target`.
 ///
@@ -77,6 +214,21 @@ pub fn emit_store_result_and_goto(
     loc: Location,
     no_target_msg: &str,
 ) -> TranslationResult<Ptr<Operation>> {
+    // This epilogue has no `body`, so it cannot compute the address of a
+    // projected place the way [`store_result_to_place`] does. Refusing is the
+    // alternative to storing to `destination.local`, which for `x.0 = f()` or
+    // `(*p) = f()` writes the result over the whole aggregate or over the
+    // pointer. Most callers are generated, so the signature stays as it is.
+    if !destination.projection.is_empty() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "intrinsic result written to a projected destination {:?} is not supported",
+                destination.projection
+            ))
+        );
+    }
+
     let goto_prev = value_map
         .store_local(
             ctx,
@@ -219,15 +371,16 @@ pub fn emit_function_call(
 
     let result_value = call_op.deref(ctx).get_result(0);
 
-    let goto_prev = value_map
-        .store_local(
-            ctx,
-            destination.local,
-            result_value,
-            block_ptr,
-            Some(call_op),
-        )
-        .unwrap_or(call_op);
+    let goto_prev = store_result_to_place(
+        ctx,
+        body,
+        destination,
+        result_value,
+        value_map,
+        block_ptr,
+        call_op,
+        loc.clone(),
+    )?;
 
     if let Some(target_idx) = target {
         Ok(emit_goto(ctx, *target_idx, goto_prev, block_map, loc))
