@@ -67,15 +67,14 @@ Call(_9 = dump_var(Move(__rl_dump1)), ReturnTo(bb5), UnwindUnreachable())
 - `UNSUPPORTED [adapter]`: rustlantis generated a MIR program, but our Python
   adapter refused to turn it into a cuda-oxide smoke case.
 
-For example, seed `0` dumps a `u128`, which the adapter once refused; the
-trace API has since widened and the seed currently reports:
+For example, seed `0` dumps a `[i8; 1]`, which the trace API does not hash, and
+the seed currently reports:
 
 ```text
-seed 0: PASS
-
 results:
-  seed 0: PASS [run] CPU/GPU traces matched
-summary: PASS=1
+  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: [i8; 1]
+  seed 1: PASS [run] CPU/GPU traces matched
+summary: PASS=1, UNSUPPORTED=1
 ```
 
 The typical `UNSUPPORTED [adapter]` cause is a generated `dump_var(...)` call
@@ -162,7 +161,7 @@ append its path. For example, `--start 0 --count 2` currently prints:
 
 ```text
 results:
-  seed 0: PASS [run] CPU/GPU traces matched
+  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: [i8; 1] (crates/fuzzer/artifacts/seed-0-unsupported.log)
   seed 1: PASS [run] CPU/GPU traces matched
-summary: PASS=2
+summary: PASS=1, UNSUPPORTED=1
 ```
