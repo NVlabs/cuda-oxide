@@ -57,16 +57,30 @@ pub(crate) fn diagnose_file(path: &Path) -> std::io::Result<Vec<String>> {
 fn diagnose_text(llvm: &str) -> Vec<String> {
     let mut diagnostics = Vec::new();
     for function in function_bodies(llvm) {
+        let function_name = demangle_function_name(&function.name);
         for alloca in surviving_allocas(&function) {
             let blocker = classify_promotion_blocker(&function.lines, &alloca.value);
             diagnostics.push(format_diagnostic(
-                &function.name,
+                &function_name,
                 &alloca.provenance,
                 blocker,
             ));
         }
     }
     diagnostics
+}
+
+/// Render the containing function readably in the warning.
+///
+/// Kernel entry points already carry their exported source name, but a
+/// non-inlined device function survives optimization under its mangled Rust
+/// symbol. Demangle those (dropping the disambiguating hash) so the warning
+/// points at the source function; anything unmangled passes through untouched.
+fn demangle_function_name(name: &str) -> String {
+    match rustc_demangle::try_demangle(name) {
+        Ok(demangled) => format!("{demangled:#}"),
+        Err(_) => name.to_string(),
+    }
 }
 
 fn function_bodies(llvm: &str) -> Vec<FunctionBody<'_>> {
@@ -370,7 +384,7 @@ fn format_diagnostic(
                 "\n  = note: the allocation survives mem2reg and LLVM scalar replacement and remains stack-backed",
             );
             message.push_str(
-                "\n  = help: inspect dynamic indexing, pointer escapes, volatile accesses, or aliasing around this local",
+                "\n  = help: inspect dynamic indexing, pointer escapes, volatile accesses, or aliasing around this local; large aggregates are also harder to promote because scalar replacement must split every access into independent scalars",
             );
         }
     }
@@ -477,6 +491,21 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].contains("survives mem2reg and LLVM scalar replacement"));
         assert!(!diagnostics[0].contains("address escapes"));
+    }
+
+    #[test]
+    fn mangled_containing_functions_are_demangled() {
+        let name = alloca_name("2\t8\tacc\t[f32; 2]");
+        let llvm = format!(
+            "define void @_ZN6kernel5inner17h0123456789abcdefE() {{\nentry:\n  {name} = alloca [2 x float], align 4\n  ret void\n}}\n"
+        );
+        let diagnostics = diagnose_text(&llvm);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0].contains("in `kernel::inner`"),
+            "expected demangled function name without hash: {}",
+            diagnostics[0]
+        );
     }
 
     #[test]

@@ -452,6 +452,7 @@ dependencies = [
  "mir-transforms",
  "nvvm-transforms",
  "pliron",
+ "rustc-demangle",
  "tempfile",
  "thiserror",
 ]
@@ -1087,6 +1088,12 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 [[package]]
 name = "reserved-oxide-symbols"
 version = "0.2.1"
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"
