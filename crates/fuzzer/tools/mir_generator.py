@@ -333,11 +333,20 @@ def adapt_function(fn_src: str, fn_name: str) -> str:
         # with `[^;]+` would stop inside an array return type and leave the
         # remainder of that type stranded after the inserted declarations,
         # which rustc then reads as a statement.
+        #
+        # A missing anchor is an adapter failure, not something to skip:
+        # silently dropping the declarations leaves the rewritten dump calls
+        # referencing undeclared locals, and the resulting rustc error would
+        # be misreported as a backend COMPILE_FAIL instead of
+        # UNSUPPORTED [adapter].
         anchor = re.search(r"type RET\s*=\s*", adapted)
-        parsed = split_type_at_semicolon(adapted[anchor.end() :]) if anchor else None
-        if parsed is not None:
-            end = anchor.end() + parsed[1]
-            adapted = f"{adapted[:end]}\n{local_decls}{adapted[end:]}"
+        if anchor is None:
+            raise SystemExit("expected a `type RET = ..;` alias to anchor the dump-local declarations")
+        parsed = split_type_at_semicolon(adapted[anchor.end() :])
+        if parsed is None:
+            raise SystemExit("expected a depth-0 `;` terminating the `type RET` alias")
+        end = anchor.end() + parsed[1]
+        adapted = f"{adapted[:end]}\n{local_decls}{adapted[end:]}"
 
     return format_rust_block(adapted)
 
