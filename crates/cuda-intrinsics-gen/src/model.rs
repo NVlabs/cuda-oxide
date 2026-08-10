@@ -3851,14 +3851,14 @@ mod tests {
             serde_json::from_str::<LdmatrixAddressContract>(
                 r#""warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable""#
             )
-                .unwrap(),
+            .unwrap(),
             LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadable
         );
         assert_eq!(
             serde_json::from_str::<LdmatrixAddressContract>(
                 r#""warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_thirty_two_bytes_readable""#
             )
-                .unwrap(),
+            .unwrap(),
             LdmatrixAddressContract::WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedThirtyTwoBytesReadable
         );
     }

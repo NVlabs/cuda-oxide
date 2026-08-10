@@ -3131,8 +3131,8 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 targets: "all".into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                "9.7.14.4 Parallel Synchronization and Communication Instructions: membar / fence"
-                    .into(),
+                    "9.7.14.4 Parallel Synchronization and Communication Instructions: membar / fence"
+                        .into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-membar-fence".into(),
                 lowering: "direct_nvvm".into(),
                 backend_lowerings: vec![
@@ -17494,16 +17494,16 @@ fn packed_conversion_overlay_record(
             (IntrinsicBackend::LlvmNvptx, llvm_evidence_profile),
             (IntrinsicBackend::LibNvvm, libnvvm_evidence_profile),
         ]
-            .into_iter()
-            .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                backend,
-                mechanism: packed_conversion_backend_mechanism(&conversion, backend),
-                evidence_profile: evidence_profile.into(),
-                targets: None,
-                minimum_ptx: Some(minimum_ptx.into()),
-                minimum_sm: Some(minimum_sm.into()),
-            })
-            .collect(),
+        .into_iter()
+        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+            backend,
+            mechanism: packed_conversion_backend_mechanism(&conversion, backend),
+            evidence_profile: evidence_profile.into(),
+            targets: None,
+            minimum_ptx: Some(minimum_ptx.into()),
+            minimum_sm: Some(minimum_sm.into()),
+        })
+        .collect(),
         packed_atomic: None,
         redux: None,
         vote: None,
@@ -17989,19 +17989,19 @@ fn scalar_conversion_overlay_record(
             (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
             (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
         ]
-            .into_iter()
-            .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                backend,
-                mechanism: match backend {
-                    IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
-                    IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
-                },
-                evidence_profile: evidence_profile.clone(),
-                targets: None,
-                minimum_ptx: Some(recipe.minimum_ptx.into()),
-                minimum_sm: Some(recipe.minimum_sm.into()),
-            })
-            .collect(),
+        .into_iter()
+        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+            backend,
+            mechanism: match backend {
+                IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
+                IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+            },
+            evidence_profile: evidence_profile.clone(),
+            targets: None,
+            minimum_ptx: Some(recipe.minimum_ptx.into()),
+            minimum_sm: Some(recipe.minimum_sm.into()),
+        })
+        .collect(),
         packed_atomic: None,
         redux: None,
         vote: None,
@@ -21710,9 +21710,9 @@ fn expand_register_mma_f8f6f4_admission(
                         b,
                         scalar,
                     ]
-                        .into_iter()
-                        .map(Into::into)
-                        .collect(),
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
                     operands: contract
                         .ptx_register_counts
                         .map(|length| OperandPattern::RegisterList { length })
@@ -21852,7 +21852,7 @@ fn expand_register_mma_mxf8f6f4_admission(
                 targets: REGISTER_MMA_F8F6F4_TARGETS.into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
+                    "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma".into(),
                 lowering: "generated_register_mma".into(),
                 backend_lowerings: vec![
@@ -21924,9 +21924,9 @@ fn expand_register_mma_mxf8f6f4_admission(
                         "f32",
                         "ue8m0",
                     ]
-                        .into_iter()
-                        .map(Into::into)
-                        .collect(),
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
                     operands: vec![
                         OperandPattern::RegisterList { length: 4 },
                         OperandPattern::RegisterList { length: 4 },
@@ -22163,16 +22163,16 @@ fn expand_register_mma_fp8_admission(
                             (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
                             (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
                         ]
-                            .into_iter()
-                            .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                                backend,
-                                mechanism: BackendLoweringMechanism::InlinePtx,
-                                evidence_profile: evidence_profile.clone(),
-                                targets: None,
-                                minimum_ptx: Some(minimum_ptx.into()),
-                                minimum_sm: Some("sm_89".into()),
-                            })
-                            .collect(),
+                        .into_iter()
+                        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                            backend,
+                            mechanism: BackendLoweringMechanism::InlinePtx,
+                            evidence_profile: evidence_profile.clone(),
+                            targets: None,
+                            minimum_ptx: Some(minimum_ptx.into()),
+                            minimum_sm: Some("sm_89".into()),
+                        })
+                        .collect(),
                         packed_atomic: None,
                         redux: None,
                         vote: None,
@@ -22359,16 +22359,16 @@ fn expand_register_mma_ampere_float_admission(
                     (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
                     (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
                 ]
-                    .into_iter()
-                    .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                        backend,
-                        mechanism: BackendLoweringMechanism::InlinePtx,
-                        evidence_profile: evidence_profile.clone(),
-                        targets: None,
-                        minimum_ptx: Some(recipe.minimum_ptx.into()),
-                        minimum_sm: Some(recipe.minimum_sm.into()),
-                    })
-                    .collect(),
+                .into_iter()
+                .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                    backend,
+                    mechanism: BackendLoweringMechanism::InlinePtx,
+                    evidence_profile: evidence_profile.clone(),
+                    targets: None,
+                    minimum_ptx: Some(recipe.minimum_ptx.into()),
+                    minimum_sm: Some(recipe.minimum_sm.into()),
+                })
+                .collect(),
                 packed_atomic: None,
                 redux: None,
                 vote: None,
@@ -23191,8 +23191,8 @@ fn expand_sparse_mma_f8f6f4_admission(
                 runtime_validation: admission.runtime_validation,
             };
             let recipe = sparse_mma_recipe(&mma).with_context(|| {
-                "compact sparse f8f6f4 MMA admission requests a variant outside the closed recipe set"
-            })?;
+            "compact sparse f8f6f4 MMA admission requests a variant outside the closed recipe set"
+        })?;
             let summary = format!(
                 "Multiplies warp-distributed sparse {} A and {} B fragments and adds an f32 accumulator.",
                 sparse_mma_element_name(a_element),
@@ -23362,16 +23362,16 @@ fn sparse_mma_overlay_record(
             (IntrinsicBackend::LlvmNvptx, llvm_evidence_profile),
             (IntrinsicBackend::LibNvvm, libnvvm_evidence_profile),
         ]
-            .into_iter()
-            .map(|(backend, evidence_profile)| OverlayBackendLowering {
-                backend,
-                mechanism: BackendLoweringMechanism::InlinePtx,
-                evidence_profile: evidence_profile.into(),
-                targets: None,
-                minimum_ptx: Some(minimum_ptx.into()),
-                minimum_sm: minimum_sm.map(str::to_owned),
-            })
-            .collect(),
+        .into_iter()
+        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+            backend,
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            evidence_profile: evidence_profile.into(),
+            targets: None,
+            minimum_ptx: Some(minimum_ptx.into()),
+            minimum_sm: minimum_sm.map(str::to_owned),
+        })
+        .collect(),
         packed_atomic: None,
         redux: None,
         vote: None,
@@ -24793,8 +24793,8 @@ fn expand_cluster_barrier_admission(
                 targets: "all".into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                "Parallel Synchronization and Communication Instructions: barrier.cluster"
-                    .into(),
+                    "Parallel Synchronization and Communication Instructions: barrier.cluster"
+                        .into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-barrier-cluster".into(),
                 lowering: "generated_cluster_barrier".into(),
                 backend_lowerings: vec![
@@ -26711,7 +26711,7 @@ fn expand_wgmma_control_admission(
                 targets: "sm_90a".into(),
                 ptx_isa_version: "9.3".into(),
                 ptx_isa_section:
-                "Asynchronous Warpgroup Level Matrix Instructions: WGMMA control".into(),
+                    "Asynchronous Warpgroup Level Matrix Instructions: WGMMA control".into(),
                 ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions".into(),
                 lowering: "generated_wgmma_control".into(),
                 backend_lowerings: vec![
