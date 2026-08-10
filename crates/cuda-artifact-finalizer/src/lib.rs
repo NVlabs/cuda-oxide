@@ -297,9 +297,18 @@ fn validate_name(name: &str) -> Result<(), FinalizerError> {
 mod live_tests {
     use super::*;
 
+    /// `@llvm.used` keeps the kernel alive through LTO, exactly as cuda-oxide's
+    /// NVVM exporter emits it for real kernels. Without it nvJitLink's link-time
+    /// optimizer dead-strips the annotation-marked kernel as unreachable and
+    /// links an empty module: the pipeline still succeeds, so every assertion
+    /// below passed while nothing was being compiled. Measured on CUDA 13.3
+    /// before this line existed, the linked PTX was 202 bytes with zero
+    /// functions and the cubin had no entry points.
     const LEGACY_NVVM_IR: &[u8] = br#"
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
+
+@llvm.used = appending global [1 x i8*] [i8* bitcast (void ()* @kernel to i8*)], section "llvm.metadata"
 
 define void @kernel() {
 entry:
@@ -337,12 +346,30 @@ entry:
                 .link_ltoir(&input, &options, FinalizerOutput::Cubin)
                 .unwrap();
             assert!(is_valid_cubin(&cubin));
+            // A cubin whose kernel was stripped is still a well-formed ELF, so
+            // `is_valid_cubin` alone cannot tell the two apart. Require the
+            // kernel's name to survive into the image.
+            assert!(
+                cubin.windows(b"kernel".len()).any(|part| part == b"kernel"),
+                "cubin has no `kernel` symbol ({} bytes): the kernel was \
+                 dead-stripped and this test is validating an empty module",
+                cubin.len()
+            );
             let ptx = finalizer
                 .link_ltoir(&input, &options, FinalizerOutput::Ptx)
                 .unwrap();
             assert!(
                 ptx.windows(b".version".len())
                     .any(|part| part == b".version")
+            );
+            // `.version` is in the header of even an empty module, so it proves
+            // only that something was emitted. The entry point is what proves
+            // the kernel made it through libNVVM and nvJitLink.
+            let ptx_text = String::from_utf8_lossy(&ptx);
+            assert!(
+                ptx_text.contains(".entry kernel"),
+                "linked PTX has no `.entry kernel` ({} bytes):\n{ptx_text}",
+                ptx.len()
             );
         }
     }
