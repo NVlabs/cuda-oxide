@@ -15,7 +15,7 @@
 
 use cuda_artifact_finalizer::{
     CudaArch, CudaArchParseError, DebugPolicy, FinalizationOptions, Finalizer, FinalizerError,
-    FinalizerOutput, NamedInput,
+    FinalizerOutput, KernelResourceUsage, NamedInput,
 };
 use thiserror::Error;
 
@@ -27,6 +27,12 @@ pub(crate) const CODEGEN_FINGERPRINT_ENV: &str = reserved_oxide_symbols::CODEGEN
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MaterializationRequest {
     expected_provenance: [u8; 32],
+}
+
+/// Cubin bytes plus ptxas resource diagnostics from the final link.
+pub(crate) struct MaterializedCubin {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) resource_usage: Vec<KernelResourceUsage>,
 }
 
 /// Failures in the wrapper/backend materialization contract.
@@ -145,10 +151,14 @@ pub(crate) fn nvvm_ir_to_cubin(
     target: &str,
     allow_fma_contraction: bool,
     debug_policy: DebugPolicy,
-) -> Result<Vec<u8>, MaterializeError> {
+) -> Result<MaterializedCubin, MaterializeError> {
     let options = options(target, allow_fma_contraction, debug_policy)?;
     let finalizer = checked_finalizer(request)?;
-    Ok(finalizer.materialize_nvvm_ir(module_name, nvvm_ir, &options)?)
+    let report = finalizer.materialize_nvvm_ir_with_report(module_name, nvvm_ir, &options)?;
+    Ok(MaterializedCubin {
+        bytes: report.image,
+        resource_usage: report.resource_usage,
+    })
 }
 
 pub(crate) fn ltoir_to_cubin(
@@ -158,14 +168,18 @@ pub(crate) fn ltoir_to_cubin(
     target: &str,
     allow_fma_contraction: bool,
     debug_policy: DebugPolicy,
-) -> Result<Vec<u8>, MaterializeError> {
+) -> Result<MaterializedCubin, MaterializeError> {
     let options = options(target, allow_fma_contraction, debug_policy)?;
     let finalizer = checked_finalizer(request)?;
-    Ok(finalizer.link_ltoir(
+    let report = finalizer.link_ltoir_with_report(
         &[NamedInput::new(module_name, ltoir)],
         &options,
         FinalizerOutput::Cubin,
-    )?)
+    )?;
+    Ok(MaterializedCubin {
+        bytes: report.image,
+        resource_usage: report.resource_usage,
+    })
 }
 
 fn options(

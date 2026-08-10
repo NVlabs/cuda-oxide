@@ -11,19 +11,20 @@ When adding a new `error*` example, update this table and the
 `ERROR_EXAMPLES` array in `scripts/smoketest.sh` in the same commit.
 Run `scripts/check-error-example-status.sh` to verify both are in sync.
 
-| Example                               | Kind                | Fails at                            |
-| :------------------------------------ | :------------------ | :---------------------------------- |
-| `error`                               | diagnostics-fixture | `core::fmt` reachable from device   |
-| `error_enum_bool_payload_addr`        | diagnostics-fixture | `&mut` to a canonical-byte payload  |
-| `error_enum_pointer_overlap`          | support-gap         | Overlaid pointer/integer payload    |
-| `error_enum_shared_pointer_layout`    | support-gap         | AS3 pointer arrays/vectors in enums |
-| `error_generated_intrinsic_abi`       | diagnostics-fixture | Unsupported raw intrinsic ABI       |
-| `error_generated_intrinsic_callable`  | diagnostics-fixture | Raw intrinsic passed through `Fn`   |
-| `error_generated_intrinsic_fn_pointer`| diagnostics-fixture | Raw intrinsic made into `fn` pointer|
-| `error_generated_intrinsic_unknown_id`| diagnostics-fixture | Unknown ID in a supported ABI       |
-| `error_heap_alloc`                    | diagnostics-fixture | `__rust_alloc` reachable (#108)     |
-| `error_missing_device_attr`           | diagnostics-fixture | `thread::index_*` stub (#76)        |
-| `error_set_discriminant_uninhabited`  | diagnostics-fixture | Invalid enum variant selection      |
+| Example                                | Kind                | Fails at                             |
+| :------------------------------------- | :------------------ | :----------------------------------- |
+| `error`                                | diagnostics-fixture | `core::fmt` reachable from device    |
+| `error_enum_bool_payload_addr`         | diagnostics-fixture | `&mut` to a canonical-byte payload   |
+| `error_enum_pointer_overlap`           | support-gap         | Overlaid pointer/integer payload     |
+| `error_enum_shared_pointer_layout`     | support-gap         | Oversized AS3 pointer arrays/vectors |
+| `error_generated_intrinsic_abi`        | diagnostics-fixture | Unsupported raw intrinsic ABI        |
+| `error_generated_intrinsic_callable`   | diagnostics-fixture | Raw intrinsic passed through `Fn`    |
+| `error_generated_intrinsic_fn_pointer` | diagnostics-fixture | Raw intrinsic made into `fn` pointer |
+| `error_generated_intrinsic_unknown_id` | diagnostics-fixture | Unknown ID in a supported ABI        |
+| `error_heap_alloc`                     | diagnostics-fixture | `__rust_alloc` reachable (#108)      |
+| `error_kernel_shared_param`            | diagnostics-fixture | AS3/AS5 pointer as kernel parameter  |
+| `error_missing_device_attr`            | diagnostics-fixture | `thread::index_*` stub (#76)         |
+| `error_set_discriminant_uninhabited`   | diagnostics-fixture | Invalid enum variant selection       |
 
 Drops whose monomorphized glue is provably a no-op (e.g. the
 `core::array::IntoIter` behind `for x in arr` with Copy elements) lower
@@ -44,7 +45,10 @@ provenance. Shared-memory pointers are 64 bits in PTX and legacy NVVM output
 but 32 bits in modern NVVM output. Direct fields and pointer leaves nested
 through structs/tuples use target-stable generic physical storage, with
 recursive reconstruction at enum construction and extraction boundaries.
-Arrays and vectors containing shared pointers remain rejected: arrays need an
-explicit expansion bound and code-shape contract, while pointer vectors need
-separate ABI and address-space-cast semantics. (Bool leaves use canonical i8
-physical bytes and are converted recursively at the same boundary.)
+Arrays use the same reconstruction when the payload's recursive expansion
+contains at most 16 array-expanded shared-pointer leaves in total, whether
+they come from one array or from several arrays nested through structs.
+Larger expansions remain rejected to keep generated code shape bounded, while
+pointer vectors still need separate ABI and address-space-cast semantics.
+(Bool leaves use canonical i8 physical bytes and are converted recursively at
+the same boundary.)

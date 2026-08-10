@@ -13,10 +13,12 @@
 //! boundaries. Rust `bool` leaves are represented by canonical `i8` bytes at
 //! the same boundary.
 //!
-//! Arrays and vectors containing shared pointers remain fail-closed. Rebuilding
-//! an array creates one operation sequence per element, while pointer vectors
-//! have separate ABI and address-space-cast semantics. Those shapes need their
-//! own bounded/code-shape design rather than being accepted implicitly here.
+//! Arrays containing shared pointers are rebuilt recursively only when the
+//! payload's total array-expanded shared-pointer leaves stay within an
+//! explicit code-shape bound. The bound is enforced once at the payload root,
+//! so one array of 17 leaves and a struct of two 9-leaf arrays are rejected by
+//! the same contract. Pointer vectors remain fail-closed because they require
+//! separate ABI and address-space-cast semantics.
 
 use llvm_export::op_interfaces::{CastOpInterface, CastOpWithNNegInterface};
 use llvm_export::ops as llvm;
@@ -31,10 +33,26 @@ use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 
+/// Maximum number of array-expanded shared-pointer leaves one payload rewrite
+/// may produce, totalled across the whole payload type.
+///
+/// Construction and extraction rebuild arrays in SSA, so every shared-pointer
+/// leaf produces a pair of aggregate operations around one address-space cast.
+/// Struct nesting stays unbounded because its leaf count is proportional to
+/// the source text, while `[&shared; N]` expands from three tokens into `N`
+/// rebuild sequences. The same constant bounds the pointer-overlap walk in
+/// `build_enum_slot_map`, keeping one contract for every payload shape.
+pub(crate) const MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES: u64 = 16;
+
 #[derive(Clone)]
 struct StorageRewrite {
     ty: TypeHandle,
-    rewrote_shared_pointer: bool,
+    /// Shared-pointer leaves anywhere in the rewritten type.
+    shared_pointer_leaves: u64,
+    /// Shared-pointer leaves reached through at least one array. Only these
+    /// count against [`MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES`], checked once
+    /// at the payload root by [`enum_payload_storage_type`].
+    array_shared_pointer_leaves: u64,
 }
 
 enum TypeShape {
@@ -54,13 +72,25 @@ enum TypeShape {
 /// - `ptr addrspace(3)` becomes a CUDA generic pointer;
 /// - `i1` becomes the canonical one-byte `i8` memory representation;
 /// - structs are rebuilt field by field;
-/// - bool-only arrays are rebuilt recursively;
-/// - arrays/vectors containing shared pointers are rejected.
+/// - arrays are rebuilt recursively while the payload's total array-expanded
+///   shared-pointer leaves stay within
+///   [`MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES`];
+/// - vectors containing shared pointers are rejected.
 pub(crate) fn enum_payload_storage_type(
     ctx: &mut Context,
     semantic_ty: TypeHandle,
 ) -> std::result::Result<TypeHandle, anyhow::Error> {
-    Ok(rewrite_storage_type(ctx, semantic_ty)?.ty)
+    let rewrite = rewrite_storage_type(ctx, semantic_ty)?;
+    // One bound for every payload shape, enforced at the root: a single
+    // oversized array and a struct of several smaller arrays are both counted
+    // by their total array-expanded shared-pointer leaves.
+    if rewrite.array_shared_pointer_leaves > MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES {
+        return Err(anyhow::anyhow!(
+            "enum payload storage: arrays containing shared-memory pointers are not supported above the bounded rewrite limit; rewrite requires {} pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}",
+            rewrite.array_shared_pointer_leaves
+        ));
+    }
+    Ok(rewrite.ty)
 }
 
 fn rewrite_storage_type(
@@ -90,25 +120,31 @@ fn rewrite_storage_type(
     match shape {
         TypeShape::Bool => Ok(StorageRewrite {
             ty: IntegerType::get(ctx, 8, Signedness::Signless).into(),
-            rewrote_shared_pointer: false,
+            shared_pointer_leaves: 0,
+            array_shared_pointer_leaves: 0,
         }),
         TypeShape::Pointer(address_space) if address_space == llvm_types::address_space::SHARED => {
             Ok(StorageRewrite {
                 ty: llvm_types::PointerType::get_generic(ctx).into(),
-                rewrote_shared_pointer: true,
+                shared_pointer_leaves: 1,
+                array_shared_pointer_leaves: 0,
             })
         }
         TypeShape::Pointer(_) | TypeShape::Identity => Ok(StorageRewrite {
             ty: semantic_ty,
-            rewrote_shared_pointer: false,
+            shared_pointer_leaves: 0,
+            array_shared_pointer_leaves: 0,
         }),
         TypeShape::Array(element_ty, count) => {
             let element = rewrite_storage_type(ctx, element_ty)?;
-            if element.rewrote_shared_pointer {
-                return Err(anyhow::anyhow!(
-                    "enum payload storage: arrays containing shared-memory pointers are not supported; recursive target-stable storage currently supports direct pointers and struct/tuple nesting"
-                ));
-            }
+            let shared_pointer_leaves = element
+                .shared_pointer_leaves
+                .checked_mul(count)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "enum payload storage: shared-pointer array rewrite size overflow"
+                    )
+                })?;
             let ty = if element.ty == element_ty {
                 semantic_ty
             } else {
@@ -116,29 +152,48 @@ fn rewrite_storage_type(
             };
             Ok(StorageRewrite {
                 ty,
-                rewrote_shared_pointer: false,
+                shared_pointer_leaves,
+                // The array multiplies everything below it, so every shared
+                // leaf it contains is array-expanded, including leaves nested
+                // through structs inside the element.
+                array_shared_pointer_leaves: shared_pointer_leaves,
             })
         }
         TypeShape::Vector(element_ty) => {
             let element = rewrite_storage_type(ctx, element_ty)?;
-            if element.ty != element_ty || element.rewrote_shared_pointer {
+            if element.ty != element_ty || element.shared_pointer_leaves != 0 {
                 return Err(anyhow::anyhow!(
                     "enum payload storage: vectors containing bool or shared-memory pointer elements are not supported"
                 ));
             }
             Ok(StorageRewrite {
                 ty: semantic_ty,
-                rewrote_shared_pointer: false,
+                shared_pointer_leaves: 0,
+                array_shared_pointer_leaves: 0,
             })
         }
         TypeShape::Struct(fields) => {
             let mut storage_fields = Vec::with_capacity(fields.len());
             let mut changed = false;
-            let mut rewrote_shared_pointer = false;
+            let mut shared_pointer_leaves = 0_u64;
+            let mut array_shared_pointer_leaves = 0_u64;
             for field in fields {
                 let storage = rewrite_storage_type(ctx, field)?;
                 changed |= storage.ty != field;
-                rewrote_shared_pointer |= storage.rewrote_shared_pointer;
+                shared_pointer_leaves = shared_pointer_leaves
+                    .checked_add(storage.shared_pointer_leaves)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "enum payload storage: shared-pointer leaf count overflow while rewriting a struct payload"
+                        )
+                    })?;
+                array_shared_pointer_leaves = array_shared_pointer_leaves
+                    .checked_add(storage.array_shared_pointer_leaves)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "enum payload storage: shared-pointer leaf count overflow while rewriting a struct payload"
+                        )
+                    })?;
                 storage_fields.push(storage.ty);
             }
             let ty = if changed {
@@ -148,7 +203,8 @@ fn rewrite_storage_type(
             };
             Ok(StorageRewrite {
                 ty,
-                rewrote_shared_pointer,
+                shared_pointer_leaves,
+                array_shared_pointer_leaves,
             })
         }
     }

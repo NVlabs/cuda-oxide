@@ -3,33 +3,45 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Writing an enum payload whose bytes use canonical storage.
+//! Storing into an enum payload whose storage type differs from its usage
+//! type.
 //!
-//! Enum storage keeps two payload kinds in a converted form: a `bool` occupies
-//! a full `i8` byte, and a shared-memory pointer is stored generic. The value
-//! paths coerce at that boundary. A raw payload address cannot, because the
-//! address escapes and the loads and stores made through it elsewhere are
-//! typed with the SEMANTIC type, so mir-lower refuses to hand one out.
-//!
-//! `(_flag as On).0 = value`, which is what
-//! `if let Flag::On(b) = &mut flag { *b = value }` becomes once the borrow
-//! folds into its use, took that address and met the refusal. The write needs
-//! no address: the enum can be rebuilt around the new payload, which is what
-//! the value paths already do for a whole-enum assignment.
+//! Two payload types are not stored in the form they are used:
 //!
 //! ```text
-//!   (_flag as On).0 = v   ->   _e  = load _flag
-//!                              _e' = construct_enum On(v)
-//!                              store _e' -> _flag
+//!   used as:     bool (i1)             ptr to shared (addrspace 3)
+//!   stored as:   full i8 byte          generic ptr
 //! ```
 //!
-//! `construct_enum` coerces each payload to its canonical storage on the way
-//! in, which is the coercion the address could not carry. Valid MIR assigns to
-//! a variant's field only when the enum already holds that variant, so
-//! rebuilding with the same variant leaves the discriminant where it was.
+//! Building or unpacking a whole enum VALUE converts between the two forms on
+//! the spot. A raw POINTER to the payload bytes cannot: it escapes, and every
+//! load or store made through it later uses the usage type against bytes laid
+//! out in the storage type. mir-lower refuses to hand out such a pointer.
 //!
-//! A variant of several fields keeps the others as they stand: each is read
-//! back out of the loaded value and passed through unchanged.
+//! That refusal fired on an ordinary field write:
+//!
+//! ```rust,ignore
+//! if let Flag::On(b) = &mut flag { *b = value }
+//! ```
+//!
+//! MIR turns this into `(_flag as On).0 = value`, and the obvious translation
+//! is "take the payload's address, store through it". This module translates
+//! it without any payload address by rebuilding the whole enum:
+//!
+//! ```text
+//!   (_flag as On).0 = v   ->   _e  = load _flag             // whole enum out
+//!                              _e' = construct_enum On(v)   // new payload in
+//!                              store _e' -> _flag           // whole enum back
+//! ```
+//!
+//! Why this is correct:
+//!
+//! - `construct_enum` converts each payload to its storage form on the way
+//!   in. That is exactly the conversion a raw address could not carry.
+//! - Valid MIR only writes a variant's field when the enum already holds that
+//!   variant, so rebuilding the same variant keeps the discriminant.
+//! - In a variant with several fields, the untouched ones are read out of the
+//!   loaded value and passed back in unchanged.
 
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};

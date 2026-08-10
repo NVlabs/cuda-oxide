@@ -444,15 +444,30 @@ dependencies = [
 name = "cuda-oxide-codegen"
 version = "0.1.0"
 dependencies = [
+ "dialect-iket",
  "dialect-mir",
  "dialect-nvvm",
+ "iket-lower",
  "libnvvm-sys",
  "llvm-export",
  "mir-lower",
  "mir-transforms",
  "nvvm-transforms",
  "pliron",
+ "rustc-demangle",
  "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "dialect-iket"
+version = "0.1.0"
+dependencies = [
+ "combine",
+ "dyn-clone",
+ "linkme",
+ "pliron",
+ "pliron-derive",
  "thiserror",
 ]
 
@@ -716,6 +731,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "iket-lower"
+version = "0.1.0"
+dependencies = [
+ "dialect-iket",
+ "pliron",
+ "thiserror",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -856,6 +880,7 @@ version = "0.2.1"
 dependencies = [
  "combine",
  "cuda-oxide-codegen",
+ "dialect-iket",
  "dialect-mir",
  "dialect-nvvm",
  "linkme",
@@ -878,6 +903,7 @@ dependencies = [
  "dialect-mir",
  "dialect-nvvm",
  "llvm-export",
+ "mir-transforms",
  "pliron",
  "pliron-derive",
  "reserved-oxide-symbols",
@@ -1086,6 +1112,12 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 [[package]]
 name = "reserved-oxide-symbols"
 version = "0.2.1"
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"

@@ -1,32 +1,49 @@
 # wgmma_mma_bf16
 
-Compile-only example for BF16 Hopper WGMMA MMA lowering.
+Compile-only integration example for BF16 Hopper WGMMA lowering.
 
-This example validates the deferred 32-register accumulator adapter for:
-
-```text
-wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16
-```
+The example covers the public `cuda_device::wgmma` API from Rust source through
+MIR import, WGMMA region selection, LLVM lowering, and PTX generation.
 
 ## What this tests
 
-The compiler recognizes the following statically linear sequence:
+The crate contains two compile-only kernels.
+
+### Full drain
 
 ```text
 wgmma_fence
-one or more BF16 WGMMA MMA calls using the same accumulator
-wgmma_commit_group
-wgmma_wait_group::<0>
+mma acc0
+commit_group
+wait_group<0>
 ```
 
-The sequence is fused into one convergent inline-PTX scope. The scope:
+For the canonical `[[f32; 8]; 4]` accumulator, the compiler selects the
+value-threaded path and exposes the 32 accumulator values to LLVM only outside
+the complete asynchronous WGMMA lifetime.
 
-  1. loads the 32 per-thread accumulator values;
-  2. executes wgmma.fence;
-  3. issues the BF16 WGMMA instructions;
-  4. commits the group;
-  5. waits for all pending groups;
-  6. stores the accumulator values only after wait_group<0>.
+### Partial wait
+
+```text
+wgmma_fence
+
+mma acc0
+commit_group
+
+mma acc1
+commit_group
+
+wait_group<1>
+wait_group<0>
+```
+
+The two independent accumulator objects form two accumulator slots. The
+compiler can therefore keep two committed groups in flight, lower the static
+`wait_group<1>`, and still require a final `wait_group<0>` before either
+accumulator is observed.
+
+The example deliberately stops after two groups. Round-robin slot reuse and
+the associated legality checks are covered by `mir-lower` integration tests.
 
 ## Usage
 
@@ -35,7 +52,7 @@ cargo oxide build wgmma_mma_bf16 --arch sm_90a
 ```
 
 The command must complete successfully and generate PTX containing the BF16
-WGMMA instruction.
+WGMMA instruction and the partial wait.
 
 To run the repository smoketest:
 
@@ -43,39 +60,37 @@ To run the repository smoketest:
 scripts/smoketest.sh -x -v '^wgmma_mma_bf16$'
 ```
 
-## Expected smoketest marker:
+## Expected smoketest marker
 
 ```text
-SUCCESS: BF16 WGMMA deferred accumulator lowering compiled.
+SUCCESS: BF16 WGMMA value-threaded and partial-wait lowering compiled.
 ```
 
 ## Important
 
 This is a compile-only example.
 
-The kernel uses zero-valued WGMMA descriptors so that compilation and PTX
+Both kernels use zero-valued WGMMA descriptors so compilation and PTX
 generation can be tested without allocating Hopper shared-memory tiles. The
-kernel must not be launched with those descriptors.
+kernels must not be launched with those descriptors.
 
-Functional execution requires a sm_90a Hopper GPU and valid shared-memory
-descriptors.
+Functional execution requires an `sm_90a` Hopper GPU, valid shared-memory
+descriptors, and warpgroup-uniform participation.
 
-## Current limitations
+## Supported lowering shapes
 
-The initial lowering supports only:
+The current BF16 `m64n64k16.f32.bf16.bf16` lowering recognizes three
+conservative shapes:
 
-```text
-m64n64k16.f32.bf16.bf16
-```
+- linear full-drain regions ending in `wait_group<0>`;
+- a canonical counted K-loop with affine descriptor recurrences;
+- straight-line static partial-wait pipelines using `N + 1` independent
+  accumulator slots for `wait_group<N>`.
 
-It rejects:
+Every accepted asynchronous lifetime ends in `wait_group<0>` before
+accumulator values escape.
 
-  - F16 and TF32 variants;
-  - partial waits;
-  - multiple accumulator objects;
-  - multiple commit operations;
-  - branches and control-flow joins;
-  - sequences that span a loop boundary (a complete fence-to-wait
-    sequence inside a loop body fuses, paying the accumulator memory
-    round-trip each iteration);
-  - incomplete fence/MMA/commit/wait sequences.
+Unsupported pointer shapes retain the deferred pointer-form fallback where the
+full-drain sequence can still be proven safe. Dynamic waits, unsupported
+control flow, malformed pipeline schedules, and the F16/TF32 compatibility
+entry points fail closed.

@@ -578,10 +578,7 @@ fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
 
-    let module = ctx
-        .load_module_from_file("atomics.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
 
     const N: usize = 256;
 

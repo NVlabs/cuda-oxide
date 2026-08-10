@@ -18,11 +18,8 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      # rust-toolchain.toml pins nightly-2026-04-03 but does not list
-      # rustfmt as a component. Add it explicitly so `cargo fmt` resolves
-      # against the same nightly the rest of CI uses.
-      - name: Install rustfmt for the pinned nightly
-        run: rustup component add rustfmt
+      # rustfmt comes from rust-toolchain.toml's component list, like clippy,
+      # so `cargo fmt` resolves against the same nightly as the rest of CI.
 
       - name: Check root workspace formatting
         run: cargo fmt --all -- --check

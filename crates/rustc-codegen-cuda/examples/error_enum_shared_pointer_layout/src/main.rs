@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Negative test: enum storage containing an array of shared-memory pointers
-//! must fail closed until lowering has a bounded, code-shape-reviewed array
-//! reconstruction strategy.
+//! Negative test: enum storage containing an oversized array of shared-memory
+//! pointers must fail closed when recursive reconstruction would exceed the
+//! explicit code-shape bound.
 
 use cuda_device::{SharedArray, kernel};
 
 static mut SHARED: SharedArray<u32, 1> = SharedArray::UNINIT;
 
 struct SharedPointerArrayWrapper {
-    pointers: [&'static SharedArray<u32, 1>; 2],
+    pointers: [&'static SharedArray<u32, 1>; 17],
 }
 
 #[inline(never)]
@@ -32,7 +32,7 @@ pub unsafe fn shared_pointer_enum(out: *mut u64) {
     let shared: &'static SharedArray<u32, 1> = unsafe { &*shared_ptr };
     unsafe {
         *out = pointer_bits(Some(SharedPointerArrayWrapper {
-            pointers: [shared, shared],
+            pointers: [shared; 17],
         }));
     }
 }

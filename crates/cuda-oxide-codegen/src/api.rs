@@ -307,6 +307,7 @@ impl CodegenModule {
             })?;
         let mut context = Context::new();
         dialect_mir::register(&mut context);
+        dialect_iket::register(&mut context);
         dialect_nvvm::register(&mut context);
         let module = ModuleOp::new(&mut context, name);
         Ok(Self { context, module })
@@ -666,6 +667,7 @@ impl Compiler {
         let ll_path = scratch.path().join("module.ll");
         let ptx_path = scratch.path().join("module.ptx");
         let backend_options = BackendOptions {
+            iket: crate::options::IketInstrumentation::Auto,
             target_arch: Some(options.target.sm()),
             target_arch_source: "the requested Target",
             device_arch_hint: None,

@@ -68,8 +68,8 @@ use crate::translator::values::ValueMap;
 use crate::translator::{rvalue, types};
 
 use dialect_nvvm::ops::atomic::{
-    AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
-    NvvmAtomicRmwOp, NvvmAtomicStoreOp,
+    AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomicCmpxchgOp, NvvmAtomicFenceOp,
+    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
 };
 
 use dialect_mir::ops::{MirConstructTupleOp, MirEqOp, MirNegOp};
@@ -905,7 +905,25 @@ pub fn dispatch_core_intrinsic(
 ) -> TranslationResult<Ptr<Operation>> {
     let op_name = parse_core_intrinsic_op(path).unwrap_or("");
 
-    // Extract generic args from the func operand
+    // `atomic_fence` has no element-type generic, only its ordering const.
+    // Route it before the common type extraction used by load/store/RMW/CAS.
+    if op_name == "fence" {
+        let orderings = extract_core_intrinsic_orderings(func, &loc, 1)?;
+        return emit_core_atomic_fence(
+            ctx,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+            orderings[0].clone(),
+        );
+    }
+
+    // Extract generic args from the func operand.
     let is_cmpxchg = op_name == "cxchg" || op_name == "cxchgweak";
     let expected_orderings = if is_cmpxchg { 2 } else { 1 };
     let (type_info, orderings) = extract_core_intrinsic_generics(func, &loc, expected_orderings)?;
@@ -982,6 +1000,55 @@ pub fn dispatch_core_intrinsic(
     }
 }
 
+/// Extract and validate ordering const generics from generic arguments.
+fn extract_core_intrinsic_orderings_from_generics(
+    substs: &rustc_public::ty::GenericArgs,
+    loc: &Location,
+    expected_orderings: usize,
+) -> TranslationResult<Vec<AtomicOrdering>> {
+    let Some(orderings) = extract_orderings_from_generics(substs) else {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported("could not evaluate core atomic ordering generics")
+        );
+    };
+
+    if orderings.len() != expected_orderings {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "core atomic intrinsic requires {expected_orderings} ordering generic(s), found {}",
+                orderings.len()
+            ))
+        );
+    }
+
+    Ok(orderings)
+}
+
+/// Extract only ordering const generics from a core atomic intrinsic.
+///
+/// This path is used by `atomic_fence`, whose generic arguments do not contain
+/// an element type.
+fn extract_core_intrinsic_orderings(
+    func: &mir::Operand,
+    loc: &Location,
+    expected_orderings: usize,
+) -> TranslationResult<Vec<AtomicOrdering>> {
+    if let mir::Operand::Constant(const_op) = func
+        && let TyKind::RigidTy(RigidTy::FnDef(_, substs)) = const_op.const_.ty().kind()
+    {
+        return extract_core_intrinsic_orderings_from_generics(&substs, loc, expected_orderings);
+    }
+
+    input_err!(
+        loc.clone(),
+        TranslationErr::unsupported(
+            "core atomic intrinsic: could not extract generics from func operand"
+        )
+    )
+}
+
 /// Extract type info and ordering from a core atomic intrinsic's generic args.
 fn extract_core_intrinsic_generics(
     func: &mir::Operand,
@@ -991,40 +1058,31 @@ fn extract_core_intrinsic_generics(
     if let mir::Operand::Constant(const_op) = func
         && let TyKind::RigidTy(RigidTy::FnDef(_, substs)) = const_op.const_.ty().kind()
     {
-        if let Some(type_info) = extract_type_info_from_generics(&substs) {
-            if !core_atomic_width_is_supported(type_info.bit_width) {
-                return input_err!(
-                    loc.clone(),
-                    TranslationErr::unsupported(format!(
-                        "{}-bit core atomics are not supported; use 32-bit or 64-bit",
-                        type_info.bit_width
-                    ))
-                );
-            }
-            let Some(orderings) = extract_orderings_from_generics(&substs) else {
-                return input_err!(
-                    loc.clone(),
-                    TranslationErr::unsupported("could not evaluate core atomic ordering generics")
-                );
-            };
-            if orderings.len() != expected_orderings {
-                return input_err!(
-                    loc.clone(),
-                    TranslationErr::unsupported(format!(
-                        "core atomic intrinsic requires {expected_orderings} ordering generic(s), found {}",
-                        orderings.len()
-                    ))
-                );
-            }
-            return Ok((type_info, orderings));
+        let Some(type_info) = extract_type_info_from_generics(&substs) else {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(
+                    "could not extract element type from core atomic intrinsic generics"
+                )
+            );
+        };
+
+        if !core_atomic_width_is_supported(type_info.bit_width) {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "{}-bit core atomics are not supported; use 32-bit or 64-bit",
+                    type_info.bit_width
+                ))
+            );
         }
-        return input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(
-                "could not extract element type from core atomic intrinsic generics"
-            )
-        );
+
+        let orderings =
+            extract_core_intrinsic_orderings_from_generics(&substs, loc, expected_orderings)?;
+
+        return Ok((type_info, orderings));
     }
+
     input_err!(
         loc.clone(),
         TranslationErr::unsupported(
@@ -1032,7 +1090,6 @@ fn extract_core_intrinsic_generics(
         )
     )
 }
-
 fn core_atomic_width_is_supported(bit_width: u32) -> bool {
     matches!(bit_width, 32 | 64)
 }
@@ -1044,6 +1101,71 @@ fn core_atomic_width_is_supported(bit_width: u32) -> bool {
 // from cuda_device (no ordering arg, different arg count).  They build the same
 // NVVM ops as the cuda_device emit functions.
 // =============================================================================
+
+/// Emit a core atomic fence.
+///
+/// MIR args: none; ordering is carried by a const generic. Core fences use
+/// system scope, matching the rest of the `core::sync::atomic` importer.
+#[allow(clippy::too_many_arguments)]
+fn emit_core_atomic_fence(
+    ctx: &mut Context,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    ordering: AtomicOrdering,
+) -> TranslationResult<Ptr<Operation>> {
+    if !args.is_empty() {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "core atomic fence expects no arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let fence = NvvmAtomicFenceOp::build(ctx, ordering, AtomicScope::System);
+    let fence_op = fence.get_operation();
+    fence_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = prev_op {
+        fence_op.insert_after(ctx, prev);
+    } else {
+        fence_op.insert_at_front(block_ptr, ctx);
+    }
+
+    // `core::sync::atomic::fence` returns unit.
+    let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
+    let unit_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirConstructTupleOp::get_concrete_op_info(),
+        vec![unit_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    unit_op.deref_mut(ctx).set_loc(loc.clone());
+    unit_op.insert_after(ctx, fence_op);
+    let unit_val = unit_op.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        unit_val,
+        target,
+        block_ptr,
+        unit_op,
+        value_map,
+        block_map,
+        loc,
+        "core atomic fence call without target block",
+    )
+}
 
 /// Emit a core atomic load.
 ///

@@ -102,6 +102,7 @@ use rustc_middle::ty::{EarlyBinder, InstanceKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
 use rustc_span::{Span, hygiene};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -277,6 +278,8 @@ pub struct DeviceCodegenResult {
     /// stages must preserve this policy instead of silently compiling with
     /// their own defaults.
     pub debug_kind: llvm_export::export::DebugKind,
+    /// Source launch bounds for kernel entries, keyed by exported kernel name.
+    pub kernel_launch_bounds: BTreeMap<String, mir_importer::KernelLaunchBounds>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -801,6 +804,7 @@ pub fn generate_device_code<'tcx>(
                     artifact,
                     allow_fma_contraction: compilation_result.allow_fma_contraction,
                     debug_kind,
+                    kernel_launch_bounds: compilation_result.kernel_launch_bounds,
                 })
             }
             Err(pipeline_err) => Err(DeviceCodegenError::PtxGeneration(format!(
@@ -931,6 +935,7 @@ mod tests {
             artifact_kind: mir_importer::CompilationArtifactKind::NvvmIr,
             target: "sm_90".to_string(),
             allow_fma_contraction: false,
+            kernel_launch_bounds: BTreeMap::new(),
         };
 
         let artifact = read_compilation_artifact(&result).unwrap().unwrap();
@@ -957,6 +962,7 @@ mod tests {
             artifact_kind: mir_importer::CompilationArtifactKind::Cubin,
             target: "sm_90".to_string(),
             allow_fma_contraction: true,
+            kernel_launch_bounds: BTreeMap::new(),
         };
 
         let artifact = read_compilation_artifact(&result).unwrap().unwrap();

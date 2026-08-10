@@ -8022,6 +8022,41 @@ fn build_wgmma_pointer_test_kernel(
     )
 }
 
+fn build_wgmma_canonical_pointer_test_kernel(
+    ctx: &mut Context,
+    accumulator_count: usize,
+    descriptor_count: usize,
+) -> (
+    pliron::context::Ptr<Operation>,
+    pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    Vec<pliron::value::Value>,
+    Vec<pliron::value::Value>,
+) {
+    use dialect_mir::types::{MirArrayType, MirPtrType};
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    let f32_ty = FP32Type::get(ctx);
+    let row_ty = MirArrayType::get(ctx, f32_ty.into(), 8);
+    let accumulator_ty = MirArrayType::get(ctx, row_ty.into(), 4);
+    let accumulator_ptr_ty = MirPtrType::get_generic(ctx, accumulator_ty.into(), true);
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+
+    let accumulator_arg_ty: pliron::r#type::TypeHandle = accumulator_ptr_ty.into();
+    let u64_arg_ty: pliron::r#type::TypeHandle = u64_ty.into();
+    let mut argument_types = vec![accumulator_arg_ty; accumulator_count];
+    argument_types.extend(vec![u64_arg_ty; descriptor_count]);
+    let (module_ptr, entry) = build_test_kernel(ctx, argument_types);
+
+    let accumulators = (0..accumulator_count)
+        .map(|index| entry.deref(ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let descriptors = (0..descriptor_count)
+        .map(|index| entry.deref(ctx).get_argument(accumulator_count + index))
+        .collect::<Vec<_>>();
+
+    (module_ptr, entry, accumulators, descriptors)
+}
+
 fn append_pointer_wgmma_mma(
     ctx: &mut Context,
     block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
@@ -8068,6 +8103,39 @@ fn append_wgmma_wait_group_constant(
 
     let value = constant.deref(ctx).get_result(0);
     nvvm::WgmmaWaitGroupSyncAlignedOp::build(ctx, value).insert_at_back(block, ctx);
+}
+
+fn append_mir_unsigned_constant(
+    ctx: &mut Context,
+    block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    ty: pliron::r#type::TypedHandle<pliron::builtin::types::IntegerType>,
+    value: u64,
+) -> pliron::value::Value {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let width = usize::try_from(ty.deref(ctx).width()).expect("integer width must fit usize");
+    let constant = Operation::new(
+        ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(constant).set_attr_value(
+        ctx,
+        IntegerAttr::new(
+            ty,
+            APInt::from_u64(
+                value,
+                NonZeroUsize::new(width).expect("nonzero integer width"),
+            ),
+        ),
+    );
+    constant.insert_at_back(block, ctx);
+    constant.deref(ctx).get_result(0)
 }
 
 fn assert_wgmma_lowering_rejected(
@@ -8715,7 +8783,152 @@ fn test_deferred_wgmma_group_lowers_to_one_register_lifetime_scope() -> Result<(
 }
 
 #[test]
-fn test_pointer_form_wgmma_sequence_is_fused_before_lowering() -> Result<(), anyhow::Error> {
+fn test_value_form_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    const ACCUMULATOR_LEN: usize = 32;
+    const DESCRIPTOR_COUNT: usize = 4;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let argument_types = (0..ACCUMULATOR_LEN)
+        .map(|_| f32_ty.into())
+        .chain((0..DESCRIPTOR_COUNT).map(|_| u64_ty.into()))
+        .collect::<Vec<pliron::r#type::TypeHandle>>();
+
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+
+    let accumulators = (0..ACCUMULATOR_LEN)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let descriptors = (0..DESCRIPTOR_COUNT)
+        .map(|index| entry.deref(&ctx).get_argument(ACCUMULATOR_LEN + index))
+        .collect::<Vec<_>>();
+
+    nvvm::WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(&mut ctx, accumulators, descriptors)
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| {
+                    template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let asm_op = asm.get_operation();
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("value-form WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    for forbidden in [".reg .f32", "ld.f32", "st.f32"] {
+        assert!(
+            !template.contains(forbidden),
+            "value-form WGMMA must not materialize accumulator memory via {forbidden:?}: {template}"
+        );
+    }
+
+    let accumulator_operands = (0..ACCUMULATOR_LEN)
+        .map(|index| format!("${index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(
+        template.contains(&format!("{{{accumulator_operands}}}")),
+        "WGMMA must consume the 32 output operands as one accumulator tuple: {template}"
+    );
+    assert!(template.contains("$64, $65"), "{template}");
+    assert!(template.contains("$66, $67"), "{template}");
+
+    let mut expected_constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
+    expected_constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    expected_constraints.extend((0..DESCRIPTOR_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    let asm_ref = asm_op.deref(&ctx);
+    assert_eq!(
+        asm_ref.get_num_operands(),
+        ACCUMULATOR_LEN + DESCRIPTOR_COUNT
+    );
+    assert_eq!(
+        asm_ref.get_num_results(),
+        1,
+        "LLVM inline asm must return the 32 WGMMA accumulator values as one struct"
+    );
+
+    let aggregate = asm_ref.get_result(0);
+    let aggregate_ty = aggregate.get_type(&ctx);
+    let aggregate_ty = aggregate_ty.deref(&ctx);
+    let struct_ty = aggregate_ty
+        .downcast_ref::<llvm_types::StructType>()
+        .expect("value-form WGMMA inline asm must return an LLVM struct");
+    assert_eq!(struct_ty.num_fields(), ACCUMULATOR_LEN);
+    for index in 0..ACCUMULATOR_LEN {
+        assert!(
+            struct_ty
+                .field_type(index)
+                .deref(&ctx)
+                .downcast_ref::<FP32Type>()
+                .is_some(),
+            "WGMMA result field {index} must remain f32"
+        );
+    }
+
+    let extract_indices = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::ExtractValueOp>(operation, &ctx))
+        .filter_map(|extract| {
+            let extract_op = extract.get_operation().deref(&ctx);
+            (extract_op.get_operand(0) == aggregate).then(|| extract.indices(&ctx))
+        })
+        .collect::<Vec<_>>();
+
+    let expected_indices = (0..ACCUMULATOR_LEN)
+        .map(|index| vec![index as u32])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        extract_indices, expected_indices,
+        "all 32 value-form WGMMA results must be extracted in constraint order"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::IntegerAttr;
     use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -8724,6 +8937,8 @@ fn test_pointer_form_wgmma_sequence_is_fused_before_lowering() -> Result<(), any
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
+    // A direct *mut f32 is intentionally not the public [[f32; 8]; 4]
+    // accumulator shape. It must therefore retain the deferred pointer path.
     let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, f32_ty.into(), true);
     let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
     let (module_ptr, entry) = build_test_kernel(
@@ -8764,19 +8979,646 @@ fn test_pointer_form_wgmma_sequence_is_fused_before_lowering() -> Result<(), any
     mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let templates = lowered_kernel_body(&ctx, module_ptr)
+    let matching = lowered_kernel_body(&ctx, module_ptr)
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
-        .filter_map(|asm| {
+        .filter(|asm| {
             asm.get_attr_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("wgmma.mma_async"))
         })
-        .filter(|template| template.contains("wgmma.mma_async"))
         .collect::<Vec<_>>();
-    assert_eq!(templates.len(), 1);
-    assert!(templates[0].contains("wgmma.fence.sync.aligned"));
-    assert!(templates[0].contains("wgmma.commit_group.sync.aligned"));
-    assert!(templates[0].contains("wgmma.wait_group.sync.aligned 0"));
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("WGMMA template");
+    assert_eq!(template.matches("ld.f32 %acc").count(), 32);
+    assert_eq!(template.matches("st.f32 [$0").count(), 32);
+    assert_eq!(template.matches("wgmma.mma_async").count(), 1);
+    assert!(template.contains("wgmma.fence.sync.aligned"));
+    assert!(template.contains("wgmma.commit_group.sync.aligned"));
+    assert!(template.contains("wgmma.wait_group.sync.aligned 0"));
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some("l,l,l,~{memory}")
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Result<(), anyhow::Error>
+{
+    use dialect_mir::types::{MirArrayType, MirPtrType};
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    const ACCUMULATOR_LEN: usize = 32;
+    const DESCRIPTOR_COUNT: usize = 4;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let row_ty = MirArrayType::get(&mut ctx, f32_ty.into(), 8);
+    let accumulator_ty = MirArrayType::get(&mut ctx, row_ty.into(), 4);
+    let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, accumulator_ty.into(), true);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![
+            accumulator_ptr_ty.into(),
+            u64_ty.into(),
+            u64_ty.into(),
+            u64_ty.into(),
+            u64_ty.into(),
+        ],
+    );
+    let accumulator = entry.deref(&ctx).get_argument(0);
+    let descriptors = (1..=DESCRIPTOR_COUNT)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    for pair in descriptors.chunks_exact(2) {
+        Operation::new(
+            &mut ctx,
+            nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+            vec![],
+            vec![accumulator, pair[0], pair[1]],
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+    }
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+
+    let zero_attr = IntegerAttr::new(u64_ty, APInt::from_i64(0, NonZeroUsize::new(64).unwrap()));
+    let zero = Operation::new(
+        &mut ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(zero).set_attr_value(&ctx, zero_attr);
+    zero.insert_at_back(entry, &ctx);
+    let zero_value = zero.deref(&ctx).get_result(0);
+    nvvm::WgmmaWaitGroupSyncAlignedOp::build(&mut ctx, zero_value).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| {
+            Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx)
+                .map(|inline_asm| (operation, inline_asm))
+        })
+        .filter(|(_, asm)| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("wgmma.mma_async"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let (asm_operation, asm) = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "value-form WGMMA must not materialize accumulator memory inside asm: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
+    expected_constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    expected_constraints.extend((0..DESCRIPTOR_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    let asm_ref = asm_operation.deref(&ctx);
+    assert_eq!(
+        asm_ref.get_num_operands(),
+        ACCUMULATOR_LEN + DESCRIPTOR_COUNT
+    );
+    assert_eq!(asm_ref.get_num_results(), 1);
+
+    let asm_position = body
+        .iter()
+        .position(|operation| operation == asm_operation)
+        .expect("WGMMA asm must be in the lowered kernel body");
+
+    let load_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::LoadOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        load_positions.len(),
+        ACCUMULATOR_LEN,
+        "the linear adapter must load each accumulator value exactly once"
+    );
+    assert!(
+        load_positions.iter().all(|index| *index < asm_position),
+        "all accumulator loads must happen before the WGMMA region"
+    );
+
+    let store_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::StoreOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        store_positions.len(),
+        ACCUMULATOR_LEN,
+        "the linear adapter must store each accumulator value exactly once"
+    );
+    assert!(
+        store_positions.iter().all(|index| *index > asm_position),
+        "all accumulator stores must happen after the final wait"
+    );
+
+    assert_eq!(
+        body.iter()
+            .filter(
+                |operation| Operation::get_op::<llvm::ExtractValueOp>(**operation, &ctx).is_some()
+            )
+            .count(),
+        ACCUMULATOR_LEN,
+        "all WGMMA accumulator results must be recovered as scalar SSA values"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_partial_wait_pipeline_keeps_multiple_groups_in_flight()
+-> Result<(), anyhow::Error> {
+    const SLOT_COUNT: usize = 2;
+    const ACCUMULATOR_LEN: usize = 32;
+    const GROUP_COUNT: usize = 4;
+    const DESCRIPTOR_COUNT: usize = GROUP_COUNT * 2;
+    const MAX_PENDING_GROUPS: i64 = 1;
+    const RESULT_COUNT: usize = SLOT_COUNT * ACCUMULATOR_LEN;
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, SLOT_COUNT, DESCRIPTOR_COUNT);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    for group in 0..GROUP_COUNT {
+        append_pointer_wgmma_mma(
+            &mut ctx,
+            entry,
+            accumulators[group % SLOT_COUNT],
+            descriptors[group * 2],
+            descriptors[group * 2 + 1],
+        );
+        nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+        if group + 1 >= SLOT_COUNT {
+            append_wgmma_wait_group_constant(&mut ctx, entry, MAX_PENDING_GROUPS);
+        }
+    }
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| {
+            Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx)
+                .map(|inline_asm| (operation, inline_asm))
+        })
+        .filter(|(_, asm)| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| {
+                    template.contains("wgmma.mma_async")
+                        && template.contains("wgmma.wait_group.sync.aligned 1")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected one fused partial-wait WGMMA pipeline"
+    );
+
+    let (asm_operation, asm) = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("pipeline WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(template.matches("wgmma.mma_async").count(), GROUP_COUNT);
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        GROUP_COUNT
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 1").count(),
+        GROUP_COUNT - SLOT_COUNT + 1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(
+        template.contains("{$0, $1"),
+        "slot 0 must use the first accumulator tuple"
+    );
+    assert!(
+        template.contains("{$32, $33"),
+        "slot 1 must use the second accumulator tuple"
+    );
+    assert!(template.contains("$128, $129"));
+    assert!(template.contains("$134, $135"));
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "pipeline WGMMA must not materialize accumulator memory inside asm: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); RESULT_COUNT];
+    expected_constraints.extend((0..RESULT_COUNT).map(|index| index.to_string()));
+    expected_constraints.extend((0..DESCRIPTOR_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+    assert_eq!(
+        asm_operation.deref(&ctx).get_num_operands(),
+        RESULT_COUNT + DESCRIPTOR_COUNT
+    );
+    assert_eq!(asm_operation.deref(&ctx).get_num_results(), 1);
+
+    let asm_position = body
+        .iter()
+        .position(|operation| operation == asm_operation)
+        .expect("pipeline asm must be in the lowered kernel body");
+    let load_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::LoadOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(load_positions.len(), RESULT_COUNT);
+    assert!(load_positions.iter().all(|index| *index < asm_position));
+
+    let store_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::StoreOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(store_positions.len(), RESULT_COUNT);
+    assert!(store_positions.iter().all(|index| *index > asm_position));
+    assert_eq!(
+        body.iter()
+            .filter(|operation| {
+                Operation::get_op::<llvm::ExtractValueOp>(**operation, &ctx).is_some()
+            })
+            .count(),
+        RESULT_COUNT
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::{MirArrayType, MirPtrType};
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::op_interfaces::OperandSegmentInterface;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    const ACCUMULATOR_LEN: usize = 32;
+    const LOOP_CONTROL_COUNT: usize = 5;
+    const TRIP_COUNT: u64 = 4;
+    const DESC_A_STEP: u64 = 16;
+    const DESC_B_STEP: u64 = 32;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let row_ty = MirArrayType::get(&mut ctx, f32_ty.into(), 8);
+    let accumulator_ty = MirArrayType::get(&mut ctx, row_ty.into(), 4);
+    let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, accumulator_ty.into(), true);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+
+    let (module_ptr, preheader) = build_test_kernel(
+        &mut ctx,
+        vec![accumulator_ptr_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    let accumulator = preheader.deref(&ctx).get_argument(0);
+    let desc_a_base = preheader.deref(&ctx).get_argument(1);
+    let desc_b_base = preheader.deref(&ctx).get_argument(2);
+
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let function = module_block.deref(&ctx).iter(&ctx).next().unwrap();
+    let function_region = function.deref(&ctx).get_region(0);
+
+    let header = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![u32_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    header.insert_at_back(function_region, &ctx);
+    let latch = BasicBlock::new(&mut ctx, None, vec![]);
+    latch.insert_at_back(function_region, &ctx);
+    let exit = BasicBlock::new(&mut ctx, None, vec![]);
+    exit.insert_at_back(function_region, &ctx);
+
+    // preheader: fence; i0 = 0; goto header(i0, desc_a_base, desc_b_base)
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(preheader, &ctx);
+    let i0 = append_mir_unsigned_constant(&mut ctx, preheader, u32_ty, 0);
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![i0, desc_a_base, desc_b_base],
+        vec![header],
+        0,
+    )
+    .insert_at_back(preheader, &ctx);
+
+    // header(i, desc_a, desc_b): if !(i < 4) exit else latch.
+    let i = header.deref(&ctx).get_argument(0);
+    let desc_a = header.deref(&ctx).get_argument(1);
+    let desc_b = header.deref(&ctx).get_argument(2);
+    let bound = append_mir_unsigned_constant(&mut ctx, header, u32_ty, TRIP_COUNT);
+    let lt = Operation::new(
+        &mut ctx,
+        mir::MirLtOp::get_concrete_op_info(),
+        vec![i1_ty.into()],
+        vec![i, bound],
+        vec![],
+        0,
+    );
+    lt.insert_at_back(header, &ctx);
+    let lt_value = lt.deref(&ctx).get_result(0);
+    let not_lt = Operation::new(
+        &mut ctx,
+        mir::MirNotOp::get_concrete_op_info(),
+        vec![i1_ty.into()],
+        vec![lt_value],
+        vec![],
+        0,
+    );
+    not_lt.insert_at_back(header, &ctx);
+    let not_lt_value = not_lt.deref(&ctx).get_result(0);
+    let (branch_operands, segment_sizes) =
+        mir::MirCondBranchOp::compute_segment_sizes(vec![vec![not_lt_value], vec![], vec![]]);
+    let branch = Operation::new(
+        &mut ctx,
+        mir::MirCondBranchOp::get_concrete_op_info(),
+        vec![],
+        branch_operands,
+        vec![exit, latch],
+        0,
+    );
+    Operation::get_op::<mir::MirCondBranchOp>(branch, &ctx)
+        .expect("MirCondBranchOp")
+        .set_operand_segment_sizes(&ctx, segment_sizes);
+    branch.insert_at_back(header, &ctx);
+
+    // latch: one WGMMA per K iteration and affine descriptor recurrences.
+    append_pointer_wgmma_mma(&mut ctx, latch, accumulator, desc_a, desc_b);
+
+    let one = append_mir_unsigned_constant(&mut ctx, latch, u32_ty, 1);
+    let i_next = Operation::new(
+        &mut ctx,
+        mir::MirAddOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![i, one],
+        vec![],
+        0,
+    );
+    i_next.insert_at_back(latch, &ctx);
+    let i_next = i_next.deref(&ctx).get_result(0);
+
+    let desc_a_step = append_mir_unsigned_constant(&mut ctx, latch, u64_ty, DESC_A_STEP);
+    let desc_a_next = Operation::new(
+        &mut ctx,
+        mir::MirAddOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![desc_a, desc_a_step],
+        vec![],
+        0,
+    );
+    desc_a_next.insert_at_back(latch, &ctx);
+    let desc_a_next = desc_a_next.deref(&ctx).get_result(0);
+
+    let desc_b_step = append_mir_unsigned_constant(&mut ctx, latch, u64_ty, DESC_B_STEP);
+    let desc_b_next = Operation::new(
+        &mut ctx,
+        mir::MirAddOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![desc_b, desc_b_step],
+        vec![],
+        0,
+    );
+    desc_b_next.insert_at_back(latch, &ctx);
+    let desc_b_next = desc_b_next.deref(&ctx).get_result(0);
+
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![i_next, desc_a_next, desc_b_next],
+        vec![header],
+        0,
+    )
+    .insert_at_back(latch, &ctx);
+
+    // exit: the only place where the asynchronous lifetime may become visible.
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(exit, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, exit, 0);
+    append_return(&mut ctx, exit);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| {
+            Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx)
+                .map(|inline_asm| (operation, inline_asm))
+        })
+        .filter(|(_, asm)| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("L__wgmma_loop_${:uid}:"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected one fused counted-loop WGMMA asm"
+    );
+
+    let (asm_operation, asm) = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("counted-loop WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(
+        template.matches("wgmma.mma_async").count(),
+        1,
+        "the PTX template contains one MMA instruction controlled by the internal K-loop"
+    );
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(template.contains("mov.u64 %desc_a, $64;"));
+    assert!(template.contains("mov.u64 %desc_b, $65;"));
+    assert!(template.contains("add.u64 %desc_a, %desc_a, $66;"));
+    assert!(template.contains("add.u64 %desc_b, %desc_b, $67;"));
+    assert!(template.contains("mov.u64 %remaining, $68;"));
+    assert!(template.contains("@%loop_more bra.uni L__wgmma_done_${:uid};"));
+    assert!(template.contains("@%loop_more bra.uni L__wgmma_loop_${:uid};"));
+    assert!(template.contains("L__wgmma_done_${:uid}:"));
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "counted-loop WGMMA must keep accumulator memory outside asm: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
+    expected_constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    expected_constraints.extend((0..LOOP_CONTROL_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+    assert_eq!(
+        asm_operation.deref(&ctx).get_num_operands(),
+        ACCUMULATOR_LEN + LOOP_CONTROL_COUNT
+    );
+
+    let asm_position = body
+        .iter()
+        .position(|operation| operation == asm_operation)
+        .expect("counted-loop WGMMA asm must be in the lowered kernel body");
+
+    let load_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::LoadOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        load_positions.len(),
+        ACCUMULATOR_LEN,
+        "K-loop accumulator must be loaded exactly once, not once per iteration"
+    );
+    assert!(load_positions.iter().all(|index| *index < asm_position));
+
+    let store_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::StoreOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        store_positions.len(),
+        ACCUMULATOR_LEN,
+        "K-loop accumulator must be stored exactly once after the final wait"
+    );
+    assert!(store_positions.iter().all(|index| *index > asm_position));
+
+    assert_eq!(
+        body.iter()
+            .filter(
+                |operation| Operation::get_op::<llvm::ExtractValueOp>(**operation, &ctx).is_some()
+            )
+            .count(),
+        ACCUMULATOR_LEN
+    );
+
     Ok(())
 }
 
@@ -8819,7 +9661,7 @@ fn test_deferred_wgmma_without_commit_is_rejected() -> Result<(), anyhow::Error>
 }
 
 #[test]
-fn test_deferred_wgmma_wait_group_one_is_rejected() -> Result<(), anyhow::Error> {
+fn test_wgmma_partial_wait_without_final_wait_zero_is_rejected() -> Result<(), anyhow::Error> {
     let mut ctx = make_test_ctx();
     let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
         build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
@@ -8833,7 +9675,63 @@ fn test_deferred_wgmma_wait_group_one_is_rejected() -> Result<(), anyhow::Error>
     assert_wgmma_lowering_rejected(
         &mut ctx,
         module_ptr,
-        "WGMMA deferred accumulator lowering requires wait_group<0>",
+        "WGMMA partial-wait pipeline requires a final wait_group<0>",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_wgmma_partial_wait_pipeline_rejects_unsafe_accumulator_reuse() -> Result<(), anyhow::Error>
+{
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 1, 4);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(
+        &mut ctx,
+        entry,
+        accumulators[0],
+        descriptors[0],
+        descriptors[1],
+    );
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(
+        &mut ctx,
+        entry,
+        accumulators[0],
+        descriptors[2],
+        descriptors[3],
+    );
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 1);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA partial-wait pipeline requires max_pending_groups + 1 distinct accumulator slots",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_wgmma_wait_group_eight_is_rejected() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 8);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA wait_group<N> immediate must be in 0..=7",
     );
     Ok(())
 }
@@ -9056,6 +9954,788 @@ fn test_deferred_wgmma_nested_fence_is_rejected() -> Result<(), anyhow::Error> {
         &mut ctx,
         module_ptr,
         "nested WGMMA fences are not supported in one deferred accumulator region",
+    );
+    Ok(())
+}
+
+/// Scoped atomic loads and stores must lower to inline PTX, not to
+/// `load atomic` / `store atomic`.
+///
+/// libNVVM rejects the IR-level form outright ("Atomic loads/stores are not
+/// supported"), so lowering to `llvm::AtomicLoadOp` / `llvm::AtomicStoreOp`
+/// produced modules that no `--materialize-cubin` build could consume, making
+/// every `DeviceAtomic*::load` and `::store` call a build failure. The PTX
+/// instructions themselves have existed since sm_70, so the ops lower through
+/// inline assembly instead.
+///
+/// This asserts the exact template, constraints and asm kind, because all
+/// three are load-bearing: the scope qualifier is the whole point of the
+/// feature, the constraint register class must match the operand width, and
+/// `SideEffect` plus the memory clobber is what stops a publication spin being
+/// hoisted out of its loop.
+#[test]
+fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into(), u64_ty.into()]);
+    let address = entry.deref(&ctx).get_argument(0);
+    let val32 = entry.deref(&ctx).get_argument(1);
+    let val64 = entry.deref(&ctx).get_argument(2);
+
+    // One per scope, so a regression that hardcodes a scope is caught rather
+    // than passing on the Device case alone.
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        u32_ty.into(),
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        u32_ty.into(),
+        AtomicOrdering::Acquire,
+        AtomicScope::Block,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        u64_ty.into(),
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        val32,
+        address,
+        AtomicOrdering::Release,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        val64,
+        address,
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut lowered = Vec::new();
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(function) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if function.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let body = function.get_operation().deref(&ctx).get_region(0);
+        for block in body.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                // The IR-level forms are what libNVVM rejects; neither may survive.
+                assert!(
+                    Operation::get_op::<llvm::AtomicLoadOp>(body_op, &ctx).is_none(),
+                    "scoped atomic load must not lower to `load atomic`: libNVVM rejects it"
+                );
+                assert!(
+                    Operation::get_op::<llvm::AtomicStoreOp>(body_op, &ctx).is_none(),
+                    "scoped atomic store must not lower to `store atomic`: libNVVM rejects it"
+                );
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if !template.starts_with("ld.") && !template.starts_with("st.") {
+                    continue;
+                }
+                lowered.push((
+                    template,
+                    asm.get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .unwrap_or_default(),
+                    llvm::asm_kind(&ctx, &asm),
+                ));
+            }
+        }
+    }
+
+    // Every access keeps the `~{memory}` clobber, Relaxed included. Without
+    // it LLVM may move plain loads and stores of the same address across the
+    // asm, breaking the single-thread coherence Rust still guarantees for
+    // Relaxed atomics; libcu++ keeps the clobber on its relaxed accesses too.
+    let expected = [
+        ("ld.relaxed.gpu.b32 $0, [$1];", "=r,l,~{memory}"),
+        ("ld.acquire.cta.b32 $0, [$1];", "=r,l,~{memory}"),
+        ("ld.relaxed.sys.b64 $0, [$1];", "=l,l,~{memory}"),
+        ("st.release.gpu.b32 [$0], $1;", "l,r,~{memory}"),
+        ("st.relaxed.gpu.b64 [$0], $1;", "l,l,~{memory}"),
+    ];
+    assert_eq!(
+        lowered.len(),
+        expected.len(),
+        "expected one inline-asm op per scoped atomic load/store, got {lowered:?}"
+    );
+    for (template, constraints) in expected {
+        let found = lowered
+            .iter()
+            .find(|(t, _, _)| t == template)
+            .unwrap_or_else(|| panic!("missing lowering for {template}; got {lowered:?}"));
+        assert_eq!(found.1, constraints, "constraints for {template}");
+        // Not Convergent: these are per-thread accesses, not warp-synchronous.
+        // SideEffect with the memory clobber is what keeps a spin re-reading.
+        assert_eq!(
+            found.2,
+            llvm::AsmKind::SideEffect,
+            "asm kind for {template}"
+        );
+    }
+    Ok(())
+}
+
+/// Orderings a PTX load or store cannot carry must be rejected, not silently
+/// weakened.
+///
+/// Acquire is load-only, Release is store-only, and AcqRel makes no sense on
+/// a single access. Approximating any of them with `relaxed` would be a
+/// correctness bug that no runtime test would catch, because the wrong answer
+/// only appears under contention on hardware that reorders.
+#[test]
+fn test_scoped_atomic_rejects_inexpressible_orderings() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for (is_load, ordering) in [
+        (true, AtomicOrdering::Release), // release is store-only
+        (true, AtomicOrdering::AcqRel),
+        (false, AtomicOrdering::Acquire), // acquire is load-only
+        (false, AtomicOrdering::AcqRel),
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        if is_load {
+            NvvmAtomicLoadOp::build(
+                &mut ctx,
+                address,
+                u32_ty.into(),
+                ordering.clone(),
+                AtomicScope::Device,
+            )
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        } else {
+            NvvmAtomicStoreOp::build(
+                &mut ctx,
+                val,
+                address,
+                ordering.clone(),
+                AtomicScope::Device,
+            )
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        }
+        append_return(&mut ctx, entry);
+
+        let result = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr);
+        assert!(
+            result.is_err(),
+            "{} with {ordering:?} ordering must be rejected, not approximated",
+            if is_load { "load" } else { "store" }
+        );
+    }
+    Ok(())
+}
+
+/// SeqCst load and store lower to one asm op whose template fuses the
+/// `fence.sc` with the access, at every scope.
+///
+/// PTX has no sequentially consistent load or store instruction. libcu++ maps
+/// a SeqCst load to `fence.sc.{scope}` followed by an acquire load at the
+/// same scope, and a SeqCst store to `fence.sc.{scope}` followed by a release
+/// store. Fusing the fence into the same template keeps the pair inseparable.
+#[test]
+fn test_seqcst_atomic_load_store_fuse_fence_into_template() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for (scope, ptx) in [
+        (AtomicScope::Device, "gpu"),
+        (AtomicScope::Block, "cta"),
+        (AtomicScope::System, "sys"),
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            address,
+            u32_ty.into(),
+            AtomicOrdering::SeqCst,
+            scope.clone(),
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        NvvmAtomicStoreOp::build(&mut ctx, val, address, AtomicOrdering::SeqCst, scope)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut lowered = Vec::new();
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+                continue;
+            };
+            lowered.push((
+                asm.get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default(),
+                asm.get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default(),
+            ));
+        }
+        let expected = vec![
+            (
+                format!("fence.sc.{ptx}; ld.acquire.{ptx}.b32 $0, [$1];"),
+                "=r,l,~{memory}".to_string(),
+            ),
+            (
+                format!("fence.sc.{ptx}; st.release.{ptx}.b32 [$0], $1;"),
+                "l,r,~{memory}".to_string(),
+            ),
+        ];
+        assert_eq!(lowered, expected, "SeqCst lowering at scope {ptx}");
+    }
+    Ok(())
+}
+
+/// Float atomic loads and stores travel through integer registers with an
+/// LLVM-level bitcast on each side.
+///
+/// The register classes in the constraints are integer (`h`/`r`/`l`), so
+/// handing llc a float-typed asm operand or result is a constraint mismatch.
+/// The store bitcasts the float to the same-width integer before the asm; the
+/// load returns the integer and bitcasts it back to the float type. The f16
+/// case also covers the `b16`/`h` arm end to end, which is what makes
+/// `DeviceAtomicF16::load`/`store` compile at all.
+#[test]
+fn test_float_atomic_load_store_bitcast_through_integer_registers() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::{MirFP16Type, MirPtrType};
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{FP32Type, IntegerType};
+    use pliron::r#type::Typed;
+
+    let is_expected_float = |ctx: &Context, ty: pliron::r#type::TypeHandle, width: u32| -> bool {
+        let ty_ref = ty.deref(ctx);
+        match width {
+            16 => ty_ref.is::<llvm_types::HalfType>(),
+            32 => ty_ref.is::<FP32Type>(),
+            _ => false,
+        }
+    };
+    let integer_width_of = |ctx: &Context, ty: pliron::r#type::TypeHandle| -> Option<u32> {
+        ty.deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .map(IntegerType::width)
+    };
+
+    for (is_f16, ptx_ty, reg, width) in [(false, "b32", "r", 32u32), (true, "b16", "h", 16u32)] {
+        let mut ctx = make_test_ctx();
+        let elem_ty: pliron::r#type::TypeHandle = if is_f16 {
+            MirFP16Type::get(&ctx).into()
+        } else {
+            FP32Type::get(&ctx).into()
+        };
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, elem_ty, true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), elem_ty]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            address,
+            elem_ty,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        NvvmAtomicStoreOp::build(
+            &mut ctx,
+            val,
+            address,
+            AtomicOrdering::Relaxed,
+            AtomicScope::Device,
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut ld_asm = None;
+        let mut st_asm = None;
+        let mut bitcasts = Vec::new();
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                let constraints = asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if template.starts_with("ld.") {
+                    ld_asm = Some((op, template, constraints));
+                } else if template.starts_with("st.") {
+                    st_asm = Some((op, template, constraints));
+                }
+            }
+            if Operation::get_op::<llvm::BitcastOp>(op, &ctx).is_some() {
+                bitcasts.push(op);
+            }
+        }
+
+        // Load direction: asm produces the staging integer, then one bitcast
+        // turns it back into the float.
+        let (ld_op, ld_template, ld_constraints) =
+            ld_asm.expect("float atomic load must lower to inline asm");
+        assert_eq!(ld_template, format!("ld.relaxed.gpu.{ptx_ty} $0, [$1];"));
+        assert_eq!(ld_constraints, format!("={reg},l,~{{memory}}"));
+        let ld_result = ld_op.deref(&ctx).get_result(0);
+        assert_eq!(
+            integer_width_of(&ctx, ld_result.get_type(&ctx)),
+            Some(width),
+            "load asm must produce the staging integer, not the float"
+        );
+        let load_cast = bitcasts
+            .iter()
+            .copied()
+            .find(|&cast| cast.deref(&ctx).get_operand(0) == ld_result)
+            .expect("load asm result must be bitcast back to the float type");
+        let load_cast_ty = load_cast.deref(&ctx).get_result(0).get_type(&ctx);
+        assert!(
+            is_expected_float(&ctx, load_cast_ty, width),
+            "load bitcast must produce the float type"
+        );
+
+        // Store direction: the float is bitcast to the staging integer, and
+        // that integer is what the asm consumes.
+        let (st_op, st_template, st_constraints) =
+            st_asm.expect("float atomic store must lower to inline asm");
+        assert_eq!(st_template, format!("st.relaxed.gpu.{ptx_ty} [$0], $1;"));
+        assert_eq!(st_constraints, format!("l,{reg},~{{memory}}"));
+        let stored = st_op.deref(&ctx).get_operand(1);
+        assert_eq!(
+            integer_width_of(&ctx, stored.get_type(&ctx)),
+            Some(width),
+            "store asm must consume the staging integer, not the float"
+        );
+        let store_cast = bitcasts
+            .iter()
+            .copied()
+            .find(|&cast| cast.deref(&ctx).get_result(0) == stored)
+            .expect("store asm value must come from a float-to-integer bitcast");
+        let store_src_ty = store_cast.deref(&ctx).get_operand(0).get_type(&ctx);
+        assert!(
+            is_expected_float(&ctx, store_src_ty, width),
+            "store bitcast must consume the float type"
+        );
+    }
+    Ok(())
+}
+
+/// A SeqCst fence must go through the typed NVVM intrinsic, and a weaker one
+/// through inline PTX.
+///
+/// PTX defines `membar.level` as a synonym for `fence.sc.level`, so
+/// `llvm.nvvm.membar.{cta,gl,sys}` is an exact match for SeqCst and is the route
+/// the rest of the crate already uses for fences. No intrinsic exists for a
+/// weaker fence, and emitting `membar` for AcqRel would silently upgrade the
+/// caller's request to sequential consistency, so that case emits
+/// `fence.acq_rel.{scope}` directly.
+#[test]
+fn test_fence_uses_membar_intrinsic_only_for_seqcst() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomicRmwOp};
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for (ordering, want_intrinsic, want_asm) in [
+        (AtomicOrdering::SeqCst, Some("llvm_nvvm_membar_gl"), None),
+        (AtomicOrdering::AcqRel, None, Some("fence.acq_rel.gpu;")),
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        let addend = entry.deref(&ctx).get_argument(1);
+
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            address,
+            addend,
+            u32_ty.into(),
+            AtomicRmwKind::Add,
+            ordering.clone(),
+            AtomicScope::Device,
+        )
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut saw_intrinsic = false;
+        let mut saw_asm = None;
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+                && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+                && callee.to_string().contains("membar")
+            {
+                saw_intrinsic = true;
+            }
+            if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let t = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|v| String::from((*v).clone()))
+                    .unwrap_or_default();
+                if t.starts_with("fence.") {
+                    saw_asm = Some(t);
+                }
+            }
+        }
+        assert_eq!(
+            saw_intrinsic,
+            want_intrinsic.is_some(),
+            "{ordering:?}: membar intrinsic presence"
+        );
+        assert_eq!(saw_asm.as_deref(), want_asm, "{ordering:?}: inline fence");
+        // A SeqCst fence must never also emit `membar` as assembly: that would
+        // mean both routes fired.
+        if want_intrinsic.is_some() {
+            assert!(saw_asm.is_none(), "{ordering:?}: emitted both routes");
+        }
+    }
+    Ok(())
+}
+
+/// A first-class atomic fence must lower through the same libNVVM-safe routes
+/// used by the RMW ordering workaround.
+///
+/// `core::sync::atomic::fence` imports with system scope, so the source-level
+/// path depends on this exact mapping: Acquire/Release/AcqRel become
+/// `fence.acq_rel.sys`, while SeqCst becomes `llvm.nvvm.membar.sys`.
+#[test]
+fn test_first_class_atomic_fence_lowers_at_system_scope() -> Result<(), anyhow::Error> {
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicScope, NvvmAtomicFenceOp};
+
+    for ordering in [
+        AtomicOrdering::Acquire,
+        AtomicOrdering::Release,
+        AtomicOrdering::AcqRel,
+        AtomicOrdering::SeqCst,
+    ] {
+        let mut ctx = make_test_ctx();
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+        NvvmAtomicFenceOp::build(&mut ctx, ordering.clone(), AtomicScope::System)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let mut membar_calls = 0usize;
+        let mut fence_asm = Vec::new();
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            assert!(
+                Operation::get_op::<NvvmAtomicFenceOp>(op, &ctx).is_none(),
+                "first-class atomic fence must be fully consumed by lowering"
+            );
+
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+                && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+                && callee.to_string() == "llvm_nvvm_membar_sys"
+            {
+                membar_calls += 1;
+            }
+
+            let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+                continue;
+            };
+            let template = asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap_or_default();
+            if template.starts_with("fence.") {
+                assert_eq!(
+                    asm.get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some("~{memory}")
+                );
+                assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::SideEffect);
+                fence_asm.push(template);
+            }
+        }
+
+        match ordering {
+            AtomicOrdering::SeqCst => {
+                assert_eq!(membar_calls, 1, "SeqCst must use membar.sys");
+                assert!(
+                    fence_asm.is_empty(),
+                    "SeqCst must not also emit an inline PTX fence"
+                );
+            }
+            AtomicOrdering::Acquire | AtomicOrdering::Release | AtomicOrdering::AcqRel => {
+                assert_eq!(membar_calls, 0, "weak fences must not use membar.sys");
+                assert_eq!(
+                    fence_asm,
+                    vec!["fence.acq_rel.sys;".to_owned()],
+                    "{ordering:?} must lower to one system-scope acq_rel fence"
+                );
+            }
+            AtomicOrdering::Relaxed => unreachable!("Relaxed is not a valid Rust fence ordering"),
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_first_class_atomic_fence_rejects_relaxed() -> Result<(), anyhow::Error> {
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicScope, NvvmAtomicFenceOp};
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    NvvmAtomicFenceOp::build(&mut ctx, AtomicOrdering::Relaxed, AtomicScope::System)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    let result = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr);
+    assert!(
+        result.is_err(),
+        "Relaxed is not a valid atomic fence ordering and must be rejected"
+    );
+    Ok(())
+}
+
+/// Builds a module holding a single `mir.func` whose body calls the `bswap`
+/// placeholder on a `u8` argument, with the call result carrying `result_ty`.
+/// Shared by the valid (u8 result) and malformed (tuple result) 8-bit bswap
+/// tests below.
+fn build_bswap8_call_module(
+    ctx: &mut Context,
+    result_ty: pliron::r#type::TypeHandle,
+) -> pliron::context::Ptr<Operation> {
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::builtin::attributes::TypeAttr;
+    use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
+
+    let u8_ty = IntegerType::get(ctx, 8, Signedness::Unsigned);
+
+    let module = ModuleOp::new(ctx, "m".try_into().unwrap());
+    let module_ptr = module.get_operation();
+    let module_block = module
+        .get_operation()
+        .deref(ctx)
+        .get_region(0)
+        .deref(ctx)
+        .iter(ctx)
+        .next()
+        .unwrap();
+
+    let func_ty = FunctionType::get(ctx, vec![u8_ty.into()], vec![]);
+    let func_op = Operation::new(
+        ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func = mir::MirFuncOp::new(ctx, func_op, TypeAttr::new(func_ty.into()));
+    func.set_symbol_name(ctx, "f".try_into().unwrap());
+    {
+        let region = func.get_operation().deref(ctx).get_region(0);
+        let block = BasicBlock::new(ctx, None, vec![u8_ty.into()]);
+        block.insert_at_back(region, ctx);
+        let arg = block.deref(ctx).get_argument(0);
+
+        let call_ptr = Operation::new(
+            ctx,
+            mir::MirCallOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![arg],
+            vec![],
+            0,
+        );
+        let call = mir::MirCallOp::new(call_ptr);
+        call.set_attr_callee(
+            ctx,
+            StringAttr::new(dialect_mir::rust_intrinsics::CALLEE_BSWAP.to_string()),
+        );
+        call_ptr.insert_at_back(block, ctx);
+
+        let ret_op = Operation::new(
+            ctx,
+            mir::MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        ret_op.insert_at_back(block, ctx);
+    }
+    func.get_operation().insert_at_back(module_block, ctx);
+
+    module_ptr
+}
+
+/// An 8-bit `bswap` takes an early bitcast path, since Rust's semantics for a
+/// single byte are identity and LLVM has no useful intrinsic for it. That path
+/// returned before reaching the cast every other arm goes through, so a result
+/// type that was not an 8-bit integer produced `bitcast i8 to <aggregate>`,
+/// which LLVM rejects when the module is read back.
+///
+/// The known producer of this shape is an importer bug that hands the call
+/// the type of the destination *local* rather than of the projected place it
+/// writes, so `RET.1 = bswap(x)` on a `(f64, u8)` return arrives here
+/// carrying the whole tuple. That bug is the importer's to fix, and whatever
+/// the importer does, a malformed producer can still build such a `mir.call`.
+/// Lowering cannot repair it, and refusing it is what keeps the emitted
+/// module valid.
+#[test]
+fn bswap8_with_an_aggregate_result_is_refused_rather_than_bitcast() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirTupleType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let f64_ty = pliron::builtin::types::FP64Type::get(&ctx);
+    // The tuple result is the whole point: an 8-bit operand with a result
+    // the bitcast cannot legally produce.
+    let tuple_ty = MirTupleType::get(&mut ctx, vec![f64_ty.into(), u8_ty.into()]);
+    let module_ptr = build_bswap8_call_module(&mut ctx, tuple_ty.into());
+
+    let result = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr);
+    let error =
+        result.expect_err("an 8-bit bswap with a tuple result must be refused, not lowered");
+    assert!(
+        error
+            .to_string()
+            .contains("expected integer type for Rust bit intrinsic"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+/// The valid counterpart: an 8-bit `bswap` whose result is a plain `u8` must
+/// still take the identity-bitcast path and lower cleanly, so the guard above
+/// cannot over-reject the case Rust actually produces for `u8::swap_bytes`.
+#[test]
+fn bswap8_with_a_u8_result_lowers_to_an_identity_bitcast() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let module_ptr = build_bswap8_call_module(&mut ctx, u8_ty.into());
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .expect("an 8-bit bswap with a u8 result must lower");
+
+    // The call must have become a bitcast, not an intrinsic call: there is no
+    // llvm.bswap.i8.
+    let mut found_bitcast = false;
+    let module_block = module_ptr
+        .deref(&ctx)
+        .get_region(0)
+        .deref(&ctx)
+        .iter(&ctx)
+        .next()
+        .unwrap();
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                assert!(
+                    Operation::get_op::<llvm::CallOp>(body_op, &ctx).is_none(),
+                    "an 8-bit bswap must not lower to an intrinsic call"
+                );
+                if Operation::get_op::<llvm::BitcastOp>(body_op, &ctx).is_some() {
+                    found_bitcast = true;
+                }
+            }
+        }
+    }
+    assert!(
+        found_bitcast,
+        "an 8-bit bswap with a u8 result must lower to an identity bitcast"
     );
     Ok(())
 }

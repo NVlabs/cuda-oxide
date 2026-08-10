@@ -421,6 +421,88 @@ impl NvvmAtomicOpInterface for NvvmAtomicStoreOp {
 }
 
 // =============================================================================
+// NvvmAtomicFenceOp
+// =============================================================================
+
+/// Memory fence with explicit ordering and visibility scope.
+///
+/// # Operands
+///
+/// None.
+///
+/// # Results
+///
+/// None.
+///
+/// # Attributes
+///
+/// - `ordering`: `Acquire`, `Release`, `AcqRel`, or `SeqCst`
+/// - `scope`: `Device`, `Block`, or `System`
+#[pliron_op(
+    name = "nvvm.atomic_fence",
+    format,
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+    attributes = (nvvm_fence_ordering: AtomicOrdering, nvvm_fence_scope: AtomicScope)
+)]
+pub struct NvvmAtomicFenceOp;
+
+impl NvvmAtomicFenceOp {
+    /// Wrap an existing operation as an atomic fence op.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        NvvmAtomicFenceOp { op }
+    }
+
+    /// Create a new atomic fence from scratch.
+    pub fn build(ctx: &mut Context, ordering: AtomicOrdering, scope: AtomicScope) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
+        let this = NvvmAtomicFenceOp { op };
+        this.set_attr_nvvm_fence_ordering(ctx, ordering);
+        this.set_attr_nvvm_fence_scope(ctx, scope);
+        this
+    }
+
+    /// Get the fence ordering.
+    pub fn ordering(&self, ctx: &Context) -> AtomicOrdering {
+        self.get_attr_nvvm_fence_ordering(ctx)
+            .expect("NvvmAtomicFenceOp missing ordering")
+            .clone()
+    }
+
+    /// Get the fence scope.
+    pub fn scope(&self, ctx: &Context) -> AtomicScope {
+        self.get_attr_nvvm_fence_scope(ctx)
+            .expect("NvvmAtomicFenceOp missing scope")
+            .clone()
+    }
+}
+
+impl Verify for NvvmAtomicFenceOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 0 || op.get_num_results() != 0 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_fence requires no operands and no results"
+            );
+        }
+
+        let Some(ordering) = self.get_attr_nvvm_fence_ordering(ctx) else {
+            return verify_err!(op.loc(), "nvvm.atomic_fence requires an ordering");
+        };
+        if matches!(&*ordering, AtomicOrdering::Relaxed) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.atomic_fence does not support Relaxed ordering"
+            );
+        }
+        if self.get_attr_nvvm_fence_scope(ctx).is_none() {
+            return verify_err!(op.loc(), "nvvm.atomic_fence requires a scope");
+        }
+        Ok(())
+    }
+}
+
+// =============================================================================
 // NvvmAtomicRmwOp
 // =============================================================================
 
@@ -734,6 +816,7 @@ pub fn register(ctx: &mut Context) {
     // Register ops
     NvvmAtomicLoadOp::register(ctx);
     NvvmAtomicStoreOp::register(ctx);
+    NvvmAtomicFenceOp::register(ctx);
     NvvmAtomicRmwOp::register(ctx);
     NvvmAtomicCmpxchgOp::register(ctx);
 }

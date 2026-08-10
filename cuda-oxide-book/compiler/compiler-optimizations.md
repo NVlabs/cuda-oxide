@@ -65,6 +65,40 @@ Full variable-debug builds skip `mem2reg` and loop unrolling. Keeping source
 variables in stable memory locations gives cuda-gdb a better debugging
 experience.
 
+## Diagnosing locals that remain stack-backed
+
+An optimized verbose build also checks the exact LLVM IR that will be passed to
+`llc`. If a Rust local's stack allocation survives both cuda-oxide `mem2reg` and
+LLVM's `-O2` scalar-replacement pipeline, cuda-oxide reports it before PTX
+generation. For example:
+
+```text
+warning: local `scratch` (`[u32; 4]`, 16 bytes) in `kernel` could not be promoted to registers
+  = note: indexed by a non-constant value; the allocation survives LLVM scalar replacement and remains stack-backed
+  = help: use constant indexing or a small match/select when the index range is bounded
+```
+
+Dynamic indexing is one common blocker because LLVM cannot replace a small
+aggregate with independent SSA values when the selected element is not known.
+An address passed to another function, stored as a pointer, returned, or
+otherwise made observable can also prevent promotion. When the surviving use
+pattern is not one of the conservative cases cuda-oxide recognizes, the warning
+still identifies the local but gives a generic scalar-replacement explanation
+rather than guessing at the cause.
+
+The check runs only after a successful LLVM optimization pass and only in
+verbose mode:
+
+```bash
+cargo oxide build <example> --verbose
+```
+
+This placement matters. Reporting immediately after cuda-oxide `mem2reg` would
+produce false positives for allocations that LLVM SROA removes later. The check
+is skipped for no-optimization builds and full variable-debug builds because
+those modes intentionally retain storage that an optimized build would normally
+try to promote.
+
 ---
 
 ## The first pass: loop unrolling
