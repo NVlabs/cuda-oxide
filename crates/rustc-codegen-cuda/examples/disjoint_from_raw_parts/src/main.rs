@@ -87,9 +87,7 @@ mod kernels {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
-    let module = ctx.load_module_from_file("disjoint_from_raw_parts.ptx")?;
-    let module = kernels::from_module(module)?;
-
+    let module = kernels::load(&ctx)?;
     // Two-word slice: every element carries its own index, so a constant
     // write or a misaddressed element shows up as a mismatch.
     let host: Vec<f32> = (0..LEN).map(|i| i as f32).collect();

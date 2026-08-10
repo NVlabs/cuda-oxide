@@ -604,9 +604,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
     println!("Loading PTX: {}", ptx_path.display());
-    let ptx_str = ptx_path.to_str().ok_or("PTX path must be valid UTF-8")?;
-    let module = ctx.load_module_from_file(ptx_str)?;
-    let module = kernels::from_module(module).expect("failed to initialize typed CUDA module");
+    let module = kernels::load(&ctx)?;
     println!("PTX loaded\n");
 
     if do_validate {

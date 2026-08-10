@@ -151,10 +151,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("partial_warp_reduce.ptx")?;
-    // SAFETY: the PTX beside this binary is the one built from `kernels`.
-    let module = unsafe { kernels::from_module(module) }?;
-
+    // SAFETY: the embedded module is the one built from this crate's
+    // `kernels`, so every generated launch method matches its kernel.
+    let module = unsafe { kernels::load(&ctx) }?;
     // Values vary within each warp, so a reduction that lost or duplicated a
     // lane lands on a different answer.
     let threads_pow2 = BLOCK_POW2 * BLOCKS;

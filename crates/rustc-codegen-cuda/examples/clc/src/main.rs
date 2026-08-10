@@ -200,10 +200,7 @@ fn main() {
         return;
     }
 
-    let module = ctx
-        .load_module_from_file("clc.ptx")
-        .expect("Load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     println!("PTX loaded and assembled successfully.\n");
 
     // ====================================================================

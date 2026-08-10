@@ -92,9 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load PTX module
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("wgmma.ptx");
     println!("\nLoading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-    let module = ctx.load_module_from_file(ptx_file)?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
+    let module = kernels::load(&ctx)?;
     println!("✓ PTX loaded successfully\n");
 
     // Test: Sync primitives

@@ -229,11 +229,7 @@ fn main() {
     const N: usize = 256;
     const BLOCK_SIZE: u32 = 256;
 
-    let module = ctx
-        .load_module_from_file("dynamic_smem.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // ===== Test 1: Basic Dynamic Shared Memory (default 16-byte alignment) =====
     println!("=== Test 1: Basic DynamicSharedArray (default alignment) ===");
     {

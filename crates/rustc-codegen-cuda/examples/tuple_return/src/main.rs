@@ -52,11 +52,7 @@ fn main() {
     let stream = ctx.default_stream();
     let mut dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-    let module = ctx
-        .load_module_from_file("tuple_return.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe {
         module.run(

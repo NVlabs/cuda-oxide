@@ -42,9 +42,7 @@ mod kernels {
 
 fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
-    let ptx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/uninit_const.ptx");
-    let module = ctx.load_module_from_file(ptx_path).expect("load PTX");
-    let module = kernels::from_module(module).expect("typed module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let stream = ctx.default_stream();
     const N: usize = 32;
     let cfg = LaunchConfig {

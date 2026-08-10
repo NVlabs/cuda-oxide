@@ -302,11 +302,7 @@ fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
 
-    let module = ctx
-        .load_module_from_file("const_table_lookup.ptx")
-        .expect("Failed to load const_table_lookup.ptx");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // The `.const` variants need their tables uploaded; the others carry theirs
     // in the module image.
     module

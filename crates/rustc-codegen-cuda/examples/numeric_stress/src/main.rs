@@ -199,9 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("numeric_stress.ptx")?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx)?;
     const N: usize = 1;
     let cfg = LaunchConfig::for_num_elems(N as u32);
 

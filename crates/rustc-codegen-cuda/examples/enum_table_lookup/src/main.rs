@@ -287,11 +287,7 @@ fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
 
-    let module = ctx
-        .load_module_from_file("enum_table_lookup.ptx")
-        .expect("Failed to load enum_table_lookup.ptx");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let host_in: Vec<u32> = (0..ELEMS).map(seed).collect();
     let input = DeviceBuffer::from_host(&stream, &host_in).expect("input alloc");
     let mut output = DeviceBuffer::<u32>::zeroed(&stream, ELEMS).expect("output alloc");

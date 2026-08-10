@@ -293,9 +293,7 @@ mod kernels {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
-    let module = ctx.load_module_from_file("enum_payload_addr.ptx")?;
-    let module = kernels::from_module(module)?;
-
+    let module = kernels::load(&ctx)?;
     let host: Vec<f32> = (0..LEN).map(|i| (i % 1000) as f32 * 0.5).collect();
     let input = DeviceBuffer::from_host(&stream, &host)?;
     let config = LaunchConfig {

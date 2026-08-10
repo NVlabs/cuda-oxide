@@ -200,11 +200,7 @@ fn main() {
     let stream = ctx.default_stream();
     let cfg = LaunchConfig::for_num_elems(N as u32);
 
-    let module = ctx
-        .load_module_from_file("vectorization.ptx")
-        .expect("Failed to load vectorization.ptx");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let rows = run_all(&module, &stream, cfg, N);
 
     // Flat-buffer path: allocate and fill as plain `f32`, take the `F32x4`
@@ -212,11 +208,7 @@ fn main() {
     let flat: Vec<f32> = (0..N * 4).map(|i| i as f32 * 0.25 + 1.0).collect();
     let flat_in = DeviceBuffer::from_host(&stream, &flat).expect("flat input");
     let mut flat_out = DeviceBuffer::<f32>::zeroed(&stream, N * 4).expect("flat output");
-    let view_module = ctx
-        .load_module_from_file("vectorization.ptx")
-        .expect("Failed to load vectorization.ptx for view kernels");
-    let view_module =
-        view_kernels::from_module(view_module).expect("Failed to initialize view module");
+    let view_module = view_kernels::load(&ctx).expect("Failed to load embedded view module");
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe { view_module.f32x4_view_copy(&stream, cfg, &flat_in, &mut flat_out) }
         .expect("f32x4_view_copy launch");

@@ -71,11 +71,7 @@ fn main() {
 
     const N: usize = DIM * DIM;
 
-    let module = ctx
-        .load_module_from_file("swizzle_smem.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let cfg = LaunchConfig {
         grid_dim: (1, 1, 1),
         block_dim: (DIM as u32, DIM as u32, 1),

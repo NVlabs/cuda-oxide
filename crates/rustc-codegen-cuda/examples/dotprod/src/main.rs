@@ -89,11 +89,7 @@ fn main() {
         return;
     }
 
-    let module = ctx
-        .load_module_from_file("dotprod.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // ---- dp4a operands ---------------------------------------------------
     // Pack bytes [1, 2, 3, 200] into u32 (little-endian: byte0 = LSB).
     //   a4 = 0xC8_03_02_01

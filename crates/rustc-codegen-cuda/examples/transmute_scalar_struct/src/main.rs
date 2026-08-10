@@ -57,11 +57,7 @@ fn main() {
     println!("=== scalar <-> aggregate transmute (usize <-> NonNull) ===\n");
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
-    let ptx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/transmute_scalar_struct.ptx");
-    let module = ctx
-        .load_module_from_file(ptx_path)
-        .expect("Failed to load PTX (device codegen failed?)");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let stream = ctx.default_stream();
 
     // Non-zero fabricated addresses (never dereferenced).

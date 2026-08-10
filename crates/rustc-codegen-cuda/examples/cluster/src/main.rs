@@ -233,11 +233,7 @@ fn main() {
         return;
     }
 
-    let module = ctx
-        .load_module_from_file("cluster.ptx")
-        .expect("Load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let cluster_size = 4u32;
 
     // ====================================================================
