@@ -17,6 +17,12 @@
 #                   sufficient.
 #   wgmma        -- Hopper only (sm_90a). On Hopper require execution;
 #                   elsewhere PTX compilation is sufficient.
+#   blackwell-mma -- Blackwell-consumer-only MMA (kind::mxf8f6f4 exists on
+#                   sm_120/sm_121 alone), always compiled with
+#                   `--arch=sm_120a` because the generated target gating
+#                   rejects every other architecture at compile time. On an
+#                   sm_120/121 host require full execution; elsewhere the
+#                   example verifies the generated PTX and exits 0.
 #   ltoir        -- runs with `--emit-nvvm-ir --arch=<host>`; the host
 #                   compute capability is detected via `nvidia-smi` so the
 #                   resulting cubin actually loads. Execution must succeed
@@ -50,6 +56,7 @@ set -uo pipefail
 
 TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
+BLACKWELL_MMA_EXAMPLES=(mma_mxf8f6f4)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_atomic_fadd legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
@@ -81,6 +88,7 @@ classify() {
     local ex="$1" cat
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
     for cat in "${WGMMA_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo wgmma;       return; }; done
+    for cat in "${BLACKWELL_MMA_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo blackwell-mma; return; }; done
     for cat in "${LTOIR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo ltoir;       return; }; done
     for cat in "${LTOIR_MODERN_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo ltoir-modern; return; }; done
     for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
@@ -528,6 +536,29 @@ verdict_wgmma() {
     fi
     if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS (wgmma, executed)"; return 0; fi
     echo "FAIL (wgmma, no success marker)"
+    return 1
+}
+
+verdict_blackwell_mma() {
+    local log="$1" ec="$2"
+    if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+    # Non-sm_120/121 host: the example declares the skip and must still
+    # prove the sm_120a PTX was generated with the block-scaled instruction.
+    if grep -qE 'mxf8f6f4 block-scale MMA requires sm_120' "${log}"; then
+        if [[ ${ec} -eq 0 ]] && grep -qE 'PTX was generated successfully' "${log}"; then
+            echo "PASS (blackwell-mma, PTX compiled)"
+            return 0
+        fi
+        echo "FAIL (blackwell-mma, PTX not generated)"
+        return 1
+    fi
+    if [[ ${ec} -ne 0 ]]; then echo "FAIL (blackwell-mma, exit=${ec})"; return 1; fi
+    if grep_failure_markers "${log}"; then
+        echo "FAIL (blackwell-mma, failure marker in output)"
+        return 1
+    fi
+    if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS (blackwell-mma, executed)"; return 0; fi
+    echo "FAIL (blackwell-mma, no success marker)"
     return 1
 }
 
@@ -1368,6 +1399,12 @@ run_cargo() {
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "cluster" ]]; then
         args+=("--arch=sm_90")
     fi
+    # kind::mxf8f6f4 admits only sm_120/sm_121 in the generated target
+    # gating, so the device build must always pin sm_120a; the example
+    # itself decides at runtime whether the host GPU can execute it.
+    if [[ "${cat}" == "blackwell-mma" ]]; then
+        args+=("--arch=sm_120a")
+    fi
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
@@ -1557,6 +1594,7 @@ for ex in "${selected[@]}"; do
             error)       verdict="$(verdict_error       "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
             tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
             wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
+            blackwell-mma) verdict="$(verdict_blackwell_mma "${log}" "${ec}")"    && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
