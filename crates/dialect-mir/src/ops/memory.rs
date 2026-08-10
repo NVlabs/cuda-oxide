@@ -57,7 +57,8 @@ fn bool_integer_attr(ctx: &mut Context, value: bool) -> IntegerAttr {
 ///
 /// Reserves a stack slot for a single value of the result's pointee type and
 /// yields a pointer to it. The alloca's pointee type is carried as the result
-/// pointer's pointee, so no attributes are needed.
+/// pointer's pointee. Compiler-only provenance may be attached for diagnostics;
+/// it is not part of the operation's semantics.
 ///
 /// This op is the foundation of the alloca + load/store translator model: every
 /// Rust MIR local is backed by an `mir.alloca` emitted in the function's entry

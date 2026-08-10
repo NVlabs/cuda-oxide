@@ -971,7 +971,7 @@ fn translate_call(
     let target_usize = target.map(|t| t);
 
     // Extract function info
-    let (pattern_name, call_name, substs_str) = extract_func_info(func, &loc)?;
+    let (pattern_name, call_name, substs_str, type_substs) = extract_func_info(func, &loc)?;
 
     // Helper to check if substitutions contain a type
     let substs_contains =
@@ -1272,6 +1272,7 @@ fn translate_call(
             block_map,
             loc.clone(),
             &substs_contains,
+            &type_substs,
         )?
     {
         return Ok(result);
@@ -2120,7 +2121,12 @@ fn is_cuda_device_const_marker(func: &mir::Operand, expected_name: &str) -> bool
 fn extract_func_info(
     func: &mir::Operand,
     loc: &Location,
-) -> TranslationResult<(Option<String>, Option<String>, Option<String>)> {
+) -> TranslationResult<(
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Vec<rustc_public::ty::Ty>,
+)> {
     Ok(match func {
         mir::Operand::Constant(const_op) => match const_op.const_.kind() {
             ConstantKind::ZeroSized => {
@@ -2155,14 +2161,27 @@ fn extract_func_info(
                         };
 
                         let substs_debug = format!("{:?}", substs);
-                        (Some(pattern_name), Some(call_name), Some(substs_debug))
+                        let type_substs = substs
+                            .0
+                            .iter()
+                            .filter_map(|arg| match arg {
+                                rustc_public::ty::GenericArgKind::Type(ty) => Some(*ty),
+                                _ => None,
+                            })
+                            .collect();
+                        (
+                            Some(pattern_name),
+                            Some(call_name),
+                            Some(substs_debug),
+                            type_substs,
+                        )
                     }
-                    _ => (None, None, None),
+                    _ => (None, None, None, vec![]),
                 }
             }
-            _ => (None, None, None),
+            _ => (None, None, None, vec![]),
         },
-        _ => (None, None, None),
+        _ => (None, None, None, vec![]),
     })
 }
 
@@ -2445,8 +2464,26 @@ fn try_dispatch_intrinsic(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
     substs_contains: &impl Fn(&str) -> bool,
+    type_substs: &[rustc_public::ty::Ty],
 ) -> TranslationResult<Option<Ptr<Operation>>> {
     intrinsics::wgmma::reject_unsupported(name, loc.clone())?;
+
+    if let Some(operation) = intrinsics::iket::try_dispatch(
+        ctx,
+        body,
+        name,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc.clone(),
+        type_substs,
+    )? {
+        return Ok(Some(operation));
+    }
 
     if let Some(operation) = intrinsics::generated::try_dispatch_generated_intrinsic(
         ctx,

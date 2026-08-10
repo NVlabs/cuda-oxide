@@ -13,6 +13,7 @@ pliron = { workspace = true }
 pliron-derive = { workspace = true }
 llvm-export = { workspace = true }
 dialect-mir = { workspace = true }
+dialect-iket = { workspace = true }
 dialect-nvvm = { workspace = true }
 mir-lower = { workspace = true }
 oxide-artifacts = { workspace = true }

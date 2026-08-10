@@ -20,7 +20,7 @@ cargo oxide run rustlantis-smoke
 Regenerate and run a seed:
 
 ```bash
-python3 crates/fuzzer/tools/run_seed.py --seed 192
+python3 crates/fuzzer/tools/run_seed.py --seed 33
 ```
 
 Run a small batch:

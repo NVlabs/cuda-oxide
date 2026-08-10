@@ -128,7 +128,18 @@ cargo oxide sanitize vecadd --tool memcheck
 
 # Debug with cuda-gdb
 cargo oxide debug vecadd --tui
+
+# Run Cargo tests through the cuda-oxide backend
+cargo oxide test
+
+# Compile a crate's device code to a binary LTOIR artifact in one step
+cargo oxide emit-ltoir
+
+# Refresh the cached codegen backend
+cargo oxide update
 ```
+
+`cargo oxide --help` lists every subcommand.
 
 ## Setup
 
@@ -245,7 +256,7 @@ compiles a Rust kernel to PTX, launches it on the GPU, and prints
 
 ## Examples
 
-**60+ examples** in `crates/rustc-codegen-cuda/examples/`. Highlights:
+**190+ examples** in `crates/rustc-codegen-cuda/examples/`. Highlights:
 
 | Example              | Description                                                              |
 |----------------------|--------------------------------------------------------------------------|
@@ -278,6 +289,7 @@ cargo oxide run gemm_sol_final
 | Crate               | Description                                                               |
 |---------------------|---------------------------------------------------------------------------|
 | `cuda-device`       | Device intrinsics (`thread::*`, `warp::*`, barriers)                      |
+| `cuda-intrinsics`   | Generated low-level CUDA intrinsic declarations                           |
 | `cuda-host`         | Typed module loading, launch helpers, LTOIR loader                        |
 | `cuda-macros`       | Proc macros (`#[cuda_module]`, `#[kernel]`, `gpu_printf!`)                |
 | `cuda-bindings`     | Raw `bindgen` FFI bindings to `cuda.h`                                    |
@@ -296,12 +308,20 @@ cargo oxide run gemm_sol_final
 | `dialect-mir`        | pliron dialect modelling Rust MIR                     |
 | `llvm-export`        | pliron-llvm shim + textual `.ll` exporter             |
 | `dialect-nvvm`       | pliron dialect modelling NVVM intrinsics              |
+| `mir-transforms`     | Optimization passes over the MIR dialect (loop unroll, ...) |
+| `nvvm-transforms`    | Target-aware LLVM dialect legalization for NVVM      |
+| `cuda-oxide-codegen` | Experimental rustc-independent PTX backend           |
 
 ### Build Tooling
 
-| Crate          | Description                                          |
-|----------------|------------------------------------------------------|
-| `cargo-oxide`  | Cargo subcommand (`cargo oxide run`, etc.)           |
+| Crate                     | Description                                                    |
+|---------------------------|----------------------------------------------------------------|
+| `cargo-oxide`             | Cargo subcommand (`cargo oxide run`, etc.)                     |
+| `cuda-intrinsics-gen`     | Extractor and deterministic source generator for the intrinsics |
+| `cuda-artifact-finalizer` | Driver-independent NVVM IR and LTOIR finalization              |
+| `oxide-artifacts`         | Architecture-neutral embedded device artifact metadata         |
+| `reserved-oxide-symbols`  | Workspace-private `cuda_oxide_*` symbol-name contract          |
+| `fuzzer`                  | Differential codegen fuzzer support (rustlantis adapter)       |
 
 ### Documentation
 

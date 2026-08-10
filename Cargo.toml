@@ -10,10 +10,12 @@ members = [
     "crates/cuda-macros",
     "crates/llvm-export",
     "crates/dialect-mir",
+    "crates/dialect-iket",
     "crates/dialect-nvvm",
     "crates/mir-importer",
     "crates/cuda-oxide-codegen",
     "crates/mir-lower",
+    "crates/iket-lower",
     "crates/mir-transforms",
     "crates/nvvm-transforms",
     "crates/cargo-oxide",
@@ -58,8 +60,10 @@ pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "0d3f25df6d0
 # Internal crates
 llvm-export = { path = "crates/llvm-export" }
 dialect-mir = { path = "crates/dialect-mir" }
+dialect-iket = { path = "crates/dialect-iket" }
 dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
+iket-lower = { path = "crates/iket-lower" }
 mir-importer = { path = "crates/mir-importer" }
 cuda-oxide-codegen = { path = "crates/cuda-oxide-codegen" }
 mir-transforms = { path = "crates/mir-transforms" }
@@ -96,6 +100,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
 tempfile = "3.9"
+rustc-demangle = "0.1"
 
 # llvm-export deps
 rustc-hash = "2.0"
@@ -112,4 +117,3 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 # optimize only SHA-256 so exact content fingerprinting remains inexpensive.
 [profile.dev.package.sha2]
 opt-level = 3
-

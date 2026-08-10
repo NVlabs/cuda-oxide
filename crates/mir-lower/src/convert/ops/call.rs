@@ -811,6 +811,20 @@ fn convert_rust_bit_intrinsic(
 
     if matches!(intrinsic, RustBitIntrinsic::Bswap) && value_width == 8 {
         // LLVM has no useful byte swap for a single byte; Rust's semantics are identity.
+        //
+        // The result type is checked first. `bitcast` requires both types to be
+        // non-aggregate and of one size, so a result that is not an 8-bit
+        // integer would leave this arm emitting IR that LLVM rejects. Every
+        // other arm reaches `cast_integer_value_to_type` below, which performs
+        // the same check; this one returns early and would otherwise skip it.
+        let result_width = integer_bit_width(ctx, result_type, loc.clone())?;
+        if result_width != value_width {
+            return pliron::input_err!(
+                loc,
+                "bswap on an {value_width}-bit integer cannot produce a \
+                 {result_width}-bit result"
+            );
+        }
         let bitcast = llvm::BitcastOp::new(ctx, value, result_type);
         rewriter.insert_operation(ctx, bitcast.get_operation());
         rewriter.replace_operation(ctx, op, bitcast.get_operation());
