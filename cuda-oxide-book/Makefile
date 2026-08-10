@@ -1,4 +1,6 @@
-SPHINXOPTS    ?=
+# Warnings are errors, as in CI (.github/workflows/book.yml) and in the Rust
+# docs gate. Override for a draft build:  SPHINXOPTS= make html
+SPHINXOPTS    ?= -W --keep-going
 SPHINXBUILD   ?= sphinx-build
 SOURCEDIR     = .
 BUILDDIR      = _build

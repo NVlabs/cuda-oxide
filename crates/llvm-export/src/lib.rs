@@ -750,6 +750,9 @@ pub mod ops {
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
     const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
+    /// Op-attribute key for the alignment an address computation guarantees.
+    /// Lowering-internal: never exported.
+    const ADDRESS_ALIGNMENT_KEY: &str = "cuda_oxide_address_alignment";
 
     /// Stamp the ABI alignment (bytes) onto a memory op.
     pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
@@ -760,6 +763,28 @@ pub mod ops {
     /// Read the ABI alignment (bytes) stamped on a memory op, if any.
     pub fn op_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
         let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<AlignmentAttr>(&key)
+            .map(|a| a.0)
+    }
+
+    /// Stamp the alignment (bytes) that an *address-producing* op guarantees.
+    ///
+    /// Distinct from [`set_op_alignment`], which states the alignment of a
+    /// memory op's own access and is what the exporter prints as `align N`.
+    /// This records what a computed address proves about itself, so a later
+    /// load through it can state an alignment its own result type does not
+    /// know. Nothing exports it: it is consumed during lowering and is inert
+    /// on the op that carries it.
+    pub fn set_address_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
+        let key = Identifier::try_new(ADDRESS_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx).attributes.set(key, AlignmentAttr(align));
+    }
+
+    /// Read the alignment an address-producing op guarantees, if any.
+    pub fn address_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
+        let key = Identifier::try_new(ADDRESS_ALIGNMENT_KEY.to_string()).expect("valid identifier");
         op.deref(ctx)
             .attributes
             .get::<AlignmentAttr>(&key)
@@ -818,6 +843,56 @@ pub mod ops {
             argument_index,
             ty,
         })
+    }
+
+    /// Rust-local provenance for the post-optimization local-memory diagnostic.
+    ///
+    /// `mir-importer` attaches this to the `mir.alloca` of every named Rust
+    /// source local, `mir-lower` copies it to the LLVM alloca, and the textual
+    /// exporter folds it into the alloca's SSA value name so it survives the
+    /// external `opt` binary exactly as long as the allocation itself does.
+    /// The attribute is a first-class IR citizen inside both dialects; only the
+    /// exported SSA name uses a string encoding, because the value name is the
+    /// sole channel `opt` reliably preserves on surviving instructions.
+    #[pliron_attr(name = "llvm.local_memory_provenance", format, verifier = "succ")]
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct LocalMemoryProvenanceAttr {
+        /// Index of the Rust MIR local backing the allocation.
+        pub local_index: u64,
+        /// ABI size of the local in bytes (0 when the layout is unavailable).
+        pub size_bytes: u64,
+        /// Source binding name of the local.
+        pub binding_name: StringAttr,
+        /// Compact source-level spelling of the local's type.
+        pub type_name: StringAttr,
+    }
+
+    /// Op-attribute key for [`LocalMemoryProvenanceAttr`] on `mir.alloca` and
+    /// `llvm.alloca`.
+    const LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
+
+    /// Attach Rust-local provenance to a stack-slot op.
+    pub fn set_local_memory_provenance(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        provenance: LocalMemoryProvenanceAttr,
+    ) {
+        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
+            .expect("valid local-memory provenance attribute key");
+        op.deref_mut(ctx).attributes.set(key, provenance);
+    }
+
+    /// Read Rust-local provenance from a stack-slot op, if present.
+    pub fn local_memory_provenance(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Option<LocalMemoryProvenanceAttr> {
+        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
+            .expect("valid local-memory provenance attribute key");
+        op.deref(ctx)
+            .attributes
+            .get::<LocalMemoryProvenanceAttr>(&key)
+            .cloned()
     }
 
     /// Attach the MIR source-scope id that owns this source local.

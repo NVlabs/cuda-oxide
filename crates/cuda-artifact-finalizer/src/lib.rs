@@ -10,14 +10,16 @@
 //! build-time materialization and runtime fallback use the same typed target,
 //! FMA, debug, input-order, validation, and provenance rules.
 
+mod diagnostics;
 mod link;
 mod nvvm;
 mod options;
 mod provenance;
 mod validation;
 
+pub use diagnostics::KernelResourceUsage;
 pub use libnvvm_sys::{CudaArch, CudaArchParseError, LibdeviceNotFound, NvvmError, find_libdevice};
-pub use link::LtoLinker;
+pub use link::{LinkReport, LtoLinker};
 pub use nvjitlink_sys::NvJitLinkError;
 pub use nvvm::NvvmCompiler;
 pub use options::{DebugPolicy, FinalizationOptions, FinalizerOutput, NamedInput};
@@ -134,6 +136,29 @@ impl Finalizer {
         )
     }
 
+    /// Compile NVVM IR to cubin and collect ptxas resource diagnostics.
+    ///
+    /// The diagnostics are best-effort: on an nvJitLink too old to accept the
+    /// reporting options, the link is retried without them and the report's
+    /// info log and resource usage are empty. See
+    /// [`LtoLinker::link_ltoir_with_report`].
+    pub fn materialize_nvvm_ir_with_report(
+        &self,
+        module_name: &str,
+        nvvm_ir: &[u8],
+        options: &FinalizationOptions,
+    ) -> Result<LinkReport, FinalizerError> {
+        let ltoir = self
+            .compiler
+            .compile_nvvm_ir_to_ltoir(module_name, nvvm_ir, options)?;
+        let ltoir_name = format!("{module_name}.ltoir");
+        self.linker.link_ltoir_with_report(
+            &[NamedInput::new(&ltoir_name, &ltoir)],
+            options,
+            FinalizerOutput::Cubin,
+        )
+    }
+
     /// Link ordered LTOIR modules to cubin or PTX.
     pub fn link_ltoir(
         &self,
@@ -142,6 +167,21 @@ impl Finalizer {
         output: FinalizerOutput,
     ) -> Result<Vec<u8>, FinalizerError> {
         self.linker.link_ltoir(inputs, options, output)
+    }
+
+    /// Link ordered LTOIR modules while collecting ptxas resource diagnostics.
+    ///
+    /// The diagnostics are best-effort: on an nvJitLink too old to accept the
+    /// reporting options, the link is retried without them and the report's
+    /// info log and resource usage are empty. See
+    /// [`LtoLinker::link_ltoir_with_report`].
+    pub fn link_ltoir_with_report(
+        &self,
+        inputs: &[NamedInput<'_>],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<LinkReport, FinalizerError> {
+        self.linker.link_ltoir_with_report(inputs, options, output)
     }
 
     /// Compiler component, including exact libdevice bytes and provenance.
@@ -298,6 +338,127 @@ entry:
             assert!(
                 ptx.windows(b".version".len())
                     .any(|part| part == b".version")
+            );
+        }
+    }
+
+    /// Legacy-dialect NVVM IR for a kernel that ptxas must spill: `values`
+    /// floats stay live across `rounds` of all-to-all mixing while a
+    /// `maxnreg` annotation caps the kernel far below that live set.
+    fn spilling_kernel_nvvm_ir(values: usize, rounds: usize, maxnreg: u32) -> String {
+        use std::fmt::Write;
+
+        let mut body = String::new();
+        for i in 0..values {
+            let _ = writeln!(
+                body,
+                "  %ptr{i} = getelementptr inbounds float, float* %data, i64 {i}"
+            );
+            let _ = writeln!(body, "  %v0_{i} = load float, float* %ptr{i}, align 4");
+        }
+        for round in 0..rounds {
+            let next = round + 1;
+            for i in 0..values {
+                let mul_with = (i + 1) % values;
+                let add_with = (i + 3) % values;
+                let _ = writeln!(
+                    body,
+                    "  %m{next}_{i} = fmul float %v{round}_{i}, %v{round}_{mul_with}"
+                );
+                let _ = writeln!(
+                    body,
+                    "  %v{next}_{i} = fadd float %m{next}_{i}, %v{round}_{add_with}"
+                );
+            }
+        }
+        for i in 0..values {
+            let _ = writeln!(
+                body,
+                "  store float %v{rounds}_{i}, float* %ptr{i}, align 4"
+            );
+        }
+
+        // `@llvm.used` keeps the kernel alive through LTO, exactly as
+        // cuda-oxide's NVVM exporter emits it for real kernels; without it
+        // nvJitLink dead-strips the annotation-marked kernel and links an
+        // empty module.
+        format!(
+            r#"
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+@llvm.used = appending global [1 x i8*] [i8* bitcast (void (float*)* @spill_kernel to i8*)], section "llvm.metadata"
+
+define void @spill_kernel(float* %data) {{
+entry:
+{body}  ret void
+}}
+
+!nvvm.annotations = !{{!0, !1}}
+!nvvmir.version = !{{!2}}
+!0 = !{{void (float*)* @spill_kernel, !"kernel", i32 1}}
+!1 = !{{void (float*)* @spill_kernel, !"maxnreg", i32 {maxnreg}}}
+!2 = !{{i32 2, i32 0, i32 3, i32 1}}
+"#
+        )
+    }
+
+    #[test]
+    #[ignore = "requires discoverable CUDA Toolkit libNVVM, nvJitLink, and libdevice"]
+    fn live_link_report_parses_ptxas_resource_usage_for_a_spilling_kernel() {
+        const MAXNREG: u32 = 32;
+
+        let finalizer = Finalizer::discover().unwrap();
+        let options = FinalizationOptions::new("sm_86".parse().unwrap());
+        let nvvm_ir = spilling_kernel_nvvm_ir(64, 4, MAXNREG);
+        let ltoir = finalizer
+            .compiler()
+            .compile_nvvm_ir_to_ltoir("spill.ll", nvvm_ir.as_bytes(), &options)
+            .unwrap();
+        let input = [NamedInput::new("spill.ltoir", &ltoir)];
+
+        let report = finalizer
+            .link_ltoir_with_report(&input, &options, FinalizerOutput::Cubin)
+            .unwrap();
+        assert!(is_valid_cubin(&report.image));
+
+        // A missing info log means the toolkit silently degraded the report;
+        // this test exists exactly to catch the diagnostic options or the log
+        // format drifting away from what the parser expects.
+        let raw_log = report
+            .info_log
+            .as_deref()
+            .expect("nvJitLink accepted the diagnostic options and produced an info log");
+        println!("--- raw nvJitLink info log ---\n{raw_log}");
+        println!(
+            "--- parsed resource usage ---\n{:#?}",
+            report.resource_usage
+        );
+
+        let usage = report
+            .resource_usage
+            .iter()
+            .find(|usage| usage.kernel == "spill_kernel")
+            .expect("ptxas resource lines for spill_kernel were parsed from the info log");
+        let registers = usage
+            .registers
+            .expect("ptxas reported a register count for spill_kernel");
+        assert!(
+            (1..=MAXNREG).contains(&registers),
+            "maxnreg({MAXNREG}) kernel reported an implausible register count: {registers}"
+        );
+        assert!(
+            usage.has_spills(),
+            "64 live values under maxnreg({MAXNREG}) must spill: {usage:?}"
+        );
+        for (figure, bytes) in [
+            ("stack frame", usage.stack_frame_bytes),
+            ("spill stores", usage.spill_store_bytes),
+            ("spill loads", usage.spill_load_bytes),
+        ] {
+            assert!(
+                (1..=65_536).contains(&bytes),
+                "implausible {figure} byte count for spill_kernel: {bytes}"
             );
         }
     }

@@ -2974,9 +2974,7 @@ fn classify_place_read_strategy(
                             .into();
                         }
                         mir::ProjectionElem::Index(_)
-                        | mir::ProjectionElem::ConstantIndex {
-                            from_end: false, ..
-                        } => {
+                        | mir::ProjectionElem::ConstantIndex { .. } => {
                             current_ptr_ty = dialect_mir::types::MirPtrType::get_generic(
                                 ctx, elem_ty, /* is_mutable */ false,
                             )
@@ -3048,7 +3046,10 @@ fn classify_place_read_strategy(
             }
 
             mir::ProjectionElem::ConstantIndex { from_end, .. } => {
-                if *from_end {
+                // rustc emits from-end ConstantIndex only for runtime-length
+                // slices. Require the immediately preceding fat-slice deref;
+                // arrays never reach stable MIR with `from_end=true`.
+                if *from_end && !entered_as_slice_data {
                     return Ok(PlaceReadStrategy::ValueFallback);
                 }
                 let Some((mut pointee_kind, addr_space)) =
@@ -4120,6 +4121,99 @@ fn enum_payload_needs_storage_coercion(ctx: &Context, ty: TypeHandle) -> bool {
         .any(|child| enum_payload_needs_storage_coercion(ctx, child))
 }
 
+/// Extract the runtime element count from a slice-shaped fat value.
+///
+/// CUDA Oxide models slices as `(data_ptr, len)`, with the length in field 1.
+/// The extraction must use the fat value itself: inferring a length from the
+/// data pointer's pointee type is wrong for slices whose elements are arrays.
+fn emit_slice_len_extract(
+    ctx: &mut Context,
+    slice_value: Value,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    let usize_ty = types::get_usize_type(ctx);
+    let op = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+    MirExtractFieldOp::new(op).set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+    match prev_op {
+        Some(prev) => op.insert_after(ctx, prev),
+        None => op.insert_at_front(block_ptr, ctx),
+    }
+    (op.deref(ctx).get_result(0), op)
+}
+
+/// Materialize the zero-based index for
+/// `ConstantIndex { offset, from_end: true }` on a runtime-length slice.
+///
+/// rustc defines the offset as 1-based from the end, so the index is
+/// `slice_len - offset`. The MIR pattern-length test dominates this place,
+/// therefore the subtraction cannot underflow on an executed path.
+fn emit_from_end_slice_index(
+    ctx: &mut Context,
+    slice_len: Value,
+    offset: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Ptr<Operation>)> {
+    let usize_ty = types::get_usize_type(ctx);
+    let usize_handle = usize_ty.to_handle();
+    if slice_len.get_type(ctx) != usize_handle {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "from-end ConstantIndex expected slice length of type {}, got {}",
+                usize_handle.disp(ctx),
+                slice_len.get_type(ctx).disp(ctx)
+            ))
+        );
+    }
+
+    let width = NonZeroUsize::new(
+        usize::try_from(usize_ty.deref(ctx).width()).expect("usize width must fit usize"),
+    )
+    .expect("usize integer width must be non-zero");
+    let offset_attr =
+        pliron::builtin::attributes::IntegerAttr::new(usize_ty, APInt::from_u64(offset, width));
+    let offset_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![usize_handle],
+        vec![],
+        vec![],
+        0,
+    );
+    offset_op.deref_mut(ctx).set_loc(loc.clone());
+    MirConstantOp::new(offset_op).set_attr_value(ctx, offset_attr);
+    match prev_op {
+        Some(prev) => offset_op.insert_after(ctx, prev),
+        None => offset_op.insert_at_front(block_ptr, ctx),
+    }
+    let offset_value = offset_op.deref(ctx).get_result(0);
+
+    let sub_op = Operation::new(
+        ctx,
+        MirSubOp::get_concrete_op_info(),
+        vec![usize_handle],
+        vec![slice_len, offset_value],
+        vec![],
+        0,
+    );
+    sub_op.deref_mut(ctx).set_loc(loc);
+    sub_op.insert_after(ctx, offset_op);
+
+    Ok((sub_op.deref(ctx).get_result(0), sub_op))
+}
+
 /// Emit a `usize` constant and insert it after `prev_op`.
 fn emit_usize_constant(
     ctx: &mut Context,
@@ -4439,8 +4533,9 @@ fn emit_array_subslice_value(
 /// element:
 ///
 /// - `Field(idx, _)`   → [`MirFieldAddrOp`]
-/// - `ConstantIndex {offset, from_end: false, ..}` → `MirConstantOp` + [`MirArrayElementAddrOp`]
-///   (array pointee) or `MirConstantOp` + [`MirPtrOffsetOp`] (slice data pointer)
+/// - `ConstantIndex {offset, from_end, ..}` → an element address. Forward
+///   indexes materialize `offset` directly; from-end indexes on slices extract
+///   the fat-pointer length and materialize `len - offset` at runtime.
 /// - `Index(local)`    → `load_local(local)` + [`MirArrayElementAddrOp`]
 ///   (array pointee) or `load_local(local)` + [`MirPtrOffsetOp`] (slice data pointer)
 /// - `Deref`           → `MirLoadOp` of the pointer (the loaded pointer IS
@@ -4461,8 +4556,10 @@ fn emit_array_subslice_value(
 /// `Subslice` is handled for both sized arrays and slice fat pointers. Array
 /// subslices keep an in-memory address; slice subslices advance the data
 /// pointer and rebuild metadata as `len - (from + to)`, and can continue into
-/// element Index/ConstantIndex projections. From-end `ConstantIndex` remains
-/// unsupported.
+/// element Index/forward-ConstantIndex projections. From-end `ConstantIndex`
+/// is accepted only when the immediately preceding fat-slice deref supplied
+/// runtime length metadata; other bases (including a from-end index after a
+/// Subslice) punt instead of guessing a length.
 ///
 /// Returns `Ok(Some((addr, last_op)))` on success, `Ok(None)` if the
 /// projection chain contains an element this helper doesn't know how to
@@ -4493,6 +4590,7 @@ fn translate_place_addr_from_slot(
     // that already-consumed projection and preserves slice-data provenance for
     // a following Index/ConstantIndex.
     let mut consumed_slice_subslice = false;
+    let mut current_slice_len: Option<Value> = None;
     // Set by a `Downcast` and consumed by the `Field` that follows it, which
     // is the only projection pair that can name an enum payload.
     let mut pending_variant: Option<usize> = None;
@@ -4505,6 +4603,7 @@ fn translate_place_addr_from_slot(
         // true only when the previous step handed us a slice DATA pointer, and
         // no later projection arm can accidentally leak it forward.
         let entered_as_slice_data = current_is_slice_data;
+        let entered_slice_len = current_slice_len.take();
         current_is_slice_data = false;
 
         // A `Downcast` names a variant only for the `Field` IMMEDIATELY
@@ -4722,20 +4821,13 @@ fn translate_place_addr_from_slot(
                             let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
                             // The element count (field 1 of the fat pair).
-                            let usize_ty = types::get_usize_type(ctx);
-                            let extract_len = Operation::new(
+                            let (len_val, extract_len) = emit_slice_len_extract(
                                 ctx,
-                                MirExtractFieldOp::get_concrete_op_info(),
-                                vec![usize_ty.to_handle()],
-                                vec![fat_val],
-                                vec![],
-                                0,
+                                fat_val,
+                                block_ptr,
+                                Some(tail_addr),
+                                loc.clone(),
                             );
-                            extract_len.deref_mut(ctx).set_loc(loc.clone());
-                            MirExtractFieldOp::new(extract_len)
-                                .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
-                            extract_len.insert_after(ctx, tail_addr);
-                            let len_val = extract_len.deref(ctx).get_result(0);
 
                             let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
                             use dialect_mir::ops::MirConstructSliceOp;
@@ -4766,12 +4858,25 @@ fn translate_place_addr_from_slot(
                             // type-only check would otherwise mistake the
                             // data pointer for a pointer to one array object
                             // and index inside row 0.
-                            mir::ProjectionElem::Index(_)
-                            | mir::ProjectionElem::ConstantIndex {
-                                from_end: false, ..
-                            } => {
+                            mir::ProjectionElem::Index(_) => {
                                 current = data_ptr;
                                 current_is_slice_data = true;
+                                continue;
+                            }
+                            mir::ProjectionElem::ConstantIndex { from_end, .. } => {
+                                current = data_ptr;
+                                current_is_slice_data = true;
+                                if *from_end {
+                                    let (len, len_op) = emit_slice_len_extract(
+                                        ctx,
+                                        fat_val,
+                                        block_ptr,
+                                        current_prev_op,
+                                        loc.clone(),
+                                    );
+                                    current_prev_op = Some(len_op);
+                                    current_slice_len = Some(len);
+                                }
                                 continue;
                             }
                             // Unknown continuation: keep the conservative
@@ -4924,9 +5029,6 @@ fn translate_place_addr_from_slot(
                 min_length: _,
                 from_end,
             } => {
-                if *from_end {
-                    return Ok(None);
-                }
                 let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
@@ -4935,25 +5037,50 @@ fn translate_place_addr_from_slot(
                     pointee_kind = PointeeKind::Direct;
                 }
 
-                let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
-                let index_apint = APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
-                let const_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, index_apint);
-                let const_op_ptr = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![i64_ty.into()],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                const_op_ptr.deref_mut(ctx).set_loc(loc.clone());
-                MirConstantOp::new(const_op_ptr).set_attr_value(ctx, const_attr);
-                match current_prev_op {
-                    Some(p) => const_op_ptr.insert_after(ctx, p),
-                    None => const_op_ptr.insert_at_front(block_ptr, ctx),
-                }
-                current_prev_op = Some(const_op_ptr);
-                let index_val = const_op_ptr.deref(ctx).get_result(0);
+                let index_val = if *from_end {
+                    // Never derive this from the pointee type. For
+                    // `&[[T; N]]`, the pointee array length N is the row
+                    // width, while this index selects a row from the outer
+                    // runtime-length slice.
+                    if !entered_as_slice_data {
+                        return Ok(None);
+                    }
+                    let Some(slice_len) = entered_slice_len else {
+                        return Ok(None);
+                    };
+                    let (index, sub_op) = emit_from_end_slice_index(
+                        ctx,
+                        slice_len,
+                        *offset,
+                        block_ptr,
+                        current_prev_op,
+                        loc.clone(),
+                    )?;
+                    current_prev_op = Some(sub_op);
+                    index
+                } else {
+                    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+                    let index_apint =
+                        APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+                    let const_attr =
+                        pliron::builtin::attributes::IntegerAttr::new(i64_ty, index_apint);
+                    let const_op_ptr = Operation::new(
+                        ctx,
+                        MirConstantOp::get_concrete_op_info(),
+                        vec![i64_ty.into()],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    const_op_ptr.deref_mut(ctx).set_loc(loc.clone());
+                    MirConstantOp::new(const_op_ptr).set_attr_value(ctx, const_attr);
+                    match current_prev_op {
+                        Some(p) => const_op_ptr.insert_after(ctx, p),
+                        None => const_op_ptr.insert_at_front(block_ptr, ctx),
+                    }
+                    current_prev_op = Some(const_op_ptr);
+                    const_op_ptr.deref(ctx).get_result(0)
+                };
 
                 let (addr_op, next_current) = emit_indexed_element_addr(
                     ctx,
@@ -5048,8 +5175,8 @@ fn translate_place_addr_from_slot(
                 pending_variant = Some(variant_idx.to_index());
             }
 
-            // Remaining projection kinds (notably from-end ConstantIndex)
-            // aren't lowered to addresses here yet. Punt to the caller,
+            // Remaining projection kinds (OpaqueCast, Subtype) aren't lowered
+            // to addresses here yet. Punt to the caller,
             // which decides between a value fallback (shared borrows) and a
             // hard error (mutable borrows).
             _ => return Ok(None),
@@ -6126,26 +6253,28 @@ pub(crate) fn emit_promoted_immutable_global(
 /// agree on what an admissible element is, so both paths ask here and cannot
 /// drift apart.
 ///
-/// Admits primitive scalars, enums carrying no payload, and nested arrays of
-/// either. `ty` is the array type, and nesting is walked so an unsupported leaf
-/// cannot hide inside it. A zero-length array passes for any element type: its
+/// Admits primitive scalars, enums carrying no payload, tuples whose every field
+/// is itself admissible, and nested arrays of any of those. `ty` is the array
+/// type, and nesting is walked so an unsupported leaf cannot hide inside it. A
+/// zero-length array passes for any element type: its
 /// initializer is empty and nothing can ever be read through it, which is what
 /// admits a promoted empty-slice constant such as `&[]` (rustc promotes it to
 /// `&[T; 0]`) regardless of `T`.
 ///
-/// **Tuples and structs are excluded, and not because the byte image would be
-/// wrong.** Reading one field of a tuple element out of a local array currently
-/// copies the *whole array* to a fresh stack slot first, once per field
-/// projected. That copy dominates: for a `[(u8, u32); 256]` table it is two
-/// 2 KiB per-thread copies, which no amount of improving the table's own storage
-/// removes. Promoting such a table would therefore add a global to the module
-/// image and leave the depot exactly where it was — dead weight rather than a
-/// win. Admit them once the projection copies are gone.
+/// Tuples are admitted when every field is itself promotable. That only became
+/// worth doing once a tuple field read stopped going through a copy of the whole
+/// array: while that copy stood it dominated, so promoting such a table changed
+/// nothing measurable and merely added a global to the module image. With the
+/// read addressed in place, the promotion is what removes the depot — the two
+/// only pay off together.
 ///
-/// A payload-carrying enum is excluded for the same reason: reading it back
-/// round-trips the payload through memory.
+/// Structs stay out because the element-wise path does not build arrays of them
+/// either, so there would be nothing to fall back to. A payload-carrying enum
+/// stays out because reading one back still round-trips the payload through
+/// memory: the address walker resolves enum payload fields for writes, not for
+/// reads.
 fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
-    use dialect_mir::types::{MirArrayType, MirEnumType};
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirTupleType};
 
     let obj = ty.deref(ctx);
     if let Some(array) = obj.downcast_ref::<MirArrayType>() {
@@ -6154,6 +6283,13 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
             return true;
         }
         return promotable_array_element(ctx, array.element_type());
+    }
+    if let Some(tuple) = obj.downcast_ref::<MirTupleType>() {
+        let fields = tuple.get_types().to_vec();
+        drop(obj);
+        return fields
+            .into_iter()
+            .all(|field| promotable_array_element(ctx, field));
     }
     if let Some(enumeration) = obj.downcast_ref::<MirEnumType>() {
         // No variant carries a field, so the whole element *is* its discriminant
@@ -6320,8 +6456,9 @@ pub(crate) fn translate_array_constant_into_alloca(
     if !value_ty.deref(ctx).is::<dialect_mir::types::MirArrayType>() {
         return Ok(None);
     }
-    // Elements whose whole-element read is a single scalar-like load: primitive
-    // scalars, field-less enums, and nested arrays of those.
+    // Elements whose whole-element read is a single scalar-like load, or whose
+    // fields are each addressed in place: primitive scalars, field-less enums,
+    // tuples of those, and nested arrays of any of them.
     if !promotable_array_element(ctx, value_ty) {
         return Ok(None);
     }
@@ -6410,7 +6547,7 @@ fn validate_ptr_to_array_constant_type(
     input_err!(
         loc,
         TranslationErr::unsupported(format!(
-            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, or nested arrays of those.",
+            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, tuples of those, or nested arrays of those.",
             ty.deref(ctx)
         ))
     )
@@ -11327,7 +11464,7 @@ mod pointer_array_constant_type_tests {
     use pliron::r#type::TypeHandle;
 
     #[test]
-    fn pointer_array_constant_boundary_keeps_aggregates_out_and_nested_primitives_in() {
+    fn pointer_array_constant_boundary_keeps_structs_out_and_promotable_tuples_in() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -11361,11 +11498,28 @@ mod pointer_array_constant_type_tests {
             "nesting must not hide an unsupported struct leaf"
         );
 
+        // Widening the shared predicate to tuples deliberately widens this form
+        // too: the doc contract on `promotable_array_element` is that `TABLE[i]`
+        // and `(&TABLE)[i]` cannot drift apart. Nothing here enumerates fields --
+        // the initializer is rustc's evaluated byte image and the size-agreement
+        // check rejects any layout the dialect reproduces differently -- so a
+        // tuple element travels this path exactly as a scalar does.
         let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty]).into();
         let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
         assert!(
-            validate_ptr_to_array_constant_type(&ctx, tuple_array, Location::Unknown).is_err(),
-            "bare tuple-array support must not widen pointer-to-array constants"
+            validate_ptr_to_array_constant_type(&ctx, tuple_array, Location::Unknown).is_ok(),
+            "const R: &[(u32,); N] = &TABLE must pass the same gate the bare table passes"
+        );
+
+        // ... and a tuple is only as admissible as its fields, on this path too.
+        let tuple_with_struct_ty: TypeHandle =
+            MirTupleType::get(&mut ctx, vec![u32_ty, struct_ty]).into();
+        let tuple_with_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_struct_ty, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, tuple_with_struct_array, Location::Unknown)
+                .is_err(),
+            "a struct field must keep its tuple out of the reference form as well"
         );
     }
 
@@ -11495,7 +11649,7 @@ mod promotable_array_element_tests {
     }
 
     #[test]
-    fn promotion_admits_scalar_and_fieldless_enum_elements_only() {
+    fn promotion_admits_scalars_fieldless_enums_and_promotable_tuples() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -11538,8 +11692,14 @@ mod promotable_array_element_tests {
         let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty, u32_ty]).into();
         let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 4).into();
         assert!(
-            !promotable_array_element(&ctx, tuple_array),
-            "tuple elements are excluded until the per-field array copies are gone"
+            promotable_array_element(&ctx, tuple_array),
+            "a tuple of promotable fields is promotable now that a field read \
+             addresses in place instead of copying the array"
+        );
+        let nested_tuple_arrays: TypeHandle = MirArrayType::get(&mut ctx, tuple_array, 2).into();
+        assert!(
+            promotable_array_element(&ctx, nested_tuple_arrays),
+            "nesting must not lose a promotable tuple leaf"
         );
 
         let struct_ty: TypeHandle = MirStructType::get(
@@ -11555,9 +11715,20 @@ mod promotable_array_element_tests {
             "struct elements stay outside, as they are for the element-wise path"
         );
 
-        let nested_tuples: TypeHandle = MirArrayType::get(&mut ctx, tuple_array, 2).into();
+        // A tuple is only as promotable as its fields: a struct field keeps the
+        // whole element out, at any depth.
+        let tuple_with_struct: TypeHandle =
+            MirTupleType::get(&mut ctx, vec![u32_ty, struct_ty]).into();
+        let tuple_with_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_struct, 4).into();
         assert!(
-            !promotable_array_element(&ctx, nested_tuples),
+            !promotable_array_element(&ctx, tuple_with_struct_array),
+            "a struct field must keep its tuple out"
+        );
+        let nested_excluded: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_struct_array, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, nested_excluded),
             "nesting must not hide an excluded leaf"
         );
     }

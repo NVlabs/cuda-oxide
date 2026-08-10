@@ -1742,11 +1742,16 @@ pub(crate) fn convert_field_addr(
         return Ok(());
     }
 
+    // Carried alongside the layout so the field address can record what it
+    // proves about its own alignment; see `stamp_field_address_alignment`.
+    let aggregate_abi_align;
     let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
         if let Some(struct_ty) = pointee_ref.downcast_ref::<MirStructType>() {
+            aggregate_abi_align = struct_ty.abi_align;
             StructLayoutInfo::of_struct(struct_ty)
         } else if let Some(tuple_ty) = pointee_ref.downcast_ref::<MirTupleType>() {
+            aggregate_abi_align = tuple_ty.abi_align();
             StructLayoutInfo::of_tuple(tuple_ty)
         } else {
             return pliron::input_err_noloc!(
@@ -1794,9 +1799,66 @@ pub(crate) fn convert_field_addr(
 
     let gep_op = llvm::GetElementPtrOp::new(ctx, ptr_operand, gep_indices, map.llvm_struct_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
+    stamp_field_address_alignment(
+        ctx,
+        gep_op.get_operation(),
+        aggregate_abi_align,
+        layout.field_offsets.get(field_index).copied(),
+    );
     rewriter.replace_operation(ctx, op, gep_op.get_operation());
 
     Ok(())
+}
+
+/// Record on a field address what its alignment provably is.
+///
+/// A load reads its alignment from its own result type, and a scalar records
+/// none -- so `p.x` on an `#[repr(C, align(8))]` struct would export with LLVM's
+/// default `align 4`, dropping the guarantee rustc gave the aggregate. That is
+/// what stops LoadStoreVectorizer from fusing two adjacent field reads into one
+/// wide access; a whole-element copy of the same struct already vectorizes,
+/// because there the load's result type *is* the aggregate.
+///
+/// The aggregate is aligned to `abi_align`, so its field at byte `offset` is
+/// aligned to `gcd(abi_align, offset)`, and to `abi_align` itself at offset
+/// zero. Both numbers are rustc's own layout, so this claims nothing the source
+/// did not already guarantee.
+///
+/// Stamps nothing when the aggregate records no alignment (`abi_align == 0`,
+/// which also stands for "layout unknown") or the field has no recorded offset.
+/// A wrong alignment here is a miscompile, so every uncertain case declines and
+/// leaves the previous, weaker-but-sound behaviour.
+fn stamp_field_address_alignment(
+    ctx: &mut Context,
+    gep: Ptr<Operation>,
+    abi_align: u64,
+    field_offset: Option<u64>,
+) {
+    const fn gcd(a: u64, b: u64) -> u64 {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+
+    if abi_align == 0 {
+        return;
+    }
+    let Some(offset) = field_offset else {
+        return;
+    };
+    let provable = if offset == 0 {
+        abi_align
+    } else {
+        gcd(abi_align, offset)
+    };
+    // Every rustc layout has a power-of-two `abi_align`, but dialect-mir only
+    // verifier-enforces that for unions and enums; a malformed hand-built
+    // struct or tuple layout could reach here with e.g. 12, and a
+    // non-power-of-two `align N` is invalid LLVM IR that llc rejects.
+    if !provable.is_power_of_two() {
+        return;
+    }
+    if let Ok(align) = u32::try_from(provable) {
+        llvm_export::ops::set_address_alignment(ctx, gep, align);
+    }
 }
 
 // ============================================================================
