@@ -60,6 +60,8 @@ struct NvJitLinkResult(c_int);
 
 impl NvJitLinkResult {
     const SUCCESS: Self = Self(0);
+    /// `NVJITLINK_ERROR_UNRECOGNIZED_OPTION` from `nvJitLink.h`.
+    const UNRECOGNIZED_OPTION: Self = Self(1);
 }
 
 /// nvJitLink input kinds (`nvJitLinkInputType`). Mirrors `nvJitLink.h`.
@@ -148,6 +150,21 @@ pub enum NvJitLinkError {
         /// nvJitLink error log, if available.
         log: Option<String>,
     },
+}
+
+impl NvJitLinkError {
+    /// Whether nvJitLink rejected an option string with
+    /// `NVJITLINK_ERROR_UNRECOGNIZED_OPTION`.
+    ///
+    /// Callers that pass optional, non-semantic options (for example
+    /// diagnostic reporting flags) can use this to detect an older nvJitLink
+    /// that predates the option and retry without it.
+    pub fn is_unrecognized_option(&self) -> bool {
+        matches!(
+            self,
+            Self::Call { code, .. } if *code == NvJitLinkResult::UNRECOGNIZED_OPTION.0
+        )
+    }
 }
 
 // ============================================================================
@@ -879,6 +896,24 @@ mod tests {
     }
 
     #[test]
+    fn unrecognized_option_is_detected_only_for_its_result_code() {
+        let unrecognized = NvJitLinkError::Call {
+            operation: "nvJitLinkCreate",
+            code: NvJitLinkResult::UNRECOGNIZED_OPTION.0,
+            log: None,
+        };
+        assert!(unrecognized.is_unrecognized_option());
+
+        let other_call = NvJitLinkError::Call {
+            operation: "nvJitLinkComplete",
+            code: 6,
+            log: None,
+        };
+        assert!(!other_call.is_unrecognized_option());
+        assert!(!NvJitLinkError::PtxOutputUnavailable.is_unrecognized_option());
+    }
+
+    #[test]
     fn ptx_input_has_exactly_one_terminal_nul_in_ffi_backing() {
         let poisoned_storage = b".version 7.1\nX";
         let ptx = &poisoned_storage[..poisoned_storage.len() - 1];
@@ -957,6 +992,20 @@ mod tests {
                 PathBuf::from("/usr/local/cuda"),
                 PathBuf::from("/opt/cuda"),
             ]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an installed CUDA Toolkit with nvJitLink"]
+    fn installed_toolkit_rejects_unknown_options_with_unrecognized_option() {
+        let library = LibNvJitLink::load().expect("load nvJitLink");
+        let Err(error) = Linker::new(&library, &["-arch=sm_86", "-cuda-oxide-unknown-option"])
+        else {
+            panic!("nvJitLink accepts only documented options");
+        };
+        assert!(
+            error.is_unrecognized_option(),
+            "expected NVJITLINK_ERROR_UNRECOGNIZED_OPTION, got: {error}"
         );
     }
 
