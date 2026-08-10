@@ -17,7 +17,7 @@ only `src/generated_case.rs`; `src/main.rs` remains the stable CPU/GPU harness.
 Run one seed:
 
 ```bash
-python3 crates/fuzzer/tools/run_seed.py --seed 192
+python3 crates/fuzzer/tools/run_seed.py --seed 33
 ```
 
 Run a range:
@@ -41,10 +41,8 @@ For each accepted seed:
 4. The CPU and GPU traces are compared as `u64` hashes.
 
 `dump_var` hashes intermediate values, not just the final return value. A seed
-can have one dump site or several dump sites. Seed `162` is the current checked
-in example, because its device code calls libdevice (`fmaf64`) and so covers the
-artifact path that a PTX-only loader cannot serve. Seed `192` is a smaller case
-with two dump sites:
+can have one dump site or several dump sites. Seed `33` is a small case with
+two dump sites:
 
 ```rust
 __rl_dump0 = (Move(_1), Move(_2), Move(_3), Move(_4));
@@ -53,6 +51,13 @@ Call(_9 = dump_var(Move(__rl_dump0)), ReturnTo(bb4), UnwindUnreachable())
 __rl_dump1 = (Move(_6),);
 Call(_9 = dump_var(Move(__rl_dump1)), ReturnTo(bb5), UnwindUnreachable())
 ```
+
+The checked-in `generated_case.rs` is kept because its device code calls
+libdevice (`fmaf64`) and so covers the artifact path that a PTX-only loader
+cannot serve. It was generated from seed `162` under the adapter's earlier
+scalar-only rustlantis config; enabling composites changed what every seed
+generates, so regenerating seed `162` today produces a different program
+rather than that file. Its header records this.
 
 ## Result statuses
 
@@ -67,12 +72,12 @@ Call(_9 = dump_var(Move(__rl_dump1)), ReturnTo(bb5), UnwindUnreachable())
 - `UNSUPPORTED [adapter]`: rustlantis generated a MIR program, but our Python
   adapter refused to turn it into a cuda-oxide smoke case.
 
-For example, seed `0` dumps a `[i8; 1]`, which the trace API does not hash, and
-the seed currently reports:
+For example, seed `0` dumps a `[i8; 1]`, which the trace API does not hash, so
+`--start 0 --count 2 --keep-going` currently reports:
 
 ```text
 results:
-  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: [i8; 1]
+  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: [i8; 1] (crates/fuzzer/artifacts/seed-0-unsupported.log)
   seed 1: PASS [run] CPU/GPU traces matched
 summary: PASS=1, UNSUPPORTED=1
 ```
@@ -157,7 +162,9 @@ crates/fuzzer/artifacts/summary.jsonl
 invocation, so the logs and `summary.jsonl` always describe only the latest run.
 
 The terminal also prints a full per-seed summary; entries that wrote a log
-append its path. For example, `--start 0 --count 2` currently prints:
+append its path, relative to the repo root. Without `--keep-going` a run
+stops at the first non-PASS seed, so `--start 0 --count 2` alone would end at
+seed 0's `UNSUPPORTED`. `--start 0 --count 2 --keep-going` currently prints:
 
 ```text
 results:
