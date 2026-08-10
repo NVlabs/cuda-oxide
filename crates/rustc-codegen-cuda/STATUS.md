@@ -44,8 +44,10 @@ provenance. Shared-memory pointers are 64 bits in PTX and legacy NVVM output
 but 32 bits in modern NVVM output. Direct fields and pointer leaves nested
 through structs/tuples use target-stable generic physical storage, with
 recursive reconstruction at enum construction and extraction boundaries.
-Arrays use the same reconstruction when their recursive expansion contains at
-most 16 shared-pointer leaves. Larger arrays remain rejected to keep generated
-code shape bounded, while pointer vectors still need separate ABI and
-address-space-cast semantics. (Bool leaves use canonical i8 physical bytes and
-are converted recursively at the same boundary.)
+Arrays use the same reconstruction when the payload's recursive expansion
+contains at most 16 array-expanded shared-pointer leaves in total, whether
+they come from one array or from several arrays nested through structs.
+Larger expansions remain rejected to keep generated code shape bounded, while
+pointer vectors still need separate ABI and address-space-cast semantics.
+(Bool leaves use canonical i8 physical bytes and are converted recursively at
+the same boundary.)

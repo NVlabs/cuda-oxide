@@ -8,7 +8,8 @@ structs/tuples, and bounded arrays of shared-pointer leaves use target-stable
 CUDA generic physical storage. Array conversion rebuilds the value recursively,
 emitting extraction, address-space cast, and insertion sequences for each shared
 pointer leaf. To keep that expansion bounded, enum payload lowering accepts at
-most 16 shared-pointer leaves across the recursive array shape.
+most 16 array-expanded shared-pointer leaves in total per payload, whether they
+come from one array or from several arrays nested through structs.
 
 This fixture deliberately exceeds that contract with 17 shared-pointer leaves.
 The compiler must reject it instead of generating unbounded reconstruction or

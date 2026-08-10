@@ -3572,6 +3572,122 @@ mod tests {
         );
     }
 
+    /// A struct payload holding two shared-pointer arrays whose leaves exceed
+    /// the bound only in total. The slot map is target-mode agnostic (it is
+    /// built once, before the exporter picks the legacy 64-bit or modern
+    /// p3:32 data layout), so this one gate covers both output modes.
+    fn struct_of_shared_pointer_arrays_over_total_bound(ctx: &mut Context) -> TypeHandle {
+        let u32_ty = mir_uint(ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(ctx, u32_ty, false).into();
+        let first: TypeHandle = MirArrayType::get(ctx, shared, 9).into();
+        let second: TypeHandle = MirArrayType::get(ctx, shared, 8).into();
+        MirStructType::get_with_full_layout(
+            ctx,
+            "SharedPointerArrayPair".into(),
+            vec!["first".into(), "second".into()],
+            vec![first, second],
+            vec![],
+            vec![0, 72],
+            136,
+            8,
+        )
+        .into()
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_struct_of_shared_pointer_arrays_over_total_bound() {
+        // Each array alone (9 and 8 leaves) is within the bound; their total
+        // of 17 is not. The payload-root gate must reject the direct layout
+        // with the same bound diagnostic as a single oversized array.
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let payload = struct_of_shared_pointer_arrays_over_total_bound(&mut ctx);
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "StructOfSharedPointerArraysPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Pointers".into(), vec![payload], vec![8], vec![136]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 144,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("two in-bound arrays exceeding the bound in total must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("arrays containing shared-memory pointers are not supported"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains(&format!(
+                "rewrite requires 17 pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_struct_of_shared_pointer_arrays_in_niche_layout() {
+        // The same over-bound payload in a niche layout must report the same
+        // bound diagnostic as the direct layout, not a pointer-provenance
+        // error from the overlap walk: the payload-root gate runs first in
+        // both layouts.
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let payload = struct_of_shared_pointer_arrays_over_total_bound(&mut ctx);
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "NicheStructOfSharedPointerArrays".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![136]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 136,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("the payload-root bound must also gate niche layouts");
+        assert!(
+            error.to_string().contains(&format!(
+                "rewrite requires 17 pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
+            "{error}"
+        );
+        assert!(
+            !error.to_string().contains("pointer provenance"),
+            "the bound diagnostic must not be masked by the provenance error: {error}"
+        );
+    }
+
     #[test]
     fn enum_slot_map_rejects_shared_pointer_vector_payload() {
         let mut ctx = make_ctx();
