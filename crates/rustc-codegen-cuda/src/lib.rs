@@ -1024,12 +1024,21 @@ fn materialize_artifact_for_embedding(
     }))
 }
 
+/// Warns on every `#[launch_bounds]` kernel whose ptxas resource report
+/// shows register spills, at the kernel's definition span.
+///
+/// Set `CUDA_OXIDE_NO_SPILL_WARN=1` to silence the warnings. They are raw
+/// span diagnostics, not lints, so `#[allow]` cannot suppress them; the
+/// escape hatch covers builds that measured a spill and accepted it.
 fn emit_launch_bounds_spill_warnings(
     tcx: TyCtxt<'_>,
     result: &device_codegen::DeviceCodegenResult,
     functions: &[collector::CollectedFunction<'_>],
     resource_usage: &[cuda_artifact_finalizer::KernelResourceUsage],
 ) {
+    if std::env::var_os("CUDA_OXIDE_NO_SPILL_WARN").is_some() {
+        return;
+    }
     for usage in resource_usage.iter().filter(|usage| usage.has_spills()) {
         let Some(bounds) = result.kernel_launch_bounds.get(&usage.kernel) else {
             continue;
