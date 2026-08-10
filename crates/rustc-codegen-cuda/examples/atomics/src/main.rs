@@ -44,7 +44,7 @@ use cuda_device::atomic::{
     AtomicOrdering, BlockAtomicU32, DeviceAtomicF32, DeviceAtomicF64, DeviceAtomicI32,
     DeviceAtomicI64, DeviceAtomicU32, DeviceAtomicU64,
 };
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
 // =============================================================================
