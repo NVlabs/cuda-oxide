@@ -1902,11 +1902,11 @@ fn build_interop_device_crate(
         let metadata = cargo_metadata
             .as_ref()
             .expect("cargo metadata is fetched whenever source-identity is configured");
-        let depfile_path = release_depfile_path_from_metadata(metadata, &cargo_target_name)
-            .unwrap_or_else(|error| {
-                eprintln!("Error: could not locate device dependency file: {error}");
-                std::process::exit(1);
-            });
+        let cargo_target_dir = cargo_target_directory(metadata).unwrap_or_else(|error| {
+            eprintln!("Error: could not locate the device cargo target directory: {error}");
+            std::process::exit(1);
+        });
+        let depfile_path = release_depfile_path(&cargo_target_dir, &cargo_target_name);
         if !depfile_path.is_file() {
             eprintln!(
                 "Error: device crate build succeeded but did not produce dependency file {}",
@@ -1920,6 +1920,7 @@ fn build_interop_device_crate(
             &depfile_path,
             &manifest_path,
             identity_base,
+            &cargo_target_dir,
             &artifact_target,
             device_features,
         )
@@ -5518,6 +5519,17 @@ fn normalize_crate_name(package_name: &str) -> String {
     package_name.replace('-', "_")
 }
 
+/// The target directory cargo reports for a device crate, which locates both
+/// its uplifted build products and the build outputs the identity sidecar
+/// must exclude.
+fn cargo_target_directory(metadata: &serde_json::Value) -> Result<PathBuf, String> {
+    metadata
+        .get("target_directory")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| "cargo metadata omitted target_directory".to_string())
+}
+
 /// Where cargo uplifts the dep-info file for a release binary target.
 ///
 /// Cargo names the uplifted copy after the bin target verbatim, hyphens
@@ -5526,17 +5538,10 @@ fn normalize_crate_name(package_name: &str) -> String {
 /// repo's own build writes `target/debug/cargo-oxide.d`). Only the internal
 /// per-unit copies under `target/release/deps/` use the underscore-normalized
 /// crate name, so the stem here must NOT be `normalize_crate_name`d.
-fn release_depfile_path_from_metadata(
-    metadata: &serde_json::Value,
-    cargo_target_name: &str,
-) -> Result<PathBuf, String> {
-    let target_dir = metadata
-        .get("target_directory")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| "cargo metadata omitted target_directory".to_string())?;
-    Ok(PathBuf::from(target_dir)
+fn release_depfile_path(cargo_target_dir: &Path, cargo_target_name: &str) -> PathBuf {
+    cargo_target_dir
         .join("release")
-        .join(format!("{cargo_target_name}.d")))
+        .join(format!("{cargo_target_name}.d"))
 }
 
 fn interop_cargo_metadata(
@@ -10101,25 +10106,25 @@ edition = "2024"
 
     #[test]
     fn release_depfile_stem_preserves_hyphens_like_cargo_uplift() {
-        let metadata = serde_json::json!({ "target_directory": "/workspace/device/target" });
+        let target_dir = Path::new("/workspace/device/target");
         // Regression: the stem was normalize_crate_name'd (hyphen -> underscore),
         // but cargo uplifts dep-info named after the bin target verbatim, so
         // every hyphenated bin/package with source-identity aborted with
         // "did not produce dependency file".
         assert_eq!(
-            release_depfile_path_from_metadata(&metadata, "simt-device").unwrap(),
+            release_depfile_path(target_dir, "simt-device"),
             PathBuf::from("/workspace/device/target/release/simt-device.d")
         );
         assert_eq!(
-            release_depfile_path_from_metadata(&metadata, "kernels").unwrap(),
+            release_depfile_path(target_dir, "kernels"),
             PathBuf::from("/workspace/device/target/release/kernels.d")
         );
     }
 
-    /// The load-bearing claim behind `release_depfile_path_from_metadata` is
-    /// cargo's own uplift naming, so assert it against a real `cargo build`
-    /// of a hyphenated package with a hyphenated bin target rather than
-    /// against our expectations of it.
+    /// The load-bearing claim behind `release_depfile_path` is cargo's own
+    /// uplift naming, so assert it against a real `cargo build` of a
+    /// hyphenated package with a hyphenated bin target rather than against
+    /// our expectations of it.
     #[test]
     fn release_depfile_path_matches_real_cargo_uplift_for_hyphenated_bin() {
         let root = unique_temp_dir("cargo_oxide_hyphen_depfile");
@@ -10167,7 +10172,8 @@ path = "src/bin/hyphen_device.rs"
         );
         let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
 
-        let depfile = release_depfile_path_from_metadata(&metadata, "hyphen-device").unwrap();
+        let depfile =
+            release_depfile_path(&cargo_target_directory(&metadata).unwrap(), "hyphen-device");
         assert!(
             depfile.is_file(),
             "cargo did not uplift the dep-info where we derive it: {}",

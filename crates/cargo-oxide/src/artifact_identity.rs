@@ -17,10 +17,17 @@ pub(crate) fn write(
     depfile_path: &Path,
     manifest_path: &Path,
     base_dir: &Path,
+    cargo_target_dir: &Path,
     target: &str,
     device_features: Option<&str>,
 ) -> io::Result<PathBuf> {
     let base_dir = base_dir.canonicalize()?;
+    // Build outputs (OUT_DIR-generated sources) are excluded by the actual
+    // cargo target directory, so a source tree that happens to contain a
+    // directory named `target` (e.g. `src/target/mod.rs`) is still digested.
+    let cargo_target_dir = cargo_target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| cargo_target_dir.to_path_buf());
     let dependency_base = manifest_path.parent().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -44,7 +51,7 @@ pub(crate) fn write(
             dependency_base.join(source)
         };
         let source = source.canonicalize()?;
-        if !is_identity_source(&source) {
+        if !is_identity_source(&source, &cargo_target_dir) {
             continue;
         }
         let relative = relative_path(&base_dir, &source);
@@ -166,12 +173,19 @@ fn parse_depfile(contents: &str) -> io::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn is_identity_source(path: &Path) -> bool {
+fn is_identity_source(path: &Path, cargo_target_dir: &Path) -> bool {
+    // Exclude build outputs by the real cargo target directory, not by any
+    // path component named "target": a crate may legitimately keep sources
+    // under e.g. `src/target/mod.rs`, and dropping those silently
+    // under-reported identity completeness.
+    if path.starts_with(cargo_target_dir) {
+        return false;
+    }
     if path.components().any(|component| {
         matches!(
             component,
             Component::Normal(name)
-                if name == "target" || name == ".pixi" || name == ".git"
+                if name == ".pixi" || name == ".git"
         )
     }) {
         return false;
@@ -234,7 +248,9 @@ fn appended_path(path: &Path, suffix: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{FORMAT_VERSION, normalize_features, parse_depfile, relative_path};
+    use super::{
+        FORMAT_VERSION, is_identity_source, normalize_features, parse_depfile, relative_path,
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -255,6 +271,31 @@ mod tests {
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn excludes_only_the_real_cargo_target_directory() {
+        let target_dir = Path::new("/workspace/engine/device/target");
+        // Build outputs (e.g. OUT_DIR-generated sources) are not identity
+        // sources.
+        assert!(!is_identity_source(
+            Path::new("/workspace/engine/device/target/release/build/gen/out/tables.rs"),
+            target_dir,
+        ));
+        // A source directory that happens to be named `target` is still a
+        // source: only the actual cargo target directory is excluded.
+        assert!(is_identity_source(
+            Path::new("/workspace/engine/device/src/target/mod.rs"),
+            target_dir,
+        ));
+        assert!(is_identity_source(
+            Path::new("/workspace/engine/device/Cargo.toml"),
+            target_dir,
+        ));
+        assert!(!is_identity_source(
+            Path::new("/workspace/engine/device/src/notes.md"),
+            target_dir,
+        ));
     }
 
     #[test]
