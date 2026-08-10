@@ -519,13 +519,19 @@ impl Drop for Linker<'_> {
 // Helpers
 // ============================================================================
 
-fn normalize_input<'data>(
-    kind: InputType,
-    data: &'data [u8],
-    name: &str,
-) -> Result<Cow<'data, [u8]>, NvJitLinkError> {
-    if kind == InputType::Ptx
-        && let Some(offset) = data.iter().position(|byte| *byte == 0)
+/// Strip PTX's single optional trailing NUL terminator, rejecting any other
+/// NUL byte.
+///
+/// nvJitLink reads PTX as a C string even though `nvJitLinkAddData` receives
+/// an explicit byte count, so a non-trailing NUL would silently truncate the
+/// module. This function is the single owner of that C-string rule: exactly
+/// one trailing NUL is tolerated (and stripped), while a NUL anywhere else,
+/// including a second trailing NUL, is rejected as
+/// [`NvJitLinkError::InteriorNulPtx`]. The returned slice holds the logical
+/// PTX text, the canonical form for hashing or comparing PTX inputs;
+/// [`Linker::add`] re-appends the terminator when it builds the FFI backing.
+pub fn logical_ptx<'data>(data: &'data [u8], name: &str) -> Result<&'data [u8], NvJitLinkError> {
+    if let Some(offset) = data.iter().position(|byte| *byte == 0)
         && offset + 1 != data.len()
     {
         return Err(NvJitLinkError::InteriorNulPtx {
@@ -533,7 +539,20 @@ fn normalize_input<'data>(
             offset,
         });
     }
-    if kind != InputType::Ptx || data.last() == Some(&0) {
+    Ok(data.strip_suffix(&[0]).unwrap_or(data))
+}
+
+fn normalize_input<'data>(
+    kind: InputType,
+    data: &'data [u8],
+    name: &str,
+) -> Result<Cow<'data, [u8]>, NvJitLinkError> {
+    if kind != InputType::Ptx {
+        return Ok(Cow::Borrowed(data));
+    }
+    let logical = logical_ptx(data, name)?;
+    if logical.len() != data.len() {
+        // Exactly one trailing NUL is already present; pass through as-is.
         return Ok(Cow::Borrowed(data));
     }
 
@@ -870,6 +889,32 @@ mod tests {
         let already_terminated = normalize_input(InputType::Ptx, b"ptx\0", "kernel.ptx").unwrap();
         assert!(matches!(&already_terminated, Cow::Borrowed(_)));
         assert_eq!(already_terminated.as_ref(), b"ptx\0");
+    }
+
+    #[test]
+    fn logical_ptx_strips_exactly_one_trailing_terminator() {
+        assert_eq!(logical_ptx(b"ptx", "kernel.ptx").unwrap(), b"ptx");
+        assert_eq!(logical_ptx(b"ptx\0", "kernel.ptx").unwrap(), b"ptx");
+        assert_eq!(logical_ptx(b"", "empty.ptx").unwrap(), b"");
+        assert_eq!(logical_ptx(b"\0", "empty.ptx").unwrap(), b"");
+    }
+
+    #[test]
+    fn logical_ptx_rejects_every_non_trailing_nul() {
+        for (ptx, expected_offset) in [
+            (&b"ptx\0ignored"[..], 3),
+            (&b"ptx\0\0"[..], 3),
+            (&b"\0ptx"[..], 0),
+        ] {
+            let error = logical_ptx(ptx, "kernel.ptx").unwrap_err();
+            assert!(matches!(
+                error,
+                NvJitLinkError::InteriorNulPtx {
+                    ref name,
+                    offset
+                } if name == "kernel.ptx" && offset == expected_offset
+            ));
+        }
     }
 
     #[test]

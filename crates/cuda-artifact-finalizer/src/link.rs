@@ -11,8 +11,7 @@ use crate::provenance::{
 };
 use crate::validation::is_valid_cubin;
 use crate::{FinalizerError, validate_name};
-use nvjitlink_sys::{InputType, LibNvJitLink, Linker};
-use std::borrow::Cow;
+use nvjitlink_sys::{InputType, LibNvJitLink, Linker, NvJitLinkError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 struct LoadedLinkerTool {
@@ -77,8 +76,11 @@ impl LtoLinker {
         options: &FinalizationOptions,
     ) -> Result<Vec<u8>, FinalizerError> {
         validate_inputs(std::slice::from_ref(&input))?;
-        let ptx = nul_terminated_ptx(input)?;
-        let input = NamedInput::new(input.name, &ptx);
+        // Enforce the PTX C-string rule up front so this route rejects
+        // exactly the inputs `ptx_artifact_digest` rejects, with the
+        // finalizer's error vocabulary. `Linker::add` NUL-terminates the FFI
+        // backing itself through the same shared nvjitlink-sys rule.
+        logical_ptx(input)?;
         self.link_inputs(
             std::slice::from_ref(&input),
             InputType::Ptx,
@@ -174,31 +176,23 @@ fn validate_inputs(inputs: &[NamedInput<'_>]) -> Result<(), FinalizerError> {
     Ok(())
 }
 
+/// Logical PTX bytes shared by the digest and link routes.
+///
+/// nvjitlink-sys owns the PTX C-string rule (strip the single optional
+/// trailing NUL, reject any other NUL); this wrapper only adds the
+/// finalizer's non-empty-input policy and error vocabulary on top.
 fn logical_ptx(input: NamedInput<'_>) -> Result<&[u8], FinalizerError> {
-    let logical = input.bytes.strip_suffix(&[0]).unwrap_or(input.bytes);
+    let logical =
+        nvjitlink_sys::logical_ptx(input.bytes, input.name).map_err(|error| match error {
+            NvJitLinkError::InteriorNulPtx { name, .. } => FinalizerError::InteriorNulPtx { name },
+            other => FinalizerError::NvJitLink(other),
+        })?;
     if logical.is_empty() {
         return Err(FinalizerError::EmptyInput {
             name: input.name.to_string(),
         });
     }
-    if logical.contains(&0) {
-        return Err(FinalizerError::InteriorNulPtx {
-            name: input.name.to_string(),
-        });
-    }
     Ok(logical)
-}
-
-fn nul_terminated_ptx(input: NamedInput<'_>) -> Result<Cow<'_, [u8]>, FinalizerError> {
-    let logical = logical_ptx(input)?;
-    if logical.len() != input.bytes.len() {
-        Ok(Cow::Borrowed(input.bytes))
-    } else {
-        let mut terminated = Vec::with_capacity(logical.len() + 1);
-        terminated.extend_from_slice(logical);
-        terminated.push(0);
-        Ok(Cow::Owned(terminated))
-    }
 }
 
 fn load_linker_tool() -> Result<Arc<LoadedLinkerTool>, FinalizerError> {
@@ -385,18 +379,21 @@ mod tests {
     }
 
     #[test]
-    fn ptx_normalization_adds_one_terminator_and_rejects_interior_nuls() {
+    fn ptx_normalization_ignores_one_terminator_and_rejects_interior_nuls() {
         let plain = NamedInput::new("kernel.ptx", b"ptx");
         let terminated = NamedInput::new("kernel.ptx", b"ptx\0");
         assert_eq!(logical_ptx(plain).unwrap(), b"ptx");
         assert_eq!(logical_ptx(terminated).unwrap(), b"ptx");
-        assert_eq!(nul_terminated_ptx(plain).unwrap().as_ref(), b"ptx\0");
         assert!(matches!(
-            nul_terminated_ptx(NamedInput::new("bad.ptx", b"p\0tx")),
-            Err(FinalizerError::InteriorNulPtx { .. })
+            logical_ptx(NamedInput::new("bad.ptx", b"p\0tx")),
+            Err(FinalizerError::InteriorNulPtx { ref name }) if name == "bad.ptx"
         ));
         assert!(matches!(
-            nul_terminated_ptx(NamedInput::new("empty.ptx", b"\0")),
+            logical_ptx(NamedInput::new("bad.ptx", b"ptx\0\0")),
+            Err(FinalizerError::InteriorNulPtx { ref name }) if name == "bad.ptx"
+        ));
+        assert!(matches!(
+            logical_ptx(NamedInput::new("empty.ptx", b"\0")),
             Err(FinalizerError::EmptyInput { .. })
         ));
     }
