@@ -3550,3 +3550,100 @@ fn small_type_extern_module_parses_with_llvm_as() {
         "{llvm_as} rejected the emitted module:\n{stderr}\n--- module ---\n{ir}"
     );
 }
+
+/// Builds a `void` function taking pointer parameters in the given address
+/// spaces, with an empty body, optionally carrying the `gpu_kernel` marker
+/// the exporter uses to distinguish an entry from a device function.
+fn pointer_param_function(
+    ctx: &mut Context,
+    module_block: Ptr<BasicBlock>,
+    name: &str,
+    address_spaces: &[u32],
+    is_kernel: bool,
+) {
+    let params: Vec<_> = address_spaces
+        .iter()
+        .map(|space| PointerType::get(ctx, *space).into())
+        .collect();
+    let void_ty = VoidType::get(ctx);
+    let func_ty = FuncType::get(ctx, void_ty.into(), params, false);
+    let func = FuncOp::new(ctx, name.try_into().unwrap(), func_ty);
+    if is_kernel {
+        let kernel_key: Identifier = "gpu_kernel".try_into().unwrap();
+        func.get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(kernel_key, StringAttr::new("true".to_string()));
+    }
+    let entry = func.get_or_create_entry_block(ctx);
+    ReturnOp::new(ctx, None)
+        .get_operation()
+        .insert_at_back(entry, ctx);
+    func.get_operation().insert_at_back(module_block, ctx);
+}
+
+/// A kernel receives its parameters in `.param` space from the host, which
+/// holds no shared-memory address to pass. The exporter must refuse the
+/// signature instead of emitting `.ptr .shared`, which ptxas accepts but the
+/// driver rejects at module load, taking every kernel in the module down.
+#[test]
+fn kernel_rejects_a_shared_memory_pointer_parameter() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "kernel_shared_param".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    pointer_param_function(&mut ctx, module_block, "shared_param", &[0, 3], true);
+
+    let error = export_module_to_string(&ctx, &module)
+        .expect_err("export must refuse a kernel parameter in shared memory");
+    assert!(
+        error.contains(
+            "kernel `@shared_param` parameter 1 is a pointer into shared memory (address space 3)"
+        ),
+        "{error}"
+    );
+}
+
+/// Local memory is per-thread, so the host has no address in it to pass
+/// either; the exporter refuses it on the same grounds as shared.
+#[test]
+fn kernel_rejects_a_local_memory_pointer_parameter() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "kernel_local_param".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    pointer_param_function(&mut ctx, module_block, "local_param", &[5], true);
+
+    let error = export_module_to_string(&ctx, &module)
+        .expect_err("export must refuse a kernel parameter in local memory");
+    assert!(
+        error.contains(
+            "kernel `@local_param` parameter 0 is a pointer into local memory (address space 5)"
+        ),
+        "{error}"
+    );
+}
+
+/// The refusal is scoped to what the host cannot supply. Generic, global,
+/// and constant pointer parameters are host-addressable and stay accepted on
+/// kernels, and a device (non-kernel) function may carry any state space on
+/// its parameters, shared included.
+#[test]
+fn kernel_keeps_host_addressable_pointer_parameters_and_device_functions_keep_shared() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "kernel_allowed_params".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    pointer_param_function(&mut ctx, module_block, "allowed_param", &[0, 1, 4], true);
+    pointer_param_function(&mut ctx, module_block, "device_shared", &[3], false);
+
+    let ir = export_module_to_string(&ctx, &module)
+        .expect("generic/global/constant kernel parameters and device shared must export");
+    assert!(
+        ir.contains(
+            "define ptx_kernel void @allowed_param(ptr %v0, ptr addrspace(1) %v1, ptr addrspace(4) %v2)"
+        ),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("define void @device_shared(ptr addrspace(3) %v0)"),
+        "{ir}"
+    );
+}

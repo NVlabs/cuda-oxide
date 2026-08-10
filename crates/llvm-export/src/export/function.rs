@@ -624,6 +624,14 @@ impl<'a> ModuleExportState<'a> {
         // the codegen tests rely on it. A device function may carry any state
         // space on its parameters, which is why this is checked for kernels
         // alone.
+        //
+        // The refusal is deliberately scoped to address spaces 3 (shared) and
+        // 5 (local). addrspace(4) constant parameters stay allowed by design:
+        // the host owns constant-bank allocation, so it does have an address
+        // to pass. addrspace(7) (shared::cluster) is not user-reachable as a
+        // parameter type today; if a frontend type ever surfaces it at a
+        // kernel boundary, it needs a new arm here for the same reason as
+        // plain shared.
         if is_kernel {
             for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
                 let arg_ref = arg_ty.deref(self.ctx);
