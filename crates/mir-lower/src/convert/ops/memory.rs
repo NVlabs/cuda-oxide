@@ -1587,6 +1587,140 @@ mod tests {
         );
     }
 
+    /// Lower `load (&arr[index])` where `arr` is the array field of an
+    /// over-aligned struct, and report the alignment the load ends up with.
+    ///
+    /// `index` of `Some(i)` builds a constant index, `None` a runtime one.
+    fn lowered_element_load_alignment(
+        element_bits: u32,
+        element_count: u64,
+        struct_abi_align: u64,
+        index: Option<u64>,
+    ) -> Option<u32> {
+        use dialect_mir::attributes::FieldIndexAttr;
+        use pliron::builtin::attributes::IntegerAttr;
+        use std::num::NonZeroUsize;
+
+        let mut ctx = make_ctx();
+        let element_ty: TypeHandle =
+            IntegerType::get(&ctx, element_bits, Signedness::Signless).into();
+        let array_ty: TypeHandle =
+            dialect_mir::types::MirArrayType::get(&mut ctx, element_ty, element_count).into();
+        let elem_bytes = u64::from(element_bits) / 8;
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "ElementLoadAlign".into(),
+            vec!["lanes".into()],
+            vec![array_ty],
+            vec![],
+            vec![0],
+            elem_bytes * element_count,
+            struct_abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, false);
+        let array_ptr_ty = MirPtrType::get_generic(&mut ctx, array_ty, false);
+        let element_ptr_ty = MirPtrType::get_generic(&mut ctx, element_ty, false);
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+
+        let (module_ptr, block) =
+            build_kernel(&mut ctx, vec![struct_ptr_ty.into(), i64_ty], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+
+        // &s.lanes -- carries the struct's alignment onto the array address.
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![array_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        field_addr_op.insert_at_back(block, &ctx);
+        let array_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let index_val = match index {
+            Some(i) => {
+                let constant = Operation::new(
+                    &mut ctx,
+                    mir::MirConstantOp::get_concrete_op_info(),
+                    vec![i64_ty],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                mir::MirConstantOp::new(constant).set_attr_value(
+                    &ctx,
+                    IntegerAttr::new(
+                        IntegerType::get(&ctx, 64, Signedness::Signed),
+                        APInt::from_u64(i, NonZeroUsize::new(64).unwrap()),
+                    ),
+                );
+                constant.insert_at_back(block, &ctx);
+                constant.deref(&ctx).get_result(0)
+            }
+            None => block.deref(&ctx).get_argument(1),
+        };
+
+        let elem_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![element_ptr_ty.into()],
+            vec![array_ptr_val, index_val],
+            vec![],
+            0,
+        );
+        elem_addr_op.insert_at_back(block, &ctx);
+        let elem_ptr_val = elem_addr_op.deref(&ctx).get_result(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![element_ty],
+            vec![elem_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        llvm_export::ops::op_alignment(&ctx, load.get_operation())
+    }
+
+    /// Element 0 inherits the whole alignment the base address proved, which is
+    /// what lets the adjacent pair fuse into one wide load.
+    #[test]
+    fn convert_load_inherits_base_alignment_at_element_zero() {
+        // &(#[repr(C, align(8))] struct { lanes: [i32; 2] }).lanes[0]
+        assert_eq!(lowered_element_load_alignment(32, 2, 8, Some(0)), Some(8));
+    }
+
+    /// A nonzero constant index proves `gcd(base, i * stride)`: element 1 of an
+    /// align-8 `[i32; 2]` sits at byte 4, so it proves 4, not 8.
+    #[test]
+    fn convert_load_narrows_element_alignment_to_gcd_with_offset() {
+        assert_eq!(lowered_element_load_alignment(32, 2, 8, Some(1)), Some(4));
+    }
+
+    /// A runtime index can land on any element, so only what every stride
+    /// preserves may be claimed -- `gcd(base, stride)`, never the base itself.
+    #[test]
+    fn convert_load_claims_only_stride_alignment_for_a_runtime_index() {
+        assert_eq!(lowered_element_load_alignment(32, 2, 8, None), Some(4));
+    }
+
+    /// A base with no extra alignment proves nothing beyond the element's own
+    /// natural alignment, so the emitted access is unchanged.
+    #[test]
+    fn convert_load_keeps_natural_element_alignment_without_overalignment() {
+        assert_eq!(lowered_element_load_alignment(32, 2, 4, Some(0)), Some(4));
+    }
+
     #[test]
     fn convert_dbg_value_lowers_to_llvm_dbg_value() {
         let mut ctx = make_ctx();

@@ -44,6 +44,16 @@ pub struct AlignedPair {
     pub y: f32,
 }
 
+/// The same payload and alignment, but the two lanes live in an array rather
+/// than in named fields. Reading them goes through the array-element address
+/// path instead of the field path.
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub struct AlignedLanes(pub [f32; 2]);
+
+// SAFETY: `AlignedLanes` is a `repr(C)` array of two f32 with no padding.
+unsafe impl cuda_core::DeviceCopy for AlignedLanes {}
+
 // SAFETY: both are plain `repr(C)` f32 pairs -- no padding holes, pointers, or
 // interior mutability -- so a byte copy to the device is valid.
 unsafe impl cuda_core::DeviceCopy for PackedPair {}
@@ -77,6 +87,39 @@ mod kernels {
         if let Some(o) = out.get_mut(idx) {
             let p = pts[i];
             *o = p.x + p.y;
+        }
+    }
+
+    /// The array-lane form, read through the slice rather than copied into a
+    /// local first. Copying the element to a local already fused, because SROA
+    /// then loads the whole aggregate; reading through the place uses the
+    /// address path, which is what this needed.
+    #[kernel]
+    pub fn lanes_through_ref(pts: &[AlignedLanes], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if let Some(o) = out.get_mut(idx) {
+            *o = pts[i].0[0] + pts[i].0[1];
+        }
+    }
+
+    /// Cache-resident array-lane form, read through a reference: the kernel
+    /// this change speeds up.
+    #[kernel]
+    pub fn hot_lanes(pts: &[AlignedLanes], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if let Some(o) = out.get_mut(idx) {
+            let mut acc = 0.0f32;
+            let mut k = i as u32;
+            let mut r = 0;
+            while r < ROUNDS {
+                let lanes = &pts[(k as usize) & (TABLE - 1)].0;
+                acc += lanes[0] + lanes[1];
+                k = k.wrapping_mul(1664525).wrapping_add(1013904223);
+                r += 1;
+            }
+            *o = acc;
         }
     }
 
@@ -156,7 +199,12 @@ fn main() {
         })
         .collect();
 
+    let lanes: Vec<AlignedLanes> = (0..N)
+        .map(|i| AlignedLanes([i as f32, (i * 2) as f32]))
+        .collect();
+
     let packed_dev = DeviceBuffer::from_host(&stream, &packed).unwrap();
+    let lanes_dev = DeviceBuffer::from_host(&stream, &lanes).unwrap();
     let aligned_dev = DeviceBuffer::from_host(&stream, &aligned).unwrap();
     let mut out = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
@@ -216,6 +264,24 @@ fn main() {
             stream_expect
         );
         bench!(
+            "lanes_through_ref",
+            {
+                module
+                    .lanes_through_ref(&stream, cfg, &lanes_dev, &mut out)
+                    .unwrap()
+            },
+            stream_expect
+        );
+        bench!(
+            "hot_lanes",
+            {
+                module
+                    .hot_lanes(&stream, cfg, &lanes_dev, &mut out)
+                    .unwrap()
+            },
+            hot_expect
+        );
+        bench!(
             "hot_packed",
             {
                 module
@@ -236,7 +302,7 @@ fn main() {
     }
 
     if all_ok {
-        println!("\nSUCCESS: all 4 kernels bit-correct");
+        println!("\nSUCCESS: all 6 kernels bit-correct");
     } else {
         eprintln!("\nMISMATCH");
         std::process::exit(1);

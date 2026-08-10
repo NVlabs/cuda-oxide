@@ -59,8 +59,12 @@ reject_entry_shape() {
 vector_load='ld\.global\.v2\.b32'
 scalar_load='ld\.global\.b32'
 
-# The align(8) kernels must fuse the field pair into a single wide load.
-for kernel in aligned_pair hot_aligned; do
+# The align(8) kernels must fuse the pair into a single wide load. The `lanes`
+# kernels reach the same two f32 through an array index rather than named
+# fields, and read them through a reference rather than copying the element to
+# a local -- the shape that keeps the load on the address path, where the
+# alignment has to be carried explicitly.
+for kernel in aligned_pair hot_aligned lanes_through_ref hot_lanes; do
     require_entry_shape "${kernel}" \
         "vectorized field-pair load" "${vector_load}"
     reject_entry_shape "${kernel}" \
@@ -68,7 +72,9 @@ for kernel in aligned_pair hot_aligned; do
 done
 
 # The natural-align-4 controls prove nothing wider than the f32 itself, so
-# fusing them would be claiming alignment the source never guaranteed.
+# fusing them would be claiming alignment the source never guaranteed. They
+# guard both the field path and the element path: nothing in this change may
+# widen an access whose base is only 4-byte aligned.
 for kernel in packed_pair hot_packed; do
     require_entry_shape "${kernel}" \
         "scalar field load" "${scalar_load}"

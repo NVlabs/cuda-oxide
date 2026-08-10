@@ -39,12 +39,12 @@
 use crate::convert::enum_payload_storage::{coerce_enum_payload_value, enum_payload_storage_type};
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
-    build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
-    llvm_type_contains_i1, make_slice_struct, mir_type_abi_align,
+    build_union_storage_type, convert_type, get_type_size, is_zero_sized_type,
+    llvm_byte_faithful_twin, llvm_type_contains_i1, make_slice_struct, mir_type_abi_align,
 };
 use dialect_mir::ops::{
-    MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp, MirInsertFieldOp,
-    MirSetDiscriminantOp,
+    MirConstantOp, MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp,
+    MirInsertFieldOp, MirSetDiscriminantOp,
 };
 use dialect_mir::types::{
     EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType,
@@ -1903,11 +1903,98 @@ pub(crate) fn convert_array_element_addr(
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Value(index)];
 
+    let element_align = stamp_element_address_alignment(ctx, arr_ptr, pointee_ty, index);
+
     let gep_op = llvm::GetElementPtrOp::new(ctx, arr_ptr, gep_indices, llvm_array_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
+    if let Some(align) = element_align {
+        llvm_export::ops::set_address_alignment(ctx, gep_op.get_operation(), align);
+    }
     rewriter.replace_operation(ctx, op, gep_op.get_operation());
 
     Ok(())
+}
+
+/// Alignment an array-element address provably has, in bytes.
+///
+/// The field path records this already ([`stamp_field_address_alignment`]), but
+/// an element address recorded nothing, so `lanes[0] + lanes[1]` on an
+/// `#[repr(C, align(8))]` `[f32; 2]` still exported two `align 4` loads and
+/// LoadStoreVectorizer refused to fuse them. Reading the same element into a
+/// local first happens to work, because SROA then loads the whole aggregate and
+/// the alignment comes from its type — so the cost depended on whether the
+/// source copied the element or read through it.
+///
+/// Two facts combine. The array's own alignment is `abi_align`, and whatever the
+/// *base pointer* already proved is stronger when the array is itself a field of
+/// an over-aligned aggregate: `&table[i].lanes` carries the outer struct's
+/// alignment, which the array type alone does not know. Element `i` then sits at
+/// byte `i * stride`, so it is aligned to `gcd(base, i * stride)` — and to `base`
+/// itself at index zero. A runtime index can land on any element, so it gets
+/// `gcd(base, stride)`, which every element satisfies.
+///
+/// Answers `None` — leaving the previous behaviour — when neither the base nor
+/// the array type records an alignment, or the stride is unknown. As on the
+/// field path, a wrong answer here is a miscompile, so every uncertain case
+/// declines rather than guesses.
+fn stamp_element_address_alignment(
+    ctx: &Context,
+    arr_ptr: Value,
+    array_ty: TypeHandle,
+    index: Value,
+) -> Option<u32> {
+    const fn gcd(a: u64, b: u64) -> u64 {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+
+    // What the base address already proved, else what the array type states.
+    let base_align = arr_ptr
+        .defining_op()
+        .and_then(|def| llvm_export::ops::address_alignment(ctx, def))
+        .map(u64::from)
+        .or_else(|| mir_type_abi_align(ctx, array_ty))?;
+    if base_align == 0 {
+        return None;
+    }
+
+    let element_ty = {
+        let array_ref = array_ty.deref(ctx);
+        array_ref.downcast_ref::<MirArrayType>()?.element_type()
+    };
+    let stride = get_type_size(ctx, element_ty);
+    if stride == 0 {
+        return None;
+    }
+
+    let provable = match constant_index_value(ctx, index) {
+        Some(0) => base_align,
+        Some(i) => gcd(base_align, i.checked_mul(stride)?),
+        // Any element is reachable, so claim only what every stride preserves.
+        None => gcd(base_align, stride),
+    };
+
+    // Same guard as the field path: dialect-mir does not verifier-enforce a
+    // power-of-two `abi_align` for every aggregate, and a non-power-of-two
+    // `align N` is invalid LLVM IR that llc rejects.
+    if !provable.is_power_of_two() {
+        return None;
+    }
+    u32::try_from(provable).ok()
+}
+
+/// The constant an index operand holds, if it is one.
+fn constant_index_value(ctx: &Context, index: Value) -> Option<u64> {
+    let defining_op = index.defining_op()?;
+    if let Some(constant) = Operation::get_op::<MirConstantOp>(defining_op, ctx) {
+        return constant
+            .get_attr_value(ctx)
+            .map(|attribute| attribute.value().to_u64());
+    }
+    let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
+    let attribute = constant.get_value(ctx);
+    attribute
+        .downcast_ref::<pliron::builtin::attributes::IntegerAttr>()
+        .map(|integer| integer.value().to_u64())
 }
 
 #[cfg(test)]
