@@ -99,10 +99,19 @@ impl FinalizationOptions {
     ///
     /// These options deliberately stay out of artifact provenance and cache keys:
     /// they request compiler reporting without changing the generated program.
+    ///
+    /// `-no-cache` bypasses nvJitLink's own JIT cache for cubin output. A
+    /// cache hit skips ptxas entirely and replays no info log, so a warm link
+    /// would silently return an empty resource report; the report path exists
+    /// to observe a real compile.
     pub(crate) fn nvjitlink_diagnostic_options(&self, output: FinalizerOutput) -> Vec<String> {
         match output {
             FinalizerOutput::Cubin => {
-                vec!["-verbose".to_string(), "-Xptxas=-v".to_string()]
+                vec![
+                    "-verbose".to_string(),
+                    "-Xptxas=-v".to_string(),
+                    "-no-cache".to_string(),
+                ]
             }
             FinalizerOutput::Ptx => vec!["-verbose".to_string()],
         }
@@ -190,17 +199,18 @@ mod tests {
 
         assert_eq!(
             options.nvjitlink_diagnostic_options(FinalizerOutput::Cubin),
-            ["-verbose", "-Xptxas=-v"]
+            ["-verbose", "-Xptxas=-v", "-no-cache"]
         );
         assert_eq!(
             options.nvjitlink_diagnostic_options(FinalizerOutput::Ptx),
             ["-verbose"]
         );
+        let diagnostic = options.nvjitlink_diagnostic_options(FinalizerOutput::Cubin);
         assert!(
             options
                 .nvjitlink_options(FinalizerOutput::Cubin)
                 .iter()
-                .all(|option| option != "-verbose" && option != "-Xptxas=-v")
+                .all(|option| !diagnostic.contains(option))
         );
     }
 
