@@ -10549,12 +10549,13 @@ fn build_bswap8_call_module(
 /// type that was not an 8-bit integer produced `bitcast i8 to <aggregate>`,
 /// which LLVM rejects when the module is read back.
 ///
-/// The importer used to hand the call the type of the destination *local*
-/// rather than of the projected place it writes, so `RET.1 = bswap(x)` on a
-/// `(f64, u8)` return arrived here carrying the whole tuple. That producer
-/// bug is fixed on the importer side, but any malformed producer could still
-/// build such a `mir.call`. Lowering cannot repair it, and refusing it is
-/// what keeps the emitted module valid.
+/// The known producer of this shape is an importer bug that hands the call
+/// the type of the destination *local* rather than of the projected place it
+/// writes, so `RET.1 = bswap(x)` on a `(f64, u8)` return arrives here
+/// carrying the whole tuple. That bug is the importer's to fix, and whatever
+/// the importer does, a malformed producer can still build such a `mir.call`.
+/// Lowering cannot repair it, and refusing it is what keeps the emitted
+/// module valid.
 #[test]
 fn bswap8_with_an_aggregate_result_is_refused_rather_than_bitcast() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirTupleType;
