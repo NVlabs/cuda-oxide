@@ -4377,20 +4377,13 @@ fn translate_place_addr_from_slot(
                             let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
                             // The element count (field 1 of the fat pair).
-                            let usize_ty = types::get_usize_type(ctx);
-                            let extract_len = Operation::new(
+                            let (len_val, extract_len) = emit_slice_len_extract(
                                 ctx,
-                                MirExtractFieldOp::get_concrete_op_info(),
-                                vec![usize_ty.to_handle()],
-                                vec![fat_val],
-                                vec![],
-                                0,
+                                fat_val,
+                                block_ptr,
+                                Some(tail_addr),
+                                loc.clone(),
                             );
-                            extract_len.deref_mut(ctx).set_loc(loc.clone());
-                            MirExtractFieldOp::new(extract_len)
-                                .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
-                            extract_len.insert_after(ctx, tail_addr);
-                            let len_val = extract_len.deref(ctx).get_result(0);
 
                             let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
                             use dialect_mir::ops::MirConstructSliceOp;
