@@ -75,7 +75,9 @@ pub fn get_usize_type(
 /// rustc suffix-encodes closure substitutions as
 /// `[parent_args..., closure_kind, closure_sig, tupled_upvars]`, so the upvars
 /// tuple is the last generic arg, not a fixed index.
-fn closure_upvar_tys(substs: &rustc_public::ty::GenericArgs) -> Option<Vec<rustc_public::ty::Ty>> {
+pub(super) fn closure_upvar_tys(
+    substs: &rustc_public::ty::GenericArgs,
+) -> Option<Vec<rustc_public::ty::Ty>> {
     let rustc_public::ty::GenericArgKind::Type(upvar_tuple_ty) = substs.0.last()? else {
         return None;
     };

@@ -2999,7 +2999,7 @@ pub enum DeviceDebug {
     Off,
     /// Preserve source line mappings without disabling optimization.
     LineTables,
-    /// Emit full debug information; libNVVM finalization runs unoptimized.
+    /// Emit full debug information; MIR optimization is disabled and libNVVM finalization runs unoptimized.
     Full,
 }
 
@@ -5826,17 +5826,48 @@ fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
     *flags = retained;
 }
 
+fn command_requests_full_device_debug_with_env(
+    cmd: &Command,
+    inherited_debug: Option<&str>,
+) -> bool {
+    let effective_debug = match cmd
+        .get_envs()
+        .find(|(name, _)| *name == std::ffi::OsStr::new("CUDA_OXIDE_DEBUG"))
+    {
+        Some((_, Some(value))) => Some(value.to_string_lossy().into_owned()),
+        Some((_, None)) => None,
+        None => inherited_debug.map(str::to_owned),
+    };
+
+    effective_debug.is_some_and(|value| value.trim().eq_ignore_ascii_case("full"))
+}
+
+fn append_full_debug_mir_rustflag(
+    encoded: &mut String,
+    cmd: &Command,
+    inherited_debug: Option<&str>,
+) {
+    if !command_requests_full_device_debug_with_env(cmd, inherited_debug) {
+        return;
+    }
+    if !encoded.is_empty() {
+        encoded.push(ENCODED_RUSTFLAGS_SEPARATOR);
+    }
+    encoded.push_str("-Zmir-opt-level=0");
+}
+
 fn apply_codegen_rustflags(
     cmd: &mut Command,
     ctx: &Context,
     profile: CodegenProfilePolicy,
     device_cfgs: &[String],
 ) {
-    cmd.env(
-        "CARGO_ENCODED_RUSTFLAGS",
-        build_encoded_rustflags(ctx, profile, device_cfgs),
-    )
-    .env_remove("RUSTFLAGS");
+    let mut encoded = build_encoded_rustflags(ctx, profile, device_cfgs);
+    let inherited_debug = std::env::var("CUDA_OXIDE_DEBUG").ok();
+    append_full_debug_mir_rustflag(&mut encoded, cmd, inherited_debug.as_deref());
+
+    cmd.env("CARGO_ENCODED_RUSTFLAGS", encoded)
+        .env_remove("RUSTFLAGS");
 }
 
 /// Apply the two deliberately different Cargo cache boundaries:
@@ -10676,5 +10707,37 @@ edition = "2024"
         assert_ne!(off, fp(&line_tables));
         assert_ne!(off, fp(&full));
         assert_ne!(fp(&line_tables), fp(&full));
+    }
+
+    #[test]
+    fn full_device_debug_disables_mir_optimization() {
+        let cmd = Command::new("cargo");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+
+        assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
+    }
+
+    #[test]
+    fn line_tables_keep_normal_mir_optimization() {
+        let mut cmd = Command::new("cargo");
+        cmd.env("CUDA_OXIDE_DEBUG", "line");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
+
+        assert_eq!(decoded_rustflags(&encoded), ["base"]);
+    }
+
+    #[test]
+    fn explicit_line_tables_override_inherited_full_debug_for_mir_optimization() {
+        let mut cmd = Command::new("cargo");
+        cmd.env("CUDA_OXIDE_DEBUG", "line");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+
+        assert_eq!(decoded_rustflags(&encoded), ["base"]);
     }
 }

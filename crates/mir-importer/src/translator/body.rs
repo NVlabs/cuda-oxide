@@ -563,17 +563,13 @@ struct LocalDebugInfo {
     source_scope: u32,
 }
 
-/// Build the first full-debug variable map.
+/// Build the full-debug variable map for whole MIR locals.
 ///
-/// This stage only supports simple whole-local bindings:
-///
-/// ```text
-/// debug name => _3
-/// ```
-///
-/// Fragments/projections need `DIExpression(DW_OP_LLVM_fragment, ...)` and more
-/// value-location tracking, so they are intentionally skipped until the basic
-/// local/argument path is solid.
+/// The cargo-oxide full-debug path disables MIR optimization, so closure
+/// environments stay as aggregate locals instead of being split into SROA
+/// fragments. Composite debug records are intentionally skipped here; closure
+/// locals use the normal whole-local path and are described by
+/// `debug_type_for_ty`.
 fn collect_debug_locals(
     ctx: &mut Context,
     body: &mir::Body,
@@ -768,6 +764,14 @@ fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
                 name: reference_name(pointee, mutability),
                 size_bits: 64,
             })
+        }
+        TyKind::RigidTy(RigidTy::Closure(closure_def, substs)) if depth < MAX_DEBUG_TYPE_DEPTH => {
+            let upvar_tys = types::closure_upvar_tys(&substs)?;
+            let fields = upvar_tys
+                .into_iter()
+                .enumerate()
+                .map(|(idx, upvar_ty)| (format!("capture_{idx}"), upvar_ty));
+            debug_struct_type(ty, format!("{:?}", closure_def.def_id()), fields, depth)
         }
         TyKind::RigidTy(RigidTy::Tuple(subtypes)) if depth < MAX_DEBUG_TYPE_DEPTH => {
             let name = format!(
