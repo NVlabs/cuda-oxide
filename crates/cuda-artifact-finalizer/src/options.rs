@@ -90,6 +90,18 @@ impl FinalizationOptions {
         options
     }
 
+    /// Options for compiling one PTX module to cubin (no `-lto`).
+    ///
+    /// `-lineinfo` and `-g` are honored on this route (verified on CUDA 13.3:
+    /// debug sections appear in the cubin). `-fma=<n>` is accepted without
+    /// `-lto` but observed to be inert for PTX input on CUDA 13.3 nvJitLink:
+    /// `-fma=0` and `-fma=1` produce byte-identical cubins even for
+    /// contractable modeless `mul.f32`+`add.f32` PTX, which standalone
+    /// `ptxas --fmad=false` does split. FMA policy for PTX inputs is
+    /// therefore decided by the PTX producer (cuda-oxide's llc pass emits
+    /// pre-fused `fma.rn` and modeless mul/add pairs that nvJitLink's
+    /// internal SASS stage contracts by default). The option is still passed
+    /// and digested so a future toolkit that honors it stays cache-correct.
     pub(crate) fn nvjitlink_ptx_options(&self) -> Vec<String> {
         let mut options = vec![format!("-arch={}", self.target.sm())];
         self.append_nvjitlink_codegen_options(&mut options);
