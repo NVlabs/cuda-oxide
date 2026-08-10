@@ -260,6 +260,11 @@ impl<'a> ModuleExportState<'a> {
             || name.starts_with("llvm.nvvm.redux")
             // Async bulk operations (TMA)
             || name.starts_with("llvm.nvvm.cp.async.bulk")
+            // Warpgroup register reconfiguration
+            // (setmaxnreg.{inc,dec}.sync.aligned.u32): all warps of the
+            // warpgroup must execute it together, so it is convergent and
+            // side-effecting and must not be sunk into divergent branches.
+            || name.starts_with("llvm.nvvm.setmaxnreg")
     }
 }
 
@@ -323,6 +328,42 @@ mod tests {
             assert!(
                 !ModuleExportState::is_convergent_intrinsic(name),
                 "{name} should not be flagged convergent"
+            );
+        }
+    }
+
+    #[test]
+    fn setmaxnreg_is_convergent() {
+        // `setmaxnreg.{inc,dec}.sync.aligned.u32` reconfigures the register
+        // file for the whole warpgroup; every warp must execute it together,
+        // so the exported declaration must carry `convergent`.
+        for name in [
+            "llvm.nvvm.setmaxnreg.inc.sync.aligned.u32",
+            "llvm.nvvm.setmaxnreg.dec.sync.aligned.u32",
+        ] {
+            assert!(
+                ModuleExportState::is_convergent_intrinsic(name),
+                "{name} should be flagged convergent"
+            );
+        }
+    }
+
+    #[test]
+    fn counted_cta_barriers_are_convergent() {
+        // The counted CTA barrier family (barrier.cta.{sync,arrive} with a
+        // thread count, aligned or not) is covered by the `llvm.nvvm.barrier`
+        // prefix; this checks that coverage against the exact names the
+        // generated lowerings produce.
+        for name in [
+            "llvm.nvvm.barrier.cta.sync.count",
+            "llvm.nvvm.barrier.cta.sync.aligned.count",
+            "llvm.nvvm.barrier.cta.arrive.count",
+            "llvm.nvvm.barrier.cta.arrive.aligned.count",
+            "llvm.nvvm.barrier.cta.sync.aligned.all",
+        ] {
+            assert!(
+                ModuleExportState::is_convergent_intrinsic(name),
+                "{name} should be flagged convergent"
             );
         }
     }
