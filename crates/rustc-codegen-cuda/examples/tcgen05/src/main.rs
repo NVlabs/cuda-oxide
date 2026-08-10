@@ -804,14 +804,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return verify_ptx_only();
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tcgen05.ptx");
-    println!("\nLoading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-    let module = match ctx.load_module_from_file(ptx_file) {
+    let module = match kernels::load(&ctx) {
         Ok(m) => m,
         Err(e) => {
-            println!("\n❌ cuModuleLoad failed: {:?} (CUresult = {:?})", e, e.0);
-            if e.0 == sys::cudaError_enum_CUDA_ERROR_INVALID_PTX {
+            // `load` wraps the driver's own status, so reach through its
+            // `Driver` variant for the code the arms below key on. Anything
+            // else (a missing or unsupported payload) is not "right PTX, wrong
+            // GPU" and falls through to the error return.
+            let driver_status = match &e {
+                cuda_host::EmbeddedModuleError::Driver(driver) => Some(driver.0),
+                _ => None,
+            };
+            println!("\n❌ embedded module load failed: {e:?} (driver status = {driver_status:?})");
+            if driver_status == Some(sys::cudaError_enum_CUDA_ERROR_INVALID_PTX) {
                 println!("   CUDA_ERROR_INVALID_PTX — the driver rejected the PTX.");
                 println!("   PTX target: sm_100a, GPU: sm_{}{}", major, minor);
                 println!(
@@ -822,7 +827,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
     println!("✓ PTX loaded successfully\n");
 
     run_tcgen05_fence_test(&stream, &module)?;
