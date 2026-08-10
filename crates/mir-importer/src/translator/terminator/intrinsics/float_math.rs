@@ -588,9 +588,20 @@ pub fn emit_sincos(
     tuple_op.insert_after(ctx, cos_op);
     let tuple_val = tuple_op.deref(ctx).get_result(0);
 
-    let goto_prev = value_map
-        .store_local(ctx, destination.local, tuple_val, block_ptr, Some(tuple_op))
-        .unwrap_or(tuple_op);
+    // Store through the projected place, not the bare local: the tuple value
+    // above is typed from the projection, so a `(*p) = sincos(x)`-style
+    // destination written to the local's slot would be a type-mismatched
+    // store aimed at the wrong address.
+    let goto_prev = helpers::store_result_to_place(
+        ctx,
+        body,
+        destination,
+        tuple_val,
+        value_map,
+        block_ptr,
+        tuple_op,
+        loc.clone(),
+    )?;
 
     if let Some(target_idx) = target {
         Ok(helpers::emit_goto(

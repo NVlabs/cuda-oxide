@@ -1486,16 +1486,21 @@ fn translate_function_item_call(
         return Ok(emit_unreachable_after(ctx, block_ptr, Some(call_op), loc));
     }
 
+    // The result is typed from the projected destination above, so it must
+    // also be stored through the projection: a bare-local store would aim a
+    // field-typed value at the aggregate's slot (or a pointee-typed value at
+    // the pointer's).
     let result_value = call_op.deref(ctx).get_result(0);
-    let last_inserted = value_map
-        .store_local(
-            ctx,
-            destination.local,
-            result_value,
-            block_ptr,
-            Some(call_op),
-        )
-        .unwrap_or(call_op);
+    let last_inserted = helpers::store_result_to_place(
+        ctx,
+        body,
+        destination,
+        result_value,
+        value_map,
+        block_ptr,
+        call_op,
+        loc.clone(),
+    )?;
 
     if let Some(target_idx) = target {
         Ok(helpers::emit_goto(
@@ -1719,17 +1724,20 @@ fn translate_closure_call(
         return Ok(emit_unreachable_after(ctx, block_ptr, Some(call_op), loc));
     }
 
-    // Store the call result into the destination local's slot.
+    // Store the call result into the destination place. The result is typed
+    // from the projected destination above, so it must also be stored
+    // through the projection, not the bare local's slot.
     let result_value = call_op.deref(ctx).get_result(0);
-    let last_inserted = value_map
-        .store_local(
-            ctx,
-            destination.local,
-            result_value,
-            block_ptr,
-            Some(call_op),
-        )
-        .unwrap_or(call_op);
+    let last_inserted = helpers::store_result_to_place(
+        ctx,
+        body,
+        destination,
+        result_value,
+        value_map,
+        block_ptr,
+        call_op,
+        loc.clone(),
+    )?;
 
     // Emit goto to target
     if let Some(target_idx) = target {

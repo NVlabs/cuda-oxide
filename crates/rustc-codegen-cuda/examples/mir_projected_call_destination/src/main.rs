@@ -22,6 +22,18 @@
 //! element. Each is written here in custom MIR, since surface Rust cannot
 //! produce them.
 //!
+//! Three translation paths build or store the call result themselves and so
+//! have store sites of their own, exercised separately: a float-math
+//! placeholder (`sqrtf32`), whose result must be typed from the projected
+//! place rather than the whole local; a plain function call, whose result
+//! the function-item path stores itself; and `libm::sincosf`, which packs a
+//! `(sin, cos)` tuple and must write it through the projection. Those cases
+//! are written so the shape actually reaches the importer under full
+//! optimization: inlining rewrites a projected call destination into a
+//! temporary plus a store, and GVN sees through a locally-taken pointer, so
+//! the bodies are `inline(never)` and the sincos pointer arrives as an
+//! opaque argument.
+//!
 //! Each case runs on the device and on the host from the same body, and the
 //! two results must agree. A result that landed at the wrong address shows up
 //! as a difference, since the host reads what the device wrote back.
@@ -91,10 +103,107 @@ fn through_index(mut _1: usize) -> [i32; 3] {
     }
 }
 
-/// Folds the three results into one word per case, so the device can report
+/// `RET.1 = sqrtf32(x)` on a tuple whose other field is eight bytes wide.
+///
+/// Unlike `bswap`, a float-math intrinsic keeps a placeholder call in the
+/// translation, and the placeholder's result is typed from the destination.
+/// Typed from the whole tuple local instead of the projected field, the
+/// store would aim a `{ i64, float }` at the field's `float` slot, which the
+/// verifier refuses. `sqrt` is correctly rounded on host and device alike,
+/// so the bit-exact comparison below is safe.
+///
+/// `inline(never)` matters: inlining rewrites a projected call destination
+/// into a fresh temporary plus an ordinary store, which would erase the very
+/// shape this case exists to reach.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_field_float(_1: f32) -> (u64, f32) {
+    mir! {
+        type RET = (u64, f32);
+        {
+            Call(RET.1 = core::intrinsics::sqrtf32(_1), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET.0 = 3_u64;
+            Return()
+        }
+    }
+}
+
+/// `RET[i] = sqrtf32(x)` with a runtime index, on a float array.
+///
+/// The index spelling of the same float-math shape. Unlike the field one it
+/// survives even inlining (the inliner keeps index projections), so it
+/// reaches the importer under every optimization decision.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+fn through_index_float(mut _1: usize, _2: f32) -> [f32; 3] {
+    mir! {
+        type RET = [f32; 3];
+        {
+            RET = [1.0_f32, 1.0_f32, 1.0_f32];
+            Call(RET[_1] = core::intrinsics::sqrtf32(_2), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// Callee for the plain-function case; `inline(never)` keeps the call (and
+/// with it the projected destination) alive in the caller's MIR.
+#[inline(never)]
+fn double_it(x: u32) -> u32 {
+    x.wrapping_mul(2)
+}
+
+/// `RET.1 = double_it(x)`: a plain function call, not an intrinsic.
+///
+/// Ordinary surface-Rust calls lower a projected destination to a temporary
+/// before codegen, but custom MIR hands the projection straight to the
+/// importer. The function-item path (and its closure sibling) has a store
+/// site of its own, separate from the intrinsic ones, and must write the
+/// call result through the projection there too.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_field_fn(_1: u32) -> (u64, u32) {
+    mir! {
+        type RET = (u64, u32);
+        {
+            Call(RET.1 = double_it(_1), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET.0 = 5_u64;
+            Return()
+        }
+    }
+}
+
+/// `(*p) = sincosf(x)` through a pointer this function receives opaquely.
+///
+/// `sincos` packs the `(sin, cos)` pair itself before storing, so it has a
+/// store site of its own: the pair is typed from the pointee and has to be
+/// written through the pointer. Written to the pointer's local instead, a
+/// tuple would be aimed at a pointer slot. The pointer must arrive as an
+/// argument: were it materialized here from a local, GVN would see through
+/// it and rewrite `(*p)` back to the plain local. The angle 0 keeps the
+/// comparison exact: both sides produce `(+0.0, 1.0)` bitwise.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_deref_sincos(_1: *mut (f32, f32), _2: f32) {
+    mir! {
+        {
+            Call((*_1) = libm::sincosf(_2), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// Folds the seven results into one word per case, so the device can report
 /// them through a `u64` slice and the host can compare without a layout
 /// assumption.
-fn case_results() -> [u64; 3] {
+fn case_results() -> [u64; 7] {
     let deref = through_deref(0) as u32 as u64;
 
     let field = through_field();
@@ -105,7 +214,30 @@ fn case_results() -> [u64; 3] {
         ^ ((indexed[1] as u32 as u64) << 8)
         ^ ((indexed[2] as u32 as u64) << 16);
 
-    [deref, field, index]
+    let field_float = through_field_float(2.0_f32);
+    let field_float = field_float.0 ^ u64::from(field_float.1.to_bits());
+
+    let index_float = through_index_float(1, 2.0_f32);
+    let index_float = u64::from(index_float[0].to_bits())
+        ^ u64::from(index_float[1].to_bits()).rotate_left(8)
+        ^ u64::from(index_float[2].to_bits()).rotate_left(16);
+
+    let field_fn = through_field_fn(21);
+    let field_fn = field_fn.0 ^ u64::from(field_fn.1);
+
+    let mut pair = (9.0_f32, 9.0_f32);
+    through_deref_sincos(&raw mut pair, 0.0_f32);
+    let sincos = u64::from(pair.0.to_bits()) ^ (u64::from(pair.1.to_bits()) << 32);
+
+    [
+        deref,
+        field,
+        index,
+        field_float,
+        index_float,
+        field_fn,
+        sincos,
+    ]
 }
 
 #[cuda_module]
@@ -116,19 +248,35 @@ mod kernels {
     pub fn projected_destinations(mut out: DisjointSlice<u64>) {
         let results = case_results();
         if let Some(slot) = out.get_mut(thread::index_1d()) {
-            *slot = results[0] ^ results[1].rotate_left(21) ^ results[2].rotate_left(42);
+            *slot = results[0]
+                ^ results[1].rotate_left(8)
+                ^ results[2].rotate_left(16)
+                ^ results[3].rotate_left(24)
+                ^ results[4].rotate_left(32)
+                ^ results[5].rotate_left(40)
+                ^ results[6].rotate_left(48);
         }
     }
 }
 
 fn main() {
     let host = case_results();
-    let host_folded = host[0] ^ host[1].rotate_left(21) ^ host[2].rotate_left(42);
+    let host_folded = host[0]
+        ^ host[1].rotate_left(8)
+        ^ host[2].rotate_left(16)
+        ^ host[3].rotate_left(24)
+        ^ host[4].rotate_left(32)
+        ^ host[5].rotate_left(40)
+        ^ host[6].rotate_left(48);
 
     println!("=== intrinsic calls writing through a projected destination ===\n");
-    println!("host  deref case: 0x{:016x}", host[0]);
-    println!("host  field case: 0x{:016x}", host[1]);
-    println!("host  index case: 0x{:016x}", host[2]);
+    println!("host  deref case:       0x{:016x}", host[0]);
+    println!("host  field case:       0x{:016x}", host[1]);
+    println!("host  index case:       0x{:016x}", host[2]);
+    println!("host  float field case: 0x{:016x}", host[3]);
+    println!("host  float index case: 0x{:016x}", host[4]);
+    println!("host  fn field case:    0x{:016x}", host[5]);
+    println!("host  sincos case:      0x{:016x}", host[6]);
 
     let ctx = CudaContext::new(0).expect("failed to create CUDA context");
     let stream = ctx.default_stream();
@@ -150,7 +298,7 @@ fn main() {
     println!("device folded:    0x{device_folded:016x}");
 
     if device_folded == host_folded {
-        println!("\nPASS: device and host agree on all three projections");
+        println!("\nPASS: device and host agree on all seven projections");
     } else {
         println!("\nFAIL: device and host disagree");
         std::process::exit(1);
