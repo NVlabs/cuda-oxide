@@ -99,8 +99,8 @@
 //! This matches the C ABI for GPU kernels.
 
 use dialect_mir::types::{
-    EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirSliceType,
-    MirStructType, MirTupleType, MirUnionType,
+    EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirFP16Type,
+    MirPtrType, MirSliceType, MirStructType, MirTupleType, MirUnionType,
 };
 use llvm_export::types as llvm_types;
 use llvm_export::types::PointerTypeExt;
@@ -1120,16 +1120,22 @@ pub(crate) fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool 
 
 /// Size of a MIR-level type from rustc layout truth, when stored.
 ///
-/// `MirStructType`, `MirUnionType`, and `MirEnumType` carry `total_size` (interior and
-/// trailing padding included) straight from rustc's layout query; arrays
-/// of such aggregates multiply it out. Returns `None` when no stored size
-/// is available (e.g. niched/single-variant enums store 0) and the caller
-/// must fall back to the LLVM-level approximation.
+/// `MirStructType`, `MirTupleType`, `MirUnionType`, and `MirEnumType` carry
+/// `total_size` (interior and trailing padding included) straight from
+/// rustc's layout query; arrays of such aggregates multiply it out. Returns
+/// `None` when no stored size is available (e.g. niched/single-variant enums
+/// store 0) and the caller must fall back to the LLVM-level approximation.
 fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
     let ty_ref = mir_ty.deref(ctx);
     if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
         if s.total_size() > 0 {
             return Some(s.total_size());
+        }
+        return None;
+    }
+    if let Some(t) = ty_ref.downcast_ref::<MirTupleType>() {
+        if t.total_size > 0 {
+            return Some(t.total_size);
         }
         return None;
     }
@@ -1142,10 +1148,61 @@ fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
     if let Some(u) = ty_ref.downcast_ref::<MirUnionType>() {
         return Some(u.total_size());
     }
-    if let Some(a) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+    if let Some(a) = ty_ref.downcast_ref::<MirArrayType>() {
         let elem_ty = a.element_ty;
         let size = a.size;
-        return mir_stored_size(ctx, elem_ty).map(|elem_size| elem_size * size);
+        // Checked: alignment claims consume this, and a wrapped product
+        // would masquerade as a small, trusted stride.
+        return mir_stored_size(ctx, elem_ty).and_then(|elem_size| elem_size.checked_mul(size));
+    }
+    None
+}
+
+/// Exact byte stride of a MIR array's element, when provable.
+///
+/// Element `i` of an array lives at byte `i * stride`, so any alignment
+/// claim about an element address is only as strong as the stride it
+/// multiplies, and a wrong stride is a miscompile. Scalars have exact
+/// sizes; MIR aggregates answer with rustc's stored size (interior and
+/// trailing padding included) via [`mir_stored_size`]; arrays of scalars
+/// multiply out. Everything else answers `None` so the caller declines
+/// instead of guessing. In particular [`get_type_size`] is not a
+/// substitute here: it falls back to 8 for the MIR aggregate types it
+/// does not model.
+pub(crate) fn mir_element_stride(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
+    if let Some(size) = mir_stored_size(ctx, mir_ty) {
+        return Some(size);
+    }
+    let ty_ref = mir_ty.deref(ctx);
+    if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+        return Some(u64::from(int_ty.width()).div_ceil(8));
+    }
+    // The importer's f16 is MirFP16Type; the HalfType arm covers IR that
+    // already carries the converted LLVM scalar.
+    if ty_ref.is::<MirFP16Type>() || ty_ref.is::<llvm_types::HalfType>() {
+        return Some(2);
+    }
+    if ty_ref.is::<FP32Type>() {
+        return Some(4);
+    }
+    if ty_ref.is::<FP64Type>() {
+        return Some(8);
+    }
+    if let Some(ptr_ty) = ty_ref.downcast_ref::<MirPtrType>() {
+        // Generic-space pointers are 64-bit under every data layout the
+        // exporter can choose; a shared-space pointer is 32-bit under the
+        // modern NVVM layout alone, so its stored stride is target-dependent.
+        // Claim the former, decline the latter.
+        return (ptr_ty.address_space == 0).then_some(8);
+    }
+    if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+        // Arrays of sized aggregates already answered through
+        // `mir_stored_size` above; this recursion serves arrays of
+        // scalars and pointers, and deeper such arrays.
+        let element_ty = array_ty.element_type();
+        let count = array_ty.size();
+        drop(ty_ref);
+        return mir_element_stride(ctx, element_ty)?.checked_mul(count);
     }
     None
 }

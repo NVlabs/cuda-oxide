@@ -1721,6 +1721,249 @@ mod tests {
         assert_eq!(lowered_element_load_alignment(32, 2, 4, Some(0)), Some(4));
     }
 
+    /// Like [`lowered_element_load_alignment`], but for an array whose element
+    /// is an aggregate built by `element_ty_of` (which also reports the
+    /// element's stored size in bytes). The claim on the element address must
+    /// then come from the element's *exact* stride — rustc's stored size,
+    /// padding included — not from any LLVM-level approximation.
+    ///
+    /// With `load_first_scalar` the element must itself be an array and the
+    /// access becomes `s.lanes[index][0]`, mirroring the nested-read chain
+    /// where the outer stamp is inherited by the inner index-0 address and
+    /// ends up on a scalar load that LoadStoreVectorizer trusts. Without it,
+    /// the element itself is loaded.
+    ///
+    /// Reports `(element address stamp, final load alignment)`.
+    fn lowered_aggregate_element_alignments(
+        element_ty_of: impl FnOnce(&mut Context) -> (TypeHandle, u64),
+        element_count: u64,
+        struct_abi_align: u64,
+        index: Option<u64>,
+        load_first_scalar: bool,
+    ) -> (Option<u32>, Option<u32>) {
+        use dialect_mir::attributes::FieldIndexAttr;
+        use pliron::builtin::attributes::IntegerAttr;
+        use std::num::NonZeroUsize;
+
+        let mut ctx = make_ctx();
+        let (element_ty, elem_bytes) = element_ty_of(&mut ctx);
+        let inner_scalar_ty = load_first_scalar.then(|| {
+            let element_ref = element_ty.deref(&ctx);
+            element_ref
+                .downcast_ref::<MirArrayType>()
+                .expect("load_first_scalar needs an array element")
+                .element_type()
+        });
+        let array_ty: TypeHandle = MirArrayType::get(&mut ctx, element_ty, element_count).into();
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "AggregateElementAlign".into(),
+            vec!["lanes".into()],
+            vec![array_ty],
+            vec![],
+            vec![0],
+            elem_bytes * element_count,
+            struct_abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, false);
+        let array_ptr_ty = MirPtrType::get_generic(&mut ctx, array_ty, false);
+        let element_ptr_ty = MirPtrType::get_generic(&mut ctx, element_ty, false);
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+
+        let (module_ptr, block) =
+            build_kernel(&mut ctx, vec![struct_ptr_ty.into(), i64_ty], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+
+        // &s.lanes -- carries the struct's alignment onto the array address.
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![array_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        field_addr_op.insert_at_back(block, &ctx);
+        let array_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let constant_index = |ctx: &mut Context, i: u64| {
+            let constant = Operation::new(
+                ctx,
+                mir::MirConstantOp::get_concrete_op_info(),
+                vec![i64_ty],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstantOp::new(constant).set_attr_value(
+                ctx,
+                IntegerAttr::new(
+                    IntegerType::get(ctx, 64, Signedness::Signed),
+                    APInt::from_u64(i, NonZeroUsize::new(64).unwrap()),
+                ),
+            );
+            constant.insert_at_back(block, ctx);
+            constant.deref(ctx).get_result(0)
+        };
+
+        let index_val = match index {
+            Some(i) => constant_index(&mut ctx, i),
+            None => block.deref(&ctx).get_argument(1),
+        };
+
+        let elem_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![element_ptr_ty.into()],
+            vec![array_ptr_val, index_val],
+            vec![],
+            0,
+        );
+        elem_addr_op.insert_at_back(block, &ctx);
+        let elem_ptr_val = elem_addr_op.deref(&ctx).get_result(0);
+
+        let (loaded_ty, loaded_ptr_val) = match inner_scalar_ty {
+            Some(scalar_ty) => {
+                let zero_val = constant_index(&mut ctx, 0);
+                let scalar_ptr_ty = MirPtrType::get_generic(&mut ctx, scalar_ty, false);
+                let inner_addr_op = Operation::new(
+                    &mut ctx,
+                    mir::MirArrayElementAddrOp::get_concrete_op_info(),
+                    vec![scalar_ptr_ty.into()],
+                    vec![elem_ptr_val, zero_val],
+                    vec![],
+                    0,
+                );
+                inner_addr_op.insert_at_back(block, &ctx);
+                (scalar_ty, inner_addr_op.deref(&ctx).get_result(0))
+            }
+            None => (element_ty, elem_ptr_val),
+        };
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![loaded_ty],
+            vec![loaded_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        // GEP order follows source order: field address, then the element
+        // address under test (then the inner index-0 address when nested).
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), if load_first_scalar { 3 } else { 2 });
+        let element_gep_align = llvm_export::ops::address_alignment(&ctx, geps[1].get_operation());
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        let load_align = llvm_export::ops::op_alignment(&ctx, load.get_operation());
+        (element_gep_align, load_align)
+    }
+
+    /// `[f32; 3]` element under an align-8 base: stride is 12, so a runtime
+    /// index proves `gcd(8, 12) = 4` — and the inner index-0 scalar read
+    /// inherits exactly that. Guards against sizing the element through an
+    /// LLVM-level approximation, whose guessed stride of 8 would stamp
+    /// align 8 onto addresses that are only 4-aligned (a miscompile once
+    /// LoadStoreVectorizer trusts it).
+    #[test]
+    fn convert_load_claims_exact_aggregate_stride_for_nested_array_elements() {
+        use pliron::builtin::types::FP32Type;
+        // &(#[repr(C, align(8))] struct { lanes: [[f32; 3]; 4] }).lanes[i][0]
+        let nested_f32x3 = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            (MirArrayType::get(ctx, f32_ty, 3).into(), 12)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(nested_f32x3, 4, 8, None, true),
+            (Some(4), Some(4))
+        );
+    }
+
+    /// A constant index into the same nested array uses the exact byte
+    /// offset: element 1 sits at byte 12 (`gcd(8, 12) = 4`), element 2 at
+    /// byte 24 (`gcd(8, 24) = 8`, the full base alignment again).
+    #[test]
+    fn convert_load_narrows_nested_element_alignment_by_exact_byte_offset() {
+        use pliron::builtin::types::FP32Type;
+        let nested_f32x3 = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            (MirArrayType::get(ctx, f32_ty, 3).into(), 12)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(nested_f32x3, 4, 8, Some(1), true),
+            (Some(4), Some(4))
+        );
+        assert_eq!(
+            lowered_aggregate_element_alignments(nested_f32x3, 4, 8, Some(2), true),
+            (Some(8), Some(8))
+        );
+    }
+
+    /// A tuple element's stride comes from rustc's recorded `total_size`
+    /// (trailing padding included): `(f32, f32, f32)` stores 12 bytes, so an
+    /// align-8 base proves only 4 on a runtime element address.
+    #[test]
+    fn convert_array_element_addr_takes_tuple_stride_from_recorded_layout() {
+        use pliron::builtin::types::FP32Type;
+        let f32x3_tuple = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            let tuple_ty: TypeHandle =
+                MirTupleType::get_with_layout(ctx, vec![f32_ty; 3], vec![], vec![0, 4, 8], 12, 4)
+                    .into();
+            (tuple_ty, 12)
+        };
+        let (element_gep_align, _load_align) =
+            lowered_aggregate_element_alignments(f32x3_tuple, 4, 8, None, false);
+        assert_eq!(element_gep_align, Some(4));
+    }
+
+    /// `f16` arrives from the importer as `MirFP16Type`, not the converted
+    /// LLVM `half`, and its stride is exactly 2: an align-8 base proves 2 on
+    /// a runtime element address and `gcd(8, 4) = 4` at element 2. Guards
+    /// the arm the importer actually exercises — the old sizing guessed 8
+    /// for this type too, the same over-claim as the aggregate cases.
+    #[test]
+    fn convert_load_claims_exact_f16_element_stride() {
+        let f16_scalar = |ctx: &mut Context| {
+            let f16_ty: TypeHandle = dialect_mir::types::MirFP16Type::get(ctx).into();
+            (f16_ty, 2)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(f16_scalar, 4, 8, None, false),
+            (Some(2), Some(2))
+        );
+        assert_eq!(
+            lowered_aggregate_element_alignments(f16_scalar, 4, 8, Some(2), false),
+            (Some(4), Some(4))
+        );
+    }
+
+    /// An element whose stored size is unknown (a struct built without rustc
+    /// layout) must not have its stride guessed: the element address claims
+    /// nothing and the load keeps the previous, weaker-but-sound behaviour.
+    #[test]
+    fn convert_array_element_addr_declines_unknown_element_stride() {
+        use pliron::builtin::types::FP32Type;
+        let opaque_struct = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            let struct_ty: TypeHandle =
+                MirStructType::get(ctx, "OpaqueElement".into(), vec!["x".into()], vec![f32_ty])
+                    .into();
+            (struct_ty, 4)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(opaque_struct, 4, 8, None, false),
+            (None, None)
+        );
+    }
+
     #[test]
     fn convert_dbg_value_lowers_to_llvm_dbg_value() {
         let mut ctx = make_ctx();

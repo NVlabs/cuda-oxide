@@ -39,8 +39,8 @@
 use crate::convert::enum_payload_storage::{coerce_enum_payload_value, enum_payload_storage_type};
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
-    build_union_storage_type, convert_type, get_type_size, is_zero_sized_type,
-    llvm_byte_faithful_twin, llvm_type_contains_i1, make_slice_struct, mir_type_abi_align,
+    build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
+    llvm_type_contains_i1, make_slice_struct, mir_element_stride, mir_type_abi_align,
 };
 use dialect_mir::ops::{
     MirConstantOp, MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp,
@@ -1903,7 +1903,7 @@ pub(crate) fn convert_array_element_addr(
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Value(index)];
 
-    let element_align = stamp_element_address_alignment(ctx, arr_ptr, pointee_ty, index);
+    let element_align = element_address_provable_alignment(ctx, arr_ptr, pointee_ty, index);
 
     let gep_op = llvm::GetElementPtrOp::new(ctx, arr_ptr, gep_indices, llvm_array_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
@@ -1936,8 +1936,12 @@ pub(crate) fn convert_array_element_addr(
 /// Answers `None` — leaving the previous behaviour — when neither the base nor
 /// the array type records an alignment, or the stride is unknown. As on the
 /// field path, a wrong answer here is a miscompile, so every uncertain case
-/// declines rather than guesses.
-fn stamp_element_address_alignment(
+/// declines rather than guesses. That is why the stride comes from
+/// [`mir_element_stride`], which is exact or `None`: an LLVM-level size
+/// approximation would guess 8 for a MIR aggregate element it does not
+/// model, and e.g. `[[f32; 3]; 4]` under an align-8 base would then claim
+/// align 8 on element addresses that are only 4-aligned.
+fn element_address_provable_alignment(
     ctx: &Context,
     arr_ptr: Value,
     array_ty: TypeHandle,
@@ -1961,7 +1965,7 @@ fn stamp_element_address_alignment(
         let array_ref = array_ty.deref(ctx);
         array_ref.downcast_ref::<MirArrayType>()?.element_type()
     };
-    let stride = get_type_size(ctx, element_ty);
+    let stride = mir_element_stride(ctx, element_ty)?;
     if stride == 0 {
         return None;
     }
@@ -1983,18 +1987,21 @@ fn stamp_element_address_alignment(
 }
 
 /// The constant an index operand holds, if it is one.
+///
+/// `APInt::to_u64` truncates wider values, so a >64-bit constant could be
+/// misread as a small offset multiplier. Fail closed on such widths, as
+/// `integer_constant_u64` in the extract-element fast path does.
 fn constant_index_value(ctx: &Context, index: Value) -> Option<u64> {
     let defining_op = index.defining_op()?;
     if let Some(constant) = Operation::get_op::<MirConstantOp>(defining_op, ctx) {
-        return constant
-            .get_attr_value(ctx)
-            .map(|attribute| attribute.value().to_u64());
+        let value = constant.get_attr_value(ctx)?.value();
+        return (value.bw() <= 64).then(|| value.to_u64());
     }
     let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
     let attribute = constant.get_value(ctx);
-    attribute
-        .downcast_ref::<pliron::builtin::attributes::IntegerAttr>()
-        .map(|integer| integer.value().to_u64())
+    let integer = attribute.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
+    let value = integer.value();
+    (value.bw() <= 64).then(|| value.to_u64())
 }
 
 #[cfg(test)]
