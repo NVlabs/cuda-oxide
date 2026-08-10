@@ -133,11 +133,20 @@ fn decode_provenance_name(value: &str) -> Option<LocalProvenance> {
     let encoded = value
         .strip_prefix(LOCAL_MEMORY_VALUE_PREFIX)
         .or_else(|| value.strip_prefix(LOCAL_MEMORY_ALLOCA_PREFIX))?;
-    let encoded = encoded
+    // The exporter terminates the hex payload with a `_` sentinel. LLVM
+    // uniques colliding value names by appending bare digits (a second inlined
+    // copy of the same local becomes `<name>1`), and digits are valid hex, so
+    // without the sentinel a uniquing suffix would silently extend the payload
+    // and garble the report. Key the decode on the sentinel: hex digits up to
+    // the first `_`, and reject names that lack it.
+    let hex_len = encoded
         .bytes()
         .take_while(|byte| byte.is_ascii_hexdigit())
-        .map(char::from)
-        .collect::<String>();
+        .count();
+    if encoded.as_bytes().get(hex_len) != Some(&b'_') {
+        return None;
+    }
+    let encoded = &encoded[..hex_len];
     if encoded.is_empty() || encoded.len() % 2 != 0 {
         return None;
     }
@@ -379,6 +388,7 @@ mod tests {
             use std::fmt::Write as _;
             write!(&mut output, "{byte:02x}").unwrap();
         }
+        output.push('_');
         output
     }
 
@@ -408,6 +418,42 @@ mod tests {
         let diagnostics = diagnose_text(&llvm);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].contains("local `values`"));
+    }
+
+    #[test]
+    fn name_uniquing_suffixes_do_not_garble_the_report() {
+        // LLVM uniques colliding value names by appending bare digits: the
+        // same local inlined twice into one kernel yields `<name>` and
+        // `<name>1`. The `_` sentinel ends the hex payload, so the digit must
+        // not leak into the decoded fields.
+        let provenance = "3\t16\tscratch\t[u32; 4]";
+        let base = alloca_name(provenance);
+        let uniqued = format!("{base}1");
+        let llvm = format!(
+            "define void @kernel() {{\nentry:\n  {base} = alloca [4 x i32], align 4\n  {uniqued} = alloca [4 x i32], align 4\n  ret void\n}}\n"
+        );
+        let diagnostics = diagnose_text(&llvm);
+        assert_eq!(diagnostics.len(), 2);
+        for diagnostic in &diagnostics {
+            assert!(
+                diagnostic.contains("local `scratch` (`[u32; 4]`, 16 bytes)"),
+                "uniquing digit corrupted the decoded provenance: {diagnostic}"
+            );
+        }
+    }
+
+    #[test]
+    fn payload_without_the_sentinel_is_not_trusted() {
+        // Without the terminating `_` a trailing uniquing digit is
+        // indistinguishable from payload, so such names must be ignored
+        // rather than half-decoded.
+        let provenance = "3\t16\tscratch\t[u32; 4]";
+        let name = alloca_name(provenance);
+        let unterminated = name.trim_end_matches('_');
+        let llvm = format!(
+            "define void @kernel() {{\nentry:\n  {unterminated} = alloca [4 x i32], align 4\n  ret void\n}}\n"
+        );
+        assert!(diagnose_text(&llvm).is_empty());
     }
 
     #[test]

@@ -241,10 +241,15 @@ const LOCAL_MEMORY_VALUE_PREFIX: &str = "__cuda_oxide_local_x";
 const LOCAL_MEMORY_ALLOCA_PREFIX: &str = "__cuda_oxide_local_alloca_x";
 
 fn encode_local_memory_provenance(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len() * 2);
+    let mut encoded = String::with_capacity(value.len() * 2 + 1);
     for byte in value.as_bytes() {
         write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
     }
+    // Terminate the hex run with a sentinel: LLVM uniques colliding value
+    // names by appending bare digits (a second inlined copy of the same local
+    // becomes `<name>1`), and digits are valid hex, so without a terminator a
+    // uniquing suffix would silently extend and garble the payload.
+    encoded.push('_');
     encoded
 }
 

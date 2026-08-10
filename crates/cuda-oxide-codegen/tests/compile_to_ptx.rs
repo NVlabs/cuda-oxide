@@ -222,7 +222,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-grep -F -q '%__cuda_oxide_local_x330931360973637261746368095b7533323b20345d = alloca [4 x i32]' "$input" || {
+grep -F -q '%__cuda_oxide_local_x330931360973637261746368095b7533323b20345d_ = alloca [4 x i32]' "$input" || {
   echo "tagged post-opt alloca did not reach llc" >&2
   exit 21
 }
@@ -253,8 +253,8 @@ awk '
   }
   in_empty && /^[[:space:]]*ret void/ {
     print "  %local_diag_index = add i64 0, 1"
-    print "  %__cuda_oxide_local_x330931360973637261746368095b7533323b20345d = alloca [4 x i32], align 4"
-    print "  %local_diag_element = getelementptr [4 x i32], ptr %__cuda_oxide_local_x330931360973637261746368095b7533323b20345d, i64 0, i64 %local_diag_index"
+    print "  %__cuda_oxide_local_x330931360973637261746368095b7533323b20345d_ = alloca [4 x i32], align 4"
+    print "  %local_diag_element = getelementptr [4 x i32], ptr %__cuda_oxide_local_x330931360973637261746368095b7533323b20345d_, i64 0, i64 %local_diag_index"
     introduced = 1
   }
   {
