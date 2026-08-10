@@ -8923,6 +8923,14 @@ device-owner = { path = "../device-owner" }
         assert_eq!(changed_provenance.get("device_owner"), Some(&false));
         assert_eq!(changed_provenance.get("device-consumer"), Some(&false));
 
+        // #722: a materialized build followed by a plain one must not reuse
+        // the stale cubin-path artifacts.
+        let materialize_off = cargo_artifact_freshness(&ctx, &different_output, None);
+        assert_eq!(materialize_off.get("shared_dep"), Some(&true));
+        assert_eq!(materialize_off.get("tracked_macro"), Some(&true));
+        assert_eq!(materialize_off.get("device_owner"), Some(&false));
+        assert_eq!(materialize_off.get("device-consumer"), Some(&false));
+
         std::fs::remove_dir_all(root).unwrap();
     }
 
