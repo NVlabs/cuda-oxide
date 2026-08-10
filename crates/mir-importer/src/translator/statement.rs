@@ -719,8 +719,9 @@ pub fn translate_statement(
                         // which use the same helper. The store target of an
                         // assignment is always a mutable place, so the
                         // helper's mutable-address request is correct here.
-                        // `ConstantIndex { from_end: true, .. }` is rejected
-                        // loudly by the walker itself.
+                        // `ConstantIndex { from_end: true, .. }` is accepted
+                        // by the walker only when it follows a fat-slice deref,
+                        // which supplies the runtime length metadata.
                         store_through_place_address(
                             ctx,
                             body,
@@ -1158,7 +1159,7 @@ fn store_through_place_address(
 /// error when the pointer's pointee isn't a [`MirArrayType`], which signals
 /// a structural mismatch (most likely the wrong MIR projection reaching
 /// this path).
-fn slot_array_element_ty(
+pub(crate) fn slot_array_element_ty(
     ctx: &pliron::context::Context,
     arr_ptr: Value,
     loc: &Location,
@@ -1193,7 +1194,7 @@ fn slot_array_element_ty(
 /// The caller owns positioning (`prev_op`): we chain the address op after
 /// it, then chain the store after the address op.
 #[allow(clippy::too_many_arguments)]
-fn emit_array_element_store(
+pub(crate) fn emit_array_element_store(
     ctx: &mut pliron::context::Context,
     array_ptr: Value,
     index: Value,
@@ -1243,7 +1244,7 @@ fn emit_array_element_store(
 /// other sources (loads, field-addr ops, ...), which may be immutable.
 /// Derived addresses inherit the base pointer's mutability to keep pliron
 /// type checking consistent.
-fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
+pub(crate) fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
     ty_ref
@@ -1253,7 +1254,7 @@ fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
 
 /// Return the address space of a pointer value. Defaults to 0 (the generic
 /// address space) if the value is not a [`MirPtrType`].
-fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
+pub(crate) fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
     ty_ref
@@ -1274,7 +1275,7 @@ fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
 /// could silently address another variant's payload. This mirrors the
 /// enum-pointee guard in the address walker's `Field` arm: an equally loud
 /// failure at the only layer that can still tell the two index spaces apart.
-fn reject_raw_field_index_on_enum_pointee(
+pub(crate) fn reject_raw_field_index_on_enum_pointee(
     ctx: &Context,
     base_ptr: Value,
     projection: &[mir::ProjectionElem],

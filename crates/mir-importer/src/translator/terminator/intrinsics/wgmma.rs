@@ -108,8 +108,10 @@ pub fn emit_wgmma_make_smem_desc(
 
 /// Emit BF16 m64n64k16 WGMMA pointer form.
 ///
-/// `mir-lower` later fuses this operation with the surrounding fence, commit,
-/// and `wait_group<0>` so the accumulator remains in registers until the wait.
+/// `mir-lower` later selects a proven-safe enclosing region: a linear full
+/// drain, a static partial-wait pipeline, or the canonical counted K-loop.
+/// The selected region is fused so LLVM cannot observe an accumulator while a
+/// WGMMA group that references it is still pending.
 pub fn emit_wgmma_mma_m64n64k16_f32_bf16(
     ctx: &mut Context,
     body: &mir::Body,

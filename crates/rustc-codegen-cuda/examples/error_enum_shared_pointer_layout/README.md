@@ -1,16 +1,19 @@
 # `error_enum_shared_pointer_layout`
 
 Negative test for `Option<SharedPointerArrayWrapper>`, where the wrapper contains
-an array of two `&SharedArray<...>` values.
+an array of seventeen `&SharedArray<...>` values.
 
-Direct shared-pointer enum fields and shared pointers nested through ordinary
-structs/tuples use target-stable CUDA generic physical storage. Arrays remain a
-separate boundary because value conversion would emit one extraction, address-
-space cast, and insertion sequence per element. That expansion needs an explicit
-bound and code-shape contract before it can be accepted safely.
+Direct shared-pointer enum fields, shared pointers nested through ordinary
+structs/tuples, and bounded arrays of shared-pointer leaves use target-stable
+CUDA generic physical storage. Array conversion rebuilds the value recursively,
+emitting extraction, address-space cast, and insertion sequences for each shared
+pointer leaf. To keep that expansion bounded, enum payload lowering accepts at
+most 16 array-expanded shared-pointer leaves in total per payload, whether they
+come from one array or from several arrays nested through structs.
 
-The compiler must reject the array shape instead of retaining target-dependent
-address-space-3 pointer storage:
+This fixture deliberately exceeds that contract with 17 shared-pointer leaves.
+The compiler must reject it instead of generating unbounded reconstruction or
+retaining target-dependent address-space-3 pointer storage:
 
 ```bash
 cargo oxide build error_enum_shared_pointer_layout
@@ -21,5 +24,5 @@ cargo oxide build error_enum_shared_pointer_layout --emit-nvvm-ir --arch sm_100
 Expected diagnostic:
 
 ```text
-arrays containing shared-memory pointers are not supported
+enum payload storage: arrays containing shared-memory pointers are not supported above the bounded rewrite limit; rewrite requires 17 pointer conversions, supported bound is 16
 ```

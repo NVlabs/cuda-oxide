@@ -17,12 +17,27 @@ Every prefix here contains the magic component `246e25db_`, which is
 exists purely to make accidental collisions impossible — a user is
 never going to write `fn cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_foo()` by accident.
 
-| Constant                | Value                                  |
-|-------------------------|----------------------------------------|
-| `KERNEL_PREFIX`         | `cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_` |
-| `DEVICE_PREFIX`         | `cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_` |
-| `DEVICE_EXTERN_PREFIX`  | `cuda_oxide_device_extern_246e25db_`   |
-| `INSTANTIATE_PREFIX`    | `cuda_oxide_instantiate_246e25db_`     |
+All ten symbol constants the crate exports, which is also exactly what the
+`naming-guard` CI job refuses to see hardcoded anywhere outside this crate:
+
+| Constant                    | Value                                               | What it names |
+|-----------------------------|-----------------------------------------------------|---------------|
+| `KERNEL_PREFIX`             | `cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_` | `#[kernel]` entry points |
+| `DEVICE_PREFIX`             | `cuda_oxide_codegen_v1_cuda_oxide_device_246e25db_` | `#[device]` functions |
+| `DEVICE_EXTERN_PREFIX`      | `cuda_oxide_device_extern_246e25db_`                | `extern` device declarations |
+| `INSTANTIATE_PREFIX`        | `cuda_oxide_instantiate_246e25db_`                  | forced generic instantiations |
+| `CONSTANT_PREFIX`           | `cuda_oxide_const_246e25db_`                        | `#[constant]` statics, for `cuModuleGetGlobal` lookup |
+| `KERNEL_SCOPE_LOCAL`        | `cuda_oxide_kernel_scope_246e25db`                  | the hidden thread-index scope token injected by `#[kernel]` / `#[device]` |
+| `ARTIFACT_ANCHOR_PREFIX`    | `cuda_oxide_artifact_anchor_246e25db_`              | the link anchor pinning a crate's `.oxart` section into the binary |
+| `PTX_MERGE_REQUIRED_PREFIX` | `cuda_oxide_ptx_merge_required_246e25db_`           | statics marking modules whose generic kernels need PTX-bundle merging |
+| `LEGACY_KERNEL_PREFIX`      | `cuda_oxide_kernel_246e25db_`                       | pre-scoped-cache kernels — recognized for a compatibility diagnostic, never emitted |
+| `LEGACY_DEVICE_PREFIX`      | `cuda_oxide_device_246e25db_`                       | pre-scoped-cache device functions — same |
+
+The two legacy forms need care: `KERNEL_PREFIX` *contains* `LEGACY_KERNEL_PREFIX`
+as a substring, since the modern name is the legacy one behind a
+`cuda_oxide_codegen_v1_` scope. `starts_with` tells them apart; `contains` does
+not, and reports every modern kernel as legacy. This is why the Layer-3
+predicates exist — use them rather than matching strings by hand.
 
 ## Layered API
 

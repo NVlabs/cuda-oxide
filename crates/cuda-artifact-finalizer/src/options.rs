@@ -64,10 +64,6 @@ impl FinalizationOptions {
         self.debug
     }
 
-    pub(crate) fn nvvm_verify_options(&self) -> Vec<String> {
-        vec![format!("-arch={}", self.target.compute())]
-    }
-
     pub(crate) fn nvvm_compile_options(&self) -> Vec<String> {
         let mut options = vec![
             format!("-arch={}", self.target.compute()),
@@ -114,6 +110,28 @@ impl FinalizationOptions {
             DebugPolicy::None => {}
             DebugPolicy::LineTables => options.push("-lineinfo".to_string()),
             DebugPolicy::Full => options.push("-g".to_string()),
+        }
+    }
+
+    /// Non-semantic nvJitLink options used only to collect resource diagnostics.
+    ///
+    /// These options deliberately stay out of artifact provenance and cache keys:
+    /// they request compiler reporting without changing the generated program.
+    ///
+    /// `-no-cache` bypasses nvJitLink's own JIT cache for cubin output. A
+    /// cache hit skips ptxas entirely and replays no info log, so a warm link
+    /// would silently return an empty resource report; the report path exists
+    /// to observe a real compile.
+    pub(crate) fn nvjitlink_diagnostic_options(&self, output: FinalizerOutput) -> Vec<String> {
+        match output {
+            FinalizerOutput::Cubin => {
+                vec![
+                    "-verbose".to_string(),
+                    "-Xptxas=-v".to_string(),
+                    "-no-cache".to_string(),
+                ]
+            }
+            FinalizerOutput::Ptx => vec!["-verbose".to_string()],
         }
     }
 
@@ -196,6 +214,33 @@ mod tests {
             base.with_debug_policy(DebugPolicy::Full)
                 .nvjitlink_ltoir_options(FinalizerOutput::Cubin),
             ["-arch=sm_90a", "-lto", "-fma=0", "-g"]
+        );
+    }
+
+    #[test]
+    fn resource_diagnostics_are_separate_from_semantic_link_options() {
+        let options = FinalizationOptions::new("sm_90a".parse().unwrap());
+
+        assert_eq!(
+            options.nvjitlink_diagnostic_options(FinalizerOutput::Cubin),
+            ["-verbose", "-Xptxas=-v", "-no-cache"]
+        );
+        assert_eq!(
+            options.nvjitlink_diagnostic_options(FinalizerOutput::Ptx),
+            ["-verbose"]
+        );
+        let diagnostic = options.nvjitlink_diagnostic_options(FinalizerOutput::Cubin);
+        assert!(
+            options
+                .nvjitlink_ltoir_options(FinalizerOutput::Cubin)
+                .iter()
+                .all(|option| !diagnostic.contains(option))
+        );
+        assert!(
+            options
+                .nvjitlink_ptx_options()
+                .iter()
+                .all(|option| !diagnostic.contains(option))
         );
     }
 

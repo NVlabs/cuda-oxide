@@ -124,9 +124,19 @@ flakes enabled, `nix develop` is the quickest way to get everything in place.
 
 ### Formatting and Style
 
-- Run `cargo fmt` before submitting. All code must be formatted with
-  `rustfmt`.
-- Run `cargo clippy` and address any warnings where reasonable.
+- Run `cargo oxide fmt` before submitting. All code must be formatted with
+  `rustfmt`. Use `cargo oxide fmt` rather than a bare `cargo fmt`: the codegen
+  backend and every example are their own workspaces, so `cargo fmt` at the
+  repository root reaches none of them, while the `fmt` CI job checks all three
+  scopes and will fail on code you never had a chance to format.
+- Run clippy and address any warnings where reasonable. It has the same three
+  scopes, and there is no single command covering them:
+
+  ```bash
+  cargo clippy --workspace --all-targets -- -D warnings
+  (cd crates/rustc-codegen-cuda && cargo clippy --all-targets -- -D warnings)
+  # and per example, as .github/workflows/clippy.yml does
+  ```
 - Follow existing code patterns and conventions in the crate you are
   modifying.
 

@@ -12,10 +12,13 @@ description = "Experimental rustc-independent cuda-oxide PTX backend"
 pliron = { workspace = true }
 thiserror = { workspace = true }
 dialect-mir = { workspace = true }
+dialect-iket = { workspace = true }
 dialect-nvvm = { workspace = true }
+iket-lower = { workspace = true }
 mir-lower = { workspace = true }
 mir-transforms = { workspace = true }
 llvm-export = { workspace = true }
 libnvvm-sys = { workspace = true }
 nvvm-transforms = { workspace = true }
 tempfile = { workspace = true }
+rustc-demangle = { workspace = true }

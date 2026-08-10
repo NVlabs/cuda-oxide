@@ -209,6 +209,18 @@ pub struct MirToLlvmConversionDriver {
     pub device_globals: DeviceGlobalsMap,
     /// Per-owning-function dynamic shared memory alignment tracking.
     pub dynamic_smem_alignments: DynamicSmemAlignmentMap,
+    /// Next `__shared_mem_N` index. Scoped to one driver instance (one
+    /// `lower_mir_to_llvm` call, i.e. one module), not a process-global
+    /// counter, so the assigned index is a function of this module's own
+    /// MIR walk order rather than of how many OTHER modules have lowered a
+    /// shared allocation earlier in the process. See #706.
+    pub next_shared_mem_index: usize,
+    /// Next `__device_global_N` index. Scoped to one driver instance for the
+    /// same reason as `next_shared_mem_index`: the assigned index is a
+    /// function of this module's own MIR walk order rather than of how many
+    /// OTHER modules have lowered a device global earlier in the process.
+    /// See #706.
+    pub next_device_global_index: usize,
 }
 
 fn is_mir_or_nvvm_op(ctx: &Context, op: Ptr<Operation>) -> bool {
@@ -292,6 +304,7 @@ impl DialectConversion for MirToLlvmConversionDriver {
                 op,
                 operands_info,
                 &mut self.shared_globals,
+                &mut self.next_shared_mem_index,
             );
         }
         if opid == dialect_mir::ops::MirGlobalAllocOp::get_opid_static() {
@@ -301,6 +314,7 @@ impl DialectConversion for MirToLlvmConversionDriver {
                 op,
                 operands_info,
                 &mut self.device_globals,
+                &mut self.next_device_global_index,
             );
         }
         if opid == dialect_mir::ops::MirExternSharedOp::get_opid_static() {
@@ -356,7 +370,10 @@ pub fn lower_mir_to_llvm_with_options(
 ) -> Result<()> {
     context::set_lowering_options(ctx, options);
     // WGMMA pointer-form MMA operations are only sound when their complete
-    // fence/MMA/commit/wait<0> region can be fused into one deferred group.
+    // asynchronous lifetime can be closed before LLVM sees pending accumulator
+    // state. Canonical [[f32; 8]; 4] accumulators use explicit SSA values for
+    // linear groups, counted K-loops, and proven static partial-wait pipelines;
+    // unsupported pointer shapes retain the deferred pointer-group fallback.
     // Run this while MIR control flow and unsigned constants are still intact.
     wgmma_deferred_accumulator::fuse_deferred_accumulators(ctx, module_op)?;
     // Dynamic shared-memory operations may live in device helpers. Compute
@@ -367,6 +384,8 @@ pub fn lower_mir_to_llvm_with_options(
         shared_globals: FxHashMap::default(),
         device_globals: FxHashMap::default(),
         dynamic_smem_alignments: FxHashMap::default(),
+        next_shared_mem_index: 0,
+        next_device_global_index: 0,
     };
     // pliron's DialectConversion now reports an IRStatus (Changed/Unchanged);
     // lowering only cares about success, so discard it.

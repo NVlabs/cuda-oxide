@@ -10,19 +10,18 @@
 //! per-warp (32 threads), WGMMA leverages the full warpgroup for larger tiles.
 //!
 //! The control and descriptor helpers are available. The
-//! `m64n64k16.f32.bf16.bf16` MMA variant is supported for a statically linear
-//! sequence containing one accumulator:
+//! `m64n64k16.f32.bf16.bf16` MMA variant has value-threaded lowering for
+//! several deliberately restricted, provably safe region shapes:
 //!
-//! ```text
-//! wgmma_fence
-//! one or more BF16 WGMMA MMA calls using the same accumulator
-//! wgmma_commit_group
-//! wgmma_wait_group::<0>
-//! ```
+//! - linear full-drain regions ending in `wgmma_wait_group::<0>()`;
+//! - a canonical counted K-loop with affine descriptor recurrences;
+//! - straight-line partial-wait pipelines with a static `wait_group<N>` and
+//!   `N + 1` independent accumulator slots.
 //!
-//! The compiler fuses this sequence so the 32 accumulator values stay in PTX
-//! registers until the wait completes. F16 and TF32 MMA calls remain
-//! unsupported.
+//! Every accepted asynchronous lifetime is fused into one convergent inline-PTX
+//! scope and ends in `wait_group<0>` before accumulator values become visible to
+//! LLVM again. Unsupported full-drain pointer shapes retain the deferred
+//! pointer-form fallback. F16 and TF32 MMA calls remain unsupported.
 //!
 //! # Architecture
 //!
@@ -65,19 +64,26 @@
 //! // `acc` may be read only after the wait.
 //! ```
 //!
-//! # Current Lowering Restrictions
+//! # Current Lowering Contract
 //!
-//! - All calls must form one straight-line control-flow chain.
-//! - Every MMA call must use the same accumulator reference.
-//! - The sequence must contain exactly one commit and end in
-//!   `wgmma_wait_group::<0>()`.
-//! - No other operation may occur between the fence and the wait, except
-//!   compiler-generated constants, storage markers, and unconditional gotos.
-//! - Partial waits, multiple live accumulators, F16/TF32 MMA variants, and
-//!   sequences whose fence-to-wait chain crosses a branch, join, or loop
-//!   back-edge are rejected at compile time. A complete sequence inside a
-//!   loop body fuses, but each iteration pays the accumulator memory
-//!   round-trip and a full wait.
+//! The compiler selects a value-threaded path only when it can prove the whole
+//! asynchronous accumulator lifetime.
+//!
+//! - **Linear full drain:** one canonical `[[f32; 8]; 4]` accumulator, one
+//!   commit, and a final `wgmma_wait_group::<0>()`.
+//! - **Canonical counted K-loop:** one MMA per iteration, compile-time trip
+//!   count, and `u64` descriptor recurrences of the form `desc + const`. The
+//!   fence-to-final-wait lifetime is fused so the accumulator is loaded and
+//!   stored once for the whole loop rather than once per iteration.
+//! - **Partial-wait pipeline:** a static `wgmma_wait_group::<N>()` with
+//!   `1 <= N <= 7`, exactly `N + 1` distinct canonical accumulator slots, one
+//!   MMA per committed group, round-robin slot reuse only after the matching
+//!   partial wait, and a mandatory final `wgmma_wait_group::<0>()`.
+//! - Accumulator values must not be read or written while their asynchronous
+//!   lifetime is pending.
+//! - Unsupported full-drain accumulator pointer shapes retain the deferred
+//!   pointer-form lowering. Dynamic partial waits, unsupported control flow,
+//!   malformed pipeline schedules, and F16/TF32 MMA variants are rejected.
 //!
 //! # Hardware Support
 //!
@@ -199,17 +205,20 @@ pub unsafe fn make_smem_desc_custom(
 ///
 /// # Lowering Contract
 ///
-/// This function must be enclosed by `wgmma_fence()`, one
-/// `wgmma_commit_group()`, and `wgmma_wait_group::<0>()`. The accumulator must
-/// not be accessed inside that interval. The compiler rejects sequences it
-/// cannot prove to be linear and complete.
+/// This function must participate in one compiler-supported WGMMA region.
+/// Linear full-drain regions use one commit and `wgmma_wait_group::<0>()`;
+/// proven partial-wait pipelines may use multiple commits and a static
+/// `wgmma_wait_group::<N>()` before the mandatory final full wait. Canonical
+/// counted K-loops may also be fused across iterations. The compiler rejects
+/// regions whose accumulator lifetime it cannot prove safe.
 ///
 /// # Safety
 ///
 /// - Descriptors must be valid SMEM descriptors
 /// - Must be called by all threads in a warpgroup
 /// - Must be called from within a CUDA kernel context on sm_90a
-/// - `acc` must not be read or written until `wgmma_wait_group::<0>()` returns
+/// - `acc` must not be read or written until the region's final
+///   `wgmma_wait_group::<0>()` returns
 ///
 /// # Example
 ///

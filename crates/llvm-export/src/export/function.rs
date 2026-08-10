@@ -45,6 +45,18 @@ use super::{
     },
 };
 
+/// Flatten a descriptive string so it cannot escape a single `;` comment line.
+///
+/// An LLVM comment runs to end of line, so an embedded newline would turn the
+/// remainder of the text into IR the parser has to accept. Control characters
+/// become spaces; nothing else is altered, which keeps ordinary Rust paths
+/// (`::`, generics, `<impl …>`) readable verbatim.
+fn sanitize_comment(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 impl<'a> ModuleExportState<'a> {
     /// Export a global variable (typically shared memory for GPU kernels).
     pub(super) fn export_global(
@@ -65,6 +77,23 @@ impl<'a> ModuleExportState<'a> {
             return Err(format!(
                 "NVVM global `@{name}` uses unsupported address space {address_space}; expected generic (0), global (1), shared (3), or constant (4)"
             ));
+        }
+
+        // Lowering names every static shared allocation `__shared_mem_N`, so
+        // the emitted symbol carries no hint of which Rust `static` it came
+        // from. Anyone attributing a kernel's shared-memory footprint back to
+        // source has only the exported IR to work from, so record the Rust
+        // path as a comment on the line above the definition. It is a comment
+        // rather than a symbol rename because the generated names are matched
+        // literally elsewhere, and because a source path is not a legal LLVM
+        // identifier in general.
+        if let Some(source_name) = global.shared_source_name(self.ctx) {
+            writeln!(
+                output,
+                "; shared source: {}",
+                sanitize_comment(&source_name)
+            )
+            .unwrap();
         }
 
         // Check for external linkage (dynamic shared memory)
@@ -581,6 +610,47 @@ impl<'a> ModuleExportState<'a> {
         // preservation in standalone device-function compilation.
         if !is_declaration && !is_kernel && has_device_prefix(&func_name) {
             self.device_functions.push(fixed_func_name.clone());
+        }
+
+        // A kernel receives its parameters in `.param` space, filled by the
+        // host at launch. Shared and local memory are allocated per block and
+        // per thread by the device, so the host has no address in either to
+        // pass. Carrying one of those state spaces into the entry signature
+        // produces a module that ptxas assembles and the driver then refuses,
+        // which takes every other kernel in the module down with it.
+        //
+        // Global and constant are left alone: the host allocates there, so a
+        // pointer parameter in those spaces is something it can supply, and
+        // the codegen tests rely on it. A device function may carry any state
+        // space on its parameters, which is why this is checked for kernels
+        // alone.
+        //
+        // The refusal is deliberately scoped to address spaces 3 (shared) and
+        // 5 (local). addrspace(4) constant parameters stay allowed by design:
+        // the host owns constant-bank allocation, so it does have an address
+        // to pass. addrspace(7) (shared::cluster) is not user-reachable as a
+        // parameter type today; if a frontend type ever surfaces it at a
+        // kernel boundary, it needs a new arm here for the same reason as
+        // plain shared.
+        if is_kernel {
+            for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
+                let arg_ref = arg_ty.deref(self.ctx);
+                let Some(pointer) = arg_ref.downcast_ref::<PointerType>() else {
+                    continue;
+                };
+                let space = match pointer.address_space() {
+                    3 => "shared",
+                    5 => "local",
+                    _ => continue,
+                };
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` parameter {index} is a pointer into {space} \
+                     memory (address space {}); {space} memory is allocated by the device at \
+                     launch, so the host has no address to pass, and the driver refuses a \
+                     module whose entry declares one",
+                    pointer.address_space()
+                ));
+            }
         }
 
         let ret_ty = func_ty.result_type();

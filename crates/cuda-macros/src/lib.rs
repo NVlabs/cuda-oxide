@@ -3,6 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Procedural macros for CUDA kernel development: `#[kernel]`, `#[device]`,
+//! `#[cuda_module]`, `gpu_printf!`, `ptx_asm!`, and friends.
+//!
+//! # The `host` feature in mixed build graphs
+//!
+//! The default-on `host` cargo feature makes `#[kernel]` and `#[cuda_module]`
+//! emit the generated host surface (the `LoadedModule` loader and launchers,
+//! the `CudaKernel` marker impls), all of which names `::cuda_host` /
+//! `::cuda_core`. A crate that only compiles kernels takes this crate with
+//! `default-features = false` and drops the host dependency stack.
+//!
+//! Proc-macro features unify globally per build graph. If any crate in the
+//! graph enables `cuda-macros/host`, every crate expanding these macros gets
+//! the host-emitting expansion, including a device-only kernel crate; its
+//! expansion then names `cuda_host`, which it cannot resolve (E0433). A
+//! device-only kernel crate consumed by a host application must therefore
+//! forward the feature itself:
+//!
+//! ```toml
+//! [features]
+//! host = ["dep:cuda-host", "cuda-macros/host"]
+//! ```
+//!
+//! so the same switch that turns host emission on also adds the `cuda-host`
+//! dependency that resolves it.
+
 #![feature(proc_macro_def_site, proc_macro_tracked_env)]
 
 mod device_copy;
@@ -848,7 +874,20 @@ fn scalar_int_class(ty: &Type) -> ScalarIntClass {
     }
 }
 
+/// Expands `#[cuda_module]`, emitting the host surface when the `host`
+/// feature is on.
 fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
+    expand_cuda_module_inner(module, cfg!(feature = "host"))
+}
+
+/// `expand_cuda_module` with the host-surface decision passed in.
+///
+/// The decision is a parameter rather than a `cfg!` read inside the body so
+/// that tests can exercise both settings from one build. They otherwise
+/// could not: this crate dev-depends on `cuda-host`, which turns the `host`
+/// feature back on under feature unification even for
+/// `cargo test --no-default-features`.
+fn expand_cuda_module_inner(module: ItemMod, emit_host: bool) -> syn::Result<TokenStream2> {
     let module_attrs = &module.attrs;
     let vis = &module.vis;
     let ident = &module.ident;
@@ -860,7 +899,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
     };
 
     let constants = collect_cuda_module_constants(items, ident)?;
-    let transformed = transform_cuda_module_items(items, &mut Vec::new(), &[], false)?;
+    let transformed = transform_cuda_module_items(items, &mut Vec::new(), &[], false, emit_host)?;
     if transformed.kernels.is_empty() {
         return Err(syn::Error::new_spanned(
             &module.ident,
@@ -1132,11 +1171,12 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
         TokenStream2::new()
     };
 
-    Ok(quote! {
-        #(#module_attrs)*
-        #vis mod #ident {
-            #(#module_items)*
-            #(#ptx_merge_required_markers)*
+    // Everything below names `::cuda_host` or `::cuda_core`. The kernels
+    // themselves, and the PTX-merge markers the codegen collector consumes, do
+    // not -- so a crate that only compiles kernels can take cuda-macros with
+    // `default-features = false` and stop depending on the host stack.
+    let host_items = if emit_host {
+        quote! {
             #(#launch_contract_impls)*
 
             #[derive(Clone, Debug)]
@@ -1172,6 +1212,17 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                 #async_launch_methods
             }
         }
+    } else {
+        TokenStream2::new()
+    };
+
+    Ok(quote! {
+        #(#module_attrs)*
+        #vis mod #ident {
+            #(#module_items)*
+            #(#ptx_merge_required_markers)*
+            #host_items
+        }
     })
 }
 
@@ -1194,6 +1245,7 @@ fn transform_cuda_module_items(
     module_path: &mut Vec<Ident>,
     ancestor_cfg_attrs: &[syn::Attribute],
     generate_nested_support: bool,
+    emit_host: bool,
 ) -> syn::Result<CudaModuleLevel> {
     let mut transformed_items = Vec::with_capacity(items.len());
     let mut direct_kernels = Vec::new();
@@ -1225,6 +1277,7 @@ fn transform_cuda_module_items(
                     module_path,
                     &nested_cfg_attrs,
                     true,
+                    emit_host,
                 )?;
                 module_path.pop();
 
@@ -1248,7 +1301,8 @@ fn transform_cuda_module_items(
     if generate_nested_support && !kernels.is_empty() {
         reject_reserved_loaded_module(items)?;
         reject_reserved_loaded_module_methods(&kernels[..direct_kernel_count], true)?;
-        let support = generate_nested_cuda_module_support(&kernels[..direct_kernel_count]);
+        let support =
+            generate_nested_cuda_module_support(&kernels[..direct_kernel_count], emit_host);
         let mut support_items = syn::parse2::<syn::File>(support)?.items;
         transformed_items.append(&mut support_items);
     }
@@ -1397,7 +1451,10 @@ fn cuda_module_kernel(
     }))
 }
 
-fn generate_nested_cuda_module_support(kernels: &[CudaModuleKernel]) -> TokenStream2 {
+fn generate_nested_cuda_module_support(
+    kernels: &[CudaModuleKernel],
+    emit_host: bool,
+) -> TokenStream2 {
     let launch_contract_impls = kernels
         .iter()
         .filter_map(generate_cuda_module_launch_contract_impl);
@@ -1435,6 +1492,11 @@ fn generate_nested_cuda_module_support(kernels: &[CudaModuleKernel]) -> TokenStr
     } else {
         TokenStream2::new()
     };
+
+    // Host-only, exactly as in `expand_cuda_module_inner`; see the note there.
+    if !emit_host {
+        return TokenStream2::new();
+    }
 
     quote! {
         #(#launch_contract_impls)*
@@ -5405,7 +5467,12 @@ fn generate_simple_kernel(mut input: ItemFn, explicit_scope: Option<Ident>) -> T
 
     // Generate the CudaKernel trait implementation (host-side only)
     // This provides the PTX name for cuda_launch! to look up
-    let cuda_kernel_impl = generate_cuda_kernel_impl(&fn_name, &ptx_entry_name, &original_fn);
+    let cuda_kernel_impl = generate_cuda_kernel_impl(
+        &fn_name,
+        &ptx_entry_name,
+        &original_fn,
+        cfg!(feature = "host"),
+    );
 
     let expanded = quote! {
         #[unsafe(no_mangle)]
@@ -5448,6 +5515,10 @@ fn generate_simple_kernel(mut input: ItemFn, explicit_scope: Option<Ident>) -> T
 /// borrow alive across `stream.synchronize()` remains the caller's
 /// responsibility, exactly as it was under the previous `type_name`
 /// scheme.
+///
+/// Deliberately NOT gated by the `host` feature: generic kernels remain
+/// host-coupled by design for now, because the TypeId naming machinery
+/// lives in `cuda_host`.
 fn generate_generic_cuda_kernel_impl(
     fn_name: &Ident,
     vis: &syn::Visibility,
@@ -5519,7 +5590,19 @@ fn generate_generic_cuda_kernel_impl(
 ///
 /// This generates a marker struct that implements `CudaKernel`, allowing
 /// `cuda_launch!` to look up the PTX entry point name at compile time.
-fn generate_cuda_kernel_impl(fn_name: &Ident, ptx_name: &str, _func: &ItemFn) -> TokenStream2 {
+///
+/// Emitted only under the `host` feature: the impl names `cuda_host`, and a
+/// crate that only compiles kernels never looks a PTX entry name up.
+fn generate_cuda_kernel_impl(
+    fn_name: &Ident,
+    ptx_name: &str,
+    _func: &ItemFn,
+    emit_host: bool,
+) -> TokenStream2 {
+    if !emit_host {
+        return TokenStream2::new();
+    }
+
     // Create a marker struct for this kernel
     // We use a struct because Rust doesn't allow trait impls on function pointers easily
     let marker_name = format_ident!("__{}_CudaKernel", fn_name);
@@ -7896,6 +7979,108 @@ mod tests {
             .replace(' ', "")
     }
 
+    /// Expands a `#[cuda_module]` body with the host surface suppressed.
+    fn expand_device_only_to_compact_string(module: ItemMod) -> String {
+        expand_cuda_module_inner(module, false)
+            .expect("cuda_module expansion failed")
+            .to_string()
+            .replace(' ', "")
+    }
+
+    fn one_kernel_module() -> ItemMod {
+        parse_quote! {
+            mod kernels {
+                #[kernel]
+                fn scale(out: *mut f32) {}
+            }
+        }
+    }
+
+    /// With the host surface off, nothing in the expansion may name the
+    /// `cuda-host` -> `cuda-core` -> `cuda-bindings` -> `cuda.h` stack. That is
+    /// the whole point of the feature: a crate that only compiles kernels
+    /// should not have to build it.
+    #[test]
+    fn device_only_cuda_module_names_no_host_crate() {
+        let expanded = expand_device_only_to_compact_string(one_kernel_module());
+        assert!(
+            !expanded.contains("cuda_host"),
+            "device-only expansion must not name cuda_host: {expanded}"
+        );
+        assert!(
+            !expanded.contains("cuda_core"),
+            "device-only expansion must not name cuda_core: {expanded}"
+        );
+        assert!(
+            !expanded.contains("LoadedModule"),
+            "device-only expansion must not emit the loader type: {expanded}"
+        );
+    }
+
+    /// Gating must remove only the host surface. The kernel itself still has
+    /// to reach the codegen collector.
+    #[test]
+    fn device_only_cuda_module_still_emits_the_kernel() {
+        let expanded = expand_device_only_to_compact_string(one_kernel_module());
+        assert!(
+            expanded.contains("#[kernel]fnscale"),
+            "the kernel must survive gating: {expanded}"
+        );
+    }
+
+    /// The default build is unchanged: this is the additive half of the
+    /// contract, and existing consumers depend on it.
+    #[test]
+    fn host_cuda_module_still_emits_the_loader() {
+        let expanded = expand_to_compact_string(one_kernel_module());
+        assert!(
+            expanded.contains("::cuda_host::") && expanded.contains("LoadedModule"),
+            "host expansion must keep the loader: {expanded}"
+        );
+    }
+
+    /// A nested inline module gets its own `LoadedModule`, so it needs the
+    /// same gate as the outer one.
+    #[test]
+    fn device_only_nested_module_emits_no_loader() {
+        let module: ItemMod = parse_quote! {
+            mod outer {
+                mod inner {
+                    #[kernel]
+                    fn scale(out: *mut f32) {}
+                }
+            }
+        };
+        let expanded = expand_device_only_to_compact_string(module);
+        assert!(
+            !expanded.contains("LoadedModule") && !expanded.contains("cuda_host"),
+            "nested device-only expansion must emit no loader: {expanded}"
+        );
+    }
+
+    /// A bare `#[kernel]` outside any `#[cuda_module]` carries its own
+    /// `CudaKernel` impl, the other reference a kernel-only crate cannot
+    /// resolve.
+    #[test]
+    fn bare_kernel_marker_impl_is_host_only() {
+        let func: ItemFn = parse_quote! {
+            fn scale(out: *mut f32) {}
+        };
+        let name = format_ident!("scale");
+
+        let device_only = generate_cuda_kernel_impl(&name, "scale", &func, false).to_string();
+        assert!(
+            device_only.is_empty(),
+            "device-only build must emit no marker impl: {device_only}"
+        );
+
+        let host = generate_cuda_kernel_impl(&name, "scale", &func, true).to_string();
+        assert!(
+            host.contains("CudaKernel"),
+            "host build must keep the marker impl: {host}"
+        );
+    }
+
     #[test]
     fn generated_kernel_siblings_preserve_qualified_paths_and_generics() {
         let kernel: syn::Path = parse_quote! { kernels::map::<_, 4> };
@@ -8346,7 +8531,8 @@ mod tests {
             }
         };
         let items = &module.content.expect("inline module").1;
-        let transformed = transform_cuda_module_items(items, &mut Vec::new(), &[], false).unwrap();
+        let transformed =
+            transform_cuda_module_items(items, &mut Vec::new(), &[], false, true).unwrap();
         let kernel = transformed
             .kernels
             .iter()
