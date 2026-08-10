@@ -1368,6 +1368,13 @@ run_cargo() {
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "cluster" ]]; then
         args+=("--arch=sm_90")
     fi
+    if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "interop_cubin_identity" ]]; then
+        # Cubin-kind interop artifacts require a deliberate target, and a
+        # GPU-less compile-only run has no detected device to satisfy it.
+        # Any concrete arch works: the finalizer (libNVVM + nvJitLink) runs
+        # here too, so this lane exercises the full native-artifact path.
+        args+=("--arch=sm_90")
+    fi
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
