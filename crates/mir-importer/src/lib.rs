@@ -91,7 +91,8 @@ pub mod translator;
 pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DeviceExternAttrs,
-    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, run_pipeline,
+    DeviceExternDecl, DeviceExternType, KernelLaunchBounds, PipelineConfig, PipelineError,
+    run_pipeline,
 };
 pub use translator::terminator::drop_glue::{drop_glue_is_noop, drop_instance_is_noop};
 pub use translator::terminator::is_panic_entry_path;
