@@ -253,7 +253,7 @@ These components are required by the codegen backend and doctor:
 
 ## cargo-oxide
 
-`cargo-oxide` is the cargo subcommand that drives the entire build pipeline (`cargo oxide run`, `build`, `debug`, `pipeline`, etc.).
+`cargo-oxide` is the cargo subcommand that drives the entire build pipeline (`cargo oxide run`, `build`, `debug`, `pipeline`, and the rest -- the Command reference at the end of this section lists all of them).
 
 **Inside the cuda-oxide repo**, it works out of the box via a workspace alias -- no extra install step.
 
@@ -289,6 +289,52 @@ cargo oxide clean
 `inspect` is the lightweight counterpart to `cargo oxide pipeline`. `clean`
 only touches project-local outputs; it leaves the shared backend cache at
 `~/.cargo/cuda-oxide/` alone.
+
+### Command reference
+
+The full set, as `cargo oxide --help` reports it:
+
+| Command | Description |
+|---------|-------------|
+| `run` | Build and run an example or project |
+| `sanitize` | Build and run an example or project under NVIDIA Compute Sanitizer |
+| `build` | Build an example or project (compile only, don't run) |
+| `test` | Run Cargo tests through the cuda-oxide backend |
+| `emit-ltoir` | Compile a crate's device code to a binary LTOIR artifact in one step |
+| `pipeline` | Show the full compilation pipeline (MIR -> PTX/NVVM IR) with verbose output |
+| `debug` | Build with debug info and launch `cuda-gdb` |
+| `list` | List the examples bundled with the cuda-oxide workspace |
+| `inspect` | Build an example or project and print the generated PTX |
+| `fmt` | Format all crates (root workspace, codegen backend, examples) |
+| `new` | Scaffold a new standalone cuda-oxide project |
+| `clean` | Remove project-local build outputs and generated cuda-oxide artifacts |
+| `doctor` | Check that your environment is set up correctly |
+| `setup` | Build and cache the codegen backend |
+| `update` | Refresh the cached codegen backend (or run `setup` inside the workspace) |
+
+Four of these are worth calling out, because they do something `cargo` itself
+cannot:
+
+```bash
+# Run the test suite with device code compiled by the cuda-oxide backend.
+# Arguments after `--` go to cargo; with none it is a plain `cargo test`.
+cargo oxide test -- --lib
+
+# Format the root workspace, the codegen backend, and every example. Each has
+# its own [workspace], so a single `cargo fmt` at the root misses most of them.
+cargo oxide fmt
+cargo oxide fmt --check
+
+# Rebuild the cached backend after changing compiler crates or the toolchain
+# pin. Inside the workspace this advises `setup`; --force runs it.
+cargo oxide update
+
+# Produce the LTOIR a tile or C++ kernel links against. LTOIR is
+# architecture-specific, so --arch is required rather than inferred.
+cargo oxide emit-ltoir my_kernels --arch sm_90
+```
+
+Every command takes `--help`, which lists the flags each one accepts.
 
 ---
 
