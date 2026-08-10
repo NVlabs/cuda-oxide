@@ -86,7 +86,7 @@ pub enum FinalizerError {
     InteriorNulPtx { name: String },
 
     /// nvJitLink was invoked without an input module.
-    #[error("at least one ordered LTOIR input is required")]
+    #[error("at least one link input is required (ordered LTOIR modules or a single PTX module)")]
     NoLinkInputs,
 
     /// nvJitLink returned bytes that are not a complete CUDA ELF image.
