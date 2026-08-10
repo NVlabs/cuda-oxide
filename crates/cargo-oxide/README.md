@@ -180,10 +180,15 @@ bin = "simt-device"
 
 `artifact-kind` accepts `ptx` (the default) or `cubin`. Cubin export requires a
 concrete target from `--arch`, `CUDA_OXIDE_TARGET`, project configuration, or
-the device detected by `run`. When `source-identity` is true, cargo-oxide also
-writes `<artifact>.identity` containing the target, normalized
-`--device-features` selection, artifact digest, and Cargo depfile-derived source
-digests. Paths in that sidecar are relative to the artifact directory.
+the device detected by `run`; that requirement is checked before the device
+build. The cubin itself is always finalized for the target the backend records
+in the emitted `<name>.target` sidecar, which can differ from the request hint
+when the kernel needs a newer architecture than the detected device. When
+`source-identity` is true, cargo-oxide also writes `<artifact>.identity`
+containing the built target (read back from the `.target` sidecar, or from the
+PTX's own `.target` directive for `ptx` artifacts), the normalized
+`--device-features` selection, the artifact digest, and Cargo depfile-derived
+source digests. Paths in that sidecar are relative to the artifact directory.
 
 Use `--device-features` when the nested device crate and host crate have
 different feature sets:

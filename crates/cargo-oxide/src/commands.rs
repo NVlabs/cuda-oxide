@@ -1532,6 +1532,16 @@ fn interop_device_artifact_path(
     ))
 }
 
+/// Pre-build requirement check for `artifact-kind = "cubin"` device crates.
+///
+/// A native cubin needs a deliberate target, so require one from `--arch`,
+/// `CUDA_OXIDE_TARGET`, project configuration, or the device detected by
+/// `run` before spending a device build. This is a requirement check only:
+/// the arch the finalizer actually compiles for comes from the
+/// backend-recorded `.target` sidecar (see
+/// [`read_interop_recorded_target`]), because the backend may resolve a
+/// different arch than the hint (e.g. escalate a detected `sm_120a` to the
+/// `sm_90a` WGMMA floor).
 fn interop_cubin_target(
     arch: Option<&str>,
     detected_device_arch: Option<&str>,
@@ -1548,31 +1558,139 @@ fn interop_cubin_target(
         .map_err(|error| format!("invalid cubin interop target {target:?}: {error}"))
 }
 
+/// Path of the NVVM IR a cubin-kind device crate emits into its artifact dir.
+fn interop_device_ir_path(
+    example_dir: &Path,
+    device_crate: &DeviceCrateConfig,
+    artifact_name: &str,
+) -> PathBuf {
+    example_dir
+        .join(&device_crate.artifact_dir)
+        .join(format!("{}.ll", artifact_stem(artifact_name)))
+}
+
+/// Read the CUDA target the backend recorded next to an emitted NVVM IR.
+///
+/// The backend publishes `<name>.target` last, after the `.ll` and
+/// `.options`: it is both the authoritative arch record (NVVM IR does not
+/// encode its target) and the completion marker saying the sibling
+/// `.options` file is present and required (see
+/// `write_nvvm_target_sidecar` in mir-importer). A missing or malformed
+/// sidecar therefore means the device build did not complete its artifact
+/// contract, never that some other arch should be guessed.
+fn read_interop_recorded_target(ir_path: &Path) -> Result<String, String> {
+    let path = ir_path.with_extension("target");
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "device build did not record its CUDA target at {} ({error}); \
+             the .target sidecar is the backend's completion marker, so the \
+             emitted NVVM IR cannot be trusted without it",
+            path.display()
+        )
+    })?;
+    let mut lines = text.lines();
+    let target = lines.next().unwrap_or_default().trim();
+    if target.is_empty() {
+        return Err(format!("recorded CUDA target {} is empty", path.display()));
+    }
+    match (lines.next(), lines.next()) {
+        (None, None) => Ok(target.to_string()),
+        (Some(marker), None) if marker == oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER => {
+            let options_path = ir_path.with_extension("options");
+            if !options_path.is_file() {
+                return Err(format!(
+                    "recorded CUDA target {} requires the sibling compile options {}, which is missing",
+                    path.display(),
+                    options_path.display()
+                ));
+            }
+            Ok(target.to_string())
+        }
+        _ => Err(format!(
+            "recorded CUDA target {} has an unrecognized format: {:?}",
+            path.display(),
+            text.trim()
+        )),
+    }
+}
+
+/// Read the `.target sm_XX` directive from an emitted PTX artifact.
+///
+/// PTX carries its own target record, so the identity sidecar can state the
+/// arch the artifact was actually compiled for instead of echoing a request
+/// hint (which the backend is allowed to override).
+fn ptx_recorded_target(ptx_path: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(ptx_path).map_err(|error| {
+        format!(
+            "could not read emitted PTX at {}: {error}",
+            ptx_path.display()
+        )
+    })?;
+    text.lines()
+        .find_map(|line| {
+            let mut tokens = line.split_whitespace();
+            (tokens.next() == Some(".target"))
+                .then(|| tokens.next())
+                .flatten()
+        })
+        .map(|target| target.trim_end_matches(',').to_string())
+        .filter(|target| !target.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "emitted PTX {} does not declare a .target directive",
+                ptx_path.display()
+            )
+        })
+}
+
+/// The CUDA target an interop device artifact was actually built for, read
+/// from the emitted artifact itself: the backend `.target` sidecar for
+/// cubin (the same record the finalizer compiled with) and the `.target`
+/// directive for PTX.
+fn interop_artifact_recorded_target(
+    example_dir: &Path,
+    device_crate: &DeviceCrateConfig,
+    artifact_name: &str,
+) -> Result<String, String> {
+    match device_crate.artifact_kind {
+        InteropArtifactKind::Ptx => ptx_recorded_target(&interop_device_artifact_path(
+            example_dir,
+            device_crate,
+            artifact_name,
+        )),
+        InteropArtifactKind::Cubin => read_interop_recorded_target(&interop_device_ir_path(
+            example_dir,
+            device_crate,
+            artifact_name,
+        )),
+    }
+}
+
 fn finalize_interop_device_artifact(
     example_dir: &Path,
     device_crate: &DeviceCrateConfig,
     artifact_name: &str,
-    arch: Option<&str>,
-    detected_device_arch: Option<&str>,
-) -> (PathBuf, String) {
+) -> PathBuf {
     let artifact_path = interop_device_artifact_path(example_dir, device_crate, artifact_name);
     match device_crate.artifact_kind {
-        InteropArtifactKind::Ptx => {
-            let target = arch
-                .map(str::to_owned)
-                .or_else(|| std::env::var("CUDA_OXIDE_TARGET").ok())
-                .or_else(|| detected_device_arch.map(str::to_owned))
-                .unwrap_or_else(|| "ptx".to_string());
-            (artifact_path, target)
-        }
+        InteropArtifactKind::Ptx => artifact_path,
         InteropArtifactKind::Cubin => {
-            let target = interop_cubin_target(arch, detected_device_arch).unwrap_or_else(|error| {
+            let ir_path = interop_device_ir_path(example_dir, device_crate, artifact_name);
+            // The backend-recorded target, not the CLI/env/detected hint:
+            // the backend may have resolved a different arch, and this
+            // sidecar doubles as the completion marker for the .ll/.options
+            // pair consumed below.
+            let recorded_target = read_interop_recorded_target(&ir_path).unwrap_or_else(|error| {
                 eprintln!("Error: {error}");
-                std::process::exit(2);
+                std::process::exit(1);
             });
-            let ir_path = example_dir
-                .join(&device_crate.artifact_dir)
-                .join(format!("{}.ll", artifact_stem(artifact_name)));
+            let target = parse_nvvm_arch(&recorded_target).unwrap_or_else(|error| {
+                eprintln!(
+                    "Error: invalid recorded CUDA target {recorded_target:?} next to {}: {error}",
+                    ir_path.display()
+                );
+                std::process::exit(1);
+            });
             let ir = std::fs::read(&ir_path).unwrap_or_else(|error| {
                 eprintln!(
                     "Error: could not read emitted NVVM IR at {}: {error}",
@@ -1630,7 +1748,7 @@ fn finalize_interop_device_artifact(
                 );
                 std::process::exit(1);
             });
-            (artifact_path, target.sm())
+            artifact_path
         }
     }
 }
@@ -1674,6 +1792,13 @@ fn build_interop_device_crate(
         );
         std::process::exit(1);
     });
+
+    if device_crate.artifact_kind == InteropArtifactKind::Cubin
+        && let Err(error) = interop_cubin_target(arch, detected_device_arch)
+    {
+        eprintln!("Error: {error}");
+        std::process::exit(2);
+    }
 
     let artifact_name = interop_device_artifact_name(&manifest_path, device_crate);
     clean_generated_files(&artifact_dir, &artifact_name);
@@ -1738,13 +1863,7 @@ fn build_interop_device_crate(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let (artifact_path, artifact_target) = finalize_interop_device_artifact(
-        example_dir,
-        device_crate,
-        &artifact_name,
-        arch,
-        detected_device_arch,
-    );
+    let artifact_path = finalize_interop_device_artifact(example_dir, device_crate, &artifact_name);
     if !artifact_path.exists() {
         eprintln!(
             "Error: device crate build succeeded but did not produce {}",
@@ -1758,6 +1877,17 @@ fn build_interop_device_crate(
         artifact_path.display()
     );
     if device_crate.source_identity {
+        // The identity records the arch the artifact was actually built
+        // for, read back from the emitted artifact, never the request hint.
+        let artifact_target =
+            interop_artifact_recorded_target(example_dir, device_crate, &artifact_name)
+                .unwrap_or_else(|error| {
+                    eprintln!(
+                        "Error: could not determine the built CUDA target for {}: {error}",
+                        artifact_path.display()
+                    );
+                    std::process::exit(1);
+                });
         let cargo_target_name = interop_device_cargo_target_name(&manifest_path, device_crate);
         let depfile_path =
             release_depfile_path(ctx, device_dir, &manifest_path, &cargo_target_name)
@@ -10172,6 +10302,111 @@ edition = "2024"
         assert_eq!(
             interop_cubin_target(Some("sm_120a"), None).unwrap().sm(),
             "sm_120a"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recorded_target_sidecar_is_the_completion_marker() {
+        let root = unique_temp_dir("cargo_oxide_recorded_target");
+        std::fs::create_dir_all(&root).unwrap();
+        let ir_path = root.join("device_kernels.ll");
+
+        // No sidecar: the backend never completed its artifact contract.
+        let error = read_interop_recorded_target(&ir_path).unwrap_err();
+        assert!(error.contains("completion marker"), "{error}");
+
+        // Bare target line (pre-versioned contract) is accepted.
+        std::fs::write(root.join("device_kernels.target"), "sm_90a\n").unwrap();
+        assert_eq!(read_interop_recorded_target(&ir_path).unwrap(), "sm_90a");
+
+        // The versioned marker says the sibling .options file is required...
+        std::fs::write(
+            root.join("device_kernels.target"),
+            format!(
+                "sm_120a\n{}\n",
+                oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+            ),
+        )
+        .unwrap();
+        let error = read_interop_recorded_target(&ir_path).unwrap_err();
+        assert!(error.contains("compile options"), "{error}");
+
+        // ...and the record is trusted once it exists.
+        std::fs::write(root.join("device_kernels.options"), "fma=on\ndebug=none\n").unwrap();
+        assert_eq!(read_interop_recorded_target(&ir_path).unwrap(), "sm_120a");
+
+        // Unknown trailing content is rejected, not half-trusted.
+        std::fs::write(
+            root.join("device_kernels.target"),
+            "sm_120a\nmystery-marker\nrest\n",
+        )
+        .unwrap();
+        assert!(read_interop_recorded_target(&ir_path).is_err());
+        std::fs::write(root.join("device_kernels.target"), "\n").unwrap();
+        assert!(read_interop_recorded_target(&ir_path).is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ptx_recorded_target_reads_the_target_directive() {
+        let root = unique_temp_dir("cargo_oxide_ptx_target");
+        std::fs::create_dir_all(&root).unwrap();
+        let ptx_path = root.join("kernels.ptx");
+
+        std::fs::write(
+            &ptx_path,
+            "// comment\n.version 8.7\n.target sm_120a\n.address_size 64\n",
+        )
+        .unwrap();
+        assert_eq!(ptx_recorded_target(&ptx_path).unwrap(), "sm_120a");
+
+        // Device-debug builds record `.target sm_90, debug`.
+        std::fs::write(&ptx_path, ".version 8.3\n.target sm_90, debug\n").unwrap();
+        assert_eq!(ptx_recorded_target(&ptx_path).unwrap(), "sm_90");
+
+        std::fs::write(&ptx_path, ".version 8.3\n").unwrap();
+        assert!(ptx_recorded_target(&ptx_path).is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interop_identity_target_is_read_from_the_emitted_artifact() {
+        let root = unique_temp_dir("cargo_oxide_identity_target");
+        std::fs::create_dir_all(root.join("device")).unwrap();
+
+        let ptx_crate = DeviceCrateConfig {
+            manifest_path: PathBuf::from("device/Cargo.toml"),
+            artifact_dir: PathBuf::from("device"),
+            artifact_name: Some("kernels".to_string()),
+            artifact_kind: InteropArtifactKind::Ptx,
+            source_identity: true,
+            bin: None,
+        };
+        // Whatever the request hint said, the emitted PTX is the record.
+        std::fs::write(
+            root.join("device/kernels.ptx"),
+            ".version 8.7\n.target sm_90a\n",
+        )
+        .unwrap();
+        assert_eq!(
+            interop_artifact_recorded_target(&root, &ptx_crate, "kernels").unwrap(),
+            "sm_90a"
+        );
+
+        // Cubin identity reads the backend sidecar the finalizer compiled
+        // with, not the PTX and not any hint.
+        let cubin_crate = DeviceCrateConfig {
+            artifact_kind: InteropArtifactKind::Cubin,
+            ..ptx_crate
+        };
+        std::fs::write(root.join("device/kernels.target"), "sm_100a\n").unwrap();
+        assert_eq!(
+            interop_artifact_recorded_target(&root, &cubin_crate, "kernels").unwrap(),
+            "sm_100a"
         );
 
         std::fs::remove_dir_all(root).unwrap();
