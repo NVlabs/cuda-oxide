@@ -24,9 +24,10 @@ clippy-fix:
 # Mirrors .github/workflows/unit-tests.yml; keep the two in step.
 #
 # CI splits this across a matrix and marks some entries `needs_cuda`, meaning
-# cuda-bindings' bindgen needs cuda.h at build time. This recipe therefore
-# expects a CUDA toolkit, as `doc-check` already does. `--all-targets` matches
-# the matrix default; the three exceptions below carry CI's own overrides.
+# cuda-bindings' bindgen needs cuda.h at build time. Those packages live in
+# `test-cuda` below, so this recipe runs on a machine with no CUDA at all.
+# `--all-targets` matches the matrix default; the two exceptions below carry
+# CI's own overrides.
 test:
     cargo test --all-targets \
         -p cuda-intrinsics-gen -p cuda-intrinsics -p llvm-export \
@@ -57,15 +58,18 @@ test-cuda:
     cargo test -p cuda-core --lib
 
 # Build docs warning-free + run doctests (mirrors the docs CI gate). The `test`
-# recipe uses `--lib --tests`, which skips doctests, so this covers them.
+# recipe uses `--all-targets`, which skips doctests, so this covers them.
 # cuda-bindings is excluded from doctests (its generated C doc comments are not
 # valid Rust); its docs still build under the rustdoc allows in its lib.rs.
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
     cargo test --doc --workspace --exclude cuda-bindings
 
-# Run all checks (fmt + clippy + test + docs)
-check: fmt-check clippy test doc-check
+# Run all checks (fmt + clippy + tests + docs). Includes `test-cuda`: `clippy`
+# and `doc-check` already build cuda-bindings, so this recipe needs a CUDA
+# toolkit either way, and the pre-split `test` already ran driver-linked
+# cuda-host/cuda-macros binaries. Machines without even a toolkit get `test`.
+check: fmt-check clippy test test-cuda doc-check
 
 # Clean project-local Cargo outputs and known cuda-oxide artifacts
 clean-artifacts:
