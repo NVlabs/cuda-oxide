@@ -24,11 +24,12 @@ use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
-use dialect_mir::ops::{MirAllocaOp, MirFuncOp};
+use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
     DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap, DebugTypeMember,
+    LocalMemoryProvenanceAttr,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -674,21 +675,24 @@ fn local_memory_type_name(ty: &Ty) -> String {
     }
 }
 
-/// Encode one MIR local into the opaque payload carried by `mir.alloca`.
+/// Describe one MIR local as the provenance attribute carried by `mir.alloca`.
 ///
-/// Tabs are field separators only inside the in-memory attribute. The LLVM
-/// exporter hex-encodes the whole payload before placing it in an SSA name, so
-/// arbitrary Rust identifiers and type spellings cannot make invalid LLVM IR.
-fn local_memory_provenance(local_idx: usize, name: &str, ty: &Ty) -> String {
+/// The attribute stays a first-class IR citizen through lowering; only the
+/// textual LLVM exporter serializes it (hex-encoded into the alloca's SSA
+/// name), so arbitrary Rust identifiers and type spellings cannot make
+/// invalid LLVM IR.
+fn local_memory_provenance(local_idx: usize, name: &str, ty: &Ty) -> LocalMemoryProvenanceAttr {
     let size_bytes = ty
         .layout()
         .ok()
         .map(|layout| layout.shape().size.bytes() as u64)
         .unwrap_or(0);
-    format!(
-        "{local_idx}\t{size_bytes}\t{name}\t{}",
-        local_memory_type_name(ty)
-    )
+    LocalMemoryProvenanceAttr {
+        local_index: local_idx as u64,
+        size_bytes,
+        binding_name: name.into(),
+        type_name: local_memory_type_name(ty).into(),
+    }
 }
 
 /// Maximum nesting depth for composite debug types. Guards against deeply
@@ -1025,8 +1029,9 @@ fn emit_entry_allocas(
         if let Some(source_name) = local_source_names.get(&local)
             && let Some(decl) = body.local_decl(local)
         {
-            MirAllocaOp::new(op).set_local_memory_provenance(
+            llvm_export::ops::set_local_memory_provenance(
                 ctx,
+                op,
                 local_memory_provenance(local_idx, source_name, &decl.ty),
             );
         }

@@ -9,7 +9,7 @@
 
 use pliron::{
     builtin::{
-        attributes::{BoolAttr, IntegerAttr, StringAttr},
+        attributes::{BoolAttr, IntegerAttr},
         op_interfaces::{NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface},
         types::IntegerType,
     },
@@ -88,39 +88,10 @@ fn bool_integer_attr(ctx: &mut Context, value: bool) -> IntegerAttr {
 )]
 pub struct MirAllocaOp;
 
-const LOCAL_MEMORY_PROVENANCE_KEY: &str = "mir_local_memory_provenance";
-
 impl MirAllocaOp {
     /// Create a new `MirAllocaOp` wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
         MirAllocaOp { op }
-    }
-
-    /// Attach compiler-only provenance for the local-memory diagnostic.
-    ///
-    /// The payload is intentionally opaque to the MIR dialect. `mir-importer`
-    /// records the Rust local identity, source-level type name, and byte size;
-    /// `mir-lower` carries the string to the LLVM alloca, and the textual LLVM
-    /// exporter turns it into a stable SSA name. If mem2reg or LLVM SROA
-    /// removes the allocation, the provenance disappears with it.
-    pub fn set_local_memory_provenance(&self, ctx: &mut Context, provenance: String) {
-        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
-            .expect("valid local-memory provenance attribute key");
-        self.get_operation()
-            .deref_mut(ctx)
-            .attributes
-            .set(key, StringAttr::new(provenance));
-    }
-
-    /// Return compiler-only provenance for the local-memory diagnostic.
-    pub fn local_memory_provenance(&self, ctx: &Context) -> Option<String> {
-        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
-            .expect("valid local-memory provenance attribute key");
-        self.get_operation()
-            .deref(ctx)
-            .attributes
-            .get::<StringAttr>(&key)
-            .map(|value| String::from((*value).clone()))
     }
 
     /// Return the pointee (element) type carried by the result pointer.

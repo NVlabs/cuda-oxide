@@ -18,7 +18,6 @@ use pliron::{
         types::{FP32Type, FP64Type, IntegerType},
     },
     context::Ptr,
-    identifier::Identifier,
     location::Located,
     op::Op,
     operation::Operation,
@@ -236,40 +235,42 @@ impl LlvmOp<'_> {
     }
 }
 
-const LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
 const LOCAL_MEMORY_VALUE_PREFIX: &str = "__cuda_oxide_local_x";
 const LOCAL_MEMORY_ALLOCA_PREFIX: &str = "__cuda_oxide_local_alloca_x";
 
-fn encode_local_memory_provenance(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len() * 2 + 1);
-    for byte in value.as_bytes() {
+/// Serialize a [`crate::ops::LocalMemoryProvenanceAttr`] into the hex payload
+/// carried by the alloca's SSA value name.
+///
+/// This is the only place the provenance leaves the first-class attribute
+/// world: textual `.ll` handed to an external `opt` has no other channel that
+/// reliably survives on live instructions. Tabs separate the fields, the hex
+/// encoding keeps arbitrary identifiers and type spellings valid in an LLVM
+/// value name, and the trailing `_` sentinel terminates the hex run so LLVM's
+/// numeric name-uniquing suffixes (a second inlined copy of the same local
+/// becomes `<name>1`) cannot extend or garble the payload.
+fn encode_local_memory_provenance(provenance: &crate::ops::LocalMemoryProvenanceAttr) -> String {
+    let payload = format!(
+        "{}\t{}\t{}\t{}",
+        provenance.local_index,
+        provenance.size_bytes,
+        provenance.binding_name.as_str(),
+        provenance.type_name.as_str()
+    );
+    let mut encoded = String::with_capacity(payload.len() * 2 + 1);
+    for byte in payload.as_bytes() {
         write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
     }
-    // Terminate the hex run with a sentinel: LLVM uniques colliding value
-    // names by appending bare digits (a second inlined copy of the same local
-    // becomes `<name>1`), and digits are valid hex, so without a terminator a
-    // uniquing suffix would silently extend and garble the payload.
     encoded.push('_');
     encoded
 }
 
 impl<'a> ModuleExportState<'a> {
-    fn local_memory_provenance(&self, op: Ptr<Operation>) -> Option<String> {
-        let key: Identifier = LOCAL_MEMORY_PROVENANCE_KEY
-            .try_into()
-            .expect("valid local-memory provenance attribute key");
-        op.deref(self.ctx)
-            .attributes
-            .get::<StringAttr>(&key)
-            .map(|value| String::from((*value).clone()))
-    }
-
     fn local_memory_value_name(
         &self,
         op: Ptr<Operation>,
         allocation_storage: bool,
     ) -> Option<String> {
-        let provenance = self.local_memory_provenance(op)?;
+        let provenance = crate::ops::local_memory_provenance(self.ctx, op)?;
         let prefix = if allocation_storage {
             LOCAL_MEMORY_ALLOCA_PREFIX
         } else {

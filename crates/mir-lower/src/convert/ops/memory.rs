@@ -60,7 +60,7 @@ use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
 use llvm_export::types::{ArrayType, FuncType, StructType, VoidType};
 use pliron::attribute::AttrObj;
-use pliron::builtin::attributes::{IntegerAttr, StringAttr};
+use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -150,9 +150,7 @@ fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op:
     }
 }
 
-const LLVM_LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
-
-/// Carry Rust-local identity from the MIR alloca to the LLVM alloca.
+/// Carry Rust-local provenance from the MIR alloca to the LLVM alloca.
 ///
 /// This is compiler-only metadata stored in the in-memory dialect operation;
 /// it is not emitted as LLVM metadata because an unrecognized metadata node is
@@ -163,17 +161,9 @@ fn copy_local_memory_provenance(
     mir_op: Ptr<Operation>,
     llvm_op: Ptr<Operation>,
 ) {
-    let Some(provenance) = dialect_mir::ops::MirAllocaOp::new(mir_op).local_memory_provenance(ctx)
-    else {
-        return;
-    };
-    let key: Identifier = LLVM_LOCAL_MEMORY_PROVENANCE_KEY
-        .try_into()
-        .expect("valid local-memory provenance attribute key");
-    llvm_op
-        .deref_mut(ctx)
-        .attributes
-        .set(key, StringAttr::new(provenance));
+    if let Some(provenance) = llvm_export::ops::local_memory_provenance(ctx, mir_op) {
+        llvm_export::ops::set_local_memory_provenance(ctx, llvm_op, provenance);
+    }
 }
 
 /// Convert `mir.memcpy` to the matching `llvm.memcpy.p<dst>.p<src>.i<bits>`.
@@ -1563,8 +1553,13 @@ mod tests {
             vec![],
             0,
         );
-        mir::MirAllocaOp::new(alloca_op)
-            .set_local_memory_provenance(&mut ctx, "3\t16\tscratch\t[u32; 4]".to_string());
+        let provenance = llvm_export::ops::LocalMemoryProvenanceAttr {
+            local_index: 3,
+            size_bytes: 16,
+            binding_name: "scratch".into(),
+            type_name: "[u32; 4]".into(),
+        };
+        llvm_export::ops::set_local_memory_provenance(&mut ctx, alloca_op, provenance.clone());
         alloca_op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -1572,14 +1567,9 @@ mod tests {
 
         let body = kernel_blocks(&ctx, module_ptr);
         let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).unwrap();
-        let key: Identifier = LLVM_LOCAL_MEMORY_PROVENANCE_KEY.try_into().unwrap();
-        let provenance = alloca
-            .get_operation()
-            .deref(&ctx)
-            .attributes
-            .get::<StringAttr>(&key)
-            .map(|value| String::from((*value).clone()));
-        assert_eq!(provenance.as_deref(), Some("3\t16\tscratch\t[u32; 4]"));
+        let copied =
+            llvm_export::ops::local_memory_provenance(&ctx, alloca.get_operation()).unwrap();
+        assert_eq!(copied, provenance);
     }
 
     #[test]

@@ -816,6 +816,56 @@ pub mod ops {
         })
     }
 
+    /// Rust-local provenance for the post-optimization local-memory diagnostic.
+    ///
+    /// `mir-importer` attaches this to the `mir.alloca` of every named Rust
+    /// source local, `mir-lower` copies it to the LLVM alloca, and the textual
+    /// exporter folds it into the alloca's SSA value name so it survives the
+    /// external `opt` binary exactly as long as the allocation itself does.
+    /// The attribute is a first-class IR citizen inside both dialects; only the
+    /// exported SSA name uses a string encoding, because the value name is the
+    /// sole channel `opt` reliably preserves on surviving instructions.
+    #[pliron_attr(name = "llvm.local_memory_provenance", format, verifier = "succ")]
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct LocalMemoryProvenanceAttr {
+        /// Index of the Rust MIR local backing the allocation.
+        pub local_index: u64,
+        /// ABI size of the local in bytes (0 when the layout is unavailable).
+        pub size_bytes: u64,
+        /// Source binding name of the local.
+        pub binding_name: StringAttr,
+        /// Compact source-level spelling of the local's type.
+        pub type_name: StringAttr,
+    }
+
+    /// Op-attribute key for [`LocalMemoryProvenanceAttr`] on `mir.alloca` and
+    /// `llvm.alloca`.
+    const LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
+
+    /// Attach Rust-local provenance to a stack-slot op.
+    pub fn set_local_memory_provenance(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        provenance: LocalMemoryProvenanceAttr,
+    ) {
+        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
+            .expect("valid local-memory provenance attribute key");
+        op.deref_mut(ctx).attributes.set(key, provenance);
+    }
+
+    /// Read Rust-local provenance from a stack-slot op, if present.
+    pub fn local_memory_provenance(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Option<LocalMemoryProvenanceAttr> {
+        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
+            .expect("valid local-memory provenance attribute key");
+        op.deref(ctx)
+            .attributes
+            .get::<LocalMemoryProvenanceAttr>(&key)
+            .cloned()
+    }
+
     /// Attach the MIR source-scope id that owns this source local.
     pub fn set_debug_local_source_scope(ctx: &mut Context, op: Ptr<Operation>, scope: u32) {
         set_string_attr(ctx, op, DEBUG_LOCAL_SCOPE_KEY, scope.to_string());
