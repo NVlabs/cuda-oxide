@@ -156,12 +156,7 @@ fn make_input() -> Vec<[u32; 4]> {
         .collect()
 }
 
-fn run_and_report<F, E>(
-    name: &str,
-    stream: &Arc<CudaStream>,
-    launch: F,
-    expected: E,
-) -> bool
+fn run_and_report<F, E>(name: &str, stream: &Arc<CudaStream>, launch: F, expected: E) -> bool
 where
     F: FnOnce(&Arc<CudaStream>, LaunchConfig, &DeviceBuffer<[u32; 4]>, &mut DeviceBuffer<u32>),
     E: Fn(usize) -> u32,
