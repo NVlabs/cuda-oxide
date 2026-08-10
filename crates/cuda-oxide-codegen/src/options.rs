@@ -5,6 +5,21 @@
 
 use std::path::PathBuf;
 
+/// Compiler control for materializing semantic IKET annotations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IketInstrumentation {
+    /// Erase annotations before ordinary code generation.
+    Disabled,
+    /// Prefer NativeDump and switch to ExtendedNativeDump above 30 names.
+    Auto,
+    /// Require NativeDump.
+    NativeDump,
+    /// Require ExtendedNativeDump.
+    ExtendedNativeDump,
+    /// Preserve an invalid environment value for a pipeline diagnostic.
+    Invalid(String),
+}
+
 /// Explicit backend knobs; replaces every `CUDA_OXIDE_*` env read inside the
 /// backend. `run_pipeline` (mir-importer) builds one from the environment at
 /// its own boundary. The experimental API builds one from typed compile
@@ -12,6 +27,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BackendOptions {
+    /// IKET physical instrumentation policy.
+    pub iket: IketInstrumentation,
     /// Hard target override (`llc -mcpu=`), e.g. `"sm_120"`.
     pub target_arch: Option<String>,
     /// Human-readable name for whatever set `target_arch`, used only to
@@ -45,6 +62,7 @@ pub struct BackendOptions {
 impl Default for BackendOptions {
     fn default() -> Self {
         Self {
+            iket: IketInstrumentation::Auto,
             target_arch: None,
             target_arch_source: "CUDA_OXIDE_TARGET",
             device_arch_hint: None,
@@ -64,7 +82,23 @@ impl BackendOptions {
     /// crate is `CUDA_OXIDE_LLVM_LINK` in `llvm_tools::resolve_sibling_tool`
     /// (a per-toolchain tool override, not a compile option).
     pub fn from_env() -> Self {
+        let iket = match std::env::var("CUDA_OXIDE_IKET") {
+            Err(std::env::VarError::NotPresent) => IketInstrumentation::Auto,
+            Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "" | "1" | "on" | "true" | "auto" => IketInstrumentation::Auto,
+                "native" | "native_dump" | "nativedump" => IketInstrumentation::NativeDump,
+                "extended" | "extended_native_dump" | "extendednativedump" => {
+                    IketInstrumentation::ExtendedNativeDump
+                }
+                "0" | "off" | "false" => IketInstrumentation::Disabled,
+                _ => IketInstrumentation::Invalid(value),
+            },
+            Err(std::env::VarError::NotUnicode(value)) => {
+                IketInstrumentation::Invalid(value.to_string_lossy().into_owned())
+            }
+        };
         Self {
+            iket,
             target_arch: std::env::var("CUDA_OXIDE_TARGET").ok(),
             target_arch_source: "CUDA_OXIDE_TARGET",
             device_arch_hint: std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok(),

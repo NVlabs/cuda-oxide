@@ -33,6 +33,7 @@ pub mod f16x2;
 pub mod fence;
 pub mod float;
 pub mod grid;
+pub mod iket;
 pub mod mma_frag;
 pub mod prmt;
 pub mod ptx;

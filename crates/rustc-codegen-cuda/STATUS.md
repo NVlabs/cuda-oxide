@@ -22,6 +22,7 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | `error_generated_intrinsic_fn_pointer` | diagnostics-fixture | Raw intrinsic made into `fn` pointer |
 | `error_generated_intrinsic_unknown_id` | diagnostics-fixture | Unknown ID in a supported ABI        |
 | `error_heap_alloc`                     | diagnostics-fixture | `__rust_alloc` reachable (#108)      |
+| `error_kernel_shared_param`            | diagnostics-fixture | AS3/AS5 pointer as kernel parameter  |
 | `error_missing_device_attr`            | diagnostics-fixture | `thread::index_*` stub (#76)         |
 | `error_set_discriminant_uninhabited`   | diagnostics-fixture | Invalid enum variant selection       |
 

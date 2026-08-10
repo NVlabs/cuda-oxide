@@ -29,6 +29,7 @@ use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
     DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap, DebugTypeMember,
+    LocalMemoryProvenanceAttr,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -618,6 +619,113 @@ fn collect_debug_locals(
     locals
 }
 
+/// Source-level names for MIR locals, independent of the selected debug tier.
+///
+/// Full variable debug information is deliberately optional, but the local
+/// memory diagnostic still needs a useful source identity in optimized builds.
+/// `var_debug_info` is already available in stable MIR and does not force LLVM
+/// debug metadata emission, so keep this lightweight map separate from
+/// [`collect_debug_locals`].
+fn collect_local_source_names(body: &mir::Body) -> FxHashMap<mir::Local, String> {
+    let mut names = FxHashMap::default();
+    for info in &body.var_debug_info {
+        if info.composite.is_some() {
+            continue;
+        }
+        let Some(local) = info.local() else {
+            continue;
+        };
+        let name = info.name.to_string();
+        if !name.is_empty() {
+            names.entry(local).or_insert(name);
+        }
+    }
+    names
+}
+
+/// Compact source-level type spelling for local-memory diagnostics.
+fn local_memory_type_name(ty: &Ty) -> String {
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Bool) => "bool".to_string(),
+        TyKind::RigidTy(RigidTy::Int(int_ty)) => int_name(int_ty).to_string(),
+        TyKind::RigidTy(RigidTy::Uint(uint_ty)) => uint_name(uint_ty).to_string(),
+        TyKind::RigidTy(RigidTy::Float(float_ty)) => float_name(float_ty).to_string(),
+        TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
+            raw_pointer_name(pointee, mutability)
+        }
+        TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) => {
+            reference_name(pointee, mutability)
+        }
+        TyKind::RigidTy(RigidTy::Tuple(subtypes)) => format!(
+            "({})",
+            subtypes
+                .iter()
+                .map(local_memory_type_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        TyKind::RigidTy(RigidTy::Array(element, len)) => {
+            let count = array_len_const(&len)
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            format!("[{}; {count}]", local_memory_type_name(&element))
+        }
+        TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => adt_def.trimmed_name(),
+        // Closure and coroutine environments reach here through
+        // `var_debug_info` merged from MIR-inlined callees (iterator adapters
+        // name their closure parameters, e.g. `f`). Their `{ty:?}` dump spells
+        // DefIds and generic args recursively and can run to many kilobytes,
+        // which would then be hex-encoded into an SSA value name; LLVM's
+        // textual parser mis-lexes identifiers that long. Spell them the way
+        // rustc diagnostics do instead.
+        TyKind::RigidTy(RigidTy::Closure(..)) => "{closure}".to_string(),
+        TyKind::RigidTy(
+            RigidTy::Coroutine(..) | RigidTy::CoroutineClosure(..) | RigidTy::CoroutineWitness(..),
+        ) => "{coroutine}".to_string(),
+        _ => bounded_type_spelling(ty),
+    }
+}
+
+/// Debug-format spelling for type kinds without a dedicated compact arm,
+/// hard-capped in length.
+///
+/// The spelling exists to be read in a one-line warning and travels inside an
+/// SSA value name, so an unbounded `{ty:?}` dump is never acceptable here even
+/// for kinds this function does not anticipate.
+fn bounded_type_spelling(ty: &Ty) -> String {
+    const MAX_TYPE_SPELLING_BYTES: usize = 64;
+    let mut spelled = format!("{ty:?}");
+    if spelled.len() > MAX_TYPE_SPELLING_BYTES {
+        let mut cut = MAX_TYPE_SPELLING_BYTES;
+        while !spelled.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        spelled.truncate(cut);
+        spelled.push_str("...");
+    }
+    spelled
+}
+
+/// Describe one MIR local as the provenance attribute carried by `mir.alloca`.
+///
+/// The attribute stays a first-class IR citizen through lowering; only the
+/// textual LLVM exporter serializes it (hex-encoded into the alloca's SSA
+/// name), so arbitrary Rust identifiers and type spellings cannot make
+/// invalid LLVM IR.
+fn local_memory_provenance(local_idx: usize, name: &str, ty: &Ty) -> LocalMemoryProvenanceAttr {
+    let size_bytes = ty
+        .layout()
+        .ok()
+        .map(|layout| layout.shape().size.bytes() as u64)
+        .unwrap_or(0);
+    LocalMemoryProvenanceAttr {
+        local_index: local_idx as u64,
+        size_bytes,
+        binding_name: name.into(),
+        type_name: local_memory_type_name(ty).into(),
+    }
+}
+
 /// Maximum nesting depth for composite debug types. Guards against deeply
 /// nested or (via generics) pathological value-type trees; beyond this we omit
 /// the inner detail rather than recurse without bound.
@@ -901,6 +1009,7 @@ fn emit_entry_allocas(
     } else {
         FxHashMap::default()
     };
+    let local_source_names = collect_local_source_names(body);
 
     // Translate local types once up front. The address-space analyzer uses
     // each pointer local's declared lowering as the conservative fallback for
@@ -944,6 +1053,20 @@ fn emit_entry_allocas(
         let mir_ty = values::align_pointer_addr_space(ctx, mir_ty, target);
 
         let (op, slot) = ValueMap::emit_alloca(ctx, mir_ty, entry_block, prev_op);
+
+        // Tag only named Rust source locals. Compiler temporaries and lowering-
+        // synthesized LLVM allocas must not turn verbose builds into a stream of
+        // warnings that cannot be attributed back to user code.
+        if let Some(source_name) = local_source_names.get(&local)
+            && let Some(decl) = body.local_decl(local)
+        {
+            llvm_export::ops::set_local_memory_provenance(
+                ctx,
+                op,
+                local_memory_provenance(local_idx, source_name, &decl.ty),
+            );
+        }
+
         if let Some(info) = debug_locals.get(&local) {
             llvm_export::ops::set_debug_local_variable(ctx, op, info.variable.clone());
             if debug_source_scopes

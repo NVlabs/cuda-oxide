@@ -5888,7 +5888,7 @@ const GIT_REPO: &str = "https://github.com/NVlabs/cuda-oxide.git";
 
 const RUST_TOOLCHAIN_TOML: &str = r#"[toolchain]
 channel = "nightly-2026-04-03"
-components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
+components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "rustfmt", "llvm-tools"]
 "#;
 
 const SCAFFOLD_GITIGNORE_EXTRA: &[&str] = &[
