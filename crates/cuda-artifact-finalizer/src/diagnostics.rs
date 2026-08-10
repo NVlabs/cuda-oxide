@@ -16,6 +16,9 @@ pub struct KernelResourceUsage {
     pub kernel: String,
     /// Register count reported by ptxas, when present.
     pub registers: Option<u32>,
+    /// Per-thread local-memory stack frame in bytes. Nonzero when locals are
+    /// demoted to local memory; distinct from register-spill traffic.
+    pub stack_frame_bytes: u64,
     /// Bytes written to local memory because of register spills.
     pub spill_store_bytes: u64,
     /// Bytes read from local memory because of register spills.
@@ -57,6 +60,9 @@ pub(crate) fn parse_ptxas_resource_usage(log: &str) -> Vec<KernelResourceUsage> 
             entry.registers = Some(entry.registers.map_or(registers, |old| old.max(registers)));
         }
 
+        if let Some(bytes) = number_before(line, " bytes stack frame") {
+            entry.stack_frame_bytes = entry.stack_frame_bytes.max(bytes);
+        }
         if let Some(bytes) = number_before(line, " bytes spill stores") {
             entry.spill_store_bytes = entry.spill_store_bytes.max(bytes);
         }
@@ -79,7 +85,9 @@ fn kernel_name_from_line(line: &str) -> Option<String> {
     }
 
     if let Some((_, rest)) = line.split_once("Function properties for ") {
-        let kernel = rest.trim().trim_matches('\'');
+        // Some log shapes terminate the line with a colon after the (possibly
+        // quoted) name: "Function properties for '_Z3fooPi':".
+        let kernel = rest.trim().trim_end_matches(':').trim_matches('\'');
         if !kernel.is_empty() {
             return Some(kernel.to_string());
         }
@@ -99,6 +107,7 @@ fn ensure_kernel<'a>(
     usage.push(KernelResourceUsage {
         kernel: kernel.to_string(),
         registers: None,
+        stack_frame_bytes: 0,
         spill_store_bytes: 0,
         spill_load_bytes: 0,
     });
@@ -133,12 +142,14 @@ ptxas info    : Used 127 registers, used 0 barriers, 392 bytes cmem[0]
                 KernelResourceUsage {
                     kernel: "kernel_a".to_string(),
                     registers: Some(128),
+                    stack_frame_bytes: 0,
                     spill_store_bytes: 0,
                     spill_load_bytes: 0,
                 },
                 KernelResourceUsage {
                     kernel: "kernel_b".to_string(),
                     registers: Some(127),
+                    stack_frame_bytes: 32,
                     spill_store_bytes: 24,
                     spill_load_bytes: 16,
                 },
@@ -162,6 +173,26 @@ ptxas info : Used 72 registers
             vec![KernelResourceUsage {
                 kernel: "kernel".to_string(),
                 registers: Some(72),
+                stack_frame_bytes: 0,
+                spill_store_bytes: 8,
+                spill_load_bytes: 4,
+            }]
+        );
+    }
+
+    #[test]
+    fn quoted_function_properties_name_with_trailing_colon_is_unwrapped() {
+        let log = r#"
+ptxas info    : Function properties for '_Z8kernel_bPf':
+    16 bytes stack frame, 8 bytes spill stores, 4 bytes spill loads
+"#;
+
+        assert_eq!(
+            parse_ptxas_resource_usage(log),
+            vec![KernelResourceUsage {
+                kernel: "_Z8kernel_bPf".to_string(),
+                registers: None,
+                stack_frame_bytes: 16,
                 spill_store_bytes: 8,
                 spill_load_bytes: 4,
             }]
@@ -174,13 +205,16 @@ ptxas info : Used 72 registers
     }
 
     #[test]
-    fn has_spills_checks_both_directions() {
+    fn has_spills_checks_both_directions_and_ignores_stack_frame() {
         let mut usage = KernelResourceUsage {
             kernel: "kernel".to_string(),
             registers: None,
+            stack_frame_bytes: 0,
             spill_store_bytes: 0,
             spill_load_bytes: 0,
         };
+        assert!(!usage.has_spills());
+        usage.stack_frame_bytes = 32;
         assert!(!usage.has_spills());
         usage.spill_load_bytes = 4;
         assert!(usage.has_spills());
