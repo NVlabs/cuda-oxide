@@ -288,14 +288,19 @@ cuda-oxide pins to an exact nightly release via `rust-toolchain.toml`:
 ```toml
 [toolchain]
 channel = "nightly-2026-04-03"
-components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
+components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "rustfmt", "llvm-tools"]
 ```
 
 This pin guarantees reproducible builds: anyone who clones the repository
 gets the same compiler, the same MIR shapes, and the same bridge behavior.
 When updating the pin, the process is:
 
-1. Bump the nightly date in `rust-toolchain.toml`.
+1. Bump the nightly date in `rust-toolchain.toml`, and in the copy at
+   `crates/rustc-codegen-cuda/rust-toolchain.toml` -- that crate has its own
+   `[workspace]` for the `rustc_private` dylibs, and its header requires an
+   exact match with the parent, because a `rustc_public` build against a
+   different nightly fails to load. `scripts/check-toolchain-parity.sh`
+   checks both copies and the blocks quoted in this book.
 2. Fix any `rustc_public` API changes (usually minor -- that is the whole
    point of the stable API).
 3. Run the full test suite to verify that all examples still compile and
