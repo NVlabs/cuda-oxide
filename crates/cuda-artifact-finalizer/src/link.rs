@@ -86,6 +86,12 @@ impl LtoLinker {
     /// reporting options with `NVJITLINK_ERROR_UNRECOGNIZED_OPTION`, the link
     /// is retried once without them and the returned [`LinkReport`] carries
     /// the linked image with no info log and no resource usage.
+    ///
+    /// The reported image is code-identical to a [`Self::link_ltoir`] image
+    /// but not byte-identical: ptxas records its own option line inside the
+    /// cubin's `.note.nv.tkinfo` section, so `-v` shows up there. Every
+    /// other section, including all generated code, is unchanged (verified
+    /// section-by-section on CUDA 13.3, sm_120).
     pub fn link_ltoir_with_report(
         &self,
         inputs: &[NamedInput<'_>],
