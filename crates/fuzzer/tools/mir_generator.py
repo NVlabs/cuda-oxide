@@ -11,9 +11,12 @@ composites, extracts the first generated custom-MIR function, and rewrites
 rustlantis' `dump_var(...)` terminators into calls to the cuda-oxide harness'
 generic `dump_var`.
 
-Composites reach the device; only the trace boundary is scalar. A dump site or
-return position holding a tuple or an array is still refused, since the trace
-API hashes scalars alone.
+Composites reach the device, and the trace boundary now takes them: a dump site
+or return position holding a tuple or an array folds as its leaves. What is
+still refused there is a shape with no leaf reading, such as a reference, a
+slice, or a tuple wider than the arity the trace API implements. An aggregate
+in an argument position is refused separately, by `literal_for_type`, which has
+no literal to construct for one.
 
 By default it emits a complete `generated_case.rs` module for the
 `rustlantis-smoke` example: imports, adapted MIR function, deterministic call
@@ -253,8 +256,8 @@ def literal_for_type(ty: str, idx: int) -> str:
     return values[idx % len(values)]
 
 
-def supported_trace_type(ty: str) -> bool:
-    return ty in {
+SCALAR_TRACE_TYPES = frozenset(
+    {
         "bool",
         "i8",
         "i16",
@@ -272,6 +275,36 @@ def supported_trace_type(ty: str) -> bool:
         "f32",
         "f64",
     }
+)
+
+# `TraceValue` is implemented for tuples up to arity 5, matching `TraceDump`.
+MAX_TRACE_TUPLE_ARITY = 5
+
+
+def supported_trace_type(ty: str) -> bool:
+    """Report whether the harness can fold a value of this type into the trace.
+
+    A scalar folds directly. An aggregate folds as its leaves, so it is
+    supported exactly when every leaf is, which makes this a recursive
+    question rather than a set membership one.
+    """
+    ty = ty.strip()
+    if ty in SCALAR_TRACE_TYPES:
+        return True
+
+    if ty.startswith("[") and ty.endswith("]"):
+        parsed = split_type_at_semicolon(ty[1:-1])
+        if parsed is None:
+            return False
+        return supported_trace_type(parsed[0])
+
+    if ty.startswith("(") and ty.endswith(")"):
+        fields = split_args(ty[1:-1])
+        if len(fields) > MAX_TRACE_TUPLE_ARITY:
+            return False
+        return all(supported_trace_type(field) for field in fields)
+
+    return False
 
 
 def adapt_function(fn_src: str, fn_name: str) -> str:

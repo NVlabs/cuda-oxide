@@ -152,7 +152,19 @@ fn trace_write_f64(val: f64) {
     trace_write_u64(bits);
 }
 
-/// Scalar values that can be folded into the trace.
+/// Values that can be folded into the trace.
+///
+/// A scalar folds as its bytes. An aggregate folds as its leaves, in
+/// declaration order, through those same scalar writers, so the byte sequence
+/// an aggregate produces is the one a scalar-by-scalar dump of the same leaves
+/// would produce. Composing that way keeps one trace model rather than two.
+///
+/// The fold reads leaves and never the aggregate's bytes. Padding is
+/// uninitialized, so folding raw bytes would be undefined behavior in the CPU
+/// oracle, and any layout the two backends pad differently would report a
+/// MISMATCH on every seed that touched it. Padding is also where the silent
+/// miscompile behind #393 lived, so a byte fold would bury the signal this
+/// fuzzer exists to find.
 pub trait TraceValue {
     fn trace_write(self);
 }
@@ -189,11 +201,62 @@ impl_trace_value! {
     f64 => trace_write_f64,
 }
 
-/// Aggregates of scalar values that can be folded into the trace in one call.
+/// An array folds each element in index order.
+///
+/// The walk is an indexed `while` rather than a `for` over the array's
+/// `IntoIterator`, because this code is compiled for the device as well as the
+/// host and #399 records that small local arrays consumed through iterator
+/// adapters stay in local memory. An index loop states the same thing without
+/// depending on how that resolves.
+impl<T: TraceValue + Copy, const N: usize> TraceValue for [T; N] {
+    #[inline]
+    fn trace_write(self) {
+        let mut index = 0;
+        while index < N {
+            self[index].trace_write();
+            index += 1;
+        }
+    }
+}
+
+macro_rules! impl_trace_value_tuple {
+    ($(($($field:tt: $ty:ident),+))+) => {
+        $(
+            impl<$($ty: TraceValue),+> TraceValue for ($($ty,)+) {
+                #[inline]
+                fn trace_write(self) {
+                    $(self.$field.trace_write();)+
+                }
+            }
+        )+
+    };
+}
+
+impl_trace_value_tuple! {
+    (0: A)
+    (0: A, 1: B)
+    (0: A, 1: B, 2: C)
+    (0: A, 1: B, 2: C, 3: D)
+    (0: A, 1: B, 2: C, 3: D, 4: E)
+}
+
+/// The unit type carries no leaves, so it folds to nothing.
+///
+/// The adapter prunes unit-typed values before it builds a dump tuple, so this
+/// exists for a unit nested inside an aggregate, which the adapter cannot see.
+impl TraceValue for () {
+    #[inline]
+    fn trace_write(self) {}
+}
+
+/// The argument bundle a single dump site folds into the trace.
 ///
 /// `dump_var` accepts any `TraceDump`. We provide implementations for `()` and
 /// tuples up to arity 5, which matches the largest argument bundle rustlantis
 /// emits today after we prune unit values from its `dump_var` calls.
+///
+/// This is the outer shape of a dump site. What each element may be is
+/// [`TraceValue`]'s question, and an element is free to be an aggregate.
 pub trait TraceDump {
     fn trace_dump(self);
 }
@@ -258,4 +321,65 @@ impl<A: TraceValue, B: TraceValue, C: TraceValue, D: TraceValue, E: TraceValue> 
 #[inline]
 pub fn dump_var<T: TraceDump>(value: T) {
     value.trace_dump();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fold<T: TraceValue>(value: T) -> u64 {
+        trace_reset();
+        value.trace_write();
+        trace_finish()
+    }
+
+    /// Every assertion lives in one test.
+    ///
+    /// The trace is a single `static mut`, and cargo runs test functions on
+    /// parallel threads, so two tests folding at once would race on it and
+    /// report whichever interleaving they happened to get.
+    #[test]
+    fn an_aggregate_folds_as_its_leaves() {
+        // An array folds as its elements, in index order.
+        assert_eq!(fold([1u8, 2, 3, 4]), {
+            trace_reset();
+            1u8.trace_write();
+            2u8.trace_write();
+            3u8.trace_write();
+            4u8.trace_write();
+            trace_finish()
+        });
+
+        // A tuple folds as its fields, in declaration order. `(u8, u32)` is
+        // the discriminating case: rustc lays it out with padding, and this
+        // holds only for an implementation that reads the two fields. Folding
+        // the aggregate's bytes instead would mix three padding bytes in and
+        // produce a different value here.
+        assert_eq!(fold((7u8, 0x1122_3344u32)), {
+            trace_reset();
+            7u8.trace_write();
+            0x1122_3344u32.trace_write();
+            trace_finish()
+        });
+
+        // Nesting composes: an array of tuples reaches every leaf.
+        assert_eq!(fold([(1u8, 2u16), (3u8, 4u16)]), {
+            trace_reset();
+            1u8.trace_write();
+            2u16.trace_write();
+            3u8.trace_write();
+            4u16.trace_write();
+            trace_finish()
+        });
+
+        // Order is part of the fold. An implementation walking an array
+        // backwards passes every assertion above and fails this one.
+        assert_ne!(fold([1u8, 2u8]), fold([2u8, 1u8]));
+
+        // A shape with no leaves folds to nothing, leaving the offset basis.
+        trace_reset();
+        let empty = trace_finish();
+        assert_eq!(fold([0u8; 0]), empty);
+        assert_eq!(fold(()), empty);
+    }
 }

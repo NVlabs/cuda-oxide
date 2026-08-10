@@ -72,24 +72,38 @@ rather than that file. Its header records this.
 - `UNSUPPORTED [adapter]`: rustlantis generated a MIR program, but our Python
   adapter refused to turn it into a cuda-oxide smoke case.
 
-For example, seed `0` dumps a `[i8; 1]`, which the trace API does not hash, so
-`--start 0 --count 2 --keep-going` currently reports:
+For example, seed `1436` returns a `*const i8`, which the trace API does not
+hash, so `--start 1436 --count 2 --keep-going` currently reports:
 
 ```text
 results:
-  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: [i8; 1] (crates/fuzzer/artifacts/seed-0-unsupported.log)
-  seed 1: PASS [run] CPU/GPU traces matched
+  seed 1436: UNSUPPORTED [adapter] unsupported return type for return-value tracing: *const i8 (crates/fuzzer/artifacts/seed-1436-unsupported.log)
+  seed 1437: PASS [run] CPU/GPU traces matched
 summary: PASS=1, UNSUPPORTED=1
 ```
 
+A pointer is a permanent refusal rather than a gap to widen later. The CPU
+oracle and the device hold different addresses for the same object by
+construction, so folding one into the trace would report a MISMATCH on every
+seed that dumped it.
+
 The typical `UNSUPPORTED [adapter]` cause is a generated `dump_var(...)` call
 or function signature that uses a type the adapter cannot rewrite. The trace
-API hashes:
+API hashes these scalars:
 
 ```text
 bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char,
 f32, f64
 ```
+
+It also hashes an array or a tuple of anything in that list, to any nesting
+depth, by folding the leaves. A tuple is hashed up to arity 5, matching the
+`TraceDump` implementations. An aggregate's padding is never read, so a dumped
+`(u8, u32)` hashes as the two fields and nothing else.
+
+What remains refused at a dump site is a shape with no leaf reading, such as a
+reference or a slice. An aggregate in an *argument* position is refused
+elsewhere, by `literal_for_type`, which has no literal to construct for one.
 
 In many `UNSUPPORTED [adapter]` cases, the MIR can probably be patched by
 widening the adapter and trace API. The adapter stops because it does not yet
@@ -163,12 +177,13 @@ invocation, so the logs and `summary.jsonl` always describe only the latest run.
 
 The terminal also prints a full per-seed summary; entries that wrote a log
 append its path, relative to the repo root. Without `--keep-going` a run
-stops at the first non-PASS seed, so `--start 0 --count 2` alone would end at
-seed 0's `UNSUPPORTED`. `--start 0 --count 2 --keep-going` currently prints:
+stops at the first non-PASS seed, so `--start 1436 --count 2` alone would end
+at seed 1436's `UNSUPPORTED`. `--start 1436 --count 2 --keep-going` currently
+prints:
 
 ```text
 results:
-  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: [i8; 1] (crates/fuzzer/artifacts/seed-0-unsupported.log)
-  seed 1: PASS [run] CPU/GPU traces matched
+  seed 1436: UNSUPPORTED [adapter] unsupported return type for return-value tracing: *const i8 (crates/fuzzer/artifacts/seed-1436-unsupported.log)
+  seed 1437: PASS [run] CPU/GPU traces matched
 summary: PASS=1, UNSUPPORTED=1
 ```
