@@ -137,6 +137,11 @@ impl Finalizer {
     }
 
     /// Compile NVVM IR to cubin and collect ptxas resource diagnostics.
+    ///
+    /// The diagnostics are best-effort: on an nvJitLink too old to accept the
+    /// reporting options, the link is retried without them and the report's
+    /// info log and resource usage are empty. See
+    /// [`LtoLinker::link_ltoir_with_report`].
     pub fn materialize_nvvm_ir_with_report(
         &self,
         module_name: &str,
@@ -165,6 +170,11 @@ impl Finalizer {
     }
 
     /// Link ordered LTOIR modules while collecting ptxas resource diagnostics.
+    ///
+    /// The diagnostics are best-effort: on an nvJitLink too old to accept the
+    /// reporting options, the link is retried without them and the report's
+    /// info log and resource usage are empty. See
+    /// [`LtoLinker::link_ltoir_with_report`].
     pub fn link_ltoir_with_report(
         &self,
         inputs: &[NamedInput<'_>],

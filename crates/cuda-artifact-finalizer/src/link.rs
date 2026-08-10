@@ -77,8 +77,15 @@ impl LtoLinker {
 
     /// Link LTOIR while collecting non-semantic ptxas resource diagnostics.
     ///
-    /// For cubin output this requests nvJitLink verbose output and `ptxas -v`.
-    /// Those reporting flags are intentionally excluded from artifact digests.
+    /// For cubin output this requests nvJitLink verbose output and `ptxas -v`,
+    /// and bypasses nvJitLink's own JIT cache: a cache hit skips ptxas and
+    /// would return an empty report. The reporting flags are intentionally
+    /// excluded from artifact digests.
+    ///
+    /// The report is best-effort: if the loaded nvJitLink rejects the
+    /// reporting options with `NVJITLINK_ERROR_UNRECOGNIZED_OPTION`, the link
+    /// is retried once without them and the returned [`LinkReport`] carries
+    /// the linked image with no info log and no resource usage.
     pub fn link_ltoir_with_report(
         &self,
         inputs: &[NamedInput<'_>],
@@ -101,45 +108,67 @@ impl LtoLinker {
             self.tool.digest,
             || current_linker_tool_digest(&self.tool),
             || {
-                let mut option_storage = options.nvjitlink_options(output);
-                if collect_resource_usage {
-                    option_storage.extend(options.nvjitlink_diagnostic_options(output));
+                match self.run_link(inputs, options, output, collect_resource_usage) {
+                    // Older nvJitLink versions reject the diagnostic-only
+                    // reporting options with NVJITLINK_ERROR_UNRECOGNIZED_OPTION.
+                    // The caller asked for the same program plus a best-effort
+                    // report, so degrade to a plain link with an empty report
+                    // rather than failing the whole link.
+                    Err(FinalizerError::NvJitLink(error))
+                        if collect_resource_usage && error.is_unrecognized_option() =>
+                    {
+                        self.run_link(inputs, options, output, false)
+                    }
+                    result => result,
                 }
-                let option_refs = option_storage
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>();
-                let mut linker = Linker::new(&self.tool.library, &option_refs)?;
-                for input in inputs {
-                    linker.add(InputType::Ltoir, input.bytes, input.name)?;
-                }
-
-                let LinkOutput { image, info_log } = match output {
-                    FinalizerOutput::Cubin => linker.finish_with_info_log()?,
-                    FinalizerOutput::Ptx => linker.finish_ptx_with_info_log()?,
-                };
-                if output == FinalizerOutput::Cubin && !is_valid_cubin(&image) {
-                    return Err(FinalizerError::InvalidCubin);
-                }
-                if output == FinalizerOutput::Ptx && image.is_empty() {
-                    return Err(FinalizerError::EmptyPtx);
-                }
-
-                let resource_usage = if collect_resource_usage {
-                    info_log
-                        .as_deref()
-                        .map(parse_ptxas_resource_usage)
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                Ok(LinkReport {
-                    image,
-                    info_log,
-                    resource_usage,
-                })
             },
         )
+    }
+
+    fn run_link(
+        &self,
+        inputs: &[NamedInput<'_>],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+        collect_resource_usage: bool,
+    ) -> Result<LinkReport, FinalizerError> {
+        let mut option_storage = options.nvjitlink_options(output);
+        if collect_resource_usage {
+            option_storage.extend(options.nvjitlink_diagnostic_options(output));
+        }
+        let option_refs = option_storage
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let mut linker = Linker::new(&self.tool.library, &option_refs)?;
+        for input in inputs {
+            linker.add(InputType::Ltoir, input.bytes, input.name)?;
+        }
+
+        let LinkOutput { image, info_log } = match output {
+            FinalizerOutput::Cubin => linker.finish_with_info_log()?,
+            FinalizerOutput::Ptx => linker.finish_ptx_with_info_log()?,
+        };
+        if output == FinalizerOutput::Cubin && !is_valid_cubin(&image) {
+            return Err(FinalizerError::InvalidCubin);
+        }
+        if output == FinalizerOutput::Ptx && image.is_empty() {
+            return Err(FinalizerError::EmptyPtx);
+        }
+
+        let resource_usage = if collect_resource_usage {
+            info_log
+                .as_deref()
+                .map(parse_ptxas_resource_usage)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(LinkReport {
+            image,
+            info_log,
+            resource_usage,
+        })
     }
 
     /// Digest every semantic input to an ordered LTOIR link.
