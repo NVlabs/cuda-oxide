@@ -105,6 +105,7 @@ pub(crate) fn shared_array_pointer_method(path: &str) -> Option<SharedArrayPoint
 /// so it's safe to call even if already registered.
 pub fn register_dialects(ctx: &mut Context) {
     dialect_mir::register(ctx);
+    dialect_iket::register(ctx);
 
     // dialect-nvvm is required for thread / block / warp intrinsics.
     dialect_nvvm::register(ctx);

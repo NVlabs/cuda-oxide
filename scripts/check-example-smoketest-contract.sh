@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the two things scripts/smoketest.sh assumes about the examples, both
+# Verify the three things scripts/smoketest.sh assumes about the examples, all
 # of which are otherwise only discoverable by running the suite on a GPU:
 #
 #   1. Every name in a *_EXAMPLES array is a real example directory.  These
@@ -7,14 +7,20 @@
 #      loudly -- the entry simply matches nothing and the example silently
 #      falls through to the `standard` category and the wrong verdict rules.
 #
-#   2. Every `standard` example can actually report success.  That category's
+#   2. No example is claimed by two category arrays.  classify() returns the
+#      first category that matches, so a second claim is not a conflict it can
+#      report -- it is silently ignored, taking the example's arch gate and
+#      verdict rules with it.  Listing `wgmma` in TCGEN05_EXAMPLES, say, gates
+#      a Hopper example on Blackwell and both existing guards still pass.
+#
+#   3. Every `standard` example can actually report success.  That category's
 #      verdict requires a SUCCESS/PASS/Complete marker in the output, and an
 #      example that verifies its results but never prints one is reported as
 #      `FAIL (no success marker)`.  That is a false failure, and it has landed
 #      before: 981b9eb0 had to add a marker to disjoint_from_raw_parts after
 #      #670 (the new example) and #665 (stricter verdicts) merged in one batch.
 #
-# Neither check needs a GPU, and neither is reachable from the compile-only CI
+# None of these need a GPU, and none is reachable from the compile-only CI
 # lane, which collapses every category into verdict_compile.
 #
 # Run this after adding an example or editing a *_EXAMPLES array.
@@ -70,7 +76,7 @@ on_disk = sorted(
 
 # Parse self-tests: a guard whose failure mode is "matched nothing" has to
 # prove it still reads both inputs before a clean result is believed.
-if len(lists) < 8:
+if len(lists) < 9:
     sys.exit(f"parse self-test failed: found {len(lists)} *_EXAMPLES arrays in {smoketest}")
 if len(on_disk) < 100:
     sys.exit(f"parse self-test failed: found {len(on_disk)} examples under {examples_root}")
@@ -94,6 +100,7 @@ CATEGORY_LISTS = (
     "LTOIR_EXAMPLES",
     "LTOIR_MODERN_EXAMPLES",
     "AUTO_NVVM_EXAMPLES",
+    "IKET_EXAMPLES",
     "BLACKWELL_COMPILE_EXAMPLES",
     "ERROR_EXAMPLES",
 )
@@ -108,6 +115,24 @@ if missing_arrays:
 categorised = {
     entry for name in CATEGORY_LISTS for entry in by_name[name].split()
 }
+
+# classify() returns the *first* category that claims an example, so an entry
+# in two category arrays silently takes whichever loop runs first, and with it
+# the wrong compute-capability gate and the wrong verdict rules. Nothing else
+# reports that: the phantom check above passes because both names are real
+# examples, and the set comprehension here discards the duplicate by
+# construction. Uniqueness has to be asserted against the raw lists.
+claimed_by = {}
+for name in CATEGORY_LISTS:
+    for entry in by_name[name].split():
+        claimed_by.setdefault(entry, []).append(name)
+for entry, names in sorted(claimed_by.items()):
+    if len(names) > 1:
+        failures.append(
+            f"{entry} is claimed by {len(names)} category arrays "
+            f"({', '.join(names)}); classify() checks {names[0]} first "
+            "and ignores the rest"
+        )
 
 unmarked = []
 for example in on_disk:
@@ -143,7 +168,8 @@ if failures:
 
 standard = len(on_disk) - len(categorised)
 print(
-    f"OK: {len(lists)} *_EXAMPLES arrays name only real examples, and all "
-    f"{standard} standard examples print a success marker."
+    f"OK: {len(lists)} *_EXAMPLES arrays name only real examples, no example "
+    f"is claimed by two categories, and all {standard} standard examples "
+    "print a success marker."
 )
 PY

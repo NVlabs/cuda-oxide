@@ -94,9 +94,9 @@ impl NvvmCompiler {
                 program.add_module(&self.libdevice, "libdevice.10.bc")?;
                 program.add_module(nvvm_ir, module_name)?;
 
-                let verify = options.nvvm_verify_options();
-                let verify_refs = verify.iter().map(String::as_str).collect::<Vec<_>>();
-                program.verify(&verify_refs)?;
+                // Compilation is the authoritative acceptance boundary.
+                // nvvmVerifyProgram rejects atomic loads and stores that the
+                // same libNVVM installation can compile successfully.
                 let compile = options.nvvm_compile_options();
                 let compile_refs = compile.iter().map(String::as_str).collect::<Vec<_>>();
                 Ok(program.compile(&compile_refs)?)
@@ -232,9 +232,6 @@ pub(crate) fn nvvm_ir_artifact_digest_parts(
         .field("module", nvvm_ir)
         .field("module-order", b"libdevice.10.bc,user-nvvm-ir")
         .field("libdevice-sha256", libdevice_digest);
-    for option in options.nvvm_verify_options() {
-        digest = digest.field("nvvm-verify-option", option.as_bytes());
-    }
     for option in options.nvvm_compile_options() {
         digest = digest.field("nvvm-compile-option", option.as_bytes());
     }
@@ -244,6 +241,38 @@ pub(crate) fn nvvm_ir_artifact_digest_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MODERN_ATOMIC_LOAD_NVVM_IR: &[u8] = br#"
+target datalayout = "e-p:64:64:64-p3:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-f128:128:128-v16:16:16-v32:32:32-v64:64:64-v128:128-n16:32:64-a:8:8"
+target triple = "nvptx64-nvidia-cuda"
+
+define void @kernel(ptr %value) {
+entry:
+  %loaded = load atomic i32, ptr %value syncscope("device") acquire, align 4
+  ret void
+}
+
+!nvvm.annotations = !{!0}
+!nvvmir.version = !{!1}
+!0 = !{ptr @kernel, !"kernel", i32 1}
+!1 = !{i32 2, i32 0, i32 3, i32 2}
+"#;
+
+    const MALFORMED_MODERN_NVVM_IR: &[u8] = br#"
+target datalayout = "e-p:64:64:64-p3:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-f128:128:128-v16:16:16-v32:32:32-v64:64:64-v128:128-n16:32:64-a:8:8"
+target triple = "nvptx64-nvidia-cuda"
+
+define void @kernel() {
+entry:
+  %invalid = add i32 1, ptr null
+  ret void
+}
+
+!nvvm.annotations = !{!0}
+!nvvmir.version = !{!1}
+!0 = !{ptr @kernel, !"kernel", i32 1}
+!1 = !{i32 2, i32 0, i32 3, i32 2}
+"#;
 
     #[test]
     fn nvvm_digest_covers_module_name_bytes_options_and_libdevice() {
@@ -295,6 +324,32 @@ mod tests {
                 &[1; 32],
                 &[2; 32]
             )
+        );
+    }
+
+    #[test]
+    #[ignore = "requires discoverable CUDA Toolkit libNVVM and libdevice"]
+    fn live_compile_accepts_atomic_load_and_rejects_malformed_ir() {
+        let compiler = NvvmCompiler::discover().unwrap();
+        let options = FinalizationOptions::new("sm_120a".parse().unwrap());
+
+        let ltoir = compiler
+            .compile_nvvm_ir_to_ltoir("atomic-load.ll", MODERN_ATOMIC_LOAD_NVVM_IR, &options)
+            .unwrap();
+        assert!(!ltoir.is_empty());
+
+        let error = compiler
+            .compile_nvvm_ir_to_ltoir("malformed.ll", MALFORMED_MODERN_NVVM_IR, &options)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                FinalizerError::Nvvm(libnvvm_sys::NvvmError::Call {
+                    operation: "nvvmCompileProgram",
+                    ..
+                })
+            ),
+            "unexpected error: {error}"
         );
     }
 }

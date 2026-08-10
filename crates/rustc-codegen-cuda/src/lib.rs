@@ -176,7 +176,8 @@
 //! because rustc's MIR pretty-printer routinely emits `std::*` for items
 //! that are merely re-exported from `core`.
 //!
-//! See [`collector::should_collect_from_crate`] for the exact policy.
+//! See `DeviceCollector::should_collect_from_crate` in `collector` for the
+//! exact policy.
 //!
 //! ### Why `std::*` shows up in MIR dumps (and isn't a problem)
 //!
@@ -289,9 +290,15 @@
 //!
 //! ## Module Structure
 //!
-//! - [`collector`]: Device function collection via MIR call graph traversal
-//! - [`device_codegen`]: Bridge to the cuda-oxide pipeline (MIR → PTX)
-//! - [`layout`]: Unified type layouts for host/device ABI compatibility
+//! These are private implementation modules, so they are named rather than
+//! linked: rustdoc rejects a link from public crate documentation to a private
+//! item.
+//!
+//! - `collector`: Device function collection via MIR call graph traversal
+//! - `device_codegen`: Bridge to the cuda-oxide pipeline (MIR → PTX)
+//! - `generated_intrinsics`: Generated intrinsic definitions and dispatch
+//! - `materialize`: Strict, opt-in build-time finalization of embedded device
+//!   artifacts
 
 #![feature(rustc_private)]
 #![allow(unused_imports)]
