@@ -153,7 +153,10 @@ fn evaluates_complex_place() {
     let _ = values;
 }
 
-fn maximum_marker_arity() {
+// Not the reachable maximum (that is 16 inout + 16 in = arity 32, exercised
+// against the real crate in ptx_asm_marker_arity_contract.rs); this file's
+// mock marker surface stops at 24.
+fn eight_inouts_with_full_input_block() {
     let mut o0 = 0u32;
     let mut o1 = 1u32;
     let mut o2 = 2u32;
