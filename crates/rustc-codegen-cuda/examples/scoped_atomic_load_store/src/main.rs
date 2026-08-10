@@ -41,7 +41,7 @@ const N: usize = 256;
 #[cuda_module]
 mod kernels {
     use super::*;
-    use core::sync::atomic::{Ordering, fence};
+    use core::sync::atomic::{Ordering, compiler_fence, fence};
     use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32, DeviceAtomicU64};
 
     /// Each thread publishes a payload with a release store, then reads its
@@ -82,6 +82,12 @@ mod kernels {
         // Exercise the source-level core fence path from issue #723. Core
         // atomics use system scope, so Release lowers to fence.acq_rel.sys.
         fence(Ordering::Release);
+
+        // `compiler_fence` is the weaker sibling (issue #781): it constrains
+        // only the optimizer and must emit no hardware barrier at all, so it
+        // lowers to an empty side-effecting asm carrying a `~{memory}` clobber.
+        // Placed between two stores, which is the ordering it exists to keep.
+        compiler_fence(Ordering::Release);
 
         // Pair writers with readers without spinning: a hung example is a far
         // worse failure mode than a slightly weaker test, and the instruction
