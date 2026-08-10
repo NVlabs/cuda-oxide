@@ -11,10 +11,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Only checkout rights by default. The Pages deployment permissions live on
+# the deploy job alone, so the build job, which is what pull requests run,
+# never holds a write token.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Serialising every run under one `pages` group is a deploy constraint, and
 # applying it workflow-wide would queue unrelated PR builds behind each other.
@@ -56,10 +57,13 @@ jobs:
 
   deploy:
     needs: build
-    # Publishing is for main only. A pull request builds the book to prove it is
-    # sound and stops there; it never touches the Pages environment, and the
-    # `pages: write` / `id-token: write` permissions go unused on that path.
+    # Publishing is for main only. A pull request builds the book to prove it
+    # is sound and stops there; it never touches the Pages environment or
+    # holds the deployment permissions below.
     if: github.event_name != 'pull_request'
+    permissions:
+      pages: write
+      id-token: write
     concurrency:
       group: pages
       cancel-in-progress: false
