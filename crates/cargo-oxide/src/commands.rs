@@ -1775,13 +1775,23 @@ fn build_interop_device_crate(
         std::process::exit(1);
     });
     let device_dir = manifest_path.parent().unwrap_or(example_dir);
+    // One `cargo metadata` invocation answers both consumers: bin-target
+    // resolution before the build and the uplifted depfile location after
+    // it. Skip it entirely when neither feature is requested.
+    let cargo_metadata = (device_crate.bin.is_some() || device_crate.source_identity).then(|| {
+        interop_cargo_metadata(ctx, device_dir, &manifest_path).unwrap_or_else(|error| {
+            eprintln!("Error: could not query cargo metadata for the device crate: {error}");
+            std::process::exit(1);
+        })
+    });
     let binary_target = device_crate.bin.as_deref().map(|bin| {
-        resolve_interop_binary_target(ctx, device_dir, &manifest_path, bin).unwrap_or_else(
-            |error| {
-                eprintln!("Error: could not resolve device binary target: {error}");
-                std::process::exit(1);
-            },
-        )
+        let metadata = cargo_metadata
+            .as_ref()
+            .expect("cargo metadata is fetched whenever a bin target is configured");
+        interop_binary_target_from_metadata(metadata, &manifest_path, bin).unwrap_or_else(|error| {
+            eprintln!("Error: could not resolve device binary target: {error}");
+            std::process::exit(1);
+        })
     });
     let artifact_dir = example_dir.join(&device_crate.artifact_dir);
     std::fs::create_dir_all(&artifact_dir).unwrap_or_else(|e| {
@@ -1889,12 +1899,14 @@ fn build_interop_device_crate(
                     std::process::exit(1);
                 });
         let cargo_target_name = interop_device_cargo_target_name(&manifest_path, device_crate);
-        let depfile_path =
-            release_depfile_path(ctx, device_dir, &manifest_path, &cargo_target_name)
-                .unwrap_or_else(|error| {
-                    eprintln!("Error: could not locate device dependency file: {error}");
-                    std::process::exit(1);
-                });
+        let metadata = cargo_metadata
+            .as_ref()
+            .expect("cargo metadata is fetched whenever source-identity is configured");
+        let depfile_path = release_depfile_path_from_metadata(metadata, &cargo_target_name)
+            .unwrap_or_else(|error| {
+                eprintln!("Error: could not locate device dependency file: {error}");
+                std::process::exit(1);
+            });
         if !depfile_path.is_file() {
             eprintln!(
                 "Error: device crate build succeeded but did not produce dependency file {}",
@@ -5506,16 +5518,6 @@ fn normalize_crate_name(package_name: &str) -> String {
     package_name.replace('-', "_")
 }
 
-fn release_depfile_path(
-    ctx: &Context,
-    device_dir: &Path,
-    manifest_path: &Path,
-    cargo_target_name: &str,
-) -> Result<PathBuf, String> {
-    let metadata = interop_cargo_metadata(ctx, device_dir, manifest_path)?;
-    release_depfile_path_from_metadata(&metadata, cargo_target_name)
-}
-
 /// Where cargo uplifts the dep-info file for a release binary target.
 ///
 /// Cargo names the uplifted copy after the bin target verbatim, hyphens
@@ -5567,16 +5569,6 @@ fn interop_cargo_metadata(
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("could not parse cargo metadata JSON: {error}"))
-}
-
-fn resolve_interop_binary_target(
-    ctx: &Context,
-    device_dir: &Path,
-    manifest_path: &Path,
-    bin: &str,
-) -> Result<InteropBinaryTarget, String> {
-    let metadata = interop_cargo_metadata(ctx, device_dir, manifest_path)?;
-    interop_binary_target_from_metadata(&metadata, manifest_path, bin)
 }
 
 fn interop_binary_target_from_metadata(
