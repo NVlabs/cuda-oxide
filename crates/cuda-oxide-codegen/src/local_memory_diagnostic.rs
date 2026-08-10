@@ -457,6 +457,22 @@ mod tests {
     }
 
     #[test]
+    fn capped_payloads_still_attribute_the_local() {
+        // The exporter caps the payload length before hex-encoding; a
+        // truncated trailing type spelling must not lose the report.
+        let full = format!("7\t4096\tstate\t{}", "VeryLongTypeName".repeat(8));
+        let truncated = &full[..40];
+        let name = alloca_name(truncated);
+        let llvm = format!(
+            "define void @kernel() {{\nentry:\n  {name} = alloca [512 x i64], align 8\n  ret void\n}}\n"
+        );
+        let diagnostics = diagnose_text(&llvm);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("local `state`"));
+        assert!(diagnostics[0].contains("4096 bytes"));
+    }
+
+    #[test]
     fn payload_without_the_sentinel_is_not_trusted() {
         // Without the terminating `_` a trailing uniquing digit is
         // indistinguishable from payload, so such names must be ignored

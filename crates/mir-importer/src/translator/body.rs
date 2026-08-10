@@ -671,8 +671,39 @@ fn local_memory_type_name(ty: &Ty) -> String {
             format!("[{}; {count}]", local_memory_type_name(&element))
         }
         TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => adt_def.trimmed_name(),
-        _ => format!("{ty:?}"),
+        // Closure and coroutine environments reach here through
+        // `var_debug_info` merged from MIR-inlined callees (iterator adapters
+        // name their closure parameters, e.g. `f`). Their `{ty:?}` dump spells
+        // DefIds and generic args recursively and can run to many kilobytes,
+        // which would then be hex-encoded into an SSA value name; LLVM's
+        // textual parser mis-lexes identifiers that long. Spell them the way
+        // rustc diagnostics do instead.
+        TyKind::RigidTy(RigidTy::Closure(..)) => "{closure}".to_string(),
+        TyKind::RigidTy(
+            RigidTy::Coroutine(..) | RigidTy::CoroutineClosure(..) | RigidTy::CoroutineWitness(..),
+        ) => "{coroutine}".to_string(),
+        _ => bounded_type_spelling(ty),
     }
+}
+
+/// Debug-format spelling for type kinds without a dedicated compact arm,
+/// hard-capped in length.
+///
+/// The spelling exists to be read in a one-line warning and travels inside an
+/// SSA value name, so an unbounded `{ty:?}` dump is never acceptable here even
+/// for kinds this function does not anticipate.
+fn bounded_type_spelling(ty: &Ty) -> String {
+    const MAX_TYPE_SPELLING_BYTES: usize = 64;
+    let mut spelled = format!("{ty:?}");
+    if spelled.len() > MAX_TYPE_SPELLING_BYTES {
+        let mut cut = MAX_TYPE_SPELLING_BYTES;
+        while !spelled.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        spelled.truncate(cut);
+        spelled.push_str("...");
+    }
+    spelled
 }
 
 /// Describe one MIR local as the provenance attribute carried by `mir.alloca`.

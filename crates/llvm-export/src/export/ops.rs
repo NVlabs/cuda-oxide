@@ -238,6 +238,17 @@ impl LlvmOp<'_> {
 const LOCAL_MEMORY_VALUE_PREFIX: &str = "__cuda_oxide_local_x";
 const LOCAL_MEMORY_ALLOCA_PREFIX: &str = "__cuda_oxide_local_alloca_x";
 
+/// Ceiling for the pre-hex provenance payload.
+///
+/// Hex encoding doubles the byte count, and LLVM's textual parser mis-lexes
+/// value names longer than roughly a kilobyte (empirically the failure
+/// surfaces as a bogus "multiple definition of local value" parse error), so
+/// the whole `%__cuda_oxide_local_x<hex>_` identifier must stay comfortably
+/// below that. The importer already spells types compactly; this cap makes
+/// the exporter safe against any producer, since the attribute itself places
+/// no bound on field lengths.
+const LOCAL_MEMORY_MAX_PAYLOAD_BYTES: usize = 256;
+
 /// Serialize a [`crate::ops::LocalMemoryProvenanceAttr`] into the hex payload
 /// carried by the alloca's SSA value name.
 ///
@@ -249,13 +260,22 @@ const LOCAL_MEMORY_ALLOCA_PREFIX: &str = "__cuda_oxide_local_alloca_x";
 /// numeric name-uniquing suffixes (a second inlined copy of the same local
 /// becomes `<name>1`) cannot extend or garble the payload.
 fn encode_local_memory_provenance(provenance: &crate::ops::LocalMemoryProvenanceAttr) -> String {
-    let payload = format!(
+    let mut payload = format!(
         "{}\t{}\t{}\t{}",
         provenance.local_index,
         provenance.size_bytes,
         provenance.binding_name.as_str(),
         provenance.type_name.as_str()
     );
+    if payload.len() > LOCAL_MEMORY_MAX_PAYLOAD_BYTES {
+        // Truncate on a char boundary so the decoded bytes stay valid UTF-8;
+        // only the trailing type spelling loses detail.
+        let mut cut = LOCAL_MEMORY_MAX_PAYLOAD_BYTES;
+        while !payload.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        payload.truncate(cut);
+    }
     let mut encoded = String::with_capacity(payload.len() * 2 + 1);
     for byte in payload.as_bytes() {
         write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
@@ -2002,5 +2022,52 @@ fn fmt_syncscope(scope: Option<Ref<StringAttr>>) -> String {
     match scope.map(|s| String::from((*s).clone())) {
         Some(s) if !s.is_empty() => format!(" syncscope(\"{s}\")"),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::LocalMemoryProvenanceAttr;
+
+    fn decode_hex_payload(encoded: &str) -> String {
+        let hex = encoded.strip_suffix('_').expect("sentinel-terminated");
+        let bytes = (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).unwrap())
+            .collect();
+        String::from_utf8(bytes).expect("capped payload stays valid UTF-8")
+    }
+
+    #[test]
+    fn provenance_encoding_round_trips_and_is_sentinel_terminated() {
+        let provenance = LocalMemoryProvenanceAttr {
+            local_index: 3,
+            size_bytes: 16,
+            binding_name: "scratch".into(),
+            type_name: "[u32; 4]".into(),
+        };
+        let encoded = encode_local_memory_provenance(&provenance);
+        assert_eq!(decode_hex_payload(&encoded), "3\t16\tscratch\t[u32; 4]");
+    }
+
+    #[test]
+    fn oversized_provenance_payloads_are_capped_for_llvm() {
+        // LLVM's textual parser mis-lexes kilobyte-long value names, so a
+        // pathological type spelling must not reach the emitted identifier
+        // at full length.
+        let provenance = LocalMemoryProvenanceAttr {
+            local_index: 7,
+            size_bytes: 4096,
+            binding_name: "state".into(),
+            type_name: "Ty { … }".repeat(1000).into(),
+        };
+        let encoded = encode_local_memory_provenance(&provenance);
+        assert!(encoded.len() <= LOCAL_MEMORY_MAX_PAYLOAD_BYTES * 2 + 1);
+        // The capped payload still decodes as UTF-8 (the truncation respects
+        // char boundaries even through the multi-byte ellipsis) and keeps the
+        // leading fields intact.
+        let decoded = decode_hex_payload(&encoded);
+        assert!(decoded.starts_with("7\t4096\tstate\tTy { "));
     }
 }
