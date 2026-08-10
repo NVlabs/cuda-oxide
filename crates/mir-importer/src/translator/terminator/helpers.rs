@@ -57,26 +57,6 @@ pub fn emit_goto(
     goto_op
 }
 
-/// The type a call writes through `destination`, honouring any projection.
-///
-/// `body.locals()[destination.local].ty` answers for a bare local and is wrong
-/// for a projected one: it gives the pointer for `(*p)` and the whole aggregate
-/// for `x.0`. `Place::ty` walks the projection, which is what the result of the
-/// call actually has to be.
-pub fn destination_type(
-    ctx: &mut Context,
-    body: &mir::Body,
-    destination: &mir::Place,
-) -> TranslationResult<pliron::r#type::TypeHandle> {
-    let rust_ty = destination.ty(body.locals()).map_err(|e| {
-        pliron::input_error_noloc!(TranslationErr::unsupported(format!(
-            "Failed to query call destination type: {:?}",
-            e
-        )))
-    })?;
-    crate::translator::types::translate_type(ctx, &rust_ty)
-}
-
 /// Writes `value` into `destination`, honouring a projection on it.
 ///
 /// A bare local goes to its slot, as before. A projected destination needs the
@@ -88,6 +68,11 @@ pub fn destination_type(
 /// are modelled. Anything else is refused rather than written to the wrong
 /// place, since a store aimed at the wrong address is a miscompile and an
 /// unsupported-construct error is not.
+///
+/// Known fidelity gap: rustc evaluates the destination address *before* the
+/// call, but this path materializes it *after* the call op. The difference is
+/// observable only from custom MIR where the callee mutates the destination's
+/// base local through a `&mut` argument.
 pub fn store_result_to_place(
     ctx: &mut Context,
     body: &mir::Body,
