@@ -331,6 +331,19 @@ fn convert_mem_transfer(
 /// `abi_align` is still in hand; by the time a load that consumes the address is
 /// converted, `mir.field_addr` is already a GEP and the MIR aggregate type is no
 /// longer reachable from the load's operands.
+///
+/// Known fidelity limit: the claim rides the address value, not the place
+/// access that justified it. `&raw const (*p).x` through a merely 4-aligned
+/// `p: *const Aligned8` is legal Rust so long as the place itself is never
+/// accessed, yet the later read through the raw pointer consumes this same
+/// stamped GEP and inherits the aggregate's alignment, an over-claim for that
+/// pointer. rustc keeps the two apart by threading alignment through place
+/// evaluation and dropping it at the `&raw` boundary; dialect-mir erases that
+/// distinction before lowering runs, so full fidelity would require stamping
+/// loads during MIR translation instead. Accepted for now: the pattern needs
+/// an actually under-aligned pointer to an over-aligned aggregate, projected
+/// via `&raw` inside a kernel, and any direct access through such a place is
+/// UB to begin with.
 fn pointer_proved_alignment(ctx: &Context, ptr: Value) -> Option<u64> {
     let defining_op = ptr.defining_op()?;
     llvm_export::ops::address_alignment(ctx, defining_op).map(u64::from)
@@ -1458,6 +1471,120 @@ mod tests {
         let body = kernel_blocks(&ctx, module_ptr);
         assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
         assert_eq!(count_ops::<mir::MirLoadOp>(&ctx, &body), 0);
+    }
+
+    /// Lower `mir.load (mir.field_addr %p, field_index)` for a struct of
+    /// signless integer fields with the given layout and report the alignment
+    /// stamped on the resulting `llvm.load`. `None` means no stamp survived
+    /// and the exporter's natural-alignment default applies.
+    fn lowered_field_load_alignment(
+        field_bit_widths: Vec<u32>,
+        field_offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+        field_index: u32,
+    ) -> Option<u32> {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let field_types: Vec<TypeHandle> = field_bit_widths
+            .iter()
+            .map(|w| IntegerType::get(&ctx, *w, Signedness::Signless).into())
+            .collect();
+        let field_names = (0..field_types.len()).map(|i| format!("f{i}")).collect();
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "FieldLoadAlign".into(),
+            field_names,
+            field_types.clone(),
+            vec![],
+            field_offsets,
+            total_size,
+            abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, false);
+        let field_ty = field_types[field_index as usize];
+        let field_ptr_ty = MirPtrType::get_generic(&mut ctx, field_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![struct_ptr_ty.into()], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![field_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op)
+            .set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+        field_addr_op.insert_at_back(block, &ctx);
+        let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![field_ty],
+            vec![field_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        llvm_export::ops::op_alignment(&ctx, load.get_operation())
+    }
+
+    /// Field 0 of an over-aligned struct sits at the aggregate's own
+    /// alignment, which the field's scalar result type cannot state on its
+    /// own. This is what lets LoadStoreVectorizer fuse the adjacent pair.
+    #[test]
+    fn convert_load_inherits_overaligned_field_alignment_at_offset_zero() {
+        // #[repr(C, align(8))] struct { a: i32, b: i32 }
+        assert_eq!(
+            lowered_field_load_alignment(vec![32, 32], vec![0, 4], 8, 8, 0),
+            Some(8)
+        );
+    }
+
+    /// A field at a nonzero offset proves `gcd(abi_align, offset)`: an i32 at
+    /// offset 8 of an align-16 struct proves 8, beating its natural 4.
+    #[test]
+    fn convert_load_narrows_field_alignment_to_gcd_of_align_and_offset() {
+        // #[repr(C, align(16))] struct { a: i64, b: i32 }
+        assert_eq!(
+            lowered_field_load_alignment(vec![64, 32], vec![0, 8], 16, 16, 1),
+            Some(8)
+        );
+    }
+
+    /// A struct with no extra alignment proves nothing beyond the scalar's
+    /// natural alignment: the stamp equals the exporter's default 4, so the
+    /// emitted access is unchanged.
+    #[test]
+    fn convert_load_keeps_natural_alignment_without_overalignment() {
+        // struct { a: i32, b: i32 } with rustc's natural abi_align 4
+        assert_eq!(
+            lowered_field_load_alignment(vec![32, 32], vec![0, 4], 8, 4, 1),
+            Some(4)
+        );
+    }
+
+    /// dialect-mir only verifier-enforces power-of-two alignment for unions
+    /// and enums. A malformed hand-built struct layout must decline the stamp
+    /// rather than emit a non-power-of-two `align N` that llc rejects.
+    #[test]
+    fn convert_load_declines_non_power_of_two_field_alignment() {
+        assert_eq!(
+            lowered_field_load_alignment(vec![32], vec![0], 12, 12, 0),
+            None
+        );
     }
 
     #[test]

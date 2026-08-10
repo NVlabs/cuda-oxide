@@ -2,7 +2,7 @@
 name = "aligned_field_loads"
 version = "0.1.0"
 edition = "2024"
-authors = ["Nihal Pasham <nihalp@nvidia.com>"]
+authors = ["Vyncint Ng <115854244+vyncint@users.noreply.github.com>"]
 license = "Apache-2.0"
 
 # Mark as standalone crate (not part of parent workspace)
@@ -10,7 +10,7 @@ license = "Apache-2.0"
 
 # This example demonstrates unified compilation with rustc-codegen-cuda.
 # Build with:
-#   cargo oxide run vecadd
+#   cargo oxide run aligned_field_loads
 # Or manually:
 #   RUSTFLAGS="-Z codegen-backend=path/to/librustc_codegen_cuda.so" cargo build --release
 

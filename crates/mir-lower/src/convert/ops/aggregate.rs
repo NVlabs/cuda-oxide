@@ -1849,6 +1849,13 @@ fn stamp_field_address_alignment(
     } else {
         gcd(abi_align, offset)
     };
+    // Every rustc layout has a power-of-two `abi_align`, but dialect-mir only
+    // verifier-enforces that for unions and enums; a malformed hand-built
+    // struct or tuple layout could reach here with e.g. 12, and a
+    // non-power-of-two `align N` is invalid LLVM IR that llc rejects.
+    if !provable.is_power_of_two() {
+        return;
+    }
     if let Ok(align) = u32::try_from(provable) {
         llvm_export::ops::set_address_alignment(ctx, gep, align);
     }
