@@ -5380,16 +5380,31 @@ fn release_depfile_path(
     ctx: &Context,
     device_dir: &Path,
     manifest_path: &Path,
-    package_name: &str,
+    cargo_target_name: &str,
 ) -> Result<PathBuf, String> {
     let metadata = interop_cargo_metadata(ctx, device_dir, manifest_path)?;
+    release_depfile_path_from_metadata(&metadata, cargo_target_name)
+}
+
+/// Where cargo uplifts the dep-info file for a release binary target.
+///
+/// Cargo names the uplifted copy after the bin target verbatim, hyphens
+/// preserved: building the `simt-device` target writes
+/// `target/release/simt-device` and `target/release/simt-device.d` (this
+/// repo's own build writes `target/debug/cargo-oxide.d`). Only the internal
+/// per-unit copies under `target/release/deps/` use the underscore-normalized
+/// crate name, so the stem here must NOT be `normalize_crate_name`d.
+fn release_depfile_path_from_metadata(
+    metadata: &serde_json::Value,
+    cargo_target_name: &str,
+) -> Result<PathBuf, String> {
     let target_dir = metadata
         .get("target_directory")
         .and_then(|value| value.as_str())
         .ok_or_else(|| "cargo metadata omitted target_directory".to_string())?;
     Ok(PathBuf::from(target_dir)
         .join("release")
-        .join(format!("{}.d", normalize_crate_name(package_name))))
+        .join(format!("{cargo_target_name}.d")))
 }
 
 fn interop_cargo_metadata(
@@ -9960,6 +9975,89 @@ edition = "2024"
             interop_binary_target_from_metadata(&metadata, manifest, "missing-device").unwrap_err();
         assert!(error.contains("no binary target \"missing-device\""));
         assert!(error.contains("available binary targets: main-device"));
+    }
+
+    #[test]
+    fn release_depfile_stem_preserves_hyphens_like_cargo_uplift() {
+        let metadata = serde_json::json!({ "target_directory": "/workspace/device/target" });
+        // Regression: the stem was normalize_crate_name'd (hyphen -> underscore),
+        // but cargo uplifts dep-info named after the bin target verbatim, so
+        // every hyphenated bin/package with source-identity aborted with
+        // "did not produce dependency file".
+        assert_eq!(
+            release_depfile_path_from_metadata(&metadata, "simt-device").unwrap(),
+            PathBuf::from("/workspace/device/target/release/simt-device.d")
+        );
+        assert_eq!(
+            release_depfile_path_from_metadata(&metadata, "kernels").unwrap(),
+            PathBuf::from("/workspace/device/target/release/kernels.d")
+        );
+    }
+
+    /// The load-bearing claim behind `release_depfile_path_from_metadata` is
+    /// cargo's own uplift naming, so assert it against a real `cargo build`
+    /// of a hyphenated package with a hyphenated bin target rather than
+    /// against our expectations of it.
+    #[test]
+    fn release_depfile_path_matches_real_cargo_uplift_for_hyphenated_bin() {
+        let root = unique_temp_dir("cargo_oxide_hyphen_depfile");
+        std::fs::create_dir_all(root.join("src/bin")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "probe-device"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hyphen-device"
+path = "src/bin/hyphen_device.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/bin/hyphen_device.rs"), "fn main() {}\n").unwrap();
+        // Pin the probe's target dir inside the temp root so an ambient
+        // CARGO_TARGET_DIR (shared CI caches) cannot collide across tests.
+        let target_dir = root.join("target");
+
+        let build = Command::new("cargo")
+            .args(["build", "--release", "--bin", "hyphen-device"])
+            .env("CARGO_TARGET_DIR", &target_dir)
+            .current_dir(&root)
+            .output()
+            .expect("failed to run cargo build for the depfile probe");
+        assert!(
+            build.status.success(),
+            "depfile probe build failed:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let metadata = Command::new("cargo")
+            .args(["metadata", "--format-version=1", "--no-deps"])
+            .env("CARGO_TARGET_DIR", &target_dir)
+            .current_dir(&root)
+            .output()
+            .expect("failed to run cargo metadata for the depfile probe");
+        assert!(
+            metadata.status.success(),
+            "depfile probe metadata failed:\n{}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+
+        let depfile = release_depfile_path_from_metadata(&metadata, "hyphen-device").unwrap();
+        assert!(
+            depfile.is_file(),
+            "cargo did not uplift the dep-info where we derive it: {}",
+            depfile.display()
+        );
+        // The underscore-normalized twin must NOT be where we look.
+        assert!(
+            !depfile.with_file_name("hyphen_device.d").exists(),
+            "cargo unexpectedly uplifted an underscore-normalized dep-info file"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
