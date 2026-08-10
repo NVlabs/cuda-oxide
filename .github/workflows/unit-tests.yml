@@ -180,8 +180,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install rustfmt for the pinned nightly
-        run: rustup component add rustfmt
+      # cuda-intrinsics-gen shells out to rustfmt when it writes generated
+      # sources; it comes from rust-toolchain.toml's component list.
 
       - name: Check generated intrinsic outputs
         run: cargo run -p cuda-intrinsics-gen -- check

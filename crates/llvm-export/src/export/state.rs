@@ -91,6 +91,9 @@ pub(super) struct ModuleExportState<'a> {
     /// Defined globals retain external linkage because CUDA host code can
     /// resolve them by name (for example through `cuModuleGetGlobal`).
     pub(super) public_globals: Vec<String>,
+    /// Globals explicitly consumed outside device code and therefore rooted in
+    /// `@llvm.used` so materialization cannot discard them.
+    pub(super) retained_globals: Vec<String>,
     /// Emitted function signatures keyed by their final, prefix-stripped name.
     pub(super) function_types: FxHashMap<String, TypeHandle>,
     /// Original pliron symbol spelling for each final exported function name.
@@ -179,6 +182,7 @@ impl<'a> ModuleExportState<'a> {
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
             public_globals: Vec::new(),
+            retained_globals: Vec::new(),
             function_types: FxHashMap::default(),
             function_source_names: FxHashMap::default(),
             function_definitions: HashSet::new(),

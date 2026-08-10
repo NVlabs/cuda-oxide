@@ -65,3 +65,18 @@ jobs:
           # bindgen-generated C doxygen comments, and its `doctest = false`
           # (which `cargo test --doc` otherwise bypasses) signals that intent.
           cargo test --doc --workspace --exclude cuda-bindings
+
+      # `rustc-codegen-cuda` is its own [workspace] (it links against
+      # rustc-private dylibs), so `--workspace` above never reaches it. fmt,
+      # clippy and unit-tests each carry a dedicated step for that crate;
+      # this gate did not, which is how four broken intra-doc links in its
+      # crate-level documentation went unreported.
+      - name: Build docs (warning-free) for rustc-codegen-cuda
+        working-directory: crates/rustc-codegen-cuda
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: |
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+          cargo doc --no-deps

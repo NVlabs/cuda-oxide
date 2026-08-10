@@ -104,6 +104,36 @@ impl CudaStream {
         unsafe { cuda_bindings::cuStreamSynchronize(self.cu_stream) }.result()
     }
 
+    /// Returns `true` when every operation enqueued on this stream has
+    /// completed, `false` while any is still in flight. Never blocks.
+    ///
+    /// Wraps `cuStreamQuery`, mapping `CUDA_SUCCESS` to `Ok(true)` and
+    /// `CUDA_ERROR_NOT_READY` to `Ok(false)`, as
+    /// [`CudaEvent::query`](crate::event::CudaEvent::query) does for
+    /// `cuEventQuery`. Any other code is a real driver error.
+    ///
+    /// This is the completion half of the async bridge that
+    /// [`launch_host_function`](Self::launch_host_function) opens: a
+    /// `Future::poll` implementation needs to ask whether work has finished
+    /// without parking the executor's thread, which
+    /// [`synchronize`](Self::synchronize) cannot answer.
+    ///
+    /// A sticky error from earlier work on the stream surfaces here rather
+    /// than as `Ok(false)`, the same way it would from
+    /// [`synchronize`](Self::synchronize).
+    ///
+    /// On the default stream this reports the completion of every blocking
+    /// stream in the context, since the default stream orders against them
+    /// all.
+    pub fn query(&self) -> Result<bool, DriverError> {
+        self.ctx.bind_to_thread()?;
+        match unsafe { cuda_bindings::cuStreamQuery(self.cu_stream) } {
+            cuda_bindings::cudaError_enum_CUDA_SUCCESS => Ok(true),
+            cuda_bindings::cudaError_enum_CUDA_ERROR_NOT_READY => Ok(false),
+            err => Err(DriverError(err)),
+        }
+    }
+
     /// Creates a new non-blocking stream that waits on all prior work in
     /// `self` before executing its own.
     ///

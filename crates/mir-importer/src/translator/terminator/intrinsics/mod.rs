@@ -44,6 +44,7 @@ pub mod debug;
 pub mod exact_div;
 pub mod float_math;
 pub mod generated;
+pub mod iket;
 pub mod indexing;
 pub mod memory;
 pub mod saturating;

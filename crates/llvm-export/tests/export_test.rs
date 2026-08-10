@@ -1344,6 +1344,55 @@ fn legacy_kernel_metadata_uses_typed_function_references() {
 }
 
 #[test]
+fn llvm_used_roots_only_explicitly_retained_globals() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "retained_globals".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+
+    let retained = GlobalOp::new(&mut ctx, "IKET_META".try_into().unwrap(), i32_ty.into());
+    retained.set_address_space(&mut ctx, 1);
+    retained.mark_retained(&mut ctx);
+    retained.get_operation().insert_at_back(module_block, &ctx);
+
+    let ordinary = GlobalOp::new(&mut ctx, "ORDINARY".try_into().unwrap(), i32_ty.into());
+    ordinary.set_address_space(&mut ctx, 1);
+    ordinary.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string_with_config(&ctx, &module, &PtxExportConfig)
+        .expect("retained global export succeeds");
+    assert!(
+        ir.contains(
+            "@llvm.used = appending global [1 x ptr] [ptr addrspacecast (ptr addrspace(1) @IKET_META to ptr)], section \"llvm.metadata\""
+        ),
+        "{ir}"
+    );
+    assert!(!ir.contains("@ORDINARY to ptr"), "{ir}");
+}
+
+#[test]
+fn legacy_llvm_used_roots_retained_address_space_global() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "legacy_retained_global".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let retained = GlobalOp::new(&mut ctx, "IKET_META".try_into().unwrap(), i32_ty.into());
+    retained.set_address_space(&mut ctx, 1);
+    retained.mark_retained(&mut ctx);
+    retained.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7);
+    let ir = export_module_to_string_with_config(&ctx, &module, &config)
+        .expect("legacy retained global export succeeds");
+    assert!(
+        ir.contains(
+            "@llvm.used = appending global [1 x i8*] [i8* addrspacecast (i32 addrspace(1)* @IKET_META to i8*)], section \"llvm.metadata\""
+        ),
+        "{ir}"
+    );
+}
+
+#[test]
 fn ptx_export_records_kernel_roots_for_internalization() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "ptx_roots".try_into().unwrap());

@@ -67,6 +67,9 @@ fn index_module_symbols(
                     address_space,
                 },
             );
+            if global.is_retained(state.ctx) {
+                state.retained_globals.push(symbol.clone());
+            }
 
             if let Some(source_key) = global.source_global_key(state.ctx) {
                 let initializer_size = global
@@ -213,22 +216,69 @@ fn root_function_names<'a>(state: &'a ModuleExportState<'_>) -> Vec<&'a str> {
 }
 
 fn emit_llvm_used(output: &mut String, state: &ModuleExportState<'_>) -> Result<(), String> {
-    let names = root_function_names(state);
-    if names.is_empty() {
+    let function_names = root_function_names(state);
+    let mut global_names = state
+        .retained_globals
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    global_names.sort_unstable();
+    global_names.dedup();
+    if function_names.is_empty() && global_names.is_empty() {
         return Ok(());
     }
 
-    let mut used_refs = Vec::with_capacity(names.len());
+    let mut used_refs = Vec::with_capacity(function_names.len() + global_names.len());
     let element_type = if state.legacy_typed_pointers() {
-        for name in names {
+        for name in function_names {
             let mut reference = String::from("i8* bitcast (");
             state.export_function_pointer_type(state.function_type(name)?, &mut reference)?;
             write!(&mut reference, " @{name} to i8*)").unwrap();
             used_refs.push(reference);
         }
+        for name in global_names {
+            let info = state
+                .global_symbols
+                .get(name)
+                .ok_or_else(|| format!("retained global `@{name}` was not indexed"))?;
+            let mut reference = String::from("i8* ");
+            if info.address_space == 0 {
+                reference.push_str("bitcast (");
+                state.export_type(info.value_type, &mut reference)?;
+                write!(&mut reference, "* @{name} to i8*)").unwrap();
+            } else {
+                reference.push_str("addrspacecast (");
+                state.export_type(info.value_type, &mut reference)?;
+                write!(
+                    &mut reference,
+                    " addrspace({})* @{name} to i8*)",
+                    info.address_space
+                )
+                .unwrap();
+            }
+            used_refs.push(reference);
+        }
         "i8*"
     } else {
-        used_refs.extend(names.into_iter().map(|name| format!("ptr @{name}")));
+        used_refs.extend(
+            function_names
+                .into_iter()
+                .map(|name| format!("ptr @{name}")),
+        );
+        for name in global_names {
+            let info = state
+                .global_symbols
+                .get(name)
+                .ok_or_else(|| format!("retained global `@{name}` was not indexed"))?;
+            if info.address_space == 0 {
+                used_refs.push(format!("ptr @{name}"));
+            } else {
+                used_refs.push(format!(
+                    "ptr addrspacecast (ptr addrspace({}) @{name} to ptr)",
+                    info.address_space
+                ));
+            }
+        }
         "ptr"
     };
 

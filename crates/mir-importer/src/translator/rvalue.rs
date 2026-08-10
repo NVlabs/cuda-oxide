@@ -33,6 +33,7 @@
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
+use dialect_iket::{ops::IketSentinelTokenOp, types::IketRangeTokenType};
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
@@ -2189,6 +2190,22 @@ pub fn translate_operand(
             }
 
             let const_ty_ptr = types::translate_type(ctx, &rust_ty)?;
+
+            // `RangeToken<R>` is intentionally a Rust ZST. Optimized MIR can
+            // therefore materialize a token operand as an independent ZST
+            // constant instead of preserving the call-result SSA edge. Keep a
+            // well-typed semantic placeholder here; the frontend-provided
+            // static range key pairs range_start/range_end during lowering.
+            if const_ty_ptr.deref(ctx).is::<IketRangeTokenType>() {
+                let op = IketSentinelTokenOp::new(ctx).get_operation();
+                op.deref_mut(ctx).set_loc(loc);
+                if let Some(prev) = prev_op {
+                    op.insert_after(ctx, prev);
+                } else {
+                    op.insert_at_front(block_ptr, ctx);
+                }
+                return Ok((op.deref(ctx).get_result(0), Some(op)));
+            }
 
             // ZSTs have no runtime bytes, but they still need a value with the
             // exact translated type. This is critical for marker structs,
@@ -5542,26 +5559,28 @@ pub(crate) fn emit_promoted_immutable_global(
 /// agree on what an admissible element is, so both paths ask here and cannot
 /// drift apart.
 ///
-/// Admits primitive scalars, enums carrying no payload, and nested arrays of
-/// either. `ty` is the array type, and nesting is walked so an unsupported leaf
-/// cannot hide inside it. A zero-length array passes for any element type: its
+/// Admits primitive scalars, enums carrying no payload, tuples whose every field
+/// is itself admissible, and nested arrays of any of those. `ty` is the array
+/// type, and nesting is walked so an unsupported leaf cannot hide inside it. A
+/// zero-length array passes for any element type: its
 /// initializer is empty and nothing can ever be read through it, which is what
 /// admits a promoted empty-slice constant such as `&[]` (rustc promotes it to
 /// `&[T; 0]`) regardless of `T`.
 ///
-/// **Tuples and structs are excluded, and not because the byte image would be
-/// wrong.** Reading one field of a tuple element out of a local array currently
-/// copies the *whole array* to a fresh stack slot first, once per field
-/// projected. That copy dominates: for a `[(u8, u32); 256]` table it is two
-/// 2 KiB per-thread copies, which no amount of improving the table's own storage
-/// removes. Promoting such a table would therefore add a global to the module
-/// image and leave the depot exactly where it was — dead weight rather than a
-/// win. Admit them once the projection copies are gone.
+/// Tuples are admitted when every field is itself promotable. That only became
+/// worth doing once a tuple field read stopped going through a copy of the whole
+/// array: while that copy stood it dominated, so promoting such a table changed
+/// nothing measurable and merely added a global to the module image. With the
+/// read addressed in place, the promotion is what removes the depot — the two
+/// only pay off together.
 ///
-/// A payload-carrying enum is excluded for the same reason: reading it back
-/// round-trips the payload through memory.
+/// Structs stay out because the element-wise path does not build arrays of them
+/// either, so there would be nothing to fall back to. A payload-carrying enum
+/// stays out because reading one back still round-trips the payload through
+/// memory: the address walker resolves enum payload fields for writes, not for
+/// reads.
 fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
-    use dialect_mir::types::{MirArrayType, MirEnumType};
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirTupleType};
 
     let obj = ty.deref(ctx);
     if let Some(array) = obj.downcast_ref::<MirArrayType>() {
@@ -5570,6 +5589,13 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
             return true;
         }
         return promotable_array_element(ctx, array.element_type());
+    }
+    if let Some(tuple) = obj.downcast_ref::<MirTupleType>() {
+        let fields = tuple.get_types().to_vec();
+        drop(obj);
+        return fields
+            .into_iter()
+            .all(|field| promotable_array_element(ctx, field));
     }
     if let Some(enumeration) = obj.downcast_ref::<MirEnumType>() {
         // No variant carries a field, so the whole element *is* its discriminant
@@ -5736,8 +5762,9 @@ pub(crate) fn translate_array_constant_into_alloca(
     if !value_ty.deref(ctx).is::<dialect_mir::types::MirArrayType>() {
         return Ok(None);
     }
-    // Elements whose whole-element read is a single scalar-like load: primitive
-    // scalars, field-less enums, and nested arrays of those.
+    // Elements whose whole-element read is a single scalar-like load, or whose
+    // fields are each addressed in place: primitive scalars, field-less enums,
+    // tuples of those, and nested arrays of any of them.
     if !promotable_array_element(ctx, value_ty) {
         return Ok(None);
     }
@@ -5826,7 +5853,7 @@ fn validate_ptr_to_array_constant_type(
     input_err!(
         loc,
         TranslationErr::unsupported(format!(
-            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, or nested arrays of those.",
+            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, tuples of those, or nested arrays of those.",
             ty.deref(ctx)
         ))
     )
@@ -10743,7 +10770,7 @@ mod pointer_array_constant_type_tests {
     use pliron::r#type::TypeHandle;
 
     #[test]
-    fn pointer_array_constant_boundary_keeps_aggregates_out_and_nested_primitives_in() {
+    fn pointer_array_constant_boundary_keeps_structs_out_and_promotable_tuples_in() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -10777,11 +10804,28 @@ mod pointer_array_constant_type_tests {
             "nesting must not hide an unsupported struct leaf"
         );
 
+        // Widening the shared predicate to tuples deliberately widens this form
+        // too: the doc contract on `promotable_array_element` is that `TABLE[i]`
+        // and `(&TABLE)[i]` cannot drift apart. Nothing here enumerates fields --
+        // the initializer is rustc's evaluated byte image and the size-agreement
+        // check rejects any layout the dialect reproduces differently -- so a
+        // tuple element travels this path exactly as a scalar does.
         let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty]).into();
         let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
         assert!(
-            validate_ptr_to_array_constant_type(&ctx, tuple_array, Location::Unknown).is_err(),
-            "bare tuple-array support must not widen pointer-to-array constants"
+            validate_ptr_to_array_constant_type(&ctx, tuple_array, Location::Unknown).is_ok(),
+            "const R: &[(u32,); N] = &TABLE must pass the same gate the bare table passes"
+        );
+
+        // ... and a tuple is only as admissible as its fields, on this path too.
+        let tuple_with_struct_ty: TypeHandle =
+            MirTupleType::get(&mut ctx, vec![u32_ty, struct_ty]).into();
+        let tuple_with_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_struct_ty, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, tuple_with_struct_array, Location::Unknown)
+                .is_err(),
+            "a struct field must keep its tuple out of the reference form as well"
         );
     }
 
@@ -10911,7 +10955,7 @@ mod promotable_array_element_tests {
     }
 
     #[test]
-    fn promotion_admits_scalar_and_fieldless_enum_elements_only() {
+    fn promotion_admits_scalars_fieldless_enums_and_promotable_tuples() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -10954,8 +10998,14 @@ mod promotable_array_element_tests {
         let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty, u32_ty]).into();
         let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 4).into();
         assert!(
-            !promotable_array_element(&ctx, tuple_array),
-            "tuple elements are excluded until the per-field array copies are gone"
+            promotable_array_element(&ctx, tuple_array),
+            "a tuple of promotable fields is promotable now that a field read \
+             addresses in place instead of copying the array"
+        );
+        let nested_tuple_arrays: TypeHandle = MirArrayType::get(&mut ctx, tuple_array, 2).into();
+        assert!(
+            promotable_array_element(&ctx, nested_tuple_arrays),
+            "nesting must not lose a promotable tuple leaf"
         );
 
         let struct_ty: TypeHandle = MirStructType::get(
@@ -10971,9 +11021,20 @@ mod promotable_array_element_tests {
             "struct elements stay outside, as they are for the element-wise path"
         );
 
-        let nested_tuples: TypeHandle = MirArrayType::get(&mut ctx, tuple_array, 2).into();
+        // A tuple is only as promotable as its fields: a struct field keeps the
+        // whole element out, at any depth.
+        let tuple_with_struct: TypeHandle =
+            MirTupleType::get(&mut ctx, vec![u32_ty, struct_ty]).into();
+        let tuple_with_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_struct, 4).into();
         assert!(
-            !promotable_array_element(&ctx, nested_tuples),
+            !promotable_array_element(&ctx, tuple_with_struct_array),
+            "a struct field must keep its tuple out"
+        );
+        let nested_excluded: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_struct_array, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, nested_excluded),
             "nesting must not hide an excluded leaf"
         );
     }
