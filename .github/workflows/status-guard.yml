@@ -43,6 +43,21 @@ jobs:
       - name: Verify smoketest categories and standard-example success markers
         run: bash scripts/check-example-smoketest-contract.sh
 
+  # README's Crate Overview is the only map of the tree a newcomer gets, and
+  # nothing fails when a crate is missing from it: dialect-iket and iket-lower
+  # were both absent, 1,700 lines with no row between them.
+  crate-inventory:
+    name: crate inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads Cargo.toml and README.md: no cargo, no lockfile, no network.
+      - name: Verify README lists every workspace member
+        run: bash scripts/check-crate-inventory.sh
+
   # The pin lives in three places and no build catches them drifting apart:
   # rustup reads the nested copy for the backend's own [workspace], so a
   # mismatch there is a load failure rather than a warning, and the book's

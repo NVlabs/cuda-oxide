@@ -306,6 +306,8 @@ cargo oxide run gemm_sol_final
 | `mir-importer`       | Rust MIR -> `dialect-mir` translation + pipeline      |
 | `mir-lower`          | `dialect-mir` -> LLVM dialect lowering                |
 | `dialect-mir`        | pliron dialect modelling Rust MIR                     |
+| `dialect-iket`       | pliron dialect modelling in-kernel event tracing      |
+| `iket-lower`         | `dialect-iket` profiles + instrumentation lowering    |
 | `llvm-export`        | pliron-llvm shim + textual `.ll` exporter             |
 | `dialect-nvvm`       | pliron dialect modelling NVVM intrinsics              |
 | `mir-transforms`     | Optimization passes over the MIR dialect (loop unroll, ...) |
