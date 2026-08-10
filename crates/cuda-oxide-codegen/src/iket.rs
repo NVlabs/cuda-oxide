@@ -15,7 +15,10 @@ use dialect_iket::{
     },
     types::IketRangeTokenType,
 };
-use dialect_mir::{attributes::MirCastKindAttr, ops::MirCastOp};
+use dialect_mir::{
+    attributes::MirCastKindAttr,
+    ops::{MirAllocaOp, MirCastOp, MirStoreOp},
+};
 use dialect_nvvm::ops::InlinePtxOp;
 use iket_lower::{
     EncodedEventName, EventMetadata, EventPosition, IKET_COMPATIBILITY_PROFILE, InstrumentMethod,
@@ -76,6 +79,19 @@ pub(crate) fn has_iket_operations(ctx: &Context, root: Ptr<Operation>) -> bool {
             || Operation::get_op::<IketRangePopOp>(operation, ctx).is_some()
             || Operation::get_op::<IketSentinelTokenOp>(operation, ctx).is_some()
     })
+}
+
+/// Erase every semantic IKET operation without materializing anything.
+///
+/// This is the `CUDA_OXIDE_IKET=off` path, split out so the pipeline can run
+/// it before its debug-mode preparation gate: an annotated kernel built with
+/// instrumentation disabled must compile in every configuration, including a
+/// full-debug build where `materialize` would never be reached.
+pub(crate) fn strip(ctx: &mut Context, module: Ptr<Operation>) -> Result<(), PipelineError> {
+    if !has_iket_operations(ctx, module) {
+        return Ok(());
+    }
+    erase_semantic_operations(ctx, module)
 }
 
 pub(crate) fn materialize(
@@ -480,7 +496,54 @@ fn erase_semantic_operations(
             Operation::erase(operation, ctx);
         }
     }
+    // The strip path may run before mem2reg (a full-debug build never runs it
+    // at all), so range tokens can still be in the translator's memory form:
+    // `range_start -> mir.store -> alloca` and `mir.load -> range_end`. Remove
+    // that plumbing here; `erase_token_plumbing` handles the SSA and
+    // block-argument form and fails closed on anything left over.
+    erase_token_memory_plumbing(ctx, module);
     erase_token_plumbing(ctx, module)
+}
+
+/// Erase dead memory-form token plumbing to a fixpoint: stores of token
+/// values, unused ops whose results are all tokens (e.g. `mir.load`), and
+/// unused allocas of token slots.
+fn erase_token_memory_plumbing(ctx: &mut Context, module: Ptr<Operation>) {
+    loop {
+        let mut dead = Vec::new();
+        for operation in collect_operations(ctx, module) {
+            // `erase_token_plumbing` owns the token-producing semantic ops.
+            if Operation::get_op::<IketRangeStartOp>(operation, ctx).is_some()
+                || Operation::get_op::<IketSentinelTokenOp>(operation, ctx).is_some()
+            {
+                continue;
+            }
+            let erase = if Operation::get_op::<MirStoreOp>(operation, ctx).is_some() {
+                is_token(ctx, operation.deref(ctx).get_operand(1))
+            } else if let Some(alloca) = Operation::get_op::<MirAllocaOp>(operation, ctx) {
+                alloca
+                    .pointee_type(ctx)
+                    .deref(ctx)
+                    .is::<IketRangeTokenType>()
+                    && !operation.deref(ctx).has_use()
+            } else {
+                let op_ref = operation.deref(ctx);
+                op_ref.get_num_results() > 0
+                    && (0..op_ref.get_num_results())
+                        .all(|index| is_token(ctx, op_ref.get_result(index)))
+                    && !op_ref.has_use()
+            };
+            if erase {
+                dead.push(operation);
+            }
+        }
+        if dead.is_empty() {
+            return;
+        }
+        for operation in dead {
+            Operation::erase(operation, ctx);
+        }
+    }
 }
 
 fn erase_token_plumbing(ctx: &mut Context, module: Ptr<Operation>) -> Result<(), PipelineError> {

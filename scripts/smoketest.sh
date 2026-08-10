@@ -33,6 +33,12 @@
 #   auto-nvvm    -- runs without NVVM or architecture flags to check automatic
 #                   libdevice and target selection. Compile-only CI supplies a
 #                   target because no GPU is available.
+#   iket         -- IKET-annotated kernels; the placeholder ABI needs sm_90+.
+#                   On a host with CC >= 9.0, run with an explicit --arch
+#                   matching the host and require the SUCCESS marker. On
+#                   GPU-less or pre-9.0 hosts (and in --compile-only mode),
+#                   build with the pinned sm_90 floor and require the device
+#                   artifact.
 #   blackwell-compile -- compile-only coverage pinned to exact sm_120a. These
 #                   kernels are never launched.
 #   NVVM_VERIFY_EXAMPLES are compiled through the real libNVVM verifier and
@@ -53,6 +59,7 @@ WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_atomic_fadd legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
+IKET_EXAMPLES=(iket_trace)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
@@ -84,6 +91,7 @@ classify() {
     for cat in "${LTOIR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo ltoir;       return; }; done
     for cat in "${LTOIR_MODERN_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo ltoir-modern; return; }; done
     for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
+    for cat in "${IKET_EXAMPLES[@]}";        do [[ "$ex" == "$cat" ]] && { echo iket;        return; }; done
     for cat in "${BLACKWELL_COMPILE_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo blackwell-compile; return; }; done
     for cat in "${ERROR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo error;       return; }; done
     echo standard
@@ -283,6 +291,16 @@ if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge
     LTOIR_MODERN_EXEC=1
 else
     LTOIR_MODERN_ARCH="sm_100"
+fi
+
+# iket examples need the sm_90+ placeholder ABI. On a CC >= 9.0 host, target
+# the host arch explicitly and require full execution; on GPU-less or pre-9.0
+# hosts, compile for the pinned sm_90 floor and require only the artifact.
+IKET_EXEC=0
+IKET_ARCH="sm_90"
+if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge 9 ]]; then
+    IKET_ARCH="${LTOIR_ARCH}"
+    IKET_EXEC=1
 fi
 
 printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_BOLD}" "${git_head}" "${C_RESET}" "${git_branch}"
@@ -589,6 +607,36 @@ verdict_ltoir_modern() {
         return 0
     fi
     echo "FAIL (LTOIR modern, no NVVM IR for the ${LTOIR_MODERN_ARCH} floor)"
+    return 1
+}
+
+verdict_iket() {
+    local ex="$1" log="$2" ec="$3"
+    local ex_dir="crates/rustc-codegen-cuda/examples/${ex}"
+    local artifact="${ex//-/_}"
+    if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+    if [[ ${IKET_EXEC} -eq 1 ]]; then
+        # CC >= 9.0 host: the kernel targeted the host arch and must execute.
+        if [[ ${ec} -ne 0 ]]; then echo "FAIL (iket, exit=${ec})"; return 1; fi
+        if grep_failure_markers "${log}"; then
+            echo "FAIL (iket, failure marker in output)"
+            return 1
+        fi
+        if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then
+            echo "PASS (iket, executed on ${IKET_ARCH})"
+            return 0
+        fi
+        echo "FAIL (iket, no success marker)"
+        return 1
+    fi
+    # GPU-less or pre-9.0 host: run_cargo built for the sm_90 floor instead;
+    # the bar is a clean build plus a fresh device artifact.
+    if [[ ${ec} -ne 0 ]]; then echo "FAIL (iket, exit=${ec})"; return 1; fi
+    if [[ -s "${ex_dir}/${artifact}.ptx" || -s "${ex_dir}/${artifact}.ll" ]]; then
+        echo "PASS (iket, compiled for ${IKET_ARCH})"
+        return 0
+    fi
+    echo "FAIL (iket, no device artifact for the ${IKET_ARCH} floor)"
     return 1
 }
 
@@ -1368,8 +1416,18 @@ run_cargo() {
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then
         case "${ex}" in
             cluster) args+=("--arch=sm_90") ;;
-            iket_trace) args+=("--arch=sm_120") ;;
         esac
+    fi
+    if [[ "${cat}" == "iket" ]]; then
+        if [[ ${COMPILE_ONLY} -eq 1 ]]; then
+            # CI lane: pinned floor, artifact-only bar (verdict_compile).
+            args+=("--arch=sm_90")
+        elif [[ ${IKET_EXEC} -eq 1 ]]; then
+            args+=("--arch=${IKET_ARCH}")
+        else
+            # No capable GPU: fall back to a floor-pinned compile-only build.
+            args=("build" "${ex}" "--arch=${IKET_ARCH}")
+        fi
     fi
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
@@ -1563,6 +1621,7 @@ for ex in "${selected[@]}"; do
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            iket)        verdict="$(verdict_iket        "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             standard)    verdict="$(verdict_standard    "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;
         esac

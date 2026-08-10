@@ -19,10 +19,10 @@ use crate::generated::{
     GeneratedMarkerPolicy, collect_generated_intrinsic_requirements_for_backend,
 };
 use crate::generated_intrinsic_targets::GeneratedIntrinsicBackend;
-use crate::iket::{has_iket_operations, materialize as materialize_iket};
+use crate::iket::{has_iket_operations, materialize as materialize_iket, strip as strip_iket};
 use crate::llvm_tools::LlvmToolchain;
 use crate::lower::{add_device_extern_declarations, lower_to_llvm};
-use crate::options::BackendOptions;
+use crate::options::{BackendOptions, IketInstrumentation};
 use crate::prep::{MirPreparation, prepare_mir_module};
 use crate::ptx::{PtxModule, generate_ptx, generate_ptx_with_toolchain};
 use crate::target::detect_features_in_llvm_text;
@@ -182,6 +182,41 @@ pub fn compile_translated_module(
         request.trace.emit("\n=== Verifying dialect-mir module ===");
     }
 
+    // `CUDA_OXIDE_IKET=off` strips the semantic annotation ops up front,
+    // before the full-debug preparation gate below: a disabled build of an
+    // annotated kernel must compile in every configuration, including a
+    // full-debug build in which the unstripped IKET operations would
+    // otherwise be rejected before the policy was ever consulted.
+    if request.backend.iket == IketInstrumentation::Disabled {
+        strip_iket(ctx, module)?;
+    }
+
+    // IKET's placeholder ABI is keyed by the concrete sm_* family, but the
+    // definitive target is normally resolved only after LLVM lowering
+    // (`generate_ptx` on the PTX path, `resolve_nvvm_target_with_generated`
+    // on the NVVM path), where a device hint that cannot lower a detected
+    // feature is silently raised to the feature floor. Materializing from
+    // the pre-resolution hint could then bake a placeholder shape for a
+    // family the module is never compiled for. So when IKET operations are
+    // present, promote the hint to the pipeline's explicit target: both
+    // resolvers honor an explicit target exactly (they validate it and fail
+    // loudly instead of raising it), so the placeholder shape and the
+    // compiled target can no longer diverge.
+    let pinned_backend: BackendOptions;
+    let backend: &BackendOptions = if request.backend.target_arch.is_none()
+        && request.backend.device_arch_hint.is_some()
+        && has_iket_operations(ctx, module)
+    {
+        pinned_backend = BackendOptions {
+            target_arch: request.backend.device_arch_hint.clone(),
+            target_arch_source: "the detected GPU, pinned by IKET materialization",
+            ..request.backend.clone()
+        };
+        &pinned_backend
+    } else {
+        request.backend
+    };
+
     let promote_and_unroll = !request.debug_kind.variables_enabled();
     if !promote_and_unroll && has_iket_operations(ctx, module) {
         return Err(PipelineError::Lowering(
@@ -206,7 +241,7 @@ pub fn compile_translated_module(
         MirPreparation {
             promote_and_unroll,
             verbose: request.trace.verbose,
-            mir_pass_pipeline: request.backend.mir_pass_pipeline.as_deref(),
+            mir_pass_pipeline: backend.mir_pass_pipeline.as_deref(),
         },
     )?;
     if request.trace.verbose {
@@ -221,16 +256,10 @@ pub fn compile_translated_module(
             .emit(format!("{}", module.deref(ctx).disp(ctx)));
     }
 
-    materialize_iket(
-        ctx,
-        module,
-        request
-            .backend
-            .target_arch
-            .as_deref()
-            .or(request.backend.device_arch_hint.as_deref()),
-        &request.backend.iket,
-    )?;
+    // After the pinning above, `backend.target_arch` is exactly the target
+    // the rest of the pipeline will compile for (or `None`, in which case
+    // materialization fails with its explicit-target requirement).
+    materialize_iket(ctx, module, backend.target_arch.as_deref(), &backend.iket)?;
 
     // Calls need structured extern declarations before lowering so pointer
     // address spaces are preserved by the call converter.
@@ -256,9 +285,7 @@ pub fn compile_translated_module(
     let libdevice_path = libnvvm_sys::find_libdevice().ok();
     let can_ir_link_libdevice = libdevice_path.is_some()
         && match request.toolchain {
-            ToolchainPolicy::Discover => {
-                crate::llvm_tools::libdevice_ir_linking_available(request.backend)
-            }
+            ToolchainPolicy::Discover => crate::llvm_tools::libdevice_ir_linking_available(backend),
             ToolchainPolicy::Explicit(toolchain) => toolchain.llvm_link.is_some(),
         };
 
@@ -285,7 +312,7 @@ pub fn compile_translated_module(
     lower_to_llvm(
         ctx,
         module,
-        !request.backend.no_fma,
+        !backend.no_fma,
         backend_selection.intrinsic_backend,
     )?;
 
@@ -344,8 +371,8 @@ pub fn compile_translated_module(
 
     let (nvvm_target, nvvm_dialect) = if emit_nvvm_ir {
         let target = resolve_nvvm_target_with_generated(
-            request.backend.target_arch.as_deref(),
-            request.backend.device_arch_hint.as_deref(),
+            backend.target_arch.as_deref(),
+            backend.device_arch_hint.as_deref(),
             automatic_features,
             &generated_requirements,
         )?;
@@ -469,7 +496,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Discover => generate_ptx(
             ptx_module,
             request.debug_kind,
-            request.backend,
+            backend,
             request.trace.sink,
             &generated_requirements,
             ptx_libdevice,
@@ -477,7 +504,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Explicit(toolchain) => generate_ptx_with_toolchain(
             ptx_module,
             request.debug_kind,
-            request.backend,
+            backend,
             toolchain,
             &generated_requirements,
             ptx_libdevice,

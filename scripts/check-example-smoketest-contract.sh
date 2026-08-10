@@ -70,7 +70,7 @@ on_disk = sorted(
 
 # Parse self-tests: a guard whose failure mode is "matched nothing" has to
 # prove it still reads both inputs before a clean result is believed.
-if len(lists) < 8:
+if len(lists) < 9:
     sys.exit(f"parse self-test failed: found {len(lists)} *_EXAMPLES arrays in {smoketest}")
 if len(on_disk) < 100:
     sys.exit(f"parse self-test failed: found {len(on_disk)} examples under {examples_root}")
@@ -94,6 +94,7 @@ CATEGORY_LISTS = (
     "LTOIR_EXAMPLES",
     "LTOIR_MODERN_EXAMPLES",
     "AUTO_NVVM_EXAMPLES",
+    "IKET_EXAMPLES",
     "BLACKWELL_COMPILE_EXAMPLES",
     "ERROR_EXAMPLES",
 )

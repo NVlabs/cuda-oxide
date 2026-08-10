@@ -47,6 +47,15 @@ pub enum IketPhysicalAbiError {
 }
 
 /// Resolve the IKET placeholder address contract from a CUDA target.
+///
+/// Safety note on the placeholder addresses: when no IKET tool patches the
+/// SASS, the placeholder really executes and stores to a fixed shared-memory
+/// address on every normal run. On sm_120 this was verified on hardware to
+/// land inside the driver-reserved first 1KB below user allocations (user
+/// shared memory starts at 0x400; 1024 reserved bytes per block), so it
+/// cannot corrupt user shared-memory state. The sm_90 contract (0x3f0) and
+/// the cluster-rank-addressed sm_100/sm_110 variants have not been
+/// hardware-verified and rely on the same reserved-region argument.
 pub fn placeholder_config(target: Option<&str>) -> Result<PlaceholderConfig, IketPhysicalAbiError> {
     let target = target.ok_or(IketPhysicalAbiError::MissingTarget)?;
     let Some(capability) = parse_compute_capability(target) else {
