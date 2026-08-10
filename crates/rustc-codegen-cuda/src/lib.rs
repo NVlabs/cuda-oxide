@@ -844,12 +844,7 @@ fn write_device_artifact_object(
         artifact,
     )?;
     if let Some(materialized) = materialized_artifact.as_ref() {
-        emit_launch_bounds_spill_warnings(
-            tcx,
-            result,
-            functions,
-            &materialized.resource_usage,
-        );
+        emit_launch_bounds_spill_warnings(tcx, result, functions, &materialized.resource_usage);
     }
     let (artifact, was_materialized) = match materialized_artifact.as_ref() {
         Some(materialized) => (&materialized.artifact, true),
