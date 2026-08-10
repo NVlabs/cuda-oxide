@@ -11591,8 +11591,8 @@ fn render_importer_elect_dispatch(
     output.push_str(
         "            require_arity(name, args.len(), 1, &loc)?;\n\
          \n\
-                     let tuple_ty = crate::translator::types::translate_type(\n\
-                         ctx, &body.locals()[destination.local].ty,\n\
+                     let tuple_ty = crate::translator::types::translate_destination_type(\n\
+                         ctx, body, destination, &loc,\n\
                      )?;\n\
                      let (leader_ty, elected_ty) = {\n\
                          let ty = tuple_ty.deref(ctx);\n\

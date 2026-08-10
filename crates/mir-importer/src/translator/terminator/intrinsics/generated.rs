@@ -23962,10 +23962,8 @@ pub fn try_dispatch_generated_intrinsic(
         | "cuda_device::warp::elect_sync" => {
             require_arity(name, args.len(), 1, &loc)?;
 
-            let tuple_ty = crate::translator::types::translate_type(
-                ctx,
-                &body.locals()[destination.local].ty,
-            )?;
+            let tuple_ty =
+                crate::translator::types::translate_destination_type(ctx, body, destination, &loc)?;
             let (leader_ty, elected_ty) = {
                 let ty = tuple_ty.deref(ctx);
                 match ty.downcast_ref::<MirTupleType>() {

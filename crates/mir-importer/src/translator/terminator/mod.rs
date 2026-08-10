@@ -2671,7 +2671,7 @@ fn try_dispatch_intrinsic(
             // Emit a placeholder call carrying the three operands; mir-lower
             // turns it into an LLVM `select`. `bool` lowers to `i1`, exactly
             // what the select condition needs.
-            let return_type = types::translate_type(ctx, &body.locals()[destination.local].ty)?;
+            let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
             Ok(Some(helpers::emit_function_call(
                 ctx,
                 body,

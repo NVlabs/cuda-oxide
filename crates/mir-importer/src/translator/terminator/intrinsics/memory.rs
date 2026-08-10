@@ -858,7 +858,17 @@ pub fn emit_dynamic_shared_get(
     // Get the destination type to determine the pointer element type
     // DynamicSharedArray::get() returns *mut T, so the destination is a raw pointer type
     // We need to get the pointee type from it
-    let dest_ty = body.locals()[destination.local].ty;
+    let dest_ty = match destination.ty(body.locals()) {
+        Ok(t) => t,
+        Err(e) => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "failed to resolve destination type for call result: {e:?}"
+                ))
+            );
+        }
+    };
 
     // Get pointee type from the raw pointer return type
     let pointee_ty = match dest_ty.kind() {
@@ -951,7 +961,17 @@ pub fn emit_dynamic_shared_offset(
 
     // Get the destination type to determine the pointer element type
     // DynamicSharedArray::offset() returns *mut T, so the destination is a raw pointer type
-    let dest_ty = body.locals()[destination.local].ty;
+    let dest_ty = match destination.ty(body.locals()) {
+        Ok(t) => t,
+        Err(e) => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "failed to resolve destination type for call result: {e:?}"
+                ))
+            );
+        }
+    };
 
     // Get pointee type from the raw pointer return type
     let pointee_ty = match dest_ty.kind() {

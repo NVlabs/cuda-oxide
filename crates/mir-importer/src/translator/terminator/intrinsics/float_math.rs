@@ -493,8 +493,10 @@ pub fn emit_sincos(
     use pliron::location::Located;
     use pliron::op::Op;
 
-    // Destination tuple type and its scalar element type.
-    let tuple_ty = types::translate_type(ctx, &body.locals()[destination.local].ty)?;
+    // Destination tuple type and its scalar element type. Typed from the
+    // projected place, so a `RET.1 = sincos(..)`-style destination is the
+    // tuple actually written rather than the whole local.
+    let tuple_ty = types::translate_destination_type(ctx, body, destination, &loc)?;
     let scalar_ty = {
         let r = tuple_ty.deref(ctx);
         match r.downcast_ref::<dialect_mir::types::MirTupleType>() {
@@ -623,7 +625,7 @@ pub fn emit_rust_float_math_intrinsic(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    let return_type = types::translate_type(ctx, &body.locals()[destination.local].ty)?;
+    let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
     helpers::emit_function_call(
         ctx,
         body,
