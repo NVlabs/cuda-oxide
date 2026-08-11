@@ -17,6 +17,29 @@ pub enum DebugPolicy {
     Full,
 }
 
+impl DebugPolicy {
+    /// Parse a `CUDA_OXIDE_DEBUG` value into a debug policy.
+    ///
+    /// This is the single alias table for the environment variable. The
+    /// rustc codegen backend uses it to select the DWARF emission level,
+    /// and cargo-oxide uses it to decide build policy (a full-debug build
+    /// disables MIR optimization so aggregate locals survive to DWARF).
+    /// Keeping both behind one parser means every accepted spelling, such
+    /// as `2` for `full`, drives the whole pipeline consistently.
+    ///
+    /// Returns `None` for unrecognized values so callers fall back to
+    /// their own defaults.
+    #[must_use]
+    pub fn parse_env_override(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "0" | "off" | "none" => Some(Self::None),
+            "1" | "line" | "lines" | "line-tables" | "line-tables-only" => Some(Self::LineTables),
+            "2" | "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 /// Typed options shared by the libNVVM and nvJitLink stages.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FinalizationOptions {
@@ -172,6 +195,35 @@ impl<'a> NamedInput<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_policy_env_override_accepts_every_alias() {
+        for (value, expected) in [
+            ("0", DebugPolicy::None),
+            ("off", DebugPolicy::None),
+            ("none", DebugPolicy::None),
+            ("1", DebugPolicy::LineTables),
+            ("line", DebugPolicy::LineTables),
+            ("lines", DebugPolicy::LineTables),
+            ("line-tables", DebugPolicy::LineTables),
+            ("line-tables-only", DebugPolicy::LineTables),
+            ("2", DebugPolicy::Full),
+            ("full", DebugPolicy::Full),
+        ] {
+            assert_eq!(
+                DebugPolicy::parse_env_override(value),
+                Some(expected),
+                "alias `{value}` must parse"
+            );
+        }
+        // Whitespace and case are ignored, unknown values are rejected.
+        assert_eq!(
+            DebugPolicy::parse_env_override(" Full "),
+            Some(DebugPolicy::Full)
+        );
+        assert_eq!(DebugPolicy::parse_env_override("verbose"), None);
+        assert_eq!(DebugPolicy::parse_env_override(""), None);
+    }
 
     #[test]
     fn option_order_preserves_target_lto_output_fma_and_debug_policy() {

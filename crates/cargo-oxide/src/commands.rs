@@ -5839,7 +5839,13 @@ fn command_requests_full_device_debug_with_env(
         None => inherited_debug.map(str::to_owned),
     };
 
-    effective_debug.is_some_and(|value| value.trim().eq_ignore_ascii_case("full"))
+    // Shared alias table: the codegen backend parses `CUDA_OXIDE_DEBUG`
+    // with the same function, so every spelling the backend treats as
+    // full debug (including `2`) also disables MIR optimization here.
+    effective_debug.is_some_and(|value| {
+        cuda_artifact_finalizer::DebugPolicy::parse_env_override(&value)
+            == Some(cuda_artifact_finalizer::DebugPolicy::Full)
+    })
 }
 
 fn append_full_debug_mir_rustflag(
@@ -10653,12 +10659,21 @@ edition = "2024"
 
     #[test]
     fn device_debug_env_value_matches_the_backend_parser() {
-        // These must be strings `device_debug_kind_with_override` accepts; a typo
-        // would silently fall through to the profile-derived default instead of
-        // failing, so pin them.
+        // The exported strings must round-trip through the shared
+        // `CUDA_OXIDE_DEBUG` parser (the same one the codegen backend uses);
+        // a typo would silently fall through to the profile-derived default
+        // instead of failing, so check the actual parse.
         assert_eq!(DeviceDebug::Off.env_value(), None);
         assert_eq!(DeviceDebug::LineTables.env_value(), Some("line"));
         assert_eq!(DeviceDebug::Full.env_value(), Some("full"));
+        assert_eq!(
+            cuda_artifact_finalizer::DebugPolicy::parse_env_override("line"),
+            Some(cuda_artifact_finalizer::DebugPolicy::LineTables)
+        );
+        assert_eq!(
+            cuda_artifact_finalizer::DebugPolicy::parse_env_override("full"),
+            Some(cuda_artifact_finalizer::DebugPolicy::Full)
+        );
     }
 
     #[test]
@@ -10715,6 +10730,20 @@ edition = "2024"
         let mut encoded = "base".to_string();
 
         append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+
+        assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
+    }
+
+    #[test]
+    fn numeric_full_debug_alias_disables_mir_optimization() {
+        // The backend accepts `CUDA_OXIDE_DEBUG=2` as full debug; the shared
+        // parser guarantees the build policy agrees, so `2` must disable MIR
+        // optimization exactly like `full`.
+        let mut cmd = Command::new("cargo");
+        cmd.env("CUDA_OXIDE_DEBUG", "2");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
 
         assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
     }
