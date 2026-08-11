@@ -266,7 +266,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
-    let module = kernels::from_module(ctx.load_module_from_file("hashmap_v3.ptx")?)?;
+    // The device artifact is embedded in this binary, so the bench needs no
+    // loose `hashmap_v3.ptx` beside the manifest -- the same load `main.rs`
+    // already uses.
+    let module = kernels::load(&ctx)?;
 
     print_environment_banner(&ctx)?;
 
