@@ -3068,6 +3068,86 @@ fn test_inline_ptx_supports_thirty_two_tied_f32_results() -> Result<(), anyhow::
     Ok(())
 }
 
+/// The mir-importer encodes `core::sync::atomic::compiler_fence` (issue #781)
+/// as an empty, volatile, non-convergent inline-PTX block whose only content
+/// is a `~{memory}` clobber. It must lower to a void side-effecting inline asm
+/// call with the clobber intact and no instruction text, so no hardware
+/// `fence` or `membar` can reach the emitted PTX.
+#[test]
+fn test_compiler_fence_encoding_lowers_to_empty_sideeffect_asm() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::r#type::Typed;
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+    let barrier = nvvm::InlinePtxOp::build(&mut ctx, vec![], vec![], "", "~{memory}", true, false);
+    barrier.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut found_barrier = false;
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        assert!(
+            !found_barrier,
+            "expected exactly one inline asm op in the lowered kernel"
+        );
+        found_barrier = true;
+
+        let template = inline_asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|s| String::from((*s).clone()));
+        assert_eq!(
+            template.as_deref(),
+            Some(""),
+            "compiler fence must emit no PTX instruction"
+        );
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|s| String::from((*s).clone()))
+                .as_deref(),
+            Some("~{memory}"),
+            "compiler fence must keep its memory clobber"
+        );
+        assert!(
+            llvm::inline_asm_sideeffect(&ctx, inline_asm.get_operation()),
+            "compiler fence must stay side-effecting so the optimizer cannot drop it"
+        );
+        assert!(
+            inline_asm
+                .get_attr_inline_asm_convergent(&ctx)
+                .is_some_and(|b| !bool::from((*b).clone())),
+            "compiler fence must not be convergent"
+        );
+        // The zero-result lowering path models the void call as a single
+        // result of `llvm.void` type, so assert on the type rather than on
+        // the result count.
+        let result_ty = inline_asm
+            .get_operation()
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx);
+        assert!(
+            result_ty
+                .deref(&ctx)
+                .downcast_ref::<llvm_types::VoidType>()
+                .is_some(),
+            "compiler fence lowers to a void inline asm call"
+        );
+    }
+
+    assert!(
+        found_barrier,
+        "expected the compiler-fence inline asm op in the lowered kernel"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
