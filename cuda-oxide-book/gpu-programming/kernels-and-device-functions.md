@@ -282,6 +282,47 @@ pub fn my_kernel(...) { }
 
 :::
 
+### When the bound forces spills
+
+A launch bound is ultimately a cap on registers per thread: promising ptxas more
+resident threads leaves each of them fewer registers to work with. If the kernel
+needs more than the cap allows, ptxas does not fail -- it **spills** the excess
+to local memory, and the occupancy the bound bought is then paid for again on
+every access to a spilled value.
+
+That is easy to miss, because the build succeeds. cuda-oxide warns instead, at
+the kernel's definition span:
+
+```text
+warning: kernel `cuda_oxide_kernel_a1b2c3d4_my_kernel` compiled with
+         `#[launch_bounds(256, 2)]` and spills registers
+  = note: ptxas reports 96 bytes spill stores and 96 bytes spill loads
+  = note: ptxas allocated 40 registers per thread
+  = help: relax `min_blocks_per_sm` or reduce register pressure
+```
+
+(Byte counts and register totals are whatever ptxas reported for your kernel.)
+Only kernels carrying `#[launch_bounds]` are checked -- without a bound there is
+no promise for ptxas to satisfy at the expense of registers.
+
+The usual responses are to raise `max_threads`, drop or relax `min_blocks`, or
+cut register pressure in the kernel itself. Spilling is not automatically wrong:
+a kernel can be faster spilling a little at high occupancy than not spilling at
+low occupancy. The warning exists because that is a trade worth making
+deliberately rather than by accident.
+
+:::{warning}
+`#[allow(...)]` does **not** silence these. They are raw span diagnostics rather
+than lints, so the suppression attribute does not apply to them. The escape
+hatch is an environment variable, meant for builds that measured the spill and
+accepted it:
+
+```bash
+CUDA_OXIDE_NO_SPILL_WARN=1 cargo oxide build my_kernels
+```
+
+:::
+
 ## The collector -- how device code is discovered
 
 When you build with `cargo oxide`, the `rustc-codegen-cuda` backend runs a
