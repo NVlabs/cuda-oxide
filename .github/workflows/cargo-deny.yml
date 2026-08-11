@@ -35,8 +35,14 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
+      # `--locked` so a stale committed lock fails the run instead of being
+      # re-resolved on the way past. Without it this step rewrites the very
+      # Cargo.lock it is judging -- verified: deleting a package block from the
+      # lock still exits 0 here and leaves the file rewritten, while --locked
+      # stops with "cannot update the lock file". The other two runs below and
+      # in scripts/ already pass it.
       - name: Run cargo-deny
-        run: cargo deny check
+        run: cargo deny --locked check
 
       # crates/rustc-codegen-cuda carries its own `[workspace]` for the
       # rustc-private dylibs, so the run above stops at that boundary and never

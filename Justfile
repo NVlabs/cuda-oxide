@@ -147,7 +147,7 @@ check-guards:
     bash scripts/check-crate-inventory.sh
     bash scripts/check-toolchain-parity.sh
     bash scripts/check-cli-doc-coverage.sh
-    cargo deny check
+    cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh
     bash scripts/check-example-license-policy.sh
