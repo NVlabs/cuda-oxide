@@ -76,3 +76,19 @@ jobs:
       # Reads sources only: no rustup, no cargo, no CUDA toolkit.
       - name: Verify every copy of the toolchain pin agrees
         run: bash scripts/check-toolchain-parity.sh
+
+  # The book's Command reference is the only complete list of the CLI surface in
+  # the docs, and adding a subcommand to the clap enum is a one-line change that
+  # leaves it silently short -- `test`, `fmt`, `update` and `emit-ltoir` were all
+  # missing when that table was written (#794).
+  cli-doc-coverage:
+    name: CLI command reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads the clap enum and the book: no cargo, no build, no network.
+      - name: Verify the book documents every cargo oxide subcommand
+        run: bash scripts/check-cli-doc-coverage.sh
