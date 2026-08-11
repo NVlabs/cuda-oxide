@@ -303,7 +303,10 @@ warning: kernel `cuda_oxide_kernel_a1b2c3d4_my_kernel` compiled with
 
 (Byte counts and register totals are whatever ptxas reported for your kernel.)
 Only kernels carrying `#[launch_bounds]` are checked -- without a bound there is
-no promise for ptxas to satisfy at the expense of registers.
+no promise for ptxas to satisfy at the expense of registers. The warning can
+only fire in builds that materialize a native cubin (`--materialize-cubin`, or
+any build that embeds a cubin): a plain PTX build never runs ptxas, so there is
+no resource report to inspect.
 
 The usual responses are to raise `max_threads`, drop or relax `min_blocks`, or
 cut register pressure in the kernel itself. Spilling is not automatically wrong:
@@ -318,7 +321,7 @@ hatch is an environment variable, meant for builds that measured the spill and
 accepted it:
 
 ```bash
-CUDA_OXIDE_NO_SPILL_WARN=1 cargo oxide build my_kernels
+CUDA_OXIDE_NO_SPILL_WARN=1 cargo oxide build my_kernels --materialize-cubin
 ```
 
 :::
