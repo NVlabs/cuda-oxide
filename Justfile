@@ -70,7 +70,9 @@ test-cuda:
                 shadow="$(mktemp -d)"
                 trap 'rm -rf "${shadow}"' EXIT
                 ln -sf "${root}/lib64/stubs/libcuda.so" "${shadow}/libcuda.so.1"
-                export LD_LIBRARY_PATH="${shadow}:${LD_LIBRARY_PATH:-}"
+                # `:+` keeps the joining colon out when the variable is unset:
+                # a trailing colon would put the cwd on the loader search path.
+                export LD_LIBRARY_PATH="${shadow}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
                 break
             fi
         done
@@ -92,9 +94,11 @@ doc-check:
 # `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
 # CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
 # is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
-# `check-guards` covers the status-guard and cargo-deny jobs, which this recipe
-# used to skip entirely -- it needs `cargo-deny` on PATH.
-# Run every gate CI runs: fmt, clippy, tests, guards, docs
+# `check-guards` covers the status-guard and cargo-deny workflows in full; see
+# its comment for prerequisites. Still CI-only: naming-guard (its grep pipeline
+# lives inline in the workflow, with no script to invoke), examples-compile
+# (needs the CUDA codegen backend), the book build, and CodeQL.
+# Run CI's gates minus naming-guard, examples-compile, book, CodeQL
 check: fmt-check clippy test test-cuda check-guards doc-check
 
 # Clean project-local Cargo outputs and known cuda-oxide artifacts
@@ -121,15 +125,19 @@ smoketest *args:
 check-errors:
     scripts/check-error-example-status.sh
 
-# The status-guard pair (error* examples in STATUS.md, and the smoketest example
-# contract) plus the cargo-deny pair (the license inventory covers the workspace
-# and its example workspaces, and deny.toml holds over those workspaces). These
-# were only reachable by reading the workflows, so `just check` could pass while
-# status-guard or cargo-deny failed. Invoked via `bash` as CI does: two of the
-# four have no exec bit.
-# Run the four source-reading CI guards (no GPU, needs cargo-deny)
+# The status-guard pair (error* examples in STATUS.md, and the smoketest
+# example contract) plus all three cargo-deny jobs: `cargo deny check` enforces
+# deny.toml over the root workspace's resolved graph, the license inventory
+# covers what the workspace declares, and deny.toml holds over the example
+# workspaces. These were only reachable by reading the workflows, so `just
+# check` could pass while status-guard or cargo-deny failed. Prerequisites:
+# `cargo-deny` on PATH (`cargo install cargo-deny --locked`) and `python3`
+# (three of the scripts drive it). The scripts are invoked via `bash` as CI
+# does: two of the four carry no exec bit.
+# Run the status-guard and cargo-deny CI jobs (needs cargo-deny, python3)
 check-guards:
     bash scripts/check-error-example-status.sh
     bash scripts/check-example-smoketest-contract.sh
+    cargo deny check
     bash scripts/check-dependency-licenses.sh
     bash scripts/check-example-license-policy.sh
