@@ -109,7 +109,15 @@ pub(crate) fn convert_store(
     if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
     }
-    if let Some(align) = value_abi_align(ctx, operands_info, val) {
+    // The stored value's own type answers first, as it did before. A scalar
+    // records none, though, so fall back to whatever the address itself proved
+    // when it was computed -- for a field projection that is the aggregate's
+    // `abi_align` narrowed to the field's offset, which is otherwise lost here
+    // and costs the pair its vectorization. This mirrors `convert_load`, which
+    // consults the same record for the same reason.
+    if let Some(align) =
+        value_abi_align(ctx, operands_info, val).or_else(|| pointer_proved_alignment(ctx, ptr))
+    {
         llvm_export::ops::set_op_alignment(ctx, llvm_store.get_operation(), align as u32);
     }
     rewriter.insert_operation(ctx, llvm_store.get_operation());
@@ -1600,6 +1608,126 @@ mod tests {
     fn convert_load_declines_non_power_of_two_field_alignment() {
         assert_eq!(
             lowered_field_load_alignment(vec![32], vec![0], 12, 12, 0),
+            None
+        );
+    }
+
+    /// Lower `mir.store %v, (mir.field_addr %p, field_index)` for a struct of
+    /// signless integer fields with the given layout and report the alignment
+    /// stamped on the resulting `llvm.store`. `None` means no stamp survived
+    /// and the exporter's natural-alignment default applies.
+    fn lowered_field_store_alignment(
+        field_bit_widths: Vec<u32>,
+        field_offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+        field_index: u32,
+    ) -> Option<u32> {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let field_types: Vec<TypeHandle> = field_bit_widths
+            .iter()
+            .map(|w| IntegerType::get(&ctx, *w, Signedness::Signless).into())
+            .collect();
+        let field_names = (0..field_types.len()).map(|i| format!("f{i}")).collect();
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "FieldStoreAlign".into(),
+            field_names,
+            field_types.clone(),
+            vec![],
+            field_offsets,
+            total_size,
+            abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, true);
+        let field_ty = field_types[field_index as usize];
+        let field_ptr_ty = MirPtrType::get_generic(&mut ctx, field_ty, true);
+
+        // The stored value arrives as a kernel argument of the field's own
+        // scalar type, so `value_abi_align` reports nothing about it and the
+        // address's stamp is the only alignment left -- the case this covers.
+        let (module_ptr, block) =
+            build_kernel(&mut ctx, vec![struct_ptr_ty.into(), field_ty], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+        let val = block.deref(&ctx).get_argument(1);
+
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![field_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op)
+            .set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+        field_addr_op.insert_at_back(block, &ctx);
+        let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let store_op = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![field_ptr_val, val],
+            vec![],
+            0,
+        );
+        store_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).expect("expected one llvm.store");
+        llvm_export::ops::op_alignment(&ctx, store.get_operation())
+    }
+
+    /// Field 0 of an over-aligned struct sits at the aggregate's own alignment,
+    /// which the stored scalar's type cannot state. This is what lets
+    /// LoadStoreVectorizer fuse the adjacent pair into one wide store.
+    #[test]
+    fn convert_store_inherits_overaligned_field_alignment_at_offset_zero() {
+        // #[repr(C, align(8))] struct { a: i32, b: i32 }
+        assert_eq!(
+            lowered_field_store_alignment(vec![32, 32], vec![0, 4], 8, 8, 0),
+            Some(8)
+        );
+    }
+
+    /// A field at a nonzero offset proves `gcd(abi_align, offset)`: an i32 at
+    /// offset 8 of an align-16 struct proves 8, beating its natural 4.
+    #[test]
+    fn convert_store_narrows_field_alignment_to_gcd_of_align_and_offset() {
+        // #[repr(C, align(16))] struct { a: i64, b: i32 }
+        assert_eq!(
+            lowered_field_store_alignment(vec![64, 32], vec![0, 8], 16, 16, 1),
+            Some(8)
+        );
+    }
+
+    /// A struct with no extra alignment proves nothing beyond the scalar's
+    /// natural alignment, so the emitted store is unchanged. Widening here
+    /// would claim an alignment the source never guaranteed.
+    #[test]
+    fn convert_store_keeps_natural_alignment_without_overalignment() {
+        // struct { a: i32, b: i32 } with rustc's natural abi_align 4
+        assert_eq!(
+            lowered_field_store_alignment(vec![32, 32], vec![0, 4], 8, 4, 1),
+            Some(4)
+        );
+    }
+
+    /// A malformed hand-built layout must decline the stamp rather than emit a
+    /// non-power-of-two `align N` that llc rejects. Same guard the load path
+    /// has, and it matters more here: an over-aligned store instruction on an
+    /// under-aligned address is undefined, not merely slow.
+    #[test]
+    fn convert_store_declines_non_power_of_two_field_alignment() {
+        assert_eq!(
+            lowered_field_store_alignment(vec![32], vec![0], 12, 12, 0),
             None
         );
     }
