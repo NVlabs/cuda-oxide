@@ -59,10 +59,13 @@ if [[ ${recorded_count} -lt 20 || ${data_rows} -lt 20 ]]; then
     exit 1
 fi
 
+# Members and directly declared third-party dependencies of one workspace.
+#
 # `--locked` so the guard reads the committed resolution rather than silently
 # updating Cargo.lock to satisfy itself: a check that can rewrite its own input
 # is not a check.
-required="$(cargo metadata --locked --format-version 1 | python3 -c '
+declared_crates() {
+    cargo metadata --locked --format-version 1 --manifest-path "$1" | python3 -c '
 import json, sys
 
 metadata = json.load(sys.stdin)
@@ -78,7 +81,21 @@ for package in members:
             names.add(dependency["name"])
 
 print("\n".join(sorted(names)))
-' | LC_ALL=C sort -u)"
+'
+}
+
+# Both first-party workspaces, not just the root one.  crates/rustc-codegen-cuda
+# carries its own `[workspace]` for the rustc-private dylibs, so `-p` from the
+# root cannot reach it and the root `cargo metadata` above stops at that
+# boundary -- which is how the backend crate itself, the largest first-party
+# crate in the tree, sat unrecorded while every other member had a row.  This is
+# the second pass asked for in the #662 review.
+required="$(
+    {
+        declared_crates Cargo.toml
+        declared_crates crates/rustc-codegen-cuda/Cargo.toml
+    } | LC_ALL=C sort -u
+)"
 
 missing="$(comm -23 <(printf '%s\n' "${required}") <(printf '%s\n' "${recorded}"))"
 

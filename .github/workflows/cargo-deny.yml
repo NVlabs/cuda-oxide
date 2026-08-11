@@ -6,7 +6,9 @@ name: cargo-deny
 # Concurrency for the CI path is governed by CI's own group.
 #
 # Three parts of the same concern. `check` enforces the license *policy* over
-# the whole resolved graph from deny.toml. `license-manifest` enforces that
+# the whole resolved graph from deny.toml -- once for the root workspace and
+# once for crates/rustc-codegen-cuda, which has its own `[workspace]` and so is
+# a separate resolution the root run cannot reach. `license-manifest` enforces that
 # the human-readable inventory in dependency-licenses.csv still lists what the
 # workspace declares, which nothing checked before: CONTRIBUTING asks
 # contributors to update that file by hand, and it had fallen behind by eight
@@ -35,6 +37,15 @@ jobs:
 
       - name: Run cargo-deny
         run: cargo deny check
+
+      # crates/rustc-codegen-cuda carries its own `[workspace]` for the
+      # rustc-private dylibs, so the run above stops at that boundary and never
+      # sees the 82 third-party crates it resolves. Same policy, second
+      # workspace -- the pass asked for in the #662 review. No --config:
+      # cargo-deny walks up from the manifest directory and finds the
+      # repository-root deny.toml, as the example-policy script relies on too.
+      - name: Run cargo-deny over the codegen backend workspace
+        run: cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
 
   license-manifest:
     name: dependency-licenses.csv covers every declared crate

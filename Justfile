@@ -128,9 +128,11 @@ check-errors:
 # Every status-guard job (error* examples in STATUS.md, the smoketest example
 # contract, the README crate inventory, toolchain-pin parity, and the book's CLI
 # command reference) plus all three cargo-deny jobs: `cargo deny check` enforces
-# deny.toml over the root workspace's resolved graph, the license inventory
-# covers what the workspace declares, and deny.toml holds over the example
-# workspaces. These were only reachable by reading the workflows, so `just
+# deny.toml over the root workspace's resolved graph and again over
+# crates/rustc-codegen-cuda, which resolves its own because it has its own
+# `[workspace]`; the license inventory covers what both declare; and deny.toml
+# holds over the example workspaces. These were only reachable by reading the
+# workflows, so `just
 # check` could pass while status-guard or cargo-deny failed. Keep this list in
 # step when a guard is added to either workflow -- the crate-inventory and
 # toolchain-parity jobs were added to CI without being added here, which is the
@@ -146,5 +148,6 @@ check-guards:
     bash scripts/check-toolchain-parity.sh
     bash scripts/check-cli-doc-coverage.sh
     cargo deny check
+    cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh
     bash scripts/check-example-license-policy.sh
