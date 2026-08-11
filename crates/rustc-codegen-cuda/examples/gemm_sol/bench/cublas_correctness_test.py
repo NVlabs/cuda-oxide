@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """cuBLAS + numpy correctness test — matching gemm_sol exactly.
 
 gemm_sol pipeline: FP16 inputs → FP32 accumulation → BF16 output.

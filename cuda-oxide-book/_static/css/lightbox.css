@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /**
  * Lightbox styles for image enlargement
  */
@@ -120,4 +125,3 @@ article img[style*="cursor: zoom-in"]:hover {
         border-radius: 4px;
     }
 }
-

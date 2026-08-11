@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # scripts/debug-smoketest.sh -- end-to-end cuda-gdb validation of device
 # debug info (CUDA_OXIDE_DEBUG=full).

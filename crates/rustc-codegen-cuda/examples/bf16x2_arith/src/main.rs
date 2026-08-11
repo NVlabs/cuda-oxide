@@ -1,4 +1,4 @@
-// Copyright (c) 2024-2026 NVIDIA CORPORATION. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end example exercising all eight packed bf16x2 arithmetic intrinsics.
