@@ -602,10 +602,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return verify_ptx_only();
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
-    println!("Loading PTX: {}", ptx_path.display());
+    println!("Loading embedded CUDA module");
     let module = kernels::load(&ctx)?;
-    println!("PTX loaded\n");
+    println!("Module loaded\n");
 
     if do_validate {
         println!("── Full-output correctness tests ────────────────────\n");
@@ -1031,13 +1030,17 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     Ok(tflops)
 }
 
+/// Fallback for GPUs that cannot execute tcgen05: verify the loose PTX build
+/// artifact beside this crate against the tcgen05 contract. The main path
+/// loads the module embedded in the binary instead; only this fallback reads
+/// the loose file.
 fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
     let ptx = std::fs::read_to_string(&ptx_path)?;
     verify_tcgen05_ptx_contract(&ptx)
         .map_err(|error| format!("PTX verification failed: {error}"))?;
 
-    println!("\nPTX Verification:");
+    println!("\nPTX verification (loose build artifact):");
     println!("   PTX file generated at: {}", ptx_path.display());
     println!("\n   To inspect generated PTX:");
     println!("   cat {}", ptx_path.display());

@@ -129,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stream = ctx.default_stream();
 
     let module = kernels::load(&ctx)?;
-    println!("PTX loaded\n");
+    println!("Embedded CUDA module loaded\n");
 
     for &num_iters in &[4u32, 8, 16, 32, 64, 256, 1024] {
         print!("  {} iters ... ", num_iters);
