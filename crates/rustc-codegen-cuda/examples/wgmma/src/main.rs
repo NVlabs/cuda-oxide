@@ -89,13 +89,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return verify_ptx_only(&ctx);
     }
 
-    // Load PTX module
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("wgmma.ptx");
-    println!("\nLoading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-    let module = ctx.load_module_from_file(ptx_file)?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-    println!("✓ PTX loaded successfully\n");
+    // Load the CUDA module embedded in this binary
+    println!("\nLoading embedded CUDA module");
+    let module = kernels::load(&ctx)?;
+    println!("✓ Module loaded successfully\n");
 
     // Test: Sync primitives
     run_wgmma_sync_test(&stream, &module)?;
@@ -104,11 +101,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Fallback for GPUs that cannot execute the WGMMA kernels: inspect the loose
+/// PTX build artifact beside this crate. The main path loads the module
+/// embedded in the binary instead; only this fallback reads the loose file.
 fn verify_ptx_only(ctx: &Arc<CudaContext>) -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("wgmma.ptx");
+    println!("Checking loose PTX artifact: {}", ptx_path.display());
 
     if !ptx_path.exists() {
-        return Err("PTX file not found".into());
+        return Err("loose PTX artifact not found (build with `cargo oxide build wgmma`)".into());
     }
 
     let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;

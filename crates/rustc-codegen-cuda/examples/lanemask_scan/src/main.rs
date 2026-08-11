@@ -127,11 +127,7 @@ fn main() {
     const N: usize = 256;
     const WARPS: usize = N / 32;
 
-    let module = ctx
-        .load_module_from_file("lanemask_scan.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let cfg = LaunchConfig {
         block_dim: (32, 1, 1),
         grid_dim: (WARPS as u32, 1, 1),

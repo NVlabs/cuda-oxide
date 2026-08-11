@@ -48,9 +48,7 @@ mod kernels {
 
 fn main() {
     let context = CudaContext::new(0).expect("create CUDA context");
-    let ptx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/copy_aggregate_borrow.ptx");
-    let module = context.load_module_from_file(ptx_path).expect("load PTX");
-    let module = kernels::from_module(module).expect("initialize typed module");
+    let module = kernels::load(&context).expect("Failed to load embedded CUDA module");
     let stream = context.default_stream();
 
     let shape = GridShape {

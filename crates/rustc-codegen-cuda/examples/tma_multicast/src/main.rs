@@ -164,24 +164,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tma_multicast.ptx");
-    println!("Loading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-
-    match ctx.load_module_from_file(ptx_file) {
+    match kernels::load(&ctx) {
         Ok(module) => {
-            let module =
-                kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-            println!("✓ PTX loaded successfully\n");
+            println!("✓ embedded module loaded successfully\n");
             run_tma_multicast_test(&stream, &module)?;
         }
         Err(e) => {
             // TMA multicast needs sm_100a (Blackwell datacenter). On every
-            // other GPU the cubin won't JIT and `load_module_from_file`
-            // returns DriverError(218). Treat that as a clean skip so the
-            // smoketest's failure-marker scan doesn't flag this as a
-            // regression — the PTX itself was generated, which is all this
-            // example can verify off-hopper datacenter.
+            // other GPU the cubin won't JIT and the driver returns 218, which
+            // `load` surfaces through its `Driver` variant. Treat that as a
+            // clean skip so the smoketest's failure-marker scan doesn't flag
+            // this as a regression — the PTX itself was generated, which is
+            // all this example can verify off-hopper datacenter.
             println!("\nskipping: TMA multicast requires sm_100a");
             println!("  driver reported: {}", e);
             println!("  TMA multicast requires sm_100a or later (B100/B200/GB200, and sm_120).");

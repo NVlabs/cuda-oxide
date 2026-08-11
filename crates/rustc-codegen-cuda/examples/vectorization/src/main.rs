@@ -200,11 +200,7 @@ fn main() {
     let stream = ctx.default_stream();
     let cfg = LaunchConfig::for_num_elems(N as u32);
 
-    let module = ctx
-        .load_module_from_file("vectorization.ptx")
-        .expect("Failed to load vectorization.ptx");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let rows = run_all(&module, &stream, cfg, N);
 
     // Flat-buffer path: allocate and fill as plain `f32`, take the `F32x4`
@@ -212,92 +208,131 @@ fn main() {
     let flat: Vec<f32> = (0..N * 4).map(|i| i as f32 * 0.25 + 1.0).collect();
     let flat_in = DeviceBuffer::from_host(&stream, &flat).expect("flat input");
     let mut flat_out = DeviceBuffer::<f32>::zeroed(&stream, N * 4).expect("flat output");
-    let view_module = ctx
-        .load_module_from_file("vectorization.ptx")
-        .expect("Failed to load vectorization.ptx for view kernels");
-    let view_module =
-        view_kernels::from_module(view_module).expect("Failed to initialize view module");
+    let view_module = view_kernels::load(&ctx).expect("Failed to load embedded view module");
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe { view_module.f32x4_view_copy(&stream, cfg, &flat_in, &mut flat_out) }
         .expect("f32x4_view_copy launch");
     let flat_round_trip = flat_out.to_host_vec(&stream).expect("flat readback") == flat;
 
-    // Inspect the PTX we just launched to report/assert the codegen shape.
-    let ptx = std::fs::read_to_string("vectorization.ptx")
-        .expect("vectorization.ptx not found (run with `cargo oxide run vectorization`)");
+    // Inspect the code we just launched: read the PTX back from the artifact
+    // bundle embedded in this binary. Those are the same bytes `kernels::load`
+    // handed to the driver, so the shape assertion can never diverge from what
+    // actually ran (a loose `vectorization.ptx` on disk can). A
+    // `--materialize-cubin` build embeds a cubin with no PTX text; only the
+    // textual shape check is skipped then, and says so.
+    let ptx = embedded_ptx_text();
 
-    println!(
-        "{:<11} {:<14} {:>4} {:>5}  {:<22} vectorized",
-        "rust", "cuda", "size", "align", "ptx load"
-    );
     let mut errors = 0;
     for r in &rows {
-        let body = kernel_body(&ptx, r.kernel);
-        let load = first_mem_op(body);
-        let vectorized = load.contains(".v2.") || load.contains(".v4.") || load.contains(".v8.");
         if !r.copy_ok {
             errors += 1;
             println!("  !! {} round-trip copy mismatch", r.name);
         }
-        // The robust, alignment-gated invariant this example exists to show: a
-        // type aligned to the 128-bit vector width (or wider) always fuses into
-        // a vector `ld/st.global.v*`. (Some smaller types also vectorize, and
-        // the 8-byte ones coalesce into a single `b64` -- reported, not asserted.)
-        let expect_vec = r.align >= 16;
-        if expect_vec && !vectorized {
-            errors += 1;
-            println!("  !! {} expected to vectorize but did not", r.name);
-        }
-        println!(
-            "{:<11} {:<14} {:>4} {:>5}  {:<22} {}",
-            r.name,
-            r.cuda,
-            r.size,
-            r.align,
-            load,
-            if vectorized { "yes" } else { "no" }
-        );
     }
-
-    // The in-kernel `as_vectors::<F32x4>` view over a flat `&[f32]` parameter
-    // must reach the same 128-bit transactions as the over-aligned parameter
-    // types above: this is the checked-view path the `vector` module ships.
-    let view_body = kernel_body(&ptx, "f32x4_view_copy");
     if !flat_round_trip {
         errors += 1;
         println!("  !! f32x4_view_copy round-trip copy mismatch");
     }
-    for dir in ["ld", "st"] {
-        match find_128bit_global(view_body, dir) {
-            Some(line) => println!("f32x4_view_copy: {line}"),
-            None => {
+
+    if let Some(ptx) = &ptx {
+        println!(
+            "{:<11} {:<14} {:>4} {:>5}  {:<22} vectorized",
+            "rust", "cuda", "size", "align", "ptx load"
+        );
+        for r in &rows {
+            let body = kernel_body(ptx, r.kernel);
+            let load = first_mem_op(body);
+            let vectorized =
+                load.contains(".v2.") || load.contains(".v4.") || load.contains(".v8.");
+            // The robust, alignment-gated invariant this example exists to show: a
+            // type aligned to the 128-bit vector width (or wider) always fuses into
+            // a vector `ld/st.global.v*`. (Some smaller types also vectorize, and
+            // the 8-byte ones coalesce into a single `b64` -- reported, not asserted.)
+            let expect_vec = r.align >= 16;
+            if expect_vec && !vectorized {
                 errors += 1;
-                // Deliberately not "has no 128-bit vector op". When this fires,
-                // the likely state is not a scalarized transaction but a
-                // widened one that lost its state space: measured on sm_86
-                // while #657 was open, the view path did reach 128 bits, as a
-                // generic `LD.E.128` / `ST.E.128` rather than the `LDG.E.128` /
-                // `STG.E.128` the direct path gets, and paid four extra
-                // `LDL.64`/`STL.64` local accesses on the way. What was missing
-                // was the *global* window, not the width. Say that, so whoever
-                // sees this next looks at the address space first.
-                println!(
-                    "  !! f32x4_view_copy: no 128-bit {dir}.global vector op \
-                     (the 128-bit access is there, but in the generic window)"
-                );
+                println!("  !! {} expected to vectorize but did not", r.name);
+            }
+            println!(
+                "{:<11} {:<14} {:>4} {:>5}  {:<22} {}",
+                r.name,
+                r.cuda,
+                r.size,
+                r.align,
+                load,
+                if vectorized { "yes" } else { "no" }
+            );
+        }
+
+        // The in-kernel `as_vectors::<F32x4>` view over a flat `&[f32]` parameter
+        // must reach the same 128-bit transactions as the over-aligned parameter
+        // types above: this is the checked-view path the `vector` module ships.
+        let view_body = kernel_body(ptx, "f32x4_view_copy");
+        for dir in ["ld", "st"] {
+            match find_128bit_global(view_body, dir) {
+                Some(line) => println!("f32x4_view_copy: {line}"),
+                None => {
+                    errors += 1;
+                    // Deliberately not "has no 128-bit vector op". When this fires,
+                    // the likely state is not a scalarized transaction but a
+                    // widened one that lost its state space: measured on sm_86
+                    // while #657 was open, the view path did reach 128 bits, as a
+                    // generic `LD.E.128` / `ST.E.128` rather than the `LDG.E.128` /
+                    // `STG.E.128` the direct path gets, and paid four extra
+                    // `LDL.64`/`STL.64` local accesses on the way. What was missing
+                    // was the *global* window, not the width. Say that, so whoever
+                    // sees this next looks at the address space first.
+                    println!(
+                        "  !! f32x4_view_copy: no 128-bit {dir}.global vector op \
+                         (the 128-bit access is there, but in the generic window)"
+                    );
+                }
             }
         }
+    } else {
+        println!(
+            "PTX shape check skipped: the embedded bundle has no PTX text to \
+             inspect (a --materialize-cubin build embeds a cubin)"
+        );
     }
 
     if errors == 0 {
+        let scope = if ptx.is_some() {
+            "layout, copy, and codegen all correct"
+        } else {
+            "layout and copy correct (codegen shape not inspected)"
+        };
         println!(
-            "\n\u{2713} SUCCESS: {} CUDA vector types -- layout, copy, and codegen all correct",
-            rows.len()
+            "\n\u{2713} SUCCESS: {} CUDA vector types -- {}",
+            rows.len(),
+            scope
         );
     } else {
         println!("\n\u{2717} FAILED: {} problem(s)", errors);
         std::process::exit(1);
     }
+}
+
+/// PTX text of this binary's embedded device bundle, if the bundle carries
+/// PTX. These are the bytes `kernels::load` hands to the driver, so asserting
+/// on them asserts on the code that ran. Returns `None` when the bundle holds
+/// a cubin instead (a `--materialize-cubin` build), which has no PTX text.
+fn embedded_ptx_text() -> Option<String> {
+    use cuda_host::embedded::{ArtifactPayloadKind, artifact_bundles_from_current_exe};
+
+    let bundles = artifact_bundles_from_current_exe()
+        .expect("failed to read embedded artifact bundles from the current executable");
+    let bundle = bundles
+        .into_iter()
+        .find(|bundle| bundle.name == env!("CARGO_PKG_NAME"))
+        .expect("embedded device bundle not found in the current executable");
+    let ptx = bundle.payload(ArtifactPayloadKind::Ptx)?;
+    Some(
+        std::str::from_utf8(ptx)
+            .expect("embedded PTX payload is not valid UTF-8")
+            .trim_end_matches('\0')
+            .to_string(),
+    )
 }
 
 /// PTX text of a `.visible .entry <name>` kernel, header to closing `}`.

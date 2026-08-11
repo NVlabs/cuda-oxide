@@ -113,11 +113,7 @@ fn main() {
     let b_dev = DeviceBuffer::from_host(&stream, &b).unwrap();
     let mut c_dev = DeviceBuffer::from_host(&stream, &c).unwrap();
 
-    let module = ctx
-        .load_module_from_file("gemm.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // Configure launch: 16x16 threads per block
     let block_size = 16u32;
     let grid_x = (N as u32).div_ceil(block_size);

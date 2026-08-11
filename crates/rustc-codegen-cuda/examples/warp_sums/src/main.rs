@@ -92,10 +92,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("warp_sums.ptx")?;
-    // SAFETY: the PTX beside this binary is the one built from `kernels`.
-    let module = unsafe { kernels::from_module(module) }?;
-
+    // SAFETY: the embedded module is the one built from this crate's
+    // `kernels`, so every generated launch method matches its kernel.
+    let module = unsafe { kernels::load(&ctx) }?;
     let host: Vec<f32> = (0..THREADS).map(|i| (i % 17) as f32).collect();
     let input = DeviceBuffer::from_host(&stream, &host)?;
     let mut sums = DeviceBuffer::from_host(&stream, &vec![-1.0f32; WARPS as usize])?;

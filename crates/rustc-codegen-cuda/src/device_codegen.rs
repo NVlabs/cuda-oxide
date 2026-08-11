@@ -830,15 +830,19 @@ fn device_debug_kind_with_override(
     rustc_debug: DebugInfo,
     override_value: Option<&str>,
 ) -> llvm_export::export::DebugKind {
-    if let Some(value) = override_value {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "0" | "off" | "none" => return llvm_export::export::DebugKind::Off,
-            "1" | "line" | "lines" | "line-tables" | "line-tables-only" => {
-                return llvm_export::export::DebugKind::LineTables;
+    // The alias table lives in cuda-artifact-finalizer so cargo-oxide's
+    // build policy (full debug disables MIR optimization) and this DWARF
+    // emission level can never disagree about what a value means.
+    if let Some(policy) =
+        override_value.and_then(cuda_artifact_finalizer::DebugPolicy::parse_env_override)
+    {
+        return match policy {
+            cuda_artifact_finalizer::DebugPolicy::None => llvm_export::export::DebugKind::Off,
+            cuda_artifact_finalizer::DebugPolicy::LineTables => {
+                llvm_export::export::DebugKind::LineTables
             }
-            "2" | "full" => return llvm_export::export::DebugKind::Full,
-            _ => {}
-        }
+            cuda_artifact_finalizer::DebugPolicy::Full => llvm_export::export::DebugKind::Full,
+        };
     }
 
     match rustc_debug {
@@ -915,6 +919,12 @@ mod tests {
         );
         assert_eq!(
             device_debug_kind_with_override(DebugInfo::None, Some("full")),
+            llvm_export::export::DebugKind::Full
+        );
+        // The nvcc-style numeric spelling goes through the same shared
+        // parser, so it must select full debug here exactly like "full".
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::None, Some("2")),
             llvm_export::export::DebugKind::Full
         );
     }

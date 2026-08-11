@@ -130,9 +130,7 @@ fn cpu_pairs() -> [(u8, u32); TABLE_LEN] {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
-    let module = ctx.load_module_from_file("const_tuple_table_lookup.ptx")?;
-    let module = kernels::from_module(module)?;
-
+    let module = kernels::load(&ctx)?;
     // Deterministic, lane-divergent index spread (a multiplicative hash),
     // not a uniform pattern every warp lane would share.
     let indices_host: Vec<u32> = (0..N).map(|i| i.wrapping_mul(2_654_435_761)).collect();

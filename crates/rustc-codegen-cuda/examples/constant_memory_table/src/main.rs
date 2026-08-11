@@ -256,11 +256,7 @@ fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
 
-    let module = ctx
-        .load_module_from_file("constant_memory_table.ptx")
-        .expect("Failed to load constant_memory_table.ptx");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     module
         .set_table_const(&stream, &TABLE)
         .expect("upload the constant-memory table");

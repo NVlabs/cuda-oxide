@@ -300,7 +300,9 @@ When updating the pin, the process is:
    `[workspace]` for the `rustc_private` dylibs, and its header requires an
    exact match with the parent, because a `rustc_public` build against a
    different nightly fails to load. `scripts/check-toolchain-parity.sh`
-   checks both copies and the blocks quoted in this book.
+   checks every copy: both real files, the scaffold `cargo oxide new`
+   writes, the devcontainer, and the blocks and dated commands quoted in
+   this book and the READMEs -- so run it to find the stragglers.
 2. Fix any `rustc_public` API changes (usually minor -- that is the whole
    point of the stable API).
 3. Run the full test suite to verify that all examples still compile and

@@ -2999,7 +2999,7 @@ pub enum DeviceDebug {
     Off,
     /// Preserve source line mappings without disabling optimization.
     LineTables,
-    /// Emit full debug information; libNVVM finalization runs unoptimized.
+    /// Emit full debug information; MIR optimization is disabled and libNVVM finalization runs unoptimized.
     Full,
 }
 
@@ -3706,7 +3706,21 @@ pub fn codegen_show_pipeline(
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
-    apply_config_env(&mut cmd, ctx);
+    // The shared codegen env (including the CLI debug level) must be on the
+    // command before the rustflags decision below: a full-debug request adds
+    // `-Zmir-opt-level=0`, and `apply_codegen_rustflags` reads the command's
+    // `CUDA_OXIDE_DEBUG` to see it. This is the same ordering build/run use.
+    apply_common_codegen_env(
+        &mut cmd,
+        ctx,
+        true,
+        no_fmad,
+        unchecked_indexing,
+        device_debug,
+    );
+    cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
+    cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
+    cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
     let fingerprint = pipeline_codegen_fingerprint(
         ctx,
         no_fmad,
@@ -3723,22 +3737,8 @@ pub fn codegen_show_pipeline(
         &[],
         &fingerprint,
     );
-    cmd.env("CUDA_OXIDE_VERBOSE", "1");
-    cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
-    cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
-    cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
-    if no_fmad {
-        cmd.env("CUDA_OXIDE_NO_FMA", "1");
-    }
-    if unchecked_indexing {
-        cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
-    }
-    if let Some(level) = device_debug.env_value() {
-        cmd.env("CUDA_OXIDE_DEBUG", level);
-    }
 
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
-    apply_ld_library_path(&mut cmd, ctx);
 
     println!("Building {}...", example);
     println!();
@@ -5826,17 +5826,54 @@ fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
     *flags = retained;
 }
 
+fn command_requests_full_device_debug_with_env(
+    cmd: &Command,
+    inherited_debug: Option<&str>,
+) -> bool {
+    let effective_debug = match cmd
+        .get_envs()
+        .find(|(name, _)| *name == std::ffi::OsStr::new("CUDA_OXIDE_DEBUG"))
+    {
+        Some((_, Some(value))) => Some(value.to_string_lossy().into_owned()),
+        Some((_, None)) => None,
+        None => inherited_debug.map(str::to_owned),
+    };
+
+    // Shared alias table: the codegen backend parses `CUDA_OXIDE_DEBUG`
+    // with the same function, so every spelling the backend treats as
+    // full debug (including `2`) also disables MIR optimization here.
+    effective_debug.is_some_and(|value| {
+        cuda_artifact_finalizer::DebugPolicy::parse_env_override(&value)
+            == Some(cuda_artifact_finalizer::DebugPolicy::Full)
+    })
+}
+
+fn append_full_debug_mir_rustflag(
+    encoded: &mut String,
+    cmd: &Command,
+    inherited_debug: Option<&str>,
+) {
+    if !command_requests_full_device_debug_with_env(cmd, inherited_debug) {
+        return;
+    }
+    if !encoded.is_empty() {
+        encoded.push(ENCODED_RUSTFLAGS_SEPARATOR);
+    }
+    encoded.push_str("-Zmir-opt-level=0");
+}
+
 fn apply_codegen_rustflags(
     cmd: &mut Command,
     ctx: &Context,
     profile: CodegenProfilePolicy,
     device_cfgs: &[String],
 ) {
-    cmd.env(
-        "CARGO_ENCODED_RUSTFLAGS",
-        build_encoded_rustflags(ctx, profile, device_cfgs),
-    )
-    .env_remove("RUSTFLAGS");
+    let mut encoded = build_encoded_rustflags(ctx, profile, device_cfgs);
+    let inherited_debug = std::env::var("CUDA_OXIDE_DEBUG").ok();
+    append_full_debug_mir_rustflag(&mut encoded, cmd, inherited_debug.as_deref());
+
+    cmd.env("CARGO_ENCODED_RUSTFLAGS", encoded)
+        .env_remove("RUSTFLAGS");
 }
 
 /// Apply the two deliberately different Cargo cache boundaries:
@@ -10622,12 +10659,21 @@ edition = "2024"
 
     #[test]
     fn device_debug_env_value_matches_the_backend_parser() {
-        // These must be strings `device_debug_kind_with_override` accepts; a typo
-        // would silently fall through to the profile-derived default instead of
-        // failing, so pin them.
+        // The exported strings must round-trip through the shared
+        // `CUDA_OXIDE_DEBUG` parser (the same one the codegen backend uses);
+        // a typo would silently fall through to the profile-derived default
+        // instead of failing, so check the actual parse.
         assert_eq!(DeviceDebug::Off.env_value(), None);
         assert_eq!(DeviceDebug::LineTables.env_value(), Some("line"));
         assert_eq!(DeviceDebug::Full.env_value(), Some("full"));
+        assert_eq!(
+            cuda_artifact_finalizer::DebugPolicy::parse_env_override("line"),
+            Some(cuda_artifact_finalizer::DebugPolicy::LineTables)
+        );
+        assert_eq!(
+            cuda_artifact_finalizer::DebugPolicy::parse_env_override("full"),
+            Some(cuda_artifact_finalizer::DebugPolicy::Full)
+        );
     }
 
     #[test]
@@ -10676,5 +10722,51 @@ edition = "2024"
         assert_ne!(off, fp(&line_tables));
         assert_ne!(off, fp(&full));
         assert_ne!(fp(&line_tables), fp(&full));
+    }
+
+    #[test]
+    fn full_device_debug_disables_mir_optimization() {
+        let cmd = Command::new("cargo");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+
+        assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
+    }
+
+    #[test]
+    fn numeric_full_debug_alias_disables_mir_optimization() {
+        // The backend accepts `CUDA_OXIDE_DEBUG=2` as full debug; the shared
+        // parser guarantees the build policy agrees, so `2` must disable MIR
+        // optimization exactly like `full`.
+        let mut cmd = Command::new("cargo");
+        cmd.env("CUDA_OXIDE_DEBUG", "2");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
+
+        assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
+    }
+
+    #[test]
+    fn line_tables_keep_normal_mir_optimization() {
+        let mut cmd = Command::new("cargo");
+        cmd.env("CUDA_OXIDE_DEBUG", "line");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
+
+        assert_eq!(decoded_rustflags(&encoded), ["base"]);
+    }
+
+    #[test]
+    fn explicit_line_tables_override_inherited_full_debug_for_mir_optimization() {
+        let mut cmd = Command::new("cargo");
+        cmd.env("CUDA_OXIDE_DEBUG", "line");
+        let mut encoded = "base".to_string();
+
+        append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+
+        assert_eq!(decoded_rustflags(&encoded), ["base"]);
     }
 }

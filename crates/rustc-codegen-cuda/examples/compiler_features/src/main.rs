@@ -13,6 +13,7 @@
 //! - Shared memory address casting
 //! - 64-bit arithmetic
 //! - Parallel for loop patterns
+//! - Full-debug closure environments
 //!
 //! Run: cargo oxide run compiler_features
 
@@ -55,6 +56,24 @@ mod kernels {
             let maybe: Option<u32> = if val > 0 { Some(val) } else { None };
             let result = maybe.unwrap_or_default();
             *out_elem = result;
+        }
+    }
+
+    /// Full-debug fixture for closure environment DWARF.
+    ///
+    /// The `move` closure forces two scalar captures into the environment so
+    /// cuda-gdb can verify the generated composite type and inspect both
+    /// `capture_0` and `capture_1`.
+    #[kernel]
+    pub fn test_closure_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let captured_u32 = seed + 10;
+            let captured_u64 = 0x1_0000_0020u64;
+            let closure = move |x: u32| x + captured_u32 + captured_u64 as u32;
+            *out_elem = seed; // CUDA_OXIDE_DEBUG_CLOSURE_BREAKPOINT
+            let closure_result = closure(5u32);
+            *out_elem = closure_result;
         }
     }
 
@@ -471,9 +490,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("compiler_features.ptx")?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx)?;
     const N: usize = 1;
     let cfg = LaunchConfig::for_num_elems(N as u32);
 
@@ -563,6 +580,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             assert_eq!(result[0], expected, "test_option({}) failed", val);
             println!("  ✓ val={}: {} (expected {})", val, result[0], expected);
         }
+    }
+
+    // Test closure lowering and keep a deterministic full-debug fixture live.
+    println!("Testing: test_closure_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // capture_0 = seed + 10 = 17, capture_1 low 32 bits = 32, x = 5.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 54, "test_closure_debug failed");
+        println!("  ✓ Result: {} (expected 54)", result[0]);
     }
 
     // Test for loop sum

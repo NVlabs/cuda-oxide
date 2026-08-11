@@ -122,12 +122,7 @@ fn main() {
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     println!("Device ordinal: {}\n", ctx.ordinal());
 
-    let ptx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/slice_index_bounds_check.ptx");
-    let module = ctx
-        .load_module_from_file(ptx_path)
-        .expect("Failed to load PTX");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let stream = ctx.default_stream();
 
     // The out-of-bounds test runs last

@@ -128,13 +128,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let stream = ctx.default_stream();
 
-    let ptx_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mcast_barrier_test.ptx");
-    println!("Loading PTX: {}", ptx_path.display());
-    let module =
-        ctx.load_module_from_file(ptx_path.to_str().ok_or("PTX path must be valid UTF-8")?)?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-    println!("PTX loaded\n");
+    let module = kernels::load(&ctx)?;
+    println!("Embedded CUDA module loaded\n");
 
     for &num_iters in &[4u32, 8, 16, 32, 64, 256, 1024] {
         print!("  {} iters ... ", num_iters);

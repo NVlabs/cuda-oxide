@@ -74,9 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let stream = ctx.default_stream();
-    let module = ctx.load_module_from_file("cvt_f16x2.ptx")?;
-    let module = kernels::from_module(module)?;
-
+    let module = kernels::load(&ctx)?;
     let lo_host: Vec<f32> = (0..N).map(|i| (i as f32) * 0.337 - 40.0).collect();
     let hi_host: Vec<f32> = (0..N).map(|i| (i as f32) * -1.113 + 17.5).collect();
 

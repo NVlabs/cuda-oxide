@@ -131,11 +131,7 @@ fn main() {
     println!("=== Nested-aggregate constant materialization ===\n");
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
-    let ptx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/const_aggregate.ptx");
-    let module = ctx
-        .load_module_from_file(ptx_path)
-        .expect("Failed to load PTX (device codegen failed?)");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let stream = ctx.default_stream();
 
     let mut d_out = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();

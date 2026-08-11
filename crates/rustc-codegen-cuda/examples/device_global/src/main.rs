@@ -168,11 +168,7 @@ fn main() {
     let stream = ctx.default_stream();
     let out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1).expect("Failed to allocate output");
 
-    let module = ctx
-        .load_module_from_file("device_global.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     for launch_idx in 1..=2 {
         unsafe {
             module.device_global(

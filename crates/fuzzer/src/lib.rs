@@ -17,7 +17,9 @@
 //! `tools/mir_generator.py`, etc.) lives next to this library. The library
 //! itself is `no_std` and contains nothing CUDA- or std-specific.
 
-#![no_std]
+// The library is `no_std`. The test harness is not, so a test build links std
+// on the host while every real build, including the device build, does not.
+#![cfg_attr(not(test), no_std)]
 
 pub mod trace;
 

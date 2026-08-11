@@ -28,6 +28,7 @@ clippy-fix:
 # `test-cuda` below, so this recipe runs on a machine with no CUDA at all.
 # `--all-targets` matches the matrix default; the two exceptions below carry
 # CI's own overrides.
+# Run unit tests for every package CI covers that needs no CUDA
 test:
     cargo test --all-targets \
         -p cuda-intrinsics-gen -p cuda-intrinsics -p llvm-export \
@@ -52,7 +53,30 @@ test:
 # shadowing the toolkit's link-time stub under that name; see unit-tests.yml.
 #
 # `--lib` for cuda-core skips the GPU-only VMM/P2P test in tests/vmm_p2p.rs.
+# Run the five CUDA-linked packages (shadows the libcuda stub if no driver)
 test-cuda:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The toolkit ships only the link-time stub `libcuda.so`, while the linker
+    # stamps `libcuda.so.1` into the binary, so a machine with a toolkit but no
+    # driver cannot even load these tests. CI shadows the stub under that name
+    # (unit-tests.yml) and CONTRIBUTING documents the same recipe by hand; do it
+    # here so `just check` works on the driverless machine CONTRIBUTING calls
+    # the common case. A real driver already provides the name, so this is a
+    # no-op there.
+    if ! ldconfig -p 2>/dev/null | grep -q 'libcuda\.so\.1'; then
+        for root in "${CUDA_TOOLKIT_PATH:-}" "${CUDA_HOME:-}" /usr/local/cuda; do
+            if [ -n "${root}" ] && [ -f "${root}/lib64/stubs/libcuda.so" ]; then
+                shadow="$(mktemp -d)"
+                trap 'rm -rf "${shadow}"' EXIT
+                ln -sf "${root}/lib64/stubs/libcuda.so" "${shadow}/libcuda.so.1"
+                # `:+` keeps the joining colon out when the variable is unset:
+                # a trailing colon would put the cwd on the loader search path.
+                export LD_LIBRARY_PATH="${shadow}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+                break
+            fi
+        done
+    fi
     cargo test --all-targets \
         -p cuda-oxide-codegen -p cuda-macros -p cuda-host -p cuda-async
     cargo test -p cuda-core --lib
@@ -61,15 +85,21 @@ test-cuda:
 # recipe uses `--all-targets`, which skips doctests, so this covers them.
 # cuda-bindings is excluded from doctests (its generated C doc comments are not
 # valid Rust); its docs still build under the rustdoc allows in its lib.rs.
+# Build docs warning-free and run doctests
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
     cargo test --doc --workspace --exclude cuda-bindings
 
-# Run all checks (fmt + clippy + tests + docs). Includes `test-cuda`: `clippy`
-# and `doc-check` already build cuda-bindings, so this recipe needs a CUDA
-# toolkit either way, and the pre-split `test` already ran driver-linked
-# cuda-host/cuda-macros binaries. Machines without even a toolkit get `test`.
-check: fmt-check clippy test test-cuda doc-check
+# Run all checks (fmt + clippy + tests + guards + docs). Includes `test-cuda`:
+# `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
+# CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
+# is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
+# `check-guards` covers the status-guard and cargo-deny workflows in full; see
+# its comment for prerequisites. Still CI-only: naming-guard (its grep pipeline
+# lives inline in the workflow, with no script to invoke), examples-compile
+# (needs the CUDA codegen backend), the book build, and CodeQL.
+# Run CI's gates minus naming-guard, examples-compile, book, CodeQL
+check: fmt-check clippy test test-cuda check-guards doc-check
 
 # Clean project-local Cargo outputs and known cuda-oxide artifacts
 clean-artifacts:
@@ -94,3 +124,20 @@ smoketest *args:
 # Verify every error* example is in STATUS.md and smoketest.sh ERROR_EXAMPLES
 check-errors:
     scripts/check-error-example-status.sh
+
+# The status-guard pair (error* examples in STATUS.md, and the smoketest
+# example contract) plus all three cargo-deny jobs: `cargo deny check` enforces
+# deny.toml over the root workspace's resolved graph, the license inventory
+# covers what the workspace declares, and deny.toml holds over the example
+# workspaces. These were only reachable by reading the workflows, so `just
+# check` could pass while status-guard or cargo-deny failed. Prerequisites:
+# `cargo-deny` on PATH (`cargo install cargo-deny --locked`) and `python3`
+# (three of the scripts drive it). The scripts are invoked via `bash` as CI
+# does: two of the four carry no exec bit.
+# Run the status-guard and cargo-deny CI jobs (needs cargo-deny, python3)
+check-guards:
+    bash scripts/check-error-example-status.sh
+    bash scripts/check-example-smoketest-contract.sh
+    cargo deny check
+    bash scripts/check-dependency-licenses.sh
+    bash scripts/check-example-license-policy.sh

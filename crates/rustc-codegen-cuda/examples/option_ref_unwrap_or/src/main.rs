@@ -103,11 +103,7 @@ fn main() {
     println!("=== option_ref_unwrap_or regression (issue #132) ===\n");
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
-    let ptx_path = concat!(env!("CARGO_MANIFEST_DIR"), "/option_ref_unwrap_or.ptx");
-    let module = ctx
-        .load_module_from_file(ptx_path)
-        .expect("Failed to load PTX");
-    let module = kernels::from_module(module).expect("Failed to initialize typed module");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     let stream = ctx.default_stream();
 
     const BLOCK: u32 = 32;

@@ -58,11 +58,13 @@ jobs:
       - name: Verify README lists every workspace member
         run: bash scripts/check-crate-inventory.sh
 
-  # The pin lives in three places and no build catches them drifting apart:
-  # rustup reads the nested copy for the backend's own [workspace], so a
-  # mismatch there is a load failure rather than a warning, and the book's
-  # quoted blocks are presented to readers as the repo's real file. #727 added
-  # rustfmt to both real files and left both book quotes behind.
+  # The pin is copied into places no build compares: the nested backend pin
+  # (rustup reads it for the backend's own [workspace], so a mismatch there
+  # is a load failure rather than a warning), the scaffold `cargo oxide new`
+  # writes into user projects, the devcontainer's preinstalled toolchain, the
+  # book's quoted [toolchain] blocks, and the dated rustup/cargo commands in
+  # the book and READMEs. #727 added rustfmt to both real files and left both
+  # book quotes behind.
   toolchain-pin-parity:
     name: toolchain pin parity
     runs-on: ubuntu-latest

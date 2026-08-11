@@ -200,11 +200,8 @@ fn main() {
         return;
     }
 
-    let module = ctx
-        .load_module_from_file("clc.ptx")
-        .expect("Load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-    println!("PTX loaded and assembled successfully.\n");
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
+    println!("Embedded CUDA module loaded successfully.\n");
 
     // ====================================================================
     // Test 0: CLC try_cancel pipeline

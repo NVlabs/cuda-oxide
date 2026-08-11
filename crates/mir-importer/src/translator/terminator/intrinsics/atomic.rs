@@ -67,6 +67,7 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use crate::translator::{rvalue, types};
 
+use dialect_nvvm::ops::InlinePtxOp;
 use dialect_nvvm::ops::atomic::{
     AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomicCmpxchgOp, NvvmAtomicFenceOp,
     NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
@@ -882,6 +883,34 @@ fn extract_type_info_from_generics(
     })
 }
 
+/// The route a core atomic intrinsic takes through [`dispatch_core_intrinsic`].
+///
+/// The two fences carry no element-type generic, only an ordering const, so
+/// they must be picked out by name before the type extraction shared by the
+/// load/store/RMW/CAS paths. A fence that misses this routing is reported as
+/// a missing element type, which is not the problem (issue #781 was exactly
+/// that for `compiler_fence`).
+#[derive(Debug, PartialEq, Eq)]
+enum CoreIntrinsicRoute {
+    /// `atomic_singlethreadfence` (`core::sync::atomic::compiler_fence`):
+    /// constrains only the optimizer and must emit no hardware barrier.
+    CompilerFence,
+    /// `atomic_fence` (`core::sync::atomic::fence`): a hardware barrier at
+    /// system scope.
+    HardwareFence,
+    /// Everything else: element-typed load/store/RMW/CAS dispatch.
+    Typed,
+}
+
+/// Classify a core atomic intrinsic op name (see [`parse_core_intrinsic_op`]).
+fn route_core_intrinsic(op_name: &str) -> CoreIntrinsicRoute {
+    match op_name {
+        "singlethreadfence" => CoreIntrinsicRoute::CompilerFence,
+        "fence" => CoreIntrinsicRoute::HardwareFence,
+        _ => CoreIntrinsicRoute::Typed,
+    }
+}
+
 /// Dispatch a `std::intrinsics::atomic_*` / `core::intrinsics::atomic_*` call.
 ///
 /// Extracts the generic args (type, ordering) from the `func` operand and
@@ -905,28 +934,47 @@ pub fn dispatch_core_intrinsic(
 ) -> TranslationResult<Ptr<Operation>> {
     let op_name = parse_core_intrinsic_op(path).unwrap_or("");
 
-    // `atomic_fence` has no element-type generic, only its ordering const.
-    // Route it before the common type extraction used by load/store/RMW/CAS.
-    if op_name == "fence" {
-        let orderings = extract_core_intrinsic_orderings(func, &loc, 1)?;
-        return emit_core_atomic_fence(
-            ctx,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-            orderings[0].clone(),
-        );
+    // The ordering-only fences must be routed by name before the common type
+    // extraction used by load/store/RMW/CAS (see [`CoreIntrinsicRoute`]).
+    match route_core_intrinsic(op_name) {
+        CoreIntrinsicRoute::CompilerFence => {
+            let orderings = extract_core_intrinsic_orderings(func, &loc, 1)?;
+            return emit_core_compiler_fence(
+                ctx,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+                orderings[0].clone(),
+            );
+        }
+        CoreIntrinsicRoute::HardwareFence => {
+            let orderings = extract_core_intrinsic_orderings(func, &loc, 1)?;
+            return emit_core_atomic_fence(
+                ctx,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+                orderings[0].clone(),
+            );
+        }
+        CoreIntrinsicRoute::Typed => {}
     }
 
     // Extract generic args from the func operand.
     let is_cmpxchg = op_name == "cxchg" || op_name == "cxchgweak";
     let expected_orderings = if is_cmpxchg { 2 } else { 1 };
-    let (type_info, orderings) = extract_core_intrinsic_generics(func, &loc, expected_orderings)?;
+    let (type_info, orderings) =
+        extract_core_intrinsic_generics(func, &loc, expected_orderings, op_name)?;
     let ordering = orderings[0].clone();
 
     // Route by operation name
@@ -1054,6 +1102,7 @@ fn extract_core_intrinsic_generics(
     func: &mir::Operand,
     loc: &Location,
     expected_orderings: usize,
+    op_name: &str,
 ) -> TranslationResult<(AtomicTypeInfo, Vec<AtomicOrdering>)> {
     if let mir::Operand::Constant(const_op) = func
         && let TyKind::RigidTy(RigidTy::FnDef(_, substs)) = const_op.const_.ty().kind()
@@ -1061,9 +1110,10 @@ fn extract_core_intrinsic_generics(
         let Some(type_info) = extract_type_info_from_generics(&substs) else {
             return input_err!(
                 loc.clone(),
-                TranslationErr::unsupported(
-                    "could not extract element type from core atomic intrinsic generics"
-                )
+                TranslationErr::unsupported(format!(
+                    "unsupported core atomic operation `{op_name}`: no element type in its \
+                         generics, and it is not one of the ordering-only fences"
+                ))
             );
         };
 
@@ -1101,6 +1151,111 @@ fn core_atomic_width_is_supported(bit_width: u32) -> bool {
 // from cuda_device (no ordering arg, different arg count).  They build the same
 // NVVM ops as the cuda_device emit functions.
 // =============================================================================
+
+/// Build the barrier op for a core compiler fence.
+///
+/// `core::sync::atomic::compiler_fence` constrains only the compiler: it forbids
+/// reordering memory operations across itself and emits no hardware instruction,
+/// so unlike `fence` it must not become a PTX `fence` or `membar`. The encoding
+/// is an empty side-effecting inline PTX block carrying a `~{memory}` clobber --
+/// the mechanism the first-class fence routes already use, minus the instruction
+/// text. That survives the libNVVM-safe route, which rejects the LLVM `fence`
+/// instruction outright.
+///
+/// `Relaxed` is refused. Safe Rust cannot build it: `compiler_fence(Relaxed)`
+/// panics in core. Only a direct nightly intrinsic call reaches here, and a
+/// relaxed compiler fence orders nothing, so refuse it rather than emit a
+/// barrier that silently means something else.
+fn build_compiler_fence_barrier(
+    ctx: &mut Context,
+    loc: &Location,
+    ordering: &AtomicOrdering,
+) -> TranslationResult<Ptr<Operation>> {
+    if matches!(ordering, AtomicOrdering::Relaxed) {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "core compiler fence cannot use Relaxed ordering".to_owned()
+            )
+        );
+    }
+
+    // No results, and therefore no `=` output constraints, which is what the
+    // inline-PTX verifier checks the two against.
+    Ok(InlinePtxOp::build(
+        ctx,
+        vec![],
+        vec![],
+        "",
+        "~{memory}",
+        true,
+        false,
+    ))
+}
+
+/// Emit a core compiler fence (see [`build_compiler_fence_barrier`] for the
+/// encoding and the `Relaxed` refusal).
+///
+/// MIR args: none; ordering is carried by a const generic.
+#[allow(clippy::too_many_arguments)]
+fn emit_core_compiler_fence(
+    ctx: &mut Context,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    ordering: AtomicOrdering,
+) -> TranslationResult<Ptr<Operation>> {
+    if !args.is_empty() {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "core compiler fence expects no arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let barrier = build_compiler_fence_barrier(ctx, &loc, &ordering)?;
+    barrier.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = prev_op {
+        barrier.insert_after(ctx, prev);
+    } else {
+        barrier.insert_at_front(block_ptr, ctx);
+    }
+
+    // `core::sync::atomic::compiler_fence` returns unit.
+    let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
+    let unit_op = Operation::new(
+        ctx,
+        MirConstructTupleOp::get_concrete_op_info(),
+        vec![unit_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    unit_op.deref_mut(ctx).set_loc(loc.clone());
+    unit_op.insert_after(ctx, barrier);
+    let unit_val = unit_op.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        unit_val,
+        target,
+        block_ptr,
+        unit_op,
+        value_map,
+        block_map,
+        loc,
+        "core compiler fence call without target block",
+    )
+}
 
 /// Emit a core atomic fence.
 ///
@@ -1502,8 +1657,155 @@ fn emit_core_atomic_cmpxchg(
 
 #[cfg(test)]
 mod tests {
-    use super::{core_atomic_width_is_supported, intrinsic_ordering_from_discriminant};
-    use dialect_nvvm::ops::AtomicOrdering;
+    use super::{
+        CoreIntrinsicRoute, build_compiler_fence_barrier, core_atomic_width_is_supported,
+        intrinsic_ordering_from_discriminant, parse_core_intrinsic_op, route_core_intrinsic,
+    };
+    use dialect_nvvm::ops::{AtomicOrdering, InlinePtxOp};
+    use pliron::common_traits::Verify;
+    use pliron::context::Context;
+    use pliron::location::Location;
+
+    fn test_context() -> Context {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        dialect_nvvm::register(&mut ctx);
+        ctx
+    }
+
+    /// The regression gate for issue #781: `singlethreadfence` (the intrinsic
+    /// behind `core::sync::atomic::compiler_fence`) must take the
+    /// compiler-fence route through `dispatch_core_intrinsic`. Without this
+    /// routing it falls through to the element-typed dispatch and any kernel
+    /// calling `compiler_fence` fails to compile with a missing-element-type
+    /// diagnostic.
+    #[test]
+    fn compiler_fence_takes_the_compiler_fence_route() {
+        assert_eq!(
+            route_core_intrinsic("singlethreadfence"),
+            CoreIntrinsicRoute::CompilerFence
+        );
+    }
+
+    /// `fence` stays on the hardware-barrier route and the element-typed ops
+    /// stay on the typed dispatch: the compiler-fence routing must not widen.
+    #[test]
+    fn fence_and_typed_ops_keep_their_routes() {
+        assert_eq!(
+            route_core_intrinsic("fence"),
+            CoreIntrinsicRoute::HardwareFence
+        );
+        for op in ["load", "store", "xadd", "cxchg", "cxchgweak", ""] {
+            assert_eq!(
+                route_core_intrinsic(op),
+                CoreIntrinsicRoute::Typed,
+                "{op:?}"
+            );
+        }
+    }
+
+    /// `compiler_fence(Relaxed)` panics in core, so only a direct nightly
+    /// intrinsic call can carry Relaxed here. The importer refuses it instead
+    /// of emitting a barrier that silently means something else.
+    #[test]
+    fn compiler_fence_refuses_relaxed_ordering() {
+        let mut ctx = test_context();
+        let err =
+            build_compiler_fence_barrier(&mut ctx, &Location::Unknown, &AtomicOrdering::Relaxed)
+                .expect_err("Relaxed must be refused");
+        assert!(
+            err.to_string().contains("Relaxed"),
+            "diagnostic must name the refused ordering: {err}"
+        );
+    }
+
+    /// Every ordering safe Rust can pass to `compiler_fence` encodes as an
+    /// empty, volatile, non-convergent inline-PTX block whose only content is
+    /// the `~{memory}` clobber: no instruction text (so no hardware `fence` or
+    /// `membar`), no results, and it satisfies the inline-PTX verifier (zero
+    /// results paired against zero `=` output constraints).
+    #[test]
+    fn compiler_fence_barrier_is_an_empty_memory_clobber() {
+        let mut ctx = test_context();
+        for ordering in [
+            AtomicOrdering::Acquire,
+            AtomicOrdering::Release,
+            AtomicOrdering::AcqRel,
+            AtomicOrdering::SeqCst,
+        ] {
+            let op = build_compiler_fence_barrier(&mut ctx, &Location::Unknown, &ordering)
+                .unwrap_or_else(|e| panic!("{ordering:?} must be accepted: {e}"));
+            let barrier = InlinePtxOp::new(op);
+            assert_eq!(
+                barrier
+                    .get_attr_ptx_template(&ctx)
+                    .map(|s| String::from((*s).clone()))
+                    .as_deref(),
+                Some(""),
+                "{ordering:?}: the barrier must emit no PTX instruction"
+            );
+            assert_eq!(
+                barrier
+                    .get_attr_ptx_constraints(&ctx)
+                    .map(|s| String::from((*s).clone()))
+                    .as_deref(),
+                Some("~{memory}"),
+                "{ordering:?}: the barrier must clobber memory"
+            );
+            assert!(
+                barrier
+                    .get_attr_ptx_sideeffect(&ctx)
+                    .is_some_and(|b| bool::from((*b).clone())),
+                "{ordering:?}: the barrier must be side-effecting"
+            );
+            assert!(
+                barrier
+                    .get_attr_ptx_convergent(&ctx)
+                    .is_some_and(|b| !bool::from((*b).clone())),
+                "{ordering:?}: the barrier must not be convergent"
+            );
+            assert_eq!(
+                op.deref(&ctx).get_num_results(),
+                0,
+                "{ordering:?}: the barrier has no results"
+            );
+            barrier
+                .verify(&ctx)
+                .unwrap_or_else(|e| panic!("{ordering:?}: verifier must accept the barrier: {e}"));
+        }
+    }
+
+    /// Both ordering-only fences must be recognised by name. `singlethreadfence`
+    /// carries no element type, so if it is not matched here it falls through to
+    /// the load/store/RMW generics extraction and is reported as a missing
+    /// element type -- which is what issue #781 was.
+    #[test]
+    fn ordering_only_fences_are_recognised_by_name() {
+        for (path, expected) in [
+            ("core::intrinsics::atomic_fence", "fence"),
+            ("std::intrinsics::atomic_fence", "fence"),
+            (
+                "core::intrinsics::atomic_singlethreadfence",
+                "singlethreadfence",
+            ),
+            (
+                "std::intrinsics::atomic_singlethreadfence",
+                "singlethreadfence",
+            ),
+        ] {
+            assert_eq!(parse_core_intrinsic_op(path), Some(expected), "{path}");
+        }
+    }
+
+    /// `singlethreadfence` must not be confused with `fence`: they take
+    /// different routes, one emitting a hardware barrier and one emitting none.
+    #[test]
+    fn compiler_fence_is_not_parsed_as_a_hardware_fence() {
+        assert_ne!(
+            parse_core_intrinsic_op("core::intrinsics::atomic_singlethreadfence"),
+            parse_core_intrinsic_op("core::intrinsics::atomic_fence")
+        );
+    }
 
     #[test]
     fn core_atomics_accept_only_current_backend_widths() {

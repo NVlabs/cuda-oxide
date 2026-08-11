@@ -563,17 +563,13 @@ struct LocalDebugInfo {
     source_scope: u32,
 }
 
-/// Build the first full-debug variable map.
+/// Build the full-debug variable map for whole MIR locals.
 ///
-/// This stage only supports simple whole-local bindings:
-///
-/// ```text
-/// debug name => _3
-/// ```
-///
-/// Fragments/projections need `DIExpression(DW_OP_LLVM_fragment, ...)` and more
-/// value-location tracking, so they are intentionally skipped until the basic
-/// local/argument path is solid.
+/// The cargo-oxide full-debug path disables MIR optimization, so closure
+/// environments stay as aggregate locals instead of being split into SROA
+/// fragments. Composite debug records are intentionally skipped here; closure
+/// locals use the normal whole-local path and are described by
+/// `debug_type_for_ty`.
 fn collect_debug_locals(
     ctx: &mut Context,
     body: &mir::Body,
@@ -768,6 +764,14 @@ fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
                 name: reference_name(pointee, mutability),
                 size_bits: 64,
             })
+        }
+        TyKind::RigidTy(RigidTy::Closure(closure_def, substs)) if depth < MAX_DEBUG_TYPE_DEPTH => {
+            let upvar_tys = types::closure_upvar_tys(&substs)?;
+            let fields = upvar_tys
+                .into_iter()
+                .enumerate()
+                .map(|(idx, upvar_ty)| (format!("capture_{idx}"), upvar_ty));
+            debug_struct_type(ty, format!("{:?}", closure_def.def_id()), fields, depth)
         }
         TyKind::RigidTy(RigidTy::Tuple(subtypes)) if depth < MAX_DEBUG_TYPE_DEPTH => {
             let name = format!(
@@ -1703,5 +1707,132 @@ mod tests {
                 .contains_key(&key),
             "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
         );
+    }
+
+    /// Closure environments must be described as composite debug types with
+    /// member offsets taken from rustc's real layout, not declaration order.
+    ///
+    /// `debug_type_for_ty` needs a live compiler session (closure types and
+    /// layouts only exist inside one), so this test drives the pinned rustc
+    /// in-process on a small fixture via `rustc_public::run!`, extracts the
+    /// closure-typed local, and asserts on the returned plain data outside
+    /// the session. The fixture is compiled with `-Zmir-opt-level=0`, the
+    /// same flag cargo-oxide adds for full device debug, so the closure
+    /// local survives to MIR exactly as in a real full-debug build.
+    ///
+    /// The `u32`-before-`u64` capture order is deliberate: rustc's layout
+    /// sorts closure fields by descending alignment, placing the `u64` at
+    /// offset 0 and the `u32` at offset 8. Sequential declaration-order
+    /// offsets would put `capture_0` at 0, so this fails loudly if the
+    /// composite type ever stops using the layout's field offsets.
+    #[test]
+    fn closure_environment_debug_type_uses_layout_offsets() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_closure_debug_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("closure_debug_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+pub fn closure_host(a: u32, b: u64) -> u32 {
+    let add = move |x: u32| x + a + (b as u32);
+    add(1)
+}
+"#,
+        )
+        .unwrap();
+
+        // The rustup shim resolves the same pinned toolchain this test binary
+        // was built with, so the in-process driver and the sysroot agree.
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=closure_debug_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=0".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        // rustc needs more stack than the default test-thread allowance.
+        let debug_type = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let closure_ty = rustc_public::all_local_items()
+                        .into_iter()
+                        .filter_map(|item| item.body())
+                        .flat_map(|body| body.locals().to_vec())
+                        .map(|decl| decl.ty)
+                        .find(|ty| matches!(ty.kind(), TyKind::RigidTy(RigidTy::Closure(..))))
+                        .expect("fixture must contain a closure-typed local");
+                    std::ops::ControlFlow::<(), _>::Continue(debug_type_for_ty(&closure_ty))
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        let Some(DebugLocalTypeKind::Struct {
+            size_bits, members, ..
+        }) = debug_type
+        else {
+            panic!("closure environment must produce a composite debug type, got {debug_type:?}");
+        };
+        assert_eq!(size_bits, 128, "u64 + u32 environment is 16 bytes");
+        assert_eq!(members.len(), 2, "one member per capture");
+
+        assert_eq!(members[0].name, "capture_0");
+        assert_eq!(
+            members[0].offset_bits, 64,
+            "the u32 capture sits after the u64 in rustc's layout"
+        );
+        match &members[0].ty {
+            DebugLocalTypeKind::Basic {
+                name, size_bits, ..
+            } => {
+                assert_eq!(name, "u32");
+                assert_eq!(*size_bits, 32);
+            }
+            other => panic!("capture_0 must be a basic u32, got {other:?}"),
+        }
+
+        assert_eq!(members[1].name, "capture_1");
+        assert_eq!(
+            members[1].offset_bits, 0,
+            "the u64 capture is layout-first despite being declared second"
+        );
+        match &members[1].ty {
+            DebugLocalTypeKind::Basic {
+                name, size_bits, ..
+            } => {
+                assert_eq!(name, "u64");
+                assert_eq!(*size_bits, 64);
+            }
+            other => panic!("capture_1 must be a basic u64, got {other:?}"),
+        }
     }
 }
