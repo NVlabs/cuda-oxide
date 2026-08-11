@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Verify README.md's Crate Overview still lists every workspace member.
 #
 # The overview is the only map of the tree a newcomer gets, and a crate absent

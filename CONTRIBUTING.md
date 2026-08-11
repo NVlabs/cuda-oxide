@@ -142,16 +142,27 @@ flakes enabled, `nix develop` is the quickest way to get everything in place.
 
 ### License Headers
 
-All new first-party source files must identify the Apache-2.0 license with an
-SPDX header:
+All new first-party source files must carry the NVIDIA copyright notice and an
+Apache-2.0 SPDX identifier. Use the block-comment form, which is what the bulk
+of the codebase uses:
 
 ```rust
-// SPDX-License-Identifier: Apache-2.0
+/*
+ * SPDX-FileCopyrightText: Copyright (c) <year> NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
 ```
+
+The copyright line must read exactly `Copyright (c) <year(s)> NVIDIA
+CORPORATION & AFFILIATES. All rights reserved.` — including the `(c)`, the
+`& AFFILIATES`, and both trailing periods. Adapt only the comment syntax for
+non-Rust files (`#` for shell, Python, Dockerfiles and TOML; `<!-- -->` for
+HTML; `;` for LLVM IR), never the wording.
 
 Preserve existing copyright notices. Add a copyright notice only when you are
 the copyright holder or are authorized to name the holder. Vendored and other
-third-party files must keep their upstream license and copyright notices.
+third-party files must keep their upstream license and copyright notices, and
+must be attributed in `THIRD_PARTY_NOTICES` at the repository root.
 
 ### Testing
 

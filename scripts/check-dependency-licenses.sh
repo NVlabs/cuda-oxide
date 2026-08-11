@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Verify dependency-licenses.csv still records every crate the workspace
 # declares: each root-workspace member, and each directly declared third-party
 # dependency (normal, dev, or build).  Run this after adding or removing a

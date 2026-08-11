@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """CUTLASS CuTe DSL SoL benchmark — measures CUTLASS FP16 GEMM throughput.
 
 Uses cute.compile() to pre-compile the kernel, then cute.testing.benchmark()

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Verify every copy of the toolchain pin still agrees with rust-toolchain.toml.
 #
 # The pin is copied into several places, and nothing else checks that the

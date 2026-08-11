@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Verify the book's Command reference lists every `cargo oxide` subcommand.
 #
 # The table in `cuda-oxide-book/getting-started/installation.md` is the only
