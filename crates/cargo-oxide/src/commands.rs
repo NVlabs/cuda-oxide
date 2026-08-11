@@ -3706,7 +3706,21 @@ pub fn codegen_show_pipeline(
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
-    apply_config_env(&mut cmd, ctx);
+    // The shared codegen env (including the CLI debug level) must be on the
+    // command before the rustflags decision below: a full-debug request adds
+    // `-Zmir-opt-level=0`, and `apply_codegen_rustflags` reads the command's
+    // `CUDA_OXIDE_DEBUG` to see it. This is the same ordering build/run use.
+    apply_common_codegen_env(
+        &mut cmd,
+        ctx,
+        true,
+        no_fmad,
+        unchecked_indexing,
+        device_debug,
+    );
+    cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
+    cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
+    cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
     let fingerprint = pipeline_codegen_fingerprint(
         ctx,
         no_fmad,
@@ -3723,22 +3737,8 @@ pub fn codegen_show_pipeline(
         &[],
         &fingerprint,
     );
-    cmd.env("CUDA_OXIDE_VERBOSE", "1");
-    cmd.env("CUDA_OXIDE_SHOW_RUSTC_MIR", "1");
-    cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
-    cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
-    if no_fmad {
-        cmd.env("CUDA_OXIDE_NO_FMA", "1");
-    }
-    if unchecked_indexing {
-        cmd.env("CUDA_OXIDE_UNCHECKED_INDEXING", "1");
-    }
-    if let Some(level) = device_debug.env_value() {
-        cmd.env("CUDA_OXIDE_DEBUG", level);
-    }
 
     apply_output_mode(&mut cmd, emit_nvvm_ir, target_arch, &materialization);
-    apply_ld_library_path(&mut cmd, ctx);
 
     println!("Building {}...", example);
     println!();
