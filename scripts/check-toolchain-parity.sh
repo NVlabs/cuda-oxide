@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Verify every copy of the toolchain pin still agrees with rust-toolchain.toml.
 #
-# The pin is duplicated three ways, and nothing else checks that the copies
-# move together:
+# The pin is copied into several places, and nothing else checks that the
+# copies move together:
 #
 #   1. crates/rustc-codegen-cuda/rust-toolchain.toml.  That crate carries its
 #      own [workspace] for the rustc_private dylibs, so rustup resolves it
@@ -12,12 +12,28 @@
 #      disagreeing is a build break rather than a style nit -- but the header
 #      is a comment, and a comment enforces nothing.
 #
-#   2. The `[toolchain]` blocks quoted in the book.  These are presented as
+#   2. The RUST_TOOLCHAIN_TOML scaffold in crates/cargo-oxide/src/commands.rs.
+#      `cargo oxide new` writes it into every new project as that project's
+#      rust-toolchain.toml, so this is the highest-impact copy: a stale
+#      scaffold never breaks this repo's CI, it hands each new user a pin
+#      whose backend cannot load, and the failure surfaces on their machine.
+#
+#   3. The rust feature in .devcontainer/devcontainer.json.  It preinstalls
+#      the toolchain so the container's first build does not download it; a
+#      stale version there warms the wrong cache, and a component the pin no
+#      longer names keeps being installed into every container.
+#
+#   4. The `[toolchain]` blocks quoted in the book.  These are presented as
 #      the repo's actual file -- one is even labelled "already in the repo
 #      root" -- so a reader copies them into their own project.  When they go
 #      stale the book hands out a pin that silently omits a component, and the
 #      symptom lands later and elsewhere: a missing `rustfmt` surfaces as
 #      `cargo oxide fmt` failing, not as a bad toolchain file.
+#
+#   5. The dated commands and prose across the book and the READMEs:
+#      `rustup toolchain install nightly-...`, `cargo +nightly-... install`,
+#      and sentences naming the pin.  Readers run those commands outside a
+#      checkout, where no rust-toolchain.toml can correct a stale date.
 #
 # This is exactly what happened: #727 added `rustfmt` to both real files and
 # left both book quotes at five components.
@@ -39,6 +55,8 @@ cd "$(dirname "$0")/.."
 
 ROOT_PIN=rust-toolchain.toml
 NESTED_PIN=crates/rustc-codegen-cuda/rust-toolchain.toml
+SCAFFOLD=crates/cargo-oxide/src/commands.rs
+DEVCONTAINER=.devcontainer/devcontainer.json
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "error: python3 is required to verify the toolchain pin" >&2
@@ -46,15 +64,28 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+# `git ls-files` is the only precise notion of "tracked markdown": a bare
+# glob would also sweep up untracked trees (a local target/ holds registry
+# READMEs) and flag files that are not this repo's to keep consistent.
+if ! command -v git >/dev/null 2>&1; then
+    echo "error: git is required to enumerate the tracked markdown" >&2
+    echo "       refusing to report success from a check that cannot run" >&2
+    exit 1
+fi
+
 test -s "${ROOT_PIN}"
 test -s "${NESTED_PIN}"
+test -s "${SCAFFOLD}"
+test -s "${DEVCONTAINER}"
 
-python3 - "${ROOT_PIN}" "${NESTED_PIN}" <<'PY'
+python3 - "${ROOT_PIN}" "${NESTED_PIN}" "${SCAFFOLD}" "${DEVCONTAINER}" <<'PY'
 import glob
+import json
 import re
+import subprocess
 import sys
 
-root_path, nested_path = sys.argv[1], sys.argv[2]
+root_path, nested_path, scaffold_path, devcontainer_path = sys.argv[1:5]
 
 CHANNEL = re.compile(r'^\s*channel\s*=\s*"([^"]+)"', re.M)
 # Both layouts are in the tree: the root file spreads the list over one entry
@@ -104,6 +135,81 @@ if nested_components != root_components:
         f"{root_path} lists {root_components!r}"
     )
 
+# The scaffold `cargo oxide new` writes into user projects.  It is a full
+# rust-toolchain.toml, so both keys are required and must match exactly.
+SCAFFOLD_CONST = re.compile(
+    r'^const RUST_TOOLCHAIN_TOML: &str = r#"(.*?)"#;', re.M | re.S
+)
+scaffold_const = SCAFFOLD_CONST.search(read(scaffold_path))
+if not scaffold_const:
+    sys.exit(
+        "parse self-test failed: no RUST_TOOLCHAIN_TOML raw-string const "
+        f"found in {scaffold_path}; the constant moved or was renamed, fix "
+        "this script before trusting it"
+    )
+scaffold_channel, scaffold_components = pin(scaffold_const.group(1), scaffold_path)
+if not scaffold_channel or not scaffold_components:
+    sys.exit(
+        f"parse self-test failed: read channel={scaffold_channel!r} "
+        f"components={scaffold_components!r} from the RUST_TOOLCHAIN_TOML "
+        f"const in {scaffold_path}; the scaffold layout changed, fix this "
+        "script before trusting it"
+    )
+if scaffold_channel != root_channel:
+    failures.append(
+        f"{scaffold_path} scaffolds channel {scaffold_channel!r}, "
+        f"{root_path} pins {root_channel!r}"
+    )
+if scaffold_components != root_components:
+    failures.append(
+        f"{scaffold_path} scaffolds components {scaffold_components!r}, "
+        f"{root_path} lists {root_components!r}"
+    )
+
+# The devcontainer's preinstalled toolchain.  The channel must be the pin's.
+# The components line is a deliberate warm-cache subset -- the container
+# ships its own LLVM 21 and sets CUDA_OXIDE_LLC, so rustup's llvm-tools is
+# left for rust-toolchain.toml to pull on first use -- but everything it
+# *does* preinstall must be a component the pin still names, or a pin change
+# leaves every new container installing a leftover.
+try:
+    devcontainer = json.loads(read(devcontainer_path))
+except ValueError as error:
+    sys.exit(
+        f"parse self-test failed: {devcontainer_path} is not plain JSON "
+        f"({error}); if it grew JSONC comments, fix this script before "
+        "trusting it"
+    )
+# Feature keys carry a version tag (".../rust:1"); strip it and require an
+# exact id so a renamed feature trips the self-test instead of a lookalike
+# (".../rustup", ".../rust-lang") being read as the rust feature.
+rust_features = [
+    value
+    for key, value in devcontainer.get("features", {}).items()
+    if key.split(":")[0] == "ghcr.io/devcontainers/features/rust"
+]
+if len(rust_features) != 1 or "version" not in rust_features[0]:
+    sys.exit(
+        "parse self-test failed: expected one rust feature with a version "
+        f"in {devcontainer_path}, found {len(rust_features)}; the feature "
+        "moved or was renamed, fix this script before trusting it"
+    )
+devcontainer_channel = rust_features[0]["version"]
+if devcontainer_channel != root_channel:
+    failures.append(
+        f"{devcontainer_path} preinstalls {devcontainer_channel!r}, "
+        f"{root_path} pins {root_channel!r}"
+    )
+devcontainer_components = [
+    name for name in rust_features[0].get("components", "").split(",") if name
+]
+stale = [name for name in devcontainer_components if name not in root_components]
+if stale:
+    failures.append(
+        f"{devcontainer_path} preinstalls component(s) the pin does not "
+        f"name: {' '.join(stale)}; {root_path} lists {root_components!r}"
+    )
+
 # The book's quoted blocks.  Only fenced ```toml blocks that actually contain
 # a [toolchain] header are candidates: prose that merely names the file, and
 # the `rustup component add` command lines (which are deliberately not
@@ -148,6 +254,56 @@ if not quoted:
         "guard) or the fence style changed (fix the pattern)"
     )
 
+# Every dated nightly reference in tracked markdown.  The book's install
+# pages and the READMEs spell the pin inside commands a reader runs outside
+# a checkout (`rustup toolchain install nightly-...`,
+# `cargo +nightly-... install`), where no rust-toolchain.toml can correct a
+# stale date, plus prose naming the pin.  The token itself is the check --
+# any dated nightly a tracked page mentions must be the pinned one -- so the
+# guard survives pages being reworded, moved, or added.  Component lists on
+# `rustup component add` lines stay uncovered, as above; the channel date on
+# those same lines is checked like any other.
+DATED = re.compile(r"nightly-\d{4}-\d{2}-\d{2}")
+if not DATED.fullmatch(root_channel):
+    sys.exit(
+        f"parse self-test failed: {root_path} channel {root_channel!r} is "
+        "not a dated nightly; this guard assumes an exact pin"
+    )
+markdown = sorted(
+    path
+    for path in subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    .stdout.decode()
+    .split("\0")
+    if path
+)
+if len(markdown) < 20:
+    sys.exit(
+        f"parse self-test failed: git lists {len(markdown)} tracked "
+        "markdown files"
+    )
+
+dated = 0
+for path in markdown:
+    for number, line in enumerate(read(path).splitlines(), start=1):
+        for token in DATED.findall(line):
+            dated += 1
+            if token != root_channel:
+                failures.append(
+                    f"{path}:{number} spells {token!r}, "
+                    f"{root_path} pins {root_channel!r}"
+                )
+
+if not dated:
+    sys.exit(
+        "parse self-test failed: no dated nightly reference found in any "
+        "tracked markdown; either the docs stopped spelling the pin (delete "
+        "this block of the guard) or the pattern is stale (fix it)"
+    )
+
 if failures:
     print("error: the toolchain pin is not consistent across its copies", file=sys.stderr)
     for failure in failures:
@@ -155,14 +311,18 @@ if failures:
     print(file=sys.stderr)
     print(
         f"Every copy must state the same channel and components as {root_path}. "
-        "The nested\npin is required to match exactly (rustc_private dylibs); "
-        "the book's blocks are\npresented to readers as the repo's real file.",
+        "The nested\npin and the `cargo oxide new` scaffold must match exactly "
+        "(rustc_private dylibs);\nthe book's blocks are presented to readers as "
+        "the repo's real file, and the\ndated commands run where no "
+        "rust-toolchain.toml can correct them.",
         file=sys.stderr,
     )
     sys.exit(1)
 
 print(
-    f"OK: {root_path} pins {root_channel} with {len(root_components)} components, "
-    f"and the nested pin plus all {quoted} block(s) quoted in the book agree."
+    f"OK: {root_path} pins {root_channel} with {len(root_components)} components; "
+    "the nested pin, the `cargo oxide new` scaffold, the devcontainer, all "
+    f"{quoted} block(s) quoted in the book, and all {dated} dated reference(s) "
+    "in tracked markdown agree."
 )
 PY
