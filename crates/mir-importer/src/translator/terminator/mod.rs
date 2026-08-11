@@ -2456,6 +2456,7 @@ fn emit_typed_swap(
 /// | TMA               | `cp_async_bulk_tensor_*_g2s/s2g`, `wait_group`    |
 /// | Tcgen05 (Blackwell)| `tcgen05_alloc`, `tcgen05_mma_*`, `tcgen05_ld_*` |
 /// | Memory            | `SharedArray::index`, `stmatrix_*`, `cvt_*`       |
+/// | Layout            | `size_of_val`, `align_of_val`                     |
 /// | DisjointSlice     | `get_thread_local`, `len`                         |
 #[allow(clippy::too_many_arguments)]
 fn try_dispatch_intrinsic(
@@ -2539,6 +2540,23 @@ fn try_dispatch_intrinsic(
             value_map,
             block_map,
             loc,
+        )?));
+    }
+
+    if let Some(intrinsic) = intrinsics::layout::RustLayoutIntrinsic::from_core_path(name) {
+        return Ok(Some(intrinsics::layout::emit_rust_layout_intrinsic(
+            ctx,
+            body,
+            intrinsic,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+            type_substs,
         )?));
     }
 

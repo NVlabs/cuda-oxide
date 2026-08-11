@@ -19,6 +19,7 @@
 //! | `tcgen05`   | Blackwell tensor core (tcgen05) operations                                   |
 //! | `tma`       | Tensor Memory Access (TMA) operations                                        |
 //! | `memory`    | `SharedArray`, `stmatrix_*`, type conversions                                |
+//! | `layout`    | Rust DST layout intrinsics: `size_of_val`, `align_of_val`                    |
 //! | `debug`     | `clock`, `clock64`, `globaltimer`, `trap`, `breakpoint`                      |
 //!
 //! # Architecture
@@ -46,6 +47,7 @@ pub mod float_math;
 pub mod generated;
 pub mod iket;
 pub mod indexing;
+pub mod layout;
 pub mod memory;
 pub mod saturating;
 pub mod tma;
