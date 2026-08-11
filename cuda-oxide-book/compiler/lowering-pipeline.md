@@ -593,6 +593,32 @@ and a `cta_group` parameter in LLVM 21. Older `llc` versions reject it with
 intrinsic emitters per LLVM version, we set 21 as the minimum.
 ```
 
+### Picking `opt` to match
+
+`llc` is not the only LLVM binary the pipeline runs: the middle-end
+optimization stage needs `opt`, and the two must come from the **same LLVM
+major**. Mixing them is the failure this ordering exists to prevent -- `opt`
+from one release can emit IR that `llc` from another does not accept.
+
+So `llc` is resolved first, by the table above, and its major is read from
+`llc --version`. `opt` is then chosen to match:
+
+| Priority | Source                                             | Notes                                                                 |
+| :------- | :------------------------------------------------- | :-------------------------------------------------------------------- |
+| 1st      | `$CUDA_OXIDE_OPT` (if set)                         | Always respected. A major mismatch against the chosen `llc` is not silently corrected -- it records a diagnostic naming both binaries. |
+| 2nd      | The `opt` beside the chosen `llc`                  | LLVM installs keep their tools side by side. Still version-checked: a mismatched sibling is rejected, and it is only accepted unverified when `llc`'s own version cannot be read. |
+| 3rd      | Rust toolchain's `llvm-tools` `opt`                | `<sysroot>/lib/rustlib/<host>/bin/opt`. Filtered to the same major as `llc`. |
+| 4th      | `opt-22` / `opt-21` / `opt` on `PATH`              | Filtered to the same major as `llc`.                                  |
+
+If no same-major `opt` exists, resolution records a diagnostic naming every
+rejected candidate. The experimental API treats a requested optimization as
+strict and fails; the legacy rustc path falls back to running unoptimized.
+
+Because step 2 keys off whichever `llc` won, pinning `CUDA_OXIDE_LLC` alone is
+usually enough -- the matching `opt` is normally found next to it, and setting
+`CUDA_OXIDE_OPT` as well is only needed when the pair is split across
+directories.
+
 ## Atomic operations in legacy NVVM IR
 
 An “LLVM-level atomic” is an atomic instruction in the NVVM input. It is not a
