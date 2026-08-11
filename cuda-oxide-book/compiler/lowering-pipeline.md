@@ -560,6 +560,32 @@ pipeline fails with a clear error. You can opt into a specific (possibly
 older) binary by setting `CUDA_OXIDE_LLC=/path/to/llc`, but simple kernels
 are the only thing guaranteed to compile on LLVM 20 and below.
 
+### Picking `opt` to match
+
+`llc` is not the only LLVM binary the pipeline runs: the middle-end
+optimization stage needs `opt`, and the two must come from the **same LLVM
+major**. Mixing them is the failure this ordering exists to prevent -- `opt`
+from one release can emit IR that `llc` from another does not accept.
+
+So `llc` is resolved first, by the table above, and its major is read from
+`llc --version`. `opt` is then chosen to match:
+
+| Priority | Source                                             | Notes                                                                 |
+| :------- | :------------------------------------------------- | :-------------------------------------------------------------------- |
+| 1st      | `$CUDA_OXIDE_OPT` (if set)                         | Always respected. A major mismatch against the chosen `llc` is not silently corrected -- it records a diagnostic naming both binaries. |
+| 2nd      | The `opt` beside the chosen `llc`                  | LLVM installs keep their tools side by side, so this is the one that matches by construction. |
+| 3rd      | Rust toolchain's `llvm-tools` `opt`                | `<sysroot>/lib/rustlib/<host>/bin/opt`.                               |
+| 4th      | `opt-22` / `opt-21` / `opt` on `PATH`              | Filtered to the same major as `llc`.                                  |
+
+If no same-major `opt` exists, resolution records a diagnostic naming every
+rejected candidate. The experimental API treats a requested optimization as
+strict and fails; the legacy rustc path falls back to running unoptimized.
+
+Because step 2 keys off whichever `llc` won, pinning `CUDA_OXIDE_LLC` alone is
+usually enough -- the matching `opt` is normally found next to it, and setting
+`CUDA_OXIDE_OPT` as well is only needed when the pair is split across
+directories.
+
 If the selected target does not match the physical GPU, the CUDA driver
 JIT-compiles the PTX at load time. First launch costs roughly 30ms while the
 driver translates; subsequent launches use a cached binary. In practice, you
