@@ -15,9 +15,24 @@ fmt:
 fmt-check:
     cargo oxide fmt --check
 
-# Run clippy with warnings as errors
+# Lint every scope CI's clippy job lints, minus the per-example pass.
+#
+# CI runs clippy three times: over the root workspace, over
+# crates/rustc-codegen-cuda (its own [workspace] for the rustc_private dylibs,
+# which `--workspace` from the root cannot reach), and once per example. The
+# first two are here. `--workspace --all-targets` matches CI exactly; the
+# previous `--all-targets --lib --tests` narrowed target selection and so
+# skipped bin and example targets that CI lints, `cuda-host/examples/` among
+# them.
+#
+# The per-example pass stays CI-only: it is one clippy run per example across
+# 200-odd separate workspaces, which is a CI job rather than something to wait
+# on locally.
+# Run clippy with warnings as errors (root + codegen workspaces)
 clippy:
-    cargo clippy --all-targets --lib --tests -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
+    # Its own [workspace], so `--workspace` above stops at that boundary.
+    cd crates/rustc-codegen-cuda && cargo clippy --all-targets -- -D warnings
 
 # Run clippy and auto-fix warnings
 clippy-fix:
@@ -92,13 +107,17 @@ test-cuda:
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
     cargo test --doc --workspace --exclude cuda-bindings
+    # The docs gate builds this workspace's rustdoc separately too (#725); the
+    # root `--workspace` cannot reach it.
+    cd crates/rustc-codegen-cuda && RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
 # Run all checks (fmt + clippy + tests + guards + docs). Includes `test-cuda`:
 # `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
 # CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
 # is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
 # `check-guards` covers the status-guard and cargo-deny workflows in full; see
-# its comment for prerequisites. Still CI-only: naming-guard (its grep pipeline
+# its comment for prerequisites. Still CI-only: clippy's per-example pass (one
+# run per example workspace), naming-guard (its grep pipeline
 # lives inline in the workflow, with no script to invoke), examples-compile
 # (needs the CUDA codegen backend), the book build, and CodeQL.
 # Run CI's gates minus naming-guard, examples-compile, book, CodeQL
