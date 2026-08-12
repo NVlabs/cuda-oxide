@@ -34,9 +34,18 @@ clippy:
     # Its own [workspace], so `--workspace` above stops at that boundary.
     cd crates/rustc-codegen-cuda && cargo clippy --all-targets -- -D warnings
 
-# Run clippy and auto-fix warnings
+# Fix mode for the recipe above, and it has to cover the same ground: a warning
+# the gate reports in the codegen backend had no `--fix` pass to answer it,
+# because that crate's own [workspace] puts it outside every root invocation.
+#
+# The root line only changes spelling, to match `clippy` above: target flags are
+# additive and the virtual root workspace has no default-members, so
+# `--all-targets --lib --tests` already selected the same members and targets.
+# Run clippy and auto-fix warnings (root + codegen workspaces)
 clippy-fix:
-    cargo clippy --all-targets --lib --tests --fix --allow-dirty --allow-staged
+    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+    # Its own [workspace], so `--workspace` above stops at that boundary.
+    cd crates/rustc-codegen-cuda && cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 # Run unit tests for every package CI covers, so `just check` predicts CI.
 # Mirrors .github/workflows/unit-tests.yml; keep the two in step.
