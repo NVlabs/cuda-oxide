@@ -92,3 +92,19 @@ jobs:
       # Reads the clap enum and the book: no cargo, no build, no network.
       - name: Verify the book documents every cargo oxide subcommand
         run: bash scripts/check-cli-doc-coverage.sh
+
+  # A Rust code block in the book is something a reader pastes. When a device
+  # function is renamed the book keeps compiling and rendering, so the stale name
+  # survives until someone tries it -- #797 and the `warp::shuffle_xor_i32` entry
+  # in the API quick reference were both found by hand, months apart.
+  book-api-names:
+    name: book device-API names
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads the book and cuda-device's sources: no cargo, no build, no network.
+      - name: Verify every device call the book shows resolves
+        run: bash scripts/check-book-api-names.sh
