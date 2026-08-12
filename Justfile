@@ -124,6 +124,30 @@ pipeline example:
 smoketest *args:
     scripts/smoketest.sh {{args}}
 
+# Build the book exactly as the CI gate does. Needs python3; nothing else.
+#
+# `-W` turns every Sphinx warning into an error, so a broken cross-reference, a
+# malformed directive, or a page dropped from a toctree fails here instead of
+# after merge. One trap worth knowing before writing a link: the book sets
+# `heading_anchors=0`, so a markdown `[text](#some-heading)` is an error even
+# though the rendered HTML contains both the href and a matching id.
+#
+# Deliberately not part of `check`: it is the only gate needing a Python
+# virtualenv, and `check` otherwise requires none. The venv is built once and
+# reused; `cuda-oxide-book/_build/` is gitignored.
+# Build the book warning-free, as the book CI gate does (needs python3)
+book:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    venv=cuda-oxide-book/_build/venv
+    if [ ! -x "${venv}/bin/sphinx-build" ]; then
+        echo "Creating the book virtualenv (once) ..."
+        python3 -m venv "${venv}"
+        "${venv}/bin/pip" install --quiet -r cuda-oxide-book/requirements.txt
+    fi
+    "${venv}/bin/sphinx-build" -W --keep-going -b html \
+        cuda-oxide-book cuda-oxide-book/_build/html
+
 # Verify every error* example is in STATUS.md and smoketest.sh ERROR_EXAMPLES
 check-errors:
     scripts/check-error-example-status.sh
