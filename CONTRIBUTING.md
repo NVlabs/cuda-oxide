@@ -122,6 +122,26 @@ The repository includes a `flake.nix` that provides a fully reproducible develop
 environment (CUDA 13, LLVM 22, Clang, pinned Rust nightly). If you have Nix with
 flakes enabled, `nix develop` is the quickest way to get everything in place.
 
+### Running the checks
+
+Most of CI is one command. The repository ships a `Justfile` that mirrors the
+workflows:
+
+```bash
+just check
+```
+
+It needs a CUDA toolkit and `cargo-deny` on `PATH`; it does not need a GPU --
+the CUDA-linked test packages shadow the toolkit's `libcuda` stub when no driver
+is present. Individual recipes exist for each piece, and `just --list` shows
+them with a one-line description each.
+
+A few CI jobs deliberately stay outside `just check` -- ones that need the
+codegen backend, a Python virtualenv, or GitHub's own infrastructure. The
+`check` recipe's comment in the `Justfile` names them, and is the place kept in
+step when a workflow changes; the commands below are the ones worth knowing by
+hand even so.
+
 ### Formatting and Style
 
 - Run `cargo oxide fmt` before submitting. All code must be formatted with
