@@ -60,9 +60,9 @@ RUST_BLOCK = re.compile(r"```rust[^\n]*\n(.*?)```", re.S)
 # before the module keeps this to the device paths a kernel actually calls,
 # while an explicit `cuda_device::` prefix stays accepted.
 CALL = re.compile(
-    r"(?<!::)\b(?:cuda_device::)?(warp|thread|grid|cluster)::([a-z_][a-z0-9_]*)\s*\("
+    r"(?<!::)\b(?:cuda_device::)?(warp|thread|grid|cluster)::([A-Za-z_][A-Za-z0-9_]*)\s*\("
 )
-EXPORTED = re.compile(r"pub (?:unsafe )?fn ([a-z_][a-z0-9_]*)")
+EXPORTED = re.compile(r"pub (?:unsafe )?fn ([A-Za-z_][A-Za-z0-9_]*)")
 
 pages = sorted(glob.glob(os.path.join(book_root, "**", "*.md"), recursive=True))
 if len(pages) < 20:
