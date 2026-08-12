@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Use PowerShell on Windows
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
