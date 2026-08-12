@@ -619,6 +619,21 @@ usually enough -- the matching `opt` is normally found next to it, and setting
 `CUDA_OXIDE_OPT` as well is only needed when the pair is split across
 directories.
 
+### The other two inputs the pipeline looks for
+
+`llvm-link` and `libdevice.10.bc` are needed only when device code calls into
+libdevice, and both have their own override:
+
+| Variable | Selects | Discovery when unset |
+| :------- | :------ | :------------------- |
+| `CUDA_OXIDE_LLVM_LINK` | the `llvm-link` binary | the same four steps as `opt` -- beside the chosen `llc`, then the sysroot, then versioned names on `PATH`, filtered to `llc`'s major |
+| `CUDA_OXIDE_LIBDEVICE` | the `libdevice.10.bc` bitcode file, used as given | `<root>/nvvm/libdevice/libdevice.10.bc` for each of `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda` |
+
+A missing `llvm-link` is not an error on its own: resolution simply yields
+nothing and the backend stops choosing the libdevice PTX path, so a kernel that
+needed it fails later rather than at discovery. A missing `libdevice.10.bc` is
+reported directly, and the error lists every path it probed.
+
 ## Atomic operations in legacy NVVM IR
 
 An “LLVM-level atomic” is an atomic instruction in the NVVM input. It is not a
