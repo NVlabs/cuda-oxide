@@ -287,14 +287,26 @@ Two operands this time (value and lane mask), one result.
 
 ### Stage 3 -- Recognize in `mir-importer`
 
-**File:** `crates/mir-importer/src/translator/terminator/mod.rs`
+**File:** `crates/mir-importer/src/translator/terminator/mod.rs`, for a
+hand-written intrinsic.
 
-Unlike `threadIdx_x`, this calls a **specialized emitter** because it needs to
-handle the user's two arguments:
+```{important}
+The warp shuffles are catalog intrinsics, so their dispatch arms are
+*generated* into
+`crates/mir-importer/src/translator/terminator/intrinsics/generated.rs`
+alongside their ops -- the same split Stage 2 describes. The code below shows
+the shape a two-argument emitter takes; it is not a call you will find in the
+tree, and `shuffle_xor` is matched in the generated file rather than written
+out by hand. The hand-written `intrinsics/warp.rs` beside it carries the cases
+the catalog does not describe, such as `emit_warp_redux`.
+```
+
+A two-argument intrinsic calls a **specialized emitter** rather than the
+zero-argument helper, because it has to translate the user's operands:
 
 ```rust
 "cuda_device::warp::shuffle_xor" => Ok(Some(
-    intrinsics::warp::emit_warp_shuffle_i32(
+    intrinsics::warp::emit_two_operand_intrinsic(
         ctx, body,
         ShflSyncBflyI32Op::get_concrete_op_info(),
         args, destination, target, ...
@@ -305,7 +317,7 @@ handle the user's two arguments:
 **File:** `crates/mir-importer/src/translator/terminator/intrinsics/warp.rs`
 
 ```rust
-pub fn emit_warp_shuffle_i32(ctx, body, shuffle_opid, args, ...) {
+pub fn emit_two_operand_intrinsic(ctx, body, op_id, args, ...) {
     if args.len() != 2 { return error; }
 
     let (val, _) = translate_operand(ctx, body, &args[0], ...);

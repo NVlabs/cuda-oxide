@@ -285,12 +285,19 @@ name (FQDN)** of the callee, obtained from `CrateDef::name()`:
 ```rust
 match name {
     "cuda_device::thread::threadIdx_x" => emit_nvvm_intrinsic(ReadPtxSregTidXOp),
-    "cuda_device::warp::shuffle_xor"   => emit_warp_shuffle_i32(ShflSyncBflyI32Op),
     "cuda_device::sync::syncthreads"   => emit_nvvm_intrinsic(Barrier0Op),
     // ... 100+ intrinsics
     _ => translate_as_normal_call()
 }
 ```
+
+Most arms are not written out by hand. Anything described by
+`intrinsics/catalog.json` — the warp shuffles among them — has its arm
+generated into
+`crates/mir-importer/src/translator/terminator/intrinsics/generated.rs`, so
+`"cuda_device::warp::shuffle_xor"` and its width variants are matched there
+rather than here. The hand-written `intrinsics/` modules beside it hold the
+cases the catalog does not describe.
 
 The full FQDN (e.g. `cuda_device::thread::threadIdx_x`, not just `threadIdx_x`)
 is used for matching to avoid ambiguity between identically-named functions in
