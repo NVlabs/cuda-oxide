@@ -22,7 +22,7 @@
 //!   CUDA_OXIDE_NO_OPT=1 cargo oxide run checked_arith
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
 #[cuda_module]
