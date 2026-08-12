@@ -22,4 +22,4 @@ Any workaround you are currently using and why it falls short.
 Links to PTX ISA spec, CUDA docs, or prior art are very welcome.
 
 ---
-> Want to discuss the design before opening a full issue? Drop by [#contributors on Discord](https://discord.gg/Fua7DeKnm).
+> Want to discuss the design before opening a full issue? Drop by [#contributors on Discord](https://discord.gg/ZUEr4AhH5C).

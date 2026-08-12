@@ -31,4 +31,4 @@ What actually happens (error message, wrong output, panic, etc.).
 Attach `.ll` / `.ptx` files if the pipeline produces them before failing.
 
 ---
-> Not sure if this is a bug? Ask in [#help on Discord](https://discord.gg/Fua7DeKnm) first.
+> Not sure if this is a bug? Ask in [#help on Discord](https://discord.gg/ZUEr4AhH5C) first.
