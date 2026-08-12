@@ -458,6 +458,38 @@ fn use_build_passthrough(
         || has_cargo_args
 }
 
+/// What put `cargo oxide build` into passthrough mode, phrased for a diagnostic.
+///
+/// [`use_build_passthrough`] turns on for five reasons and only two of them are
+/// the `--` separator, so a message that blames `--` is wrong for the other
+/// three: `--cargo-target-dir`, `--device-codegen-crate`, and `--device-cfg` are
+/// ordinary flags that switch modes as a side effect. Naming the wrong cause
+/// sends the reader looking for a separator they never typed.
+///
+/// The order is the reporting order, not a precedence: a separator explains the
+/// mode best when one is present, so it is named first, and the flags follow in
+/// the order [`use_build_passthrough`] tests them. Returns `None` when the
+/// build is not in passthrough mode at all.
+fn build_passthrough_trigger(
+    explicit_separator: bool,
+    cargo_target_dir_is_set: bool,
+    owner_filter_is_set: bool,
+    has_device_cfgs: bool,
+    has_cargo_args: bool,
+) -> Option<&'static str> {
+    if explicit_separator || has_cargo_args {
+        Some("passthrough args after `--`")
+    } else if cargo_target_dir_is_set {
+        Some("`--cargo-target-dir`")
+    } else if owner_filter_is_set {
+        Some("`--device-codegen-crate`")
+    } else if has_device_cfgs {
+        Some("`--device-cfg`")
+    } else {
+        None
+    }
+}
+
 fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
     if !cli.materialize_cubin {
         return Ok(());
@@ -675,8 +707,16 @@ fn main() {
                 );
             } else {
                 if example.is_some() {
+                    let trigger = build_passthrough_trigger(
+                        explicit_passthrough,
+                        cargo_target_dir.is_some(),
+                        device_codegen_crate.is_some(),
+                        !device_cfgs.is_empty(),
+                        !cargo_args.is_empty(),
+                    )
+                    .unwrap_or("passthrough args after `--`");
                     eprintln!(
-                        "Error: `cargo oxide build` accepts either an example name or passthrough args after `--`, not both"
+                        "Error: `cargo oxide build` accepts either an example name or {trigger}, not both"
                     );
                     std::process::exit(2);
                 }
@@ -1300,6 +1340,60 @@ mod tests {
         assert!(use_build_passthrough(false, false, true, false, false));
         assert!(use_build_passthrough(false, false, false, true, false));
         assert!(use_build_passthrough(false, false, false, false, true));
+    }
+
+    /// Every signal that switches the mode has to name itself, because three of
+    /// the five are flags rather than the `--` separator the message used to
+    /// blame. Pinned one signal at a time, in the same order as the test above.
+    #[test]
+    fn each_passthrough_signal_names_itself_in_the_diagnostic() {
+        assert_eq!(
+            build_passthrough_trigger(false, false, false, false, false),
+            None,
+            "not passthrough at all, so there is nothing to report"
+        );
+        assert_eq!(
+            build_passthrough_trigger(true, false, false, false, false),
+            Some("passthrough args after `--`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, true, false, false, false),
+            Some("`--cargo-target-dir`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, false, true, false, false),
+            Some("`--device-codegen-crate`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, false, false, true, false),
+            Some("`--device-cfg`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, false, false, false, true),
+            Some("passthrough args after `--`"),
+            "bare cargo args arrive through the separator, so they read the same"
+        );
+        // A separator alongside a flag: the separator explains the mode best.
+        assert_eq!(
+            build_passthrough_trigger(true, true, true, true, true),
+            Some("passthrough args after `--`")
+        );
+        // Every signal that turns the mode on must produce a name for it, or the
+        // `unwrap_or` at the call site would paper over a new one.
+        for signals in [
+            (true, false, false, false, false),
+            (false, true, false, false, false),
+            (false, false, true, false, false),
+            (false, false, false, true, false),
+            (false, false, false, false, true),
+        ] {
+            let (a, b, c, d, e) = signals;
+            assert_eq!(
+                use_build_passthrough(a, b, c, d, e),
+                build_passthrough_trigger(a, b, c, d, e).is_some(),
+                "signal set {signals:?} disagrees between the mode and its name"
+            );
+        }
     }
 
     #[test]
