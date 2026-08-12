@@ -131,10 +131,10 @@ workflows:
 just check
 ```
 
-It needs a CUDA toolkit and `cargo-deny` on `PATH`; it does not need a GPU --
-the CUDA-linked test packages shadow the toolkit's `libcuda` stub when no driver
-is present. Individual recipes exist for each piece, and `just --list` shows
-them with a one-line description each.
+It needs a CUDA toolkit, `cargo-deny`, and `python3` on `PATH`; it does not
+need a GPU -- the CUDA-linked test packages shadow the toolkit's `libcuda` stub
+when no driver is present. Individual recipes exist for each piece, and
+`just --list` shows them with a one-line description each.
 
 A few CI jobs deliberately stay outside `just check` -- ones that need the
 codegen backend, a Python virtualenv, or GitHub's own infrastructure. The
