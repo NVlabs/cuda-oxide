@@ -23,8 +23,9 @@
 //! # Translation Flow
 //!
 //! ```text
-//! translate_function()
-//!   └─▶ body::translate_body()
+//! pipeline::run_pipeline()
+//!   └─▶ register_dialects()
+//!   └─▶ body::translate_body()          // once per collected function
 //!         ├─▶ emit_entry_allocas()        // one alloca per non-ZST local
 //!         └─▶ For each reachable block:
 //!               └─▶ block::translate_block()
@@ -54,16 +55,7 @@ pub mod terminator;
 pub mod types;
 pub mod values;
 
-use crate::error::{TranslationErr, TranslationResult};
-use llvm_export::export::DebugKind;
-use pliron::context::{Context, Ptr};
-use pliron::identifier::Legaliser;
-use pliron::input_error_noloc;
-use pliron::linked_list::ContainsLinkedList;
-use pliron::op::Op;
-use pliron::operation::Operation;
-use rustc_public::mir;
-use rustc_public::mir::mono;
+use pliron::context::Context;
 
 /// Public `SharedArray` methods whose compiler expansion returns a generic
 /// pointer to the underlying shared allocation.
@@ -111,86 +103,6 @@ pub fn register_dialects(ctx: &mut Context) {
     dialect_nvvm::register(ctx);
 
     // The builtin dialect (ModuleOp etc.) is auto-registered by pliron 0.14.
-}
-
-/// Translates a Rust MIR function to a pliron module in `dialect-mir`.
-///
-/// Creates a `builtin.module` containing a single `mir.func` with the
-/// translated function body. Registers required dialects automatically.
-///
-/// # Returns
-///
-/// The `builtin.module` operation pointer containing the translated function.
-pub fn translate_function(
-    ctx: &mut Context,
-    body: &mir::Body,
-    instance: &mono::Instance,
-    is_kernel: bool,
-    legaliser: &mut Legaliser,
-) -> TranslationResult<Ptr<Operation>> {
-    register_dialects(ctx);
-
-    // Translate the function body. This helper is for tests/utilities that
-    // don't have access to rustc's CodegenFnAttrs, so `is_inline_always` is
-    // always false here. The real pipeline call (in `pipeline.rs`) threads
-    // the flag through from `rustc-codegen-cuda`.
-    // This utility does not participate in rustc-codegen-cuda's collector,
-    // so it deliberately translates every block. The production pipeline
-    // passes rustc's exact per-instance reachability instead.
-    let all_successors: Vec<Vec<usize>> = body
-        .blocks
-        .iter()
-        .map(|block| block.terminator.successors())
-        .collect();
-    let func_op = body::translate_body(
-        ctx,
-        body,
-        instance,
-        body.blocks.len(),
-        &all_successors,
-        is_kernel,
-        /* is_inline_always */ false,
-        None,
-        legaliser,
-        DebugKind::Off,
-        None,
-    )?;
-
-    // Create a builtin.module operation using ModuleOp::new
-    let module_name = instance.name();
-    let module_name_ident: pliron::identifier::Identifier =
-        module_name.clone().try_into().map_err(|_| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "Invalid module name: {}",
-                module_name
-            )))
-        })?;
-
-    let module = pliron::builtin::ops::ModuleOp::new(ctx, module_name_ident);
-
-    // Append the function operation to the module's region 0
-    // Get the module's operation and append to its region 0
-    let module_op = module.get_operation();
-    let module_region = module_op.deref(ctx).get_region(0);
-
-    // Get or create the first block in the module region
-    use pliron::basic_block::BasicBlock;
-    let module_block = {
-        let region_ref = module_region.deref(ctx);
-        if let Some(first_block) = region_ref.iter(ctx).next() {
-            first_block
-        } else {
-            drop(region_ref); // Release the immutable borrow
-            let new_block = BasicBlock::new(ctx, None, vec![]);
-            new_block.insert_at_front(module_region, ctx);
-            new_block
-        }
-    };
-
-    // Insert the function operation into the module block
-    func_op.insert_at_front(module_block, ctx);
-
-    Ok(module_op)
 }
 
 #[cfg(test)]

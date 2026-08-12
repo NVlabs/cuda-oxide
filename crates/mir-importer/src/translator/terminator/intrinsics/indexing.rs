@@ -32,19 +32,12 @@
 //!   the witness packs `(row, col)` and the addressed slice resolves them
 //!   against its own host-bound row width at the access site
 
-use super::super::helpers::{emit_store_result_and_goto, set_generated_intrinsic_marker};
+use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
 use crate::translator::values::ValueMap;
-use dialect_mir::attributes::MirCastKindAttr;
-use dialect_mir::ops::{MirAddOp, MirCastOp, MirMulOp};
-use dialect_nvvm::ops::{
-    ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregNtidXOp, ReadPtxSregNtidYOp,
-    ReadPtxSregTidXOp, ReadPtxSregTidYOp,
-};
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
 use pliron::location::{Located, Location};
@@ -53,248 +46,6 @@ use pliron::operation::Operation;
 use pliron::r#type::Typed;
 use pliron::value::Value;
 use rustc_public::mir;
-
-fn generated_sreg_op(
-    ctx: &mut Context,
-    opid: (fn(Ptr<Operation>) -> pliron::op::OpObj, std::any::TypeId),
-    result_type: pliron::r#type::TypeHandle,
-    loc: Location,
-) -> Ptr<Operation> {
-    let op = Operation::new(ctx, opid, vec![result_type], vec![], vec![], 0);
-    op.deref_mut(ctx).set_loc(loc);
-    let op_name = Operation::get_opid(op, ctx).to_string();
-    let marker = cuda_oxide_codegen::__private::generated_intrinsic_marker_by_op_name(&op_name)
-        .unwrap_or_else(|| panic!("generated sreg op `{op_name}` has no generated target record"));
-    set_generated_intrinsic_marker(ctx, op, marker);
-    op
-}
-
-/// Emits `row * stride + col` (legacy expansion for `index_2d`-style
-/// helpers; the dispatcher currently translates every index helper as a
-/// normal function call instead of routing it here).
-///
-/// Where `row = index_2d_row()` and `col = index_2d_col()`. Note that
-/// `index_2d_runtime` must never be lowered through a flat expansion like
-/// this one: its witness packs the raw `(row, col)` coordinates and the
-/// addressed slice resolves them against its own host-bound row width.
-#[allow(clippy::too_many_arguments)]
-pub fn emit_index_2d(
-    ctx: &mut Context,
-    body: &mir::Body,
-    args: &[mir::Operand],
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    let u32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
-    let usize_type = types::get_usize_type(ctx);
-
-    // Get the stride argument
-    let (stride_val, mut last_op) = match &args[0] {
-        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            rvalue::translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?
-        }
-        _ => {
-            return input_err!(
-                loc.clone(),
-                TranslationErr::unsupported(
-                    "Constant stride in index_2d not yet supported".to_string()
-                )
-            );
-        }
-    };
-
-    // Emit row = blockIdx.y * blockDim.y + threadIdx.y
-    let tid_y_op = generated_sreg_op(
-        ctx,
-        ReadPtxSregTidYOp::get_concrete_op_info(),
-        u32_type.to_handle(),
-        loc.clone(),
-    );
-    match last_op {
-        Some(prev) => tid_y_op.insert_after(ctx, prev),
-        None => tid_y_op.insert_at_front(block_ptr, ctx),
-    }
-    let tid_y_val = tid_y_op.deref(ctx).get_result(0);
-    last_op = Some(tid_y_op);
-
-    let bid_y_op = generated_sreg_op(
-        ctx,
-        ReadPtxSregCtaidYOp::get_concrete_op_info(),
-        u32_type.to_handle(),
-        loc.clone(),
-    );
-    bid_y_op.insert_after(ctx, last_op.unwrap());
-    let bid_y_val = bid_y_op.deref(ctx).get_result(0);
-    last_op = Some(bid_y_op);
-
-    let bdim_y_op = generated_sreg_op(
-        ctx,
-        ReadPtxSregNtidYOp::get_concrete_op_info(),
-        u32_type.to_handle(),
-        loc.clone(),
-    );
-    bdim_y_op.insert_after(ctx, last_op.unwrap());
-    let bdim_y_val = bdim_y_op.deref(ctx).get_result(0);
-    last_op = Some(bdim_y_op);
-
-    let mul_y_op = Operation::new(
-        ctx,
-        MirMulOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![bid_y_val, bdim_y_val],
-        vec![],
-        0,
-    );
-    mul_y_op.deref_mut(ctx).set_loc(loc.clone());
-    mul_y_op.insert_after(ctx, last_op.unwrap());
-    let mul_y_val = mul_y_op.deref(ctx).get_result(0);
-    last_op = Some(mul_y_op);
-
-    let row_u32_op = Operation::new(
-        ctx,
-        MirAddOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![mul_y_val, tid_y_val],
-        vec![],
-        0,
-    );
-    row_u32_op.deref_mut(ctx).set_loc(loc.clone());
-    row_u32_op.insert_after(ctx, last_op.unwrap());
-    let row_u32_val = row_u32_op.deref(ctx).get_result(0);
-    last_op = Some(row_u32_op);
-
-    // Cast row to usize
-    let row_op = Operation::new(
-        ctx,
-        MirCastOp::get_concrete_op_info(),
-        vec![usize_type.to_handle()],
-        vec![row_u32_val],
-        vec![],
-        0,
-    );
-    row_op.deref_mut(ctx).set_loc(loc.clone());
-    MirCastOp::new(row_op).set_attr_cast_kind(ctx, MirCastKindAttr::IntToInt);
-    row_op.insert_after(ctx, last_op.unwrap());
-    let row_val = row_op.deref(ctx).get_result(0);
-    last_op = Some(row_op);
-
-    // Emit col = blockIdx.x * blockDim.x + threadIdx.x
-    let tid_x_op = generated_sreg_op(
-        ctx,
-        ReadPtxSregTidXOp::get_concrete_op_info(),
-        u32_type.to_handle(),
-        loc.clone(),
-    );
-    tid_x_op.insert_after(ctx, last_op.unwrap());
-    let tid_x_val = tid_x_op.deref(ctx).get_result(0);
-    last_op = Some(tid_x_op);
-
-    let bid_x_op = generated_sreg_op(
-        ctx,
-        ReadPtxSregCtaidXOp::get_concrete_op_info(),
-        u32_type.to_handle(),
-        loc.clone(),
-    );
-    bid_x_op.insert_after(ctx, last_op.unwrap());
-    let bid_x_val = bid_x_op.deref(ctx).get_result(0);
-    last_op = Some(bid_x_op);
-
-    let bdim_x_op = generated_sreg_op(
-        ctx,
-        ReadPtxSregNtidXOp::get_concrete_op_info(),
-        u32_type.to_handle(),
-        loc.clone(),
-    );
-    bdim_x_op.insert_after(ctx, last_op.unwrap());
-    let bdim_x_val = bdim_x_op.deref(ctx).get_result(0);
-    last_op = Some(bdim_x_op);
-
-    let mul_x_op = Operation::new(
-        ctx,
-        MirMulOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![bid_x_val, bdim_x_val],
-        vec![],
-        0,
-    );
-    mul_x_op.deref_mut(ctx).set_loc(loc.clone());
-    mul_x_op.insert_after(ctx, last_op.unwrap());
-    let mul_x_val = mul_x_op.deref(ctx).get_result(0);
-    last_op = Some(mul_x_op);
-
-    let col_u32_op = Operation::new(
-        ctx,
-        MirAddOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![mul_x_val, tid_x_val],
-        vec![],
-        0,
-    );
-    col_u32_op.deref_mut(ctx).set_loc(loc.clone());
-    col_u32_op.insert_after(ctx, last_op.unwrap());
-    let col_u32_val = col_u32_op.deref(ctx).get_result(0);
-    last_op = Some(col_u32_op);
-
-    // Cast col to usize
-    let col_op = Operation::new(
-        ctx,
-        MirCastOp::get_concrete_op_info(),
-        vec![usize_type.to_handle()],
-        vec![col_u32_val],
-        vec![],
-        0,
-    );
-    col_op.deref_mut(ctx).set_loc(loc.clone());
-    MirCastOp::new(col_op).set_attr_cast_kind(ctx, MirCastKindAttr::IntToInt);
-    col_op.insert_after(ctx, last_op.unwrap());
-    let col_val = col_op.deref(ctx).get_result(0);
-    last_op = Some(col_op);
-
-    // Compute row * stride
-    let row_stride_op = Operation::new(
-        ctx,
-        MirMulOp::get_concrete_op_info(),
-        vec![usize_type.to_handle()],
-        vec![row_val, stride_val],
-        vec![],
-        0,
-    );
-    row_stride_op.deref_mut(ctx).set_loc(loc.clone());
-    row_stride_op.insert_after(ctx, last_op.unwrap());
-    let row_stride_val = row_stride_op.deref(ctx).get_result(0);
-    last_op = Some(row_stride_op);
-
-    // Compute (row * stride) + col
-    let result_op = Operation::new(
-        ctx,
-        MirAddOp::get_concrete_op_info(),
-        vec![usize_type.to_handle()],
-        vec![row_stride_val, col_val],
-        vec![],
-        0,
-    );
-    result_op.deref_mut(ctx).set_loc(loc.clone());
-    result_op.insert_after(ctx, last_op.unwrap());
-    let result_val = result_op.deref(ctx).get_result(0);
-
-    emit_store_result_and_goto(
-        ctx,
-        destination,
-        result_val,
-        target,
-        block_ptr,
-        result_op,
-        value_map,
-        block_map,
-        loc,
-        "Call terminator without target not supported",
-    )
-}
 
 /// Load the `DisjointSlice` value behind a method receiver.
 ///
@@ -666,9 +417,8 @@ mod tests {
     use super::*;
     use dialect_mir::ops::MirLoadOp;
     use dialect_mir::types::{MirDisjointSliceType, MirPtrType, MirSliceType};
-    use pliron::builtin::attributes::StringAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::common_traits::Verify;
-    use pliron::identifier::Identifier;
     use pliron::linked_list::ContainsLinkedList;
 
     #[test]
@@ -734,48 +484,22 @@ mod tests {
         assert_eq!(block.deref(&ctx).iter(&ctx).count(), 0);
     }
 
+    /// The sreg reads behind `index_1d` are dispatched from `generated.rs`,
+    /// which stamps each op with a marker literal. Assert the three markers
+    /// against the target table the backend reads back at verification time,
+    /// so a renumbering that reached only one of the two generated artifacts
+    /// is caught.
     #[test]
     fn index_1d_sreg_ops_carry_their_exact_generated_markers() {
-        let mut ctx = Context::new();
-        dialect_nvvm::register(&mut ctx);
-        let result_type = IntegerType::get(&ctx, 32, Signedness::Unsigned).to_handle();
-        let ops = [
-            (
-                generated_sreg_op(
-                    &mut ctx,
-                    ReadPtxSregTidXOp::get_concrete_op_info(),
-                    result_type,
-                    Location::Unknown,
-                ),
-                "v1:i0001",
-            ),
-            (
-                generated_sreg_op(
-                    &mut ctx,
-                    ReadPtxSregCtaidXOp::get_concrete_op_info(),
-                    result_type,
-                    Location::Unknown,
-                ),
-                "v1:i0002",
-            ),
-            (
-                generated_sreg_op(
-                    &mut ctx,
-                    ReadPtxSregNtidXOp::get_concrete_op_info(),
-                    result_type,
-                    Location::Unknown,
-                ),
-                "v1:i0003",
-            ),
-        ];
-        let key =
-            Identifier::try_from(cuda_oxide_codegen::__private::GENERATED_INTRINSIC_MARKER_ATTR)
-                .unwrap();
-
-        for (op, expected) in ops {
-            let op_ref = op.deref(&ctx);
-            let marker: &StringAttr = op_ref.attributes.get(&key).unwrap();
-            assert_eq!(String::from(marker.clone()), expected);
+        for (dialect_op, expected) in [
+            ("nvvm.read_ptx_sreg_tid_x", "v1:i0001"),
+            ("nvvm.read_ptx_sreg_ctaid_x", "v1:i0002"),
+            ("nvvm.read_ptx_sreg_ntid_x", "v1:i0003"),
+        ] {
+            assert_eq!(
+                cuda_oxide_codegen::__private::generated_intrinsic_marker_by_op_name(dialect_op),
+                Some(expected),
+            );
         }
     }
 }

@@ -12166,7 +12166,12 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .map(|record| record.rust.canonical_path.as_str())
         .collect();
     render_string_patterns(&mut output, &raw_paths, "        ");
-    output.push_str("    )\n}\n\npub fn generated_intrinsic_marker(name: &str) -> Option<&'static str> {\n    match name {\n");
+    // Test-only. The dispatch arms rendered below carry each marker as a
+    // literal, and the op-name-keyed lookup the compiler actually calls lives
+    // in `cuda-oxide-codegen`; nothing outside this file's own generated tests
+    // reads this path-keyed table. Gate it rather than leave a 2000-line match
+    // sitting unreferenced in the compiler.
+    output.push_str("    )\n}\n\n#[cfg(test)]\npub fn generated_intrinsic_marker(name: &str) -> Option<&'static str> {\n    match name {\n");
     for record in &catalog.intrinsics {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
