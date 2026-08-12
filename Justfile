@@ -117,9 +117,8 @@ doc-check:
 # is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
 # `check-guards` covers the status-guard and cargo-deny workflows in full; see
 # its comment for prerequisites. Still CI-only: clippy's per-example pass (one
-# run per example workspace), naming-guard (its grep pipeline
-# lives inline in the workflow, with no script to invoke), examples-compile
-# (needs the CUDA codegen backend), the book build, and CodeQL.
+# run per example workspace), examples-compile (needs the CUDA codegen
+# backend), the book build, and CodeQL.
 # Run CI's gates minus naming-guard, examples-compile, book, CodeQL
 check: fmt-check clippy test test-cuda check-guards doc-check
 
@@ -170,6 +169,7 @@ check-guards:
     bash scripts/check-toolchain-parity.sh
     bash scripts/check-cli-doc-coverage.sh
     bash scripts/check-book-api-names.sh
+    bash scripts/check-reserved-prefixes.sh
     cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh
