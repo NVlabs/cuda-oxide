@@ -64,7 +64,7 @@ inside a shuffle pattern would be both unnecessary and wasteful.
 
 The most common shuffle pattern is a **butterfly reduction**: in
 ⌈log₂(32)⌉ = 5 steps, every lane accumulates the sum (or min, max, etc.)
-of all 32 values. No shared memory, no barriers, five instructions.
+of all 32 values. No shared memory, no barriers, five shuffle steps.
 
 ```{figure} images/warp-shuffle-reduction.svg
 :align: center
@@ -112,6 +112,57 @@ the 32 per-warp results to shared memory, `sync_threads()`, then reduce
 the warp-level results with one final warp. This hybrid approach is faster
 than a pure shared memory tree because it eliminates 5 levels of barriers.
 :::
+
+### Integers on Ampere: one instruction instead of ten
+
+Every reduction above -- the hand-written butterflies, and the generic
+`cooperative_groups::warp_reduce` -- costs five shuffles plus five combines.
+For **integer** reductions on `sm_80` and newer there is a single hardware
+instruction, `redux.sync`, exposed one function per operation:
+
+| function | reduces |
+|:---------|:--------|
+| `warp::redux_sync_add(mask, v)` | wrapping sum, `u32` |
+| `warp::redux_sync_min_u32` / `_min_i32` | minimum |
+| `warp::redux_sync_max_u32` / `_max_i32` | maximum |
+| `warp::redux_sync_and` / `_or` / `_xor` | bitwise |
+
+```rust
+use cuda_device::warp;
+
+const FULL_MASK: u32 = 0xffff_ffff;
+
+// The whole reduction. One instruction, every lane holds the result.
+let total = warp::redux_sync_add(FULL_MASK, my_value);
+```
+
+Measured on an A10G (`sm_86`), 1M threads each performing 64 full-warp `u32`
+sum reductions: the butterfly form takes 159.4 µs per launch, the `redux.sync`
+form 33.6 µs -- **4.74x**, with bit-identical results. Wrapping `u32` addition
+is associative modulo 2³² and min/max/and/or/xor are exact, so reduction order
+cannot change the answer.
+
+That figure is the primitive measured in isolation: the probe kernel does
+almost nothing but reduce. A kernel that reduces once at the end of a
+memory-bound pass will see very little. Reach for this where reductions sit in
+an inner loop.
+
+Three constraints:
+
+- **Integers only.** There is no `f32`/`f64` form before `sm_100`, so float
+  reductions keep the butterfly.
+- **A full, converged warp.** All 32 lanes must be live and must reach the same
+  call with the same mask -- the same contract the shuffle reductions already
+  require. Sub-warp tiles and short tail warps keep the shuffle path (see
+  `reduce_sum_f32_partial` and friends for the tail case).
+- **It will not assemble below `sm_80`.** Gate the call the way the `redux_sum`
+  example does, on `ctx.compute_capability()`, or restrict the build to Ampere
+  and newer.
+
+`warp_reduce` does not select this form for you today; making it do so
+automatically needs a way for device code to know its target architecture,
+which is the open question in
+[#811](https://github.com/NVlabs/cuda-oxide/issues/811).
 
 ---
 

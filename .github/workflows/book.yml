@@ -29,6 +29,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A pip install plus one sphinx-build; the job settles in ~2 minutes. Every
+    # other workflow in the repo bounds its jobs, and an unbounded one that
+    # hangs -- a wedged install, a sphinx that never returns -- burns to the
+    # 6-hour default instead of failing.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -68,6 +73,9 @@ jobs:
       group: pages
       cancel-in-progress: false
     runs-on: ubuntu-latest
+    # One deploy-pages action. It waits on the Pages API, which is exactly the
+    # kind of step worth bounding rather than leaving to the 6-hour default.
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -998,6 +998,25 @@ impl WarpShuffle for f32 {
 /// the butterfly converges all lanes onto the same answer, which is the
 /// usual ergonomic shape and matches CUB's `WarpReduce`.
 ///
+/// # Performance: integers on `sm_80`+ have a one-instruction form
+///
+/// This is generic over `T`, so a full warp always costs five shuffles plus
+/// five combines. For **integer** reductions on Ampere and newer,
+/// [`crate::warp::redux_sync_add`] and its `min`/`max`/`and`/`or`/`xor`
+/// siblings do the whole reduction in a single `redux.sync` instruction.
+/// Measured on an A10G (`sm_86`) over 1M threads reducing 64 times each:
+/// 159.4 µs per launch here against 33.6 µs for `redux.sync`, **4.74x**, with
+/// bit-identical results. That is the primitive in isolation — a kernel that
+/// reduces once after a memory-bound pass will see far less.
+///
+/// This function does not select that form for you: `redux.sync` will not
+/// assemble below `sm_80`, and device code has no way to ask what target it is
+/// being compiled for (see
+/// [#811](https://github.com/NVlabs/cuda-oxide/issues/811)). Call it directly
+/// when you know the target is Ampere+, gating on
+/// `CudaContext::compute_capability` as the `redux_sum` example does. Floats
+/// keep this butterfly — there is no `f32` `redux` before `sm_100`.
+///
 /// `N` is the tile size (1, 2, 4, 8, 16, or 32) — already validated by
 /// [`ThreadBlock::tiled_partition`] at construction time.
 ///

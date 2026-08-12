@@ -81,7 +81,19 @@ if not enum_body:
 # Variant-level attributes sit at the same 4-space indent as the variant. Field
 # attributes inside a body are indented deeper and never match.
 ATTR = re.compile(r"^ {4}#\[command\((.*)\)\]$")
-VARIANT = re.compile(r"^ {4}([A-Z][A-Za-z0-9]*)\s*[{,]?\s*$")
+# All three variant shapes, because missing one is silent rather than loud: an
+# unmatched variant is simply never required to appear in the table.
+#
+#     Clean,            unit          -> ends after the comma (or at EOF)
+#     Run {             struct        -> body follows on deeper-indented lines
+#     Profile(String),  tuple         -> fields follow on the same line
+#
+# The 4-space indent is what separates variants from everything else in the
+# block: doc comments start with `/`, attributes with `#`, a body's closing brace
+# with `}`, and a variant's own fields are indented deeper. So the identifier
+# only has to be followed by one of `{`, `(`, `,` or end of line -- not by
+# nothing, which is what skipped the tuple form.
+VARIANT = re.compile(r"^ {4}([A-Z][A-Za-z0-9]*)\s*(?:[{(,]|$)")
 
 commands = []
 hidden = []
