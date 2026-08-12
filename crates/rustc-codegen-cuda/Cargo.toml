@@ -6,6 +6,7 @@ authors = ["Nihal Pasham <nihalp@nvidia.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/NVlabs/cuda-oxide.git"
 description = "Unified host/device compilation backend for rustc (CUDA/PTX codegen)"
+readme = "README.md"
 
 # IMPORTANT: Must be dylib for rustc to load as codegen backend
 [lib]

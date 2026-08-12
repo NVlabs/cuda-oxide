@@ -2,6 +2,7 @@
 name = "reserved-oxide-symbols"
 version = "0.2.1"
 description = "INTERNAL: cuda-oxide workspace symbol-name contract. Not a public API."
+readme = "README.md"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true

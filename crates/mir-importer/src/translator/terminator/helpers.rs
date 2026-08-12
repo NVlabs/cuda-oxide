@@ -11,7 +11,8 @@
 //! - [`emit_store_result_and_goto`]: Write an intrinsic result to the
 //!   destination local's slot, then branch to the success target.
 //! - [`emit_function_call`]: General function call emission.
-//! - [`emit_nvvm_intrinsic`]: Simple NVVM intrinsic emission.
+//! - [`emit_generated_nvvm_intrinsic`]: Zero-operand NVVM intrinsic emission
+//!   for a catalog intrinsic, carrying its generated ABI marker.
 //! - [`emit_unit_noop_intrinsic`]: Compiler-hint intrinsics with no codegen effect.
 //! - [`insert_op`]: Common operation insertion pattern.
 
@@ -474,75 +475,6 @@ pub fn emit_function_call(
             TranslationErr::unsupported("Call terminator without target not supported".to_string(),)
         )
     }
-}
-
-/// Emits a simple NVVM intrinsic that takes no operands and returns `u32`.
-///
-/// Used for thread/block position intrinsics:
-/// - `ReadPtxSregTidX/Y` (threadIdx.x/y)
-/// - `ReadPtxSregCtaidX/Y` (blockIdx.x/y)
-/// - `ReadPtxSregNtidX/Y` (blockDim.x/y)
-/// - `ReadPtxSregLaneId` (lane_id)
-/// - `ReadPtxSregLanemaskLt/Le/Eq/Ge/Gt` (lane-position masks)
-#[allow(clippy::too_many_arguments)]
-pub fn emit_nvvm_intrinsic(
-    ctx: &mut Context,
-    opid: (
-        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
-        std::any::TypeId,
-    ),
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    emit_nvvm_integer_intrinsic(
-        ctx,
-        opid,
-        32,
-        None,
-        destination,
-        target,
-        block_ptr,
-        prev_op,
-        value_map,
-        block_map,
-        loc,
-    )
-}
-
-/// Emits a zero-operand NVVM operation returning the full 64-bit PTX value.
-#[allow(clippy::too_many_arguments)]
-pub fn emit_nvvm_intrinsic_u64(
-    ctx: &mut Context,
-    opid: (
-        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
-        std::any::TypeId,
-    ),
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    emit_nvvm_integer_intrinsic(
-        ctx,
-        opid,
-        64,
-        None,
-        destination,
-        target,
-        block_ptr,
-        prev_op,
-        value_map,
-        block_map,
-        loc,
-    )
 }
 
 /// Emits a generated zero-operand NVVM operation returning `u32` and attaches

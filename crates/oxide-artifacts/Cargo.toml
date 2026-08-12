@@ -3,6 +3,7 @@ name = "oxide-artifacts"
 version = "0.2.1"
 edition.workspace = true
 description = "Architecture-neutral embedded device artifact metadata for cuda-oxide"
+readme = "README.md"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

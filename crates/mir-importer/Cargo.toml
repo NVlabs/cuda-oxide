@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust MIR to Pliron IR translation and compilation pipeline"
+readme = "README.md"
 
 [dependencies]
 rustc-hash = { workspace = true }

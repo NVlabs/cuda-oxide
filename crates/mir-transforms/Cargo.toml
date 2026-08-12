@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Optimization passes over the MIR dialect (loop unroll, ...)"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }

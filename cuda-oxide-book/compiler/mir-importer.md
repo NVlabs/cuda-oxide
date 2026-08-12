@@ -65,8 +65,9 @@ matches what `CrateDef::name()` returns for the same function.
 For each function, the pipeline:
 
 1. Retrieves the MIR body via `instance.body()`.
-2. Calls `translate_function()` to produce a pliron module containing the
-   `dialect-mir` representation (using `mir.alloca` slots for locals).
+2. Calls `translator::body::translate_body()` to produce the function's
+   `dialect-mir` representation (using `mir.alloca` slots for locals), then
+   appends it to the one `builtin.module` the whole run shares.
 3. Runs pliron's verifier on the module to catch structural errors early --
    mismatched types, missing operands, broken dominance -- before they turn
    into cryptic LLVM failures downstream.
@@ -107,8 +108,8 @@ handles one level of MIR structure, and they compose neatly:
 The call flow follows MIR's structure top-down:
 
 ```text
-translate_function()
-  └─ body::translate_body()
+pipeline::run_pipeline()
+  └─ body::translate_body()               // once per collected function
        ├─ emit_entry_allocas()            // one mir.alloca per non-ZST local
        │     └─ SlotAddrSpaceMap::analyze // pointer slot addrspace inference
        └─ For each basic block:

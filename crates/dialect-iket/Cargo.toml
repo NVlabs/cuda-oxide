@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Semantic IKET dialect for in-kernel event tracing"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }

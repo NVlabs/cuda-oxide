@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Cargo subcommand for cuda-oxide: build and run Rust GPU programs"
+readme = "README.md"
 
 [[bin]]
 name = "cargo-oxide"

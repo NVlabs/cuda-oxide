@@ -189,13 +189,6 @@ pub fn get_isize_type(
     pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Signed)
 }
 
-/// Returns the 32-bit floating point type.
-pub fn get_f32_type(
-    ctx: &mut Context,
-) -> pliron::r#type::TypedHandle<pliron::builtin::types::FP32Type> {
-    pliron::builtin::types::FP32Type::get(ctx)
-}
-
 /// Checks if a `dialect-mir` type is zero-sized (ZST).
 ///
 /// ZSTs are types that occupy no memory at runtime but carry semantic meaning

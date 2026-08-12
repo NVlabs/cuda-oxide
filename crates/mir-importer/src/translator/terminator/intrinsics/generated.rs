@@ -3220,6 +3220,7 @@ pub fn is_raw_generated_intrinsic_path(name: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 pub fn generated_intrinsic_marker(name: &str) -> Option<&'static str> {
     match name {
         "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0070"

@@ -20,10 +20,10 @@ fmt-check:
 # CI runs clippy three times: over the root workspace, over
 # crates/rustc-codegen-cuda (its own [workspace] for the rustc_private dylibs,
 # which `--workspace` from the root cannot reach), and once per example. The
-# first two are here. `--workspace --all-targets` matches CI exactly; the
-# previous `--all-targets --lib --tests` narrowed target selection and so
-# skipped bin and example targets that CI lints, `cuda-host/examples/` among
-# them.
+# first two are here, the root invocation spelled the way CI spells it.
+# (Cargo's target-selection flags are additive and the virtual root workspace
+# has no default-members, so the earlier `--all-targets --lib --tests` covered
+# the same members and targets; the spelling was the only difference.)
 #
 # The per-example pass stays CI-only: it is one clippy run per example across
 # 200-odd separate workspaces, which is a CI job rather than something to wait
@@ -119,7 +119,7 @@ doc-check:
 # its comment for prerequisites. Still CI-only: clippy's per-example pass (one
 # run per example workspace), examples-compile (needs the CUDA codegen
 # backend), the book build, and CodeQL.
-# Run CI's gates minus naming-guard, examples-compile, book, CodeQL
+# Run CI's gates minus examples-compile, book, CodeQL
 check: fmt-check clippy test test-cuda check-guards doc-check
 
 # Clean project-local Cargo outputs and known cuda-oxide artifacts
@@ -141,6 +141,32 @@ pipeline example:
 # Run every example with GPU-aware gating (see scripts/smoketest.sh --help)
 smoketest *args:
     scripts/smoketest.sh {{args}}
+
+# Build the book exactly as the CI gate does. Needs python3; nothing else.
+#
+# `-W` turns every Sphinx warning into an error, so a broken cross-reference, a
+# malformed directive, or a page dropped from a toctree fails here instead of
+# after merge. One trap worth knowing before writing a link: `conf.py` sets no
+# heading-anchor option and MyST's auto-generated heading anchors are off by
+# default, so a markdown `[text](#some-heading)` is an error even though the
+# rendered HTML contains both the href and a matching id.
+#
+# Deliberately not part of `check`: it is the only gate needing a Python
+# virtualenv, and `check` otherwise requires none. The venv is built once and
+# reused; `cuda-oxide-book/_build/` is gitignored.
+# Build the book warning-free, as the book CI gate does (needs python3)
+book:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    venv=cuda-oxide-book/_build/venv
+    # Stale (requirements.txt changed, install half-failed)? rm -rf cuda-oxide-book/_build/venv
+    if [ ! -x "${venv}/bin/sphinx-build" ]; then
+        echo "Creating the book virtualenv (once) ..."
+        python3 -m venv "${venv}"
+        "${venv}/bin/pip" install --quiet -r cuda-oxide-book/requirements.txt
+    fi
+    "${venv}/bin/sphinx-build" -W --keep-going -b html \
+        cuda-oxide-book cuda-oxide-book/_build/html
 
 # Verify every error* example is in STATUS.md and smoketest.sh ERROR_EXAMPLES
 check-errors:

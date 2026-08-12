@@ -554,8 +554,10 @@ describe), every file you need to touch, in order:
    `Verify` impl (check operand/result counts), `register()` call.
 
 3. **`mir-importer/src/translator/terminator/mod.rs`** -- `match` arm in
-   `try_dispatch_intrinsic()`. Use `helpers::emit_nvvm_intrinsic()` for
-   zero-arg intrinsics, or write a custom emitter for anything with arguments.
+   `try_dispatch_intrinsic()`, modelled on the hand-written `typed_swap` arm.
+   Zero-operand intrinsics are catalog territory: the generated dispatcher
+   emits them through `helpers::emit_generated_nvvm_intrinsic()`, which also
+   stamps the ABI marker a hand-written arm would have to stamp itself.
 
 4. **`mir-lower/src/convert/interface_impls.rs`** -- `MirToLlvmConversion`
    impl for the new op, dispatching to the converter function.
