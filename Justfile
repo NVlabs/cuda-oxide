@@ -99,6 +99,27 @@ test-cuda:
         -p cuda-oxide-codegen -p cuda-macros -p cuda-host -p cuda-async
     cargo test -p cuda-core --lib
 
+# Mirror unit-tests.yml's third job, `generated-intrinsics`: the three gates a
+# change under crates/cuda-intrinsics-gen has to pass. Nothing else here ran
+# them, so a catalog edit could clear `just check` and still fail CI -- and the
+# catalog is the majority of the intrinsic surface (986 entries, 35 generated
+# files, against 7 hand-written op modules).
+#
+# Needs no CUDA toolkit: `--skip-terminal` is CI's own flag for runners without
+# the recorded CUDA 13.3 ptxas, leaving the pinned llc identity and the exact
+# emitted PTX as what gets checked, and llc comes from the pinned toolchain.
+# The whole recipe is ~13s.
+#
+# `base_ref` is what the append-only ABI ledger is compared against. CI uses the
+# pull request's base SHA and falls back to `HEAD^` for pushes; `HEAD^` is
+# therefore right for a single-commit branch, and anything longer wants its own
+# branch point -- `just check-intrinsics upstream/main`.
+# Run the generated-intrinsics CI job (catalog, PTX routes, ABI ledger)
+check-intrinsics base_ref="HEAD^":
+    cargo run -p cuda-intrinsics-gen -- check
+    cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal
+    cargo run -p cuda-intrinsics-gen -- check-abi-history --base-ref {{base_ref}}
+
 # Build docs warning-free + run doctests (mirrors the docs CI gate). The `test`
 # recipe uses `--all-targets`, which skips doctests, so this covers them.
 # cuda-bindings is excluded from doctests (its generated C doc comments are not
@@ -115,12 +136,14 @@ doc-check:
 # `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
 # CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
 # is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
-# `check-guards` covers the status-guard and cargo-deny workflows in full; see
-# its comment for prerequisites. Still CI-only: clippy's per-example pass (one
-# run per example workspace), examples-compile (needs the CUDA codegen
-# backend), the book build, and CodeQL.
+# `check-guards` covers the status-guard and cargo-deny workflows in full, and
+# `check-intrinsics` the generated-intrinsics job; see their comments for
+# prerequisites. Still CI-only: clippy's per-example pass (one run per example
+# workspace), examples-compile (needs the CUDA codegen backend), and CodeQL. The
+# book gate has a local mirror too, but `just book` stays out of `check` as the
+# one gate needing a Python virtualenv.
 # Run CI's gates minus examples-compile, book, CodeQL
-check: fmt-check clippy test test-cuda check-guards doc-check
+check: fmt-check clippy test test-cuda check-guards check-intrinsics doc-check
 
 # Clean project-local Cargo outputs and known cuda-oxide artifacts
 clean-artifacts:
