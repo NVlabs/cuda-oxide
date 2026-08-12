@@ -8,6 +8,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Experimental rustc-independent cuda-oxide PTX backend"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }

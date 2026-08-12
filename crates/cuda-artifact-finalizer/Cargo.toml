@@ -3,6 +3,7 @@ name = "cuda-artifact-finalizer"
 version = "0.2.1"
 edition.workspace = true
 description = "Driver-independent NVVM IR and LTOIR finalization for cuda-oxide"
+readme = "README.md"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

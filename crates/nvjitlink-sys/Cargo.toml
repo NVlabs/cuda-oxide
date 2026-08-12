@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Runtime (dlopen) bindings to NVIDIA nvJitLink (ships with the CUDA Toolkit)"
+readme = "README.md"
 
 [dependencies]
 libloading = { workspace = true }

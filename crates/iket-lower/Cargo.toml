@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Lowering policy and runtime-compatible encoding for dialect-iket"
+readme = "README.md"
 
 [dependencies]
 dialect-iket = { workspace = true }

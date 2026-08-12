@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "dialect-mir to LLVM dialect lowering pass"
+readme = "README.md"
 
 [dependencies]
 rustc-hash = { workspace = true }

@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Target-aware LLVM dialect legalization for NVVM"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }

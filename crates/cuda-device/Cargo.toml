@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Device-side intrinsics and types for CUDA kernels in Rust"
+readme = "README.md"
 
 [dependencies]
 # Inherits the workspace entry, which sets `default-features = false` and so
