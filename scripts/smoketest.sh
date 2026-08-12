@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # scripts/smoketest.sh -- run every cuda-oxide example and report pass/fail
 # per GPU-aware gating rules.
@@ -323,7 +325,12 @@ echo ""
 
 # ---- Example selection ---------------------------------------------------
 
-mapfile -t ALL_EXAMPLES < <(
+# Read loop rather than `mapfile`: that builtin arrived in bash 4, and macOS
+# still ships bash 3.2 as /bin/bash, where this line ended the run outright.
+ALL_EXAMPLES=()
+while IFS= read -r example_name; do
+    ALL_EXAMPLES+=("${example_name}")
+done < <(
     cd crates/rustc-codegen-cuda/examples
     for manifest in */Cargo.toml; do
         [[ -e "${manifest}" ]] || continue
@@ -752,7 +759,11 @@ verdict_compile() {
 EXTRA_RUSTFLAGS=""
 invoke_cargo_oxide() {
     if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
-        if [[ -v CARGO_ENCODED_RUSTFLAGS ]]; then
+        # `${var+x}` rather than `[[ -v var ]]`, which needs bash 4.2 and is a
+        # *parse* error on the bash 3.2 that macOS ships. Both mean "set, even
+        # if empty" -- not "non-empty", which matters because the branch below
+        # decides on that basis whether to prepend the 0x1f separator.
+        if [[ -n "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
             local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
             if [[ -n "${encoded_flags}" ]]; then
                 encoded_flags+=$'\x1f'
@@ -1147,7 +1158,10 @@ run_cargo() {
         nvvm_control_cg1="$(awk '/^define .*@compile_tcgen05_control_cg1\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
         nvvm_control_cg2="$(awk '/^define .*@compile_tcgen05_control_cg2\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
         local -a nvvm_control_attrs=()
-        mapfile -t nvvm_control_attrs < <(
+        local nvvm_control_attr_line
+        while IFS= read -r nvvm_control_attr_line; do
+            nvvm_control_attrs+=("${nvvm_control_attr_line}")
+        done < <(
             sed -nE '/call void asm sideeffect "tcgen05\.(commit|shift)\.cta_group::[12]/s/.* (#[0-9]+)$/\1/p' \
                 <<<"${nvvm_control_cg1}"$'\n'"${nvvm_control_cg2}"
         )
@@ -1189,7 +1203,10 @@ run_cargo() {
         nvvm_mma_inline_count="$(grep -cE 'call void asm sideeffect ".*tcgen05\.mma' <<<"${nvvm_mma_base}"$'\n'"${nvvm_mma_ws}")"
         nvvm_mma_memory_count="$(grep -E 'call void asm sideeffect ".*tcgen05\.mma' <<<"${nvvm_mma_base}"$'\n'"${nvvm_mma_ws}" | grep -cF '~{memory}')"
         local -a nvvm_mma_attrs=()
-        mapfile -t nvvm_mma_attrs < <(
+        local nvvm_mma_attr_line
+        while IFS= read -r nvvm_mma_attr_line; do
+            nvvm_mma_attrs+=("${nvvm_mma_attr_line}")
+        done < <(
             sed -nE '/call void asm sideeffect ".*tcgen05\.mma/s/.* (#[0-9]+)$/\1/p' \
                 <<<"${nvvm_mma_base}"$'\n'"${nvvm_mma_ws}"
         )

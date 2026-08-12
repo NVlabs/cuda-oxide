@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Verify the three things scripts/smoketest.sh assumes about the examples, all
 # of which are otherwise only discoverable by running the suite on a GPU:
 #

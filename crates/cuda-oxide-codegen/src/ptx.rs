@@ -701,15 +701,31 @@ mod tests {
             .push(message.to_string());
     }
 
+    /// Locates a POSIX utility the tests drive as a stand-in for a real tool.
+    ///
+    /// The location is not portable: Linux ships `true` and `false` in `/bin`,
+    /// while macOS ships them only in `/usr/bin`. Hardcoding either directory
+    /// makes a `#[cfg(unix)]` test fail on a platform that predicate covers, so
+    /// resolve the path instead of assuming one.
+    #[cfg(unix)]
+    fn posix_utility(name: &str) -> String {
+        ["/bin", "/usr/bin"]
+            .iter()
+            .map(|directory| format!("{directory}/{name}"))
+            .find(|path| Path::new(path).exists())
+            .unwrap_or_else(|| panic!("no `{name}` utility in /bin or /usr/bin"))
+    }
+
     #[test]
     #[cfg(unix)]
     fn legacy_opt_failure_warns_but_experimental_mode_fails() {
+        let opt_path = posix_utility("false");
         let toolchain = LlvmToolchain {
-            llc_path: "/bin/true".to_string(),
+            llc_path: posix_utility("true"),
             llc_major: Some(21),
             llc_from_env: false,
             opt: Some(crate::llvm_tools::OptTool {
-                path: "/bin/false".to_string(),
+                path: opt_path.clone(),
                 major: Some(21),
             }),
             llvm_link: None,
@@ -724,7 +740,11 @@ mod tests {
 
         let error = optimize_ll(input, &[], &toolchain, &opts, true).unwrap_err();
         assert!(matches!(&error, PipelineError::Optimization(_)));
-        assert!(error.to_string().contains("opt (/bin/false) failed"));
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("opt ({opt_path}) failed"))
+        );
     }
 
     #[test]

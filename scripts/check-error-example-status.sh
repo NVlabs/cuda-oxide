@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Verify every error* example is documented in STATUS.md and listed in
 # the ERROR_EXAMPLES array in smoketest.sh.  Run this after adding or
 # removing an error* example.
@@ -8,23 +10,38 @@ cd "$(dirname "$0")/.."
 
 fail=0
 
+# `mapfile` is a bash 4 builtin and `grep -P` is a GNU extension; macOS ships
+# neither (bash 3.2, BSD grep), so this guard aborted there before it checked
+# anything. Collect with a read loop and extract with `sed` instead -- both
+# portable, and the extracted values are unchanged.
+collect() {
+    COLLECTED=()
+    local line
+    while IFS= read -r line; do
+        COLLECTED+=("$line")
+    done
+}
+
 # Examples that exist on disk.
-mapfile -t on_disk < <(
+collect < <(
     find crates/rustc-codegen-cuda/examples -mindepth 1 -maxdepth 1 \
         -type d -name 'error*' -exec basename {} \; | sort
 )
+on_disk=("${COLLECTED[@]+"${COLLECTED[@]}"}")
 
 # Examples listed in STATUS.md (backtick-quoted names in the table).
-mapfile -t in_status < <(
-    grep -oP '^\|\s*`\K[^`]+' \
+collect < <(
+    sed -n 's/^|[[:space:]]*`\([^`]*\)`.*/\1/p' \
         crates/rustc-codegen-cuda/STATUS.md | sort
 )
+in_status=("${COLLECTED[@]+"${COLLECTED[@]}"}")
 
 # Examples listed in ERROR_EXAMPLES in smoketest.sh.
-mapfile -t in_smoketest < <(
-    grep -oP 'ERROR_EXAMPLES=\(\K[^)]+' scripts/smoketest.sh \
+collect < <(
+    sed -n 's/.*ERROR_EXAMPLES=(\([^)]*\)).*/\1/p' scripts/smoketest.sh \
         | tr ' ' '\n' | grep -v '^$' | sort
 )
+in_smoketest=("${COLLECTED[@]+"${COLLECTED[@]}"}")
 
 contains() {
     local needle="$1"; shift

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """CUTLASS CuTe DSL FP16 throughput diagnostic; not the live baseline.
 
 Uses cute.compile() to pre-compile the kernel, then cute.testing.benchmark()

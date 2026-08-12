@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #ifndef CUDA_OXIDE_COMPILE_OPTIONS_H
 #define CUDA_OXIDE_COMPILE_OPTIONS_H
 
