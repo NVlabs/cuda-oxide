@@ -168,7 +168,7 @@ remain unsupported.
 
 | Feature | Status | Description |
 |:--------|:-------|:------------|
-| Warp Shuffle Operations | **Full** | `shuffle`, `shuffle_xor`, `shuffle_down`, `shuffle_up` for `i32` and `f32`. |
+| Warp Shuffle Operations | **Full** | `shuffle`, `shuffle_xor`, `shuffle_down`, `shuffle_up`. Unsuffixed forms take `u32`; `_f32`, `_u64`, `_f64` variants and a `_sync` form of each. |
 | Warp Vote Operations | **Full** | `all(pred)`, `any(pred)`, `ballot(pred)` → bitmask. |
 | Lane/Warp ID | **Full** | `lane_id()` (0–31), `warp_id()`. Direct register reads. |
 
@@ -179,7 +179,7 @@ remain unsupported.
 | Typed Group Handles | **Full** | `Grid`, `Cluster`, `ThreadBlock`, `WarpTile<N>` (N ∈ {1,2,4,8,16,32}), `CoalescedThreads`. |
 | Group Universal API | **Full** | `size()`, `thread_rank()`, `sync()` on every group handle. |
 | Warp Tile Partitioning | **Full** | `ThreadBlock::tiled_partition::<N>()` carves a sub-warp `WarpTile<N>`. `coalesced_threads()` materialises the active-lane group. |
-| Warp Collectives | **Full** | `ballot`, `all`, `any`, `shfl`, `shfl_xor`, `shfl_down`, `shfl_up` (`i32` and `f32`); `match_any` / `match_all` (`i32` and `i64`); `active_mask`. |
+| Warp Collectives | **Full** | `ballot`, `all`, `any`, `shfl`, `shfl_xor`, `shfl_down`, `shfl_up` (`u32` and `f32`); `match_any` / `match_all` (`i32` and `i64`); `active_mask`. |
 | Warp Reductions / Scans | **Full** | `warp_reduce`, `warp_scan` (inclusive). `Sum`/`Min`/`Max` for `u32`/`i32`/`f32`; `BitAnd`/`BitOr`/`BitXor` for `u32`. |
 | Block Reductions / Scans | **Full** | `block_reduce`, `block_scan` (inclusive). Const-generic over `NUM_WARPS`; same op/type matrix as warp variants; uses `__shared__` scratch. |
 | Cooperative Kernel Launch | **Full** | `#[cooperative_launch]` on a `#[cuda_module]` kernel (or `unsafe { cuda_launch! { cooperative: true, ... } }`) enables `Grid::sync()` for grid-wide barriers. |

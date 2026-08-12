@@ -365,7 +365,7 @@ let partner_u = warp::shuffle_xor(val_u32, mask);
 let all_true = warp::all(predicate);
 let any_true = warp::any(predicate);
 let mask     = warp::ballot(predicate);
-let count    = warp::popc(mask);
+let count    = warp::popc(predicate); // == ballot(predicate).count_ones()
 ```
 
 ### Shuffle Operations
@@ -389,7 +389,7 @@ shuffle moves bits and does not interpret them.
 | `all(pred)`    | `bool`   | True if predicate holds for all lanes        |
 | `any(pred)`    | `bool`   | True if predicate holds for any lane         |
 | `ballot(pred)` | `u32`    | Bitmask of lanes where predicate is true     |
-| `popc(mask)`   | `u32`    | Population count of set bits                 |
+| `popc(pred)`   | `u32`    | Count of lanes where predicate is true       |
 
 ---
 
