@@ -196,6 +196,7 @@ check-guards:
     bash scripts/check-cli-doc-coverage.sh
     bash scripts/check-book-api-names.sh
     bash scripts/check-reserved-prefixes.sh
+    bash scripts/check-device-only-build.sh
     cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh

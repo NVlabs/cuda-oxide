@@ -108,3 +108,24 @@ jobs:
       # Reads the book and cuda-device's sources: no cargo, no build, no network.
       - name: Verify every device call the book shows resolves
         run: bash scripts/check-book-api-names.sh
+
+  # #702 let a kernel-only crate drop the host surface (and with it `cuda.h`) via
+  # `cuda-macros = { default-features = false }`, which is what #701 asked for.
+  # Nothing exercised it: no example takes that configuration, and every other
+  # lane that builds a kernel crate has the toolkit installed. The bad direction
+  # is quiet too -- proc-macro features unify per graph, so a stray
+  # `cuda-macros/host` makes the expansion emit `cuda_host::` paths that a
+  # device-only crate cannot resolve, and that surfaces downstream rather than
+  # here.
+  device-only-build:
+    name: device-only kernel crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Deliberately no CUDA toolkit step: a toolkit on the runner would mask
+      # exactly the dependency this job exists to keep out of the graph.
+      - name: Verify a kernel-only crate builds with no host surface
+        run: bash scripts/check-device-only-build.sh
