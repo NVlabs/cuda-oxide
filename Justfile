@@ -20,10 +20,10 @@ fmt-check:
 # CI runs clippy three times: over the root workspace, over
 # crates/rustc-codegen-cuda (its own [workspace] for the rustc_private dylibs,
 # which `--workspace` from the root cannot reach), and once per example. The
-# first two are here. `--workspace --all-targets` matches CI exactly; the
-# previous `--all-targets --lib --tests` narrowed target selection and so
-# skipped bin and example targets that CI lints, `cuda-host/examples/` among
-# them.
+# first two are here, the root invocation spelled the way CI spells it.
+# (Cargo's target-selection flags are additive and the virtual root workspace
+# has no default-members, so the earlier `--all-targets --lib --tests` covered
+# the same members and targets; the spelling was the only difference.)
 #
 # The per-example pass stays CI-only: it is one clippy run per example across
 # 200-odd separate workspaces, which is a CI job rather than something to wait
