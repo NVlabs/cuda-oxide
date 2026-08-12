@@ -128,9 +128,10 @@ smoketest *args:
 #
 # `-W` turns every Sphinx warning into an error, so a broken cross-reference, a
 # malformed directive, or a page dropped from a toctree fails here instead of
-# after merge. One trap worth knowing before writing a link: the book sets
-# `heading_anchors=0`, so a markdown `[text](#some-heading)` is an error even
-# though the rendered HTML contains both the href and a matching id.
+# after merge. One trap worth knowing before writing a link: `conf.py` sets no
+# heading-anchor option and MyST's auto-generated heading anchors are off by
+# default, so a markdown `[text](#some-heading)` is an error even though the
+# rendered HTML contains both the href and a matching id.
 #
 # Deliberately not part of `check`: it is the only gate needing a Python
 # virtualenv, and `check` otherwise requires none. The venv is built once and
@@ -140,6 +141,7 @@ book:
     #!/usr/bin/env bash
     set -euo pipefail
     venv=cuda-oxide-book/_build/venv
+    # Stale (requirements.txt changed, install half-failed)? rm -rf cuda-oxide-book/_build/venv
     if [ ! -x "${venv}/bin/sphinx-build" ]; then
         echo "Creating the book virtualenv (once) ..."
         python3 -m venv "${venv}"
