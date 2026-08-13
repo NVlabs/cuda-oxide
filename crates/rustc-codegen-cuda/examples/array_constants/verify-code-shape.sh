@@ -145,6 +145,51 @@ require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
     "runtime enum-array element load" \
     'load \{ i32 \},'
 
+union_array_symbol='array_constants__kernels__union_array_value'
+direct_union_symbol='array_constants__kernels__direct_union_value'
+union_tuple_symbol='array_constants__kernels__union_tuple_value'
+union_struct_symbol='array_constants__kernels__union_struct_value'
+partial_union_symbol='array_constants__kernels__partial_union_value'
+maybe_uninit_symbol='array_constants__kernels__maybe_uninit_array_value'
+union_storage='\{ \[0 x i32\], i32 \}'
+
+# Initialized union constants are deliberately materialized element-wise instead
+# of taking the promoted-global fast path. rustc gives the importer a byte image
+# plus an initialization mask, and inactive union bytes must remain `undef`
+# rather than being zero-filled by a global initializer.
+require_symbol_shape "${llvm_ir}" llvm "${union_array_symbol}" \
+    "four-element initialized-union array storage" \
+    "alloca \\[4 x ${union_storage}\\]"
+require_symbol_shape "${llvm_ir}" llvm "${union_array_symbol}" \
+    "runtime initialized-union array index" \
+    'and i64 .*, 3'
+require_symbol_shape "${llvm_ir}" llvm "${union_array_symbol}" \
+    "runtime initialized-union element load" \
+    "load ${union_storage},"
+
+# Direct, tuple-nested, struct-nested, and partially initialized constants all
+# cross the same byte-faithful transmute boundary. A four-byte union therefore
+# needs a temporary `[4 x i8]` storage image before it becomes union storage.
+for symbol in \
+    "${direct_union_symbol}" \
+    "${union_tuple_symbol}" \
+    "${union_struct_symbol}" \
+    "${partial_union_symbol}"; do
+    require_symbol_shape "${llvm_ir}" llvm "${symbol}" \
+        "byte-faithful initialized-union materialization" \
+        'alloca \[4 x i8\]'
+done
+
+# `MaybeUninit<u32>` is itself a union. Runtime indexing prevents rustc from
+# folding the table to one scalar and exercises the same initialized-union
+# constant path through the core-library type.
+require_symbol_shape "${llvm_ir}" llvm "${maybe_uninit_symbol}" \
+    "runtime MaybeUninit constant index" \
+    'and i64 .*, 1'
+require_symbol_shape "${llvm_ir}" llvm "${maybe_uninit_symbol}" \
+    "two-element MaybeUninit array storage" \
+    'alloca \[2 x \{'
+
 pointer_tuple_symbol='array_constants__kernels__pointer_tuple_array_value'
 
 # Device globals use backend-generated internal symbols, so source-level static

@@ -40,14 +40,20 @@ value constants use the same layout-aware decoder. Struct constants (direct
 and promoted-by-reference) also read every field at its rustc layout offset,
 so padded, reordered, `#[repr(C)]`, and nested shapes decode correctly, and a
 struct's stored size is its padded size, which fixes the element stride for
-arrays of padded structs inside constants. Arrays whose elements are structs
-or initialized unions are not yet materialized as constants. Thin pointer
-fields in array, tuple, and struct **const** values that relocate to device
-statics are materialized via `MirGlobalAllocOp` per field, including
+arrays of padded structs inside constants. Pointer-free initialized union
+constants are materialized from rustc's evaluated storage image without
+guessing an active field: initialized bytes are preserved, uninitialized
+inactive bytes remain `undef`, and the byte image is transmuted into the
+layout-exact union type. This includes direct unions, unions nested in tuple or
+struct constants, runtime-indexed `[U; N]`, and `MaybeUninit<T>` constants.
+Arrays whose elements are structs are still not materialized as constants.
+Thin pointer fields in array, tuple, and struct **const** values that relocate
+to device statics are materialized via `MirGlobalAllocOp` per field, including
 non-zero byte addends into a static (see `struct_constant_provenance`,
-`tuple_constant_provenance`, `tuple_array_provenance`). Fat pointers, enum
-constants with relocations, and device-global *initializer* relocations
-remain rejected.
+`tuple_constant_provenance`, `tuple_array_provenance`). Pointer relocations
+inside union constants, fat pointers, enum constants with relocations,
+pointer-to-array union constants (`&[U; N]`), and device-global *initializer*
+relocations remain rejected.
 
 Enum constants with direct thin-reference payloads preserve relocations to
 device statics, including non-zero byte addends. This includes niche-encoded

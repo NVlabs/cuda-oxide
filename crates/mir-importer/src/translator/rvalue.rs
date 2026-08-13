@@ -2258,6 +2258,9 @@ pub fn translate_operand(
             let is_enum = const_ty_ptr
                 .deref(ctx)
                 .is::<dialect_mir::types::MirEnumType>();
+            let is_union = const_ty_ptr
+                .deref(ctx)
+                .is::<dialect_mir::types::MirUnionType>();
 
             // Check if this is a pointer to an array (byte strings, or typed arrays like [f64; 3])
             let is_ptr_to_array = const_ty_ptr
@@ -2340,6 +2343,16 @@ pub fn translate_operand(
                 )
             } else if is_enum {
                 translate_enum_constant(
+                    ctx,
+                    constant,
+                    &rust_ty,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                )
+            } else if is_union {
+                translate_union_constant(
                     ctx,
                     constant,
                     &rust_ty,
@@ -2771,7 +2784,7 @@ pub fn translate_operand(
                      \n  pliron type: {}\
                      \n  const repr : {}\
                      \n\
-                     \nThe type dispatch (ZST -> ptr_to_array -> struct -> enum -> float -> pointer -> integer)\n\
+                     \nThe type dispatch (ZST -> ptr_to_array -> array -> struct -> tuple -> enum -> union -> float -> pointer -> integer)\n\
                      did not match this constant. A new handler may need to be added.",
                     rust_ty, pliron_ty_dbg, const_str
                 ))))
@@ -6588,8 +6601,8 @@ fn translate_array_value_constant(
         array_ty.element_type()
     };
 
-    // Bare array values support primitive scalars, enums, tuples with supported
-    // fields, or nested arrays of those. Struct elements remain outside this
+    // Bare array values support primitive scalars, enums, unions, tuples with
+    // supported fields, or nested arrays of those. Struct elements remain
     // entry point; arrays nested inside struct constants have their own
     // layout-aware aggregate path.
     validate_array_value_element_type(ctx, element_ty, &loc)?;
@@ -7465,6 +7478,8 @@ fn constant_storage_size(ctx: &Context, ty_ptr: TypeHandle) -> Option<usize> {
             st.field_offsets().len(),
             st.total_size(),
         )
+    } else if let Some(union_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirUnionType>() {
+        usize::try_from(union_ty.total_size()).ok()
     } else if let Some(at) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
         let elem = at.element_type();
         let n = at.size() as usize;
@@ -7472,6 +7487,280 @@ fn constant_storage_size(ctx: &Context, ty_ptr: TypeHandle) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Whether a constant-storage type contains a pointer-bearing leaf.
+///
+/// Initialized union constants are currently materialized through a raw byte
+/// image. That is only sound for pointer-free storage: pointer provenance
+/// cannot be reconstructed from bytes once rustc's active-field identity is gone.
+fn constant_type_contains_pointer(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if ty_ref.is::<dialect_mir::types::MirPtrType>()
+        || ty_ref.is::<dialect_mir::types::MirSliceType>()
+        || ty_ref.is::<dialect_mir::types::MirDisjointSliceType>()
+    {
+        return true;
+    }
+    if let Some(array) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        let element = array.element_type();
+        drop(ty_ref);
+        return constant_type_contains_pointer(ctx, element);
+    }
+    let children: Vec<TypeHandle> =
+        if let Some(tuple) = ty_ref.downcast_ref::<dialect_mir::types::MirTupleType>() {
+            tuple.get_types().to_vec()
+        } else if let Some(structure) = ty_ref.downcast_ref::<dialect_mir::types::MirStructType>() {
+            structure.field_types().to_vec()
+        } else if let Some(enumeration) = ty_ref.downcast_ref::<dialect_mir::types::MirEnumType>() {
+            enumeration.all_field_types.clone()
+        } else if let Some(union_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirUnionType>() {
+            union_ty.field_types().to_vec()
+        } else {
+            return false;
+        };
+    drop(ty_ref);
+    children
+        .into_iter()
+        .any(|child| constant_type_contains_pointer(ctx, child))
+}
+
+/// Verify that rustc and the MIR union agree on the exact stored size and that
+/// this byte-materialization path is pointer-free.
+fn union_constant_storage_size(
+    ctx: &Context,
+    rust_ty: &rustc_public::ty::Ty,
+    union_ty: TypeHandle,
+    loc: &Location,
+) -> TranslationResult<usize> {
+    let rust_size = rust_type_layout_size(*rust_ty, loc.clone())?;
+    let (name, mir_size, field_types) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union_ty = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(
+                    "union_constant_storage_size called on non-union type"
+                ))
+            })?;
+        let size = usize::try_from(union_ty.total_size()).map_err(|_| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Union constant `{}` size {} does not fit usize",
+                union_ty.name(),
+                union_ty.total_size()
+            )))
+        })?;
+        (
+            union_ty.name().to_string(),
+            size,
+            union_ty.field_types().to_vec(),
+        )
+    };
+
+    if field_types
+        .into_iter()
+        .any(|field| constant_type_contains_pointer(ctx, field))
+    {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Initialized union constant `{name}` contains pointer-bearing storage; pointer-bearing union constants are not yet supported"
+            ))
+        );
+    }
+
+    if rust_size != mir_size {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Union constant `{name}` has rustc size {rust_size}, but MirUnionType records {mir_size}"
+            ))
+        );
+    }
+    Ok(rust_size)
+}
+
+/// Materialize a non-ZST union constant without guessing an active field.
+///
+/// rustc constant evaluation gives us the physical storage image and its
+/// initialization mask, but not a source-level active-field identity. Rebuilding
+/// the union through `mir.insert_field` would therefore invent semantics. Build
+/// the exact byte image instead, keep uninitialized bytes as typed `undef`, then
+/// transmute the byte array into the already layout-exact `MirUnionType`.
+fn translate_union_constant(
+    ctx: &mut Context,
+    constant: &mir::ConstOperand,
+    rust_ty: &rustc_public::ty::Ty,
+    union_ty: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let size = union_constant_storage_size(ctx, rust_ty, union_ty, &loc)?;
+    if size == 0 {
+        return translate_zero_sized_constant_value(ctx, union_ty, block_ptr, prev_op, loc);
+    }
+
+    let Some(alloc) = constant_allocation(constant) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Initialized union constant of {size} byte(s) must be backed by an allocation, found {:?}",
+                constant.const_.kind()
+            ))
+        );
+    };
+
+    translate_union_constant_from_alloc(ctx, alloc, 0, rust_ty, union_ty, block_ptr, prev_op, loc)
+}
+
+/// Materialize one union value from an allocation while preserving its init mask.
+///
+/// Pointer provenance is deliberately out of scope here. The bytes under a
+/// relocation are an addend, not literal storage, so treating them as ordinary
+/// initialized bytes would silently discard provenance. Reject any relocation
+/// whose pointer word overlaps the union.
+#[allow(clippy::too_many_arguments)]
+fn translate_union_constant_from_alloc(
+    ctx: &mut Context,
+    alloc: &rustc_public::ty::Allocation,
+    base_offset: usize,
+    rust_ty: &rustc_public::ty::Ty,
+    union_ty: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let size = union_constant_storage_size(ctx, rust_ty, union_ty, &loc)?;
+    if size == 0 {
+        return translate_zero_sized_constant_value(ctx, union_ty, block_ptr, prev_op, loc);
+    }
+
+    let end = base_offset.checked_add(size).ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Union constant byte range overflows: offset {base_offset} + size {size}"
+            ))
+        )
+    })?;
+    if end > alloc.bytes.len() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Union constant needs bytes [{base_offset}..{end}), but allocation is only {} bytes",
+                alloc.bytes.len()
+            ))
+        );
+    }
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let relocations = relocation_offsets_overlapping_range(
+        &alloc.provenance.ptrs,
+        base_offset,
+        end,
+        pointer_width,
+    );
+    if !relocations.is_empty() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Initialized union constant has pointer relocation(s) overlapping byte offset(s) {relocations:?}; pointer-bearing union constants are not yet supported"
+            ))
+        );
+    }
+
+    translate_union_constant_from_storage(
+        ctx,
+        union_ty,
+        &alloc.bytes[base_offset..end],
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
+/// Build `[u8; size]` with one SSA value per physical byte and transmute it to
+/// the union type. `None` bytes become `mir.undef`; no inactive byte is invented.
+fn translate_union_constant_from_storage(
+    ctx: &mut Context,
+    union_ty: TypeHandle,
+    storage: &[Option<u8>],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    if storage.is_empty() {
+        return translate_zero_sized_constant_value(ctx, union_ty, block_ptr, prev_op, loc);
+    }
+
+    let byte_ty = IntegerType::get(ctx, 8, Signedness::Unsigned);
+    let byte_ty_handle: TypeHandle = byte_ty.into();
+    let mut bytes = Vec::with_capacity(storage.len());
+    let mut current_prev_op = prev_op;
+
+    for byte in storage {
+        let op = match byte {
+            Some(value) => {
+                let attr = pliron::builtin::attributes::IntegerAttr::new(
+                    byte_ty,
+                    APInt::from_u64(
+                        u64::from(*value),
+                        NonZeroUsize::new(8).expect("u8 width is non-zero"),
+                    ),
+                );
+                let op = Operation::new(
+                    ctx,
+                    MirConstantOp::get_concrete_op_info(),
+                    vec![byte_ty_handle],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                MirConstantOp::new(op).set_attr_value(ctx, attr);
+                op
+            }
+            None => MirUndefOp::new(ctx, byte_ty_handle).get_operation(),
+        };
+        op.deref_mut(ctx).set_loc(loc.clone());
+        match current_prev_op {
+            Some(prev) => op.insert_after(ctx, prev),
+            None => op.insert_at_front(block_ptr, ctx),
+        }
+        bytes.push(op.deref(ctx).get_result(0));
+        current_prev_op = Some(op);
+    }
+
+    let byte_array_ty: TypeHandle =
+        dialect_mir::types::MirArrayType::get(ctx, byte_ty_handle, storage.len() as u64).into();
+    let array_op = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![byte_array_ty],
+        bytes,
+        vec![],
+        0,
+    );
+    array_op.deref_mut(ctx).set_loc(loc.clone());
+    match current_prev_op {
+        Some(prev) => array_op.insert_after(ctx, prev),
+        None => array_op.insert_at_front(block_ptr, ctx),
+    }
+    let byte_array = array_op.deref(ctx).get_result(0);
+
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![union_ty],
+        vec![byte_array],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+    cast_op.insert_after(ctx, array_op);
+
+    Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
 }
 
 /// Translate an enum constant by reconstructing both its active variant and any
@@ -8001,6 +8290,16 @@ fn translate_constant_value_from_bytes(
         })?;
     if is_zst || types::is_zst_type(ctx, ty_ptr) {
         return translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc);
+    }
+
+    if ty_ptr.deref(ctx).is::<dialect_mir::types::MirUnionType>() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "Initialized union constants require their rustc allocation so the initialization mask is preserved; byte-only union decoding is not supported"
+                    .to_string()
+            )
+        );
     }
 
     enum ValueKind {
@@ -10392,6 +10691,20 @@ fn translate_constant_value_from_alloc(
         );
     }
 
+    let is_union = ty_ptr.deref(ctx).is::<dialect_mir::types::MirUnionType>();
+    if is_union {
+        return translate_union_constant_from_alloc(
+            ctx,
+            alloc,
+            absolute_byte_offset,
+            rust_ty,
+            ty_ptr,
+            block_ptr,
+            prev_op,
+            loc,
+        );
+    }
+
     let is_array = ty_ptr.deref(ctx).is::<dialect_mir::types::MirArrayType>();
     if is_array {
         return translate_array_constant_from_alloc(
@@ -10730,8 +11043,9 @@ fn translate_struct_constant_from_alloc(
 /// Element kinds admitted by a bare array value constant
 /// (`translate_array_value_constant`).
 ///
-/// Primitive scalars, enums, tuples, and nested arrays are supported at this
-/// entry point. Arrays of structs are not materialized here. Nested arrays are
+/// Primitive scalars, enums, initialized unions, tuples, and nested arrays are
+/// supported at this entry point. Arrays of structs are not materialized here.
+/// Nested arrays are
 /// walked recursively so an unsupported leaf cannot hide behind nesting.
 /// Arrays inside struct or tuple constants are dispatched through
 /// [`translate_constant_value_from_alloc`] and are not governed by this gate.
@@ -10748,6 +11062,7 @@ fn validate_array_value_element_type(
             || elem_obj.is::<FP64Type>()
             || elem_obj.is::<dialect_mir::types::MirTupleType>()
             || elem_obj.is::<dialect_mir::types::MirEnumType>()
+            || elem_obj.is::<dialect_mir::types::MirUnionType>()
         {
             return Ok(());
         }
@@ -10756,8 +11071,8 @@ fn validate_array_value_element_type(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported: {:?}. Supported array \
-                     constants are primitive scalars, enums, tuples with supported fields, \
-                     or nested arrays of those.",
+                     constants are primitive scalars, enums, initialized unions, tuples with \
+                     supported fields, or nested arrays of those.",
                     elem_obj
                 ))
             );
@@ -11760,12 +12075,13 @@ mod promotable_array_element_tests {
 #[cfg(test)]
 mod aggregate_relocation_tests {
     use super::{
-        decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
-        provenance_starts_in_range, relocation_offsets_overlapping_range,
-        validate_array_value_element_type,
+        constant_type_contains_pointer, decode_relocation_addend, find_unconsumed_relocation,
+        match_thin_pointer_relocation, provenance_starts_in_range,
+        relocation_offsets_overlapping_range, validate_array_value_element_type,
     };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
+        MirUnionType,
     };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
@@ -11955,6 +12271,46 @@ mod aggregate_relocation_tests {
         assert!(
             validate_array_value_element_type(&ctx, nested_enum_array, &Location::Unknown).is_ok(),
             "nesting preserves supported enum leaves"
+        );
+
+        let bytes_ty: TypeHandle = MirArrayType::get(&mut ctx, u8_ty, 4).into();
+        let union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "Bits".into(),
+            vec!["word".into(), "bytes".into()],
+            vec![u32_ty, bytes_ty],
+            4,
+            4,
+        )
+        .into();
+        assert!(
+            validate_array_value_element_type(&ctx, union_ty, &Location::Unknown).is_ok(),
+            "initialized union elements are supported"
+        );
+        let nested_union_array: TypeHandle = MirArrayType::get(&mut ctx, union_ty, 2).into();
+        assert!(
+            validate_array_value_element_type(&ctx, nested_union_array, &Location::Unknown).is_ok(),
+            "nesting preserves supported union leaves"
+        );
+        assert!(
+            !constant_type_contains_pointer(&ctx, union_ty),
+            "the byte-materialized Bits shape is pointer-free"
+        );
+
+        let pointer_field_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let u64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let pointer_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "PointerBits".into(),
+            vec!["ptr".into(), "bits".into()],
+            vec![pointer_field_ty, u64_ty],
+            8,
+            8,
+        )
+        .into();
+        assert!(
+            constant_type_contains_pointer(&ctx, pointer_union_ty),
+            "pointer-bearing union constants must stay outside raw-byte materialization"
         );
 
         let struct_ty: TypeHandle = MirStructType::get(
