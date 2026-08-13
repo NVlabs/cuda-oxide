@@ -183,6 +183,14 @@ pub struct LoweringOptions {
     pub allow_fma_contraction: bool,
     /// Intrinsic ABI expected by the selected LLVM-to-device backend.
     pub intrinsic_backend: IntrinsicBackend,
+    /// Width in bits of a pointer in the shared-memory address space (`addrspace(3)`).
+    ///
+    /// `mir-lower` runs before the exporter commits to a data layout. Every
+    /// address space uses 64-bit pointers except shared memory under modern NVVM
+    /// (libNVVM, [`IntrinsicBackend::LibNvvm`]), which uses 32-bit `p3:32`. The
+    /// caller supplies this width explicitly because no single target-agnostic
+    /// size is sound for a transmute that observes the physical pointer bytes.
+    pub shared_address_space_pointer_width: u32,
 }
 
 impl Default for LoweringOptions {
@@ -190,6 +198,7 @@ impl Default for LoweringOptions {
         Self {
             allow_fma_contraction: true,
             intrinsic_backend: IntrinsicBackend::LlvmNvptx,
+            shared_address_space_pointer_width: 64,
         }
     }
 }

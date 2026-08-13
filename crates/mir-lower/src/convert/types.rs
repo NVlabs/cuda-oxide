@@ -113,6 +113,7 @@ use pliron::r#type::{TypeHandle, type_cast};
 use super::enum_payload_storage::{
     MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES, enum_payload_storage_type,
 };
+use crate::context::lowering_options;
 use crate::type_conversion_interface::MirTypeConversion;
 
 // =============================================================================
@@ -1403,13 +1404,19 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64
     if ty_ref.is::<FP64Type>() {
         return Some((8, 8));
     }
-    if ty_ref.is::<llvm_types::PointerType>() {
-        // Lowering runs before the exporter chooses the minimal, legacy, or
-        // modern NVPTX data layout. The first two use 64-bit pointers in all
-        // address spaces; modern NVVM alone uses p3:32. Callers that expose
-        // physical shared-pointer width must either genericize a direct
-        // pointer first or reject the target-dependent representation.
-        return Some((8, 8));
+    if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
+        // Lowering runs before the exporter commits to a data layout. Every
+        // address space uses 64-bit pointers except shared memory under modern
+        // NVVM (libNVVM), which uses 32-bit `p3:32`. The caller supplies that
+        // width through `LoweringOptions` because no single target-agnostic size
+        // is sound for a transmute that observes the physical pointer bytes.
+        let width = if pointer.address_space() == llvm_types::address_space::SHARED {
+            lowering_options(ctx).shared_address_space_pointer_width
+        } else {
+            64
+        };
+        let bytes = (width as u64).div_ceil(8);
+        return Some((bytes, bytes));
     }
     if let Some(arr_ty) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
         let (elem_size, elem_align) = llvm_type_size_align(ctx, arr_ty.elem_type())?;

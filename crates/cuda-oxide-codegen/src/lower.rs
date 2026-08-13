@@ -44,6 +44,16 @@ pub fn lower_to_llvm(
         mir_lower::LoweringOptions {
             allow_fma_contraction,
             intrinsic_backend,
+            // Modern NVVM (libNVVM) uses 32-bit `p3:32` shared pointers; the
+            // legacy NVPTX/PTX path uses 64-bit pointers in every address space.
+            shared_address_space_pointer_width: if matches!(
+                intrinsic_backend,
+                mir_lower::IntrinsicBackend::LibNvvm
+            ) {
+                32
+            } else {
+                64
+            },
         },
     ) {
         Ok(()) => Ok(()),

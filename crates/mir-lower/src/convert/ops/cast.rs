@@ -52,7 +52,7 @@
 //! through an exactly-sized, explicitly aligned stack slot.
 
 use crate::convert::types::{
-    convert_type, llvm_type_contains_pointer_in_address_space, llvm_type_is_byte_faithful,
+    convert_type, llvm_type_is_byte_faithful,
     llvm_type_size_align,
 };
 use crate::helpers;
@@ -526,6 +526,10 @@ fn emit_transmute(
         .map(PointerType::address_space);
     let src_is_int = val_ty.deref(ctx).is::<IntegerType>();
     let dst_is_int = llvm_ty.deref(ctx).is::<IntegerType>();
+    let dst_int_width = llvm_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .map(IntegerType::width);
 
     // `ptr::addr()` is implemented in the sysroot as a pointer-to-usize
     // transmute. For a named CUDA address space, Rust's logical address is
@@ -533,25 +537,17 @@ fn emit_transmute(
     // static shared memory can validly have offset zero without being null.
     // Genericize before ptrtoint so the memory-space identity participates in
     // the integer value. This also gives modern NVVM's 32-bit shared pointer
-    // the 64-bit Rust `usize` representation expected by the MIR.
-    if src_ptr_as.is_some() && dst_is_int {
+    // the 64-bit Rust `usize` representation expected by the MIR. Only the
+    // 64-bit destination takes this path; narrower integer transmutes fall
+    // through to the bit-faithful reinterpretation below.
+    if src_ptr_as.is_some() && dst_is_int && dst_int_width == Some(64) {
         return Ok(emit_ptr_to_int(ctx, rewriter, val, val_ty, llvm_ty));
     }
 
-    // Lowering runs before the exporter chooses its target data layout.
-    // Shared pointers are 64-bit in PTX/legacy mode but 32-bit in modern
-    // NVVM (`p3:32`). A transmute observes the physical pointer bytes, so the
-    // target-agnostic 8-byte approximation used by general type conversion
-    // cannot be sound here. Reject scalar and nested aggregate forms until
-    // target mode is available at this stage.
-    let shared = llvm_export::types::address_space::SHARED;
-    if llvm_type_contains_pointer_in_address_space(ctx, val_ty, shared)
-        || llvm_type_contains_pointer_in_address_space(ctx, llvm_ty, shared)
-    {
-        return pliron::input_err_noloc!(
-            "Transmute involving a shared-memory pointer is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM) and is not yet supported"
-        );
-    }
+    // Shared-pointer width is now supplied per target via `LoweringOptions`
+    // (modern NVVM uses 32-bit `p3:32`; legacy NVPTX uses 64-bit), so
+    // `llvm_type_size_align` and `scalar_bit_width` report the correct physical
+    // size for `addrspace(3)` and the general transmute paths below handle it.
 
     let (src_bytes, _) = llvm_type_size_align(ctx, val_ty).ok_or_else(|| {
         pliron::input_error_noloc!(
@@ -651,7 +647,10 @@ fn scalar_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u32
     if let Some(float) = type_cast::<dyn FloatTypeInterface>(&*ty_ref) {
         return u32::try_from(float.get_semantics().bits).ok();
     }
-    if ty_ref.is::<llvm_export::types::PointerType>() {
+    if let Some(pointer) = ty_ref.downcast_ref::<llvm_export::types::PointerType>() {
+        if pointer.address_space() == llvm_export::types::address_space::SHARED {
+            return Some(crate::context::lowering_options(ctx).shared_address_space_pointer_width);
+        }
         return Some(64);
     }
     drop(ty_ref);
@@ -1223,41 +1222,30 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_shared_pointer_transmutes_reject_target_dependent_width() {
-        for (wrap_pointer, pointer_is_source) in [(false, false), (true, false), (true, true)] {
-            let mut ctx = make_ctx();
-            let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
-            let shared_pointer: TypeHandle = MirPtrType::get(&mut ctx, pointee, false, 3).into();
-            let pointer_shape = if wrap_pointer {
-                MirStructType::get_with_full_layout(
-                    &mut ctx,
-                    "SharedPointerWrapper".into(),
-                    vec!["pointer".into()],
-                    vec![shared_pointer],
-                    vec![0],
-                    vec![0],
-                    8,
-                    8,
-                )
-                .into()
-            } else {
-                shared_pointer
-            };
-            let bits = int_ty(&mut ctx, 64, Signedness::Unsigned);
-            let (source, destination) = if pointer_is_source {
-                (pointer_shape, bits)
-            } else {
-                (bits, pointer_shape)
-            };
-            let module =
-                build_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+    fn transmute_involving_shared_pointer_uses_target_dependent_width() {
+        for shared_width in [32u32, 64u32] {
+            for pointer_is_source in [false, true] {
+                let mut ctx = make_ctx();
+                let options = crate::LoweringOptions {
+                    shared_address_space_pointer_width: shared_width,
+                    ..Default::default()
+                };
+                let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+                let shared_pointer: TypeHandle =
+                    MirPtrType::get(&mut ctx, pointee, false, 3).into();
+                let bits = int_ty(&mut ctx, shared_width, Signedness::Unsigned);
+                let (source, destination) = if pointer_is_source {
+                    (shared_pointer, bits)
+                } else {
+                    (bits, shared_pointer)
+                };
+                let module =
+                    build_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
 
-            let error = crate::lower_mir_to_llvm(&mut ctx, module)
-                .expect_err("shared-pointer transmute must fail before target mode is known");
-            assert!(
-                error.to_string().contains("target-mode dependent"),
-                "unexpected diagnostic: {error}"
-            );
+                crate::lower_mir_to_llvm_with_options(&mut ctx, module, options).expect(
+                    "shared-pointer transmute must lower at the configured pointer width",
+                );
+            }
         }
     }
 
@@ -1282,6 +1270,8 @@ mod tests {
             "shared pointers must become generic before ptr::addr() observes them"
         );
     }
+
+
 
     #[test]
     fn int_to_int_signed_widen_lowers_to_s_ext() {

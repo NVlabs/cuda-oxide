@@ -942,6 +942,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: false,
                 intrinsic_backend: crate::IntrinsicBackend::LlvmNvptx,
+                shared_address_space_pointer_width: 64,
             },
         )
         .expect("lowering failed");

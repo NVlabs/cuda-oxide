@@ -1858,6 +1858,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: false,
                 intrinsic_backend: crate::IntrinsicBackend::LlvmNvptx,
+                shared_address_space_pointer_width: 64,
             },
         );
 
@@ -2276,6 +2277,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: true,
                 intrinsic_backend: crate::IntrinsicBackend::LlvmNvptx,
+                shared_address_space_pointer_width: 64,
             },
         );
         assert_eq!(
@@ -2324,6 +2326,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: true,
                 intrinsic_backend: crate::IntrinsicBackend::LibNvvm,
+                shared_address_space_pointer_width: 32,
             },
         );
         assert_eq!(
