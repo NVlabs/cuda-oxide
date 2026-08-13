@@ -30,7 +30,7 @@
 use crate::context::{DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
-    is_zero_sized_type,
+    is_zero_sized_type, transparent_scalar_field,
 };
 
 use dialect_mir::ops::MirFuncOp;
@@ -400,10 +400,11 @@ fn propagate_alwaysinline_attr(
 ///
 /// The LLVM entry block args reflect the post-flatten function signature.
 /// Slices always arrive as `(ptr, len)` pairs and get re-assembled via
-/// `insertvalue`. Structs only arrive flattened on the internal device-fn
-/// ABI; at kernel boundaries (`is_kernel_entry = true`) they arrive as a
-/// single byval value and pass through. This function decides the shape
-/// per-argument and emits the matching reconstruction sequence.
+/// `insertvalue`. Ordinary structs only arrive flattened on the internal
+/// device-fn ABI; at kernel boundaries they arrive as a single byval value.
+/// A rustc-proven `repr(transparent)` scalar wrapper is the exception: its
+/// kernel parameter is the underlying scalar, so the entry prologue rebuilds
+/// the MIR struct from that one non-ZST field.
 fn build_entry_prologue(
     ctx: &mut Context,
     mir_arg_types: &[TypeHandle],
@@ -416,7 +417,7 @@ fn build_entry_prologue(
     let mut result_args = Vec::new();
 
     for &mir_ty in mir_arg_types {
-        let kind = classify_argument_type(ctx, mir_ty, is_kernel_entry);
+        let kind = classify_argument_type(ctx, mir_ty, is_kernel_entry)?;
 
         match kind {
             ReconstructKind::Slice { space_fields } => {
@@ -463,6 +464,20 @@ fn build_entry_prologue(
                 last_op = Some(new_last);
                 result_args.push(val);
             }
+            ReconstructKind::TransparentScalar => {
+                if llvm_arg_idx >= llvm_args.len() {
+                    return Err(anyhow::anyhow!(
+                        "Entry block arg mismatch: no scalar argument available for transparent struct"
+                    ));
+                }
+                let scalar_val = llvm_args[llvm_arg_idx];
+                llvm_arg_idx += 1;
+
+                let (val, new_last) =
+                    reconstruct_transparent_scalar(ctx, llvm_entry, last_op, mir_ty, scalar_val)?;
+                last_op = Some(new_last);
+                result_args.push(val);
+            }
             ReconstructKind::Zst => {
                 let llvm_ty = convert_type(ctx, mir_ty)?;
                 let undef = llvm::UndefOp::new(ctx, llvm_ty).get_operation();
@@ -496,6 +511,8 @@ enum ReconstructKind {
     Slice { space_fields: usize },
     /// A struct type with N non-ZST fields, flattened to N separate arguments.
     Struct(usize),
+    /// A rustc-proven transparent scalar wrapper, passed as one scalar.
+    TransparentScalar,
     /// A zero-sized argument omitted from the LLVM signature.
     Zst,
     /// A simple type that passes through without reconstruction.
@@ -505,20 +522,21 @@ enum ReconstructKind {
 /// Classify an argument type to determine how to reconstruct it from
 /// flattened LLVM entry block arguments.
 ///
-/// At kernel-entry boundaries (`is_kernel_entry = true`) structs arrive
-/// intact, so they're classified as `None` even though the MIR type is
-/// `MirStructType`. Slices keep their `(ptr, len)` reconstruction on
-/// both ABIs.
+/// At kernel-entry boundaries (`is_kernel_entry = true`) ordinary structs
+/// arrive intact and are classified as `None`. A rustc-proven transparent
+/// scalar wrapper arrives as one scalar field and is classified as
+/// `TransparentScalar` so the MIR aggregate is reconstructed. Slices keep their
+/// `(ptr, len)` reconstruction on both ABIs.
 fn classify_argument_type(
     ctx: &mut Context,
     arg_ty: TypeHandle,
     is_kernel_entry: bool,
-) -> ReconstructKind {
+) -> std::result::Result<ReconstructKind, anyhow::Error> {
     if convert_type(ctx, arg_ty).is_ok_and(|llvm_ty| is_zero_sized_type(ctx, llvm_ty)) {
-        return ReconstructKind::Zst;
+        return Ok(ReconstructKind::Zst);
     }
 
-    let (slice_space_tys, struct_fields) = {
+    let (slice_space_tys, struct_info) = {
         let arg_ty_ref = arg_ty.deref(ctx);
         let slice_space_tys = if arg_ty_ref.is::<MirSliceType>() {
             Some(Vec::new())
@@ -527,10 +545,10 @@ fn classify_argument_type(
                 .downcast_ref::<MirDisjointSliceType>()
                 .map(|s| s.space_tys.clone())
         };
-        let struct_fields = arg_ty_ref
+        let struct_info = arg_ty_ref
             .downcast_ref::<MirStructType>()
-            .map(|s| s.field_types.clone());
-        (slice_space_tys, struct_fields)
+            .map(|s| (s.field_types.clone(), s.is_transparent_scalar()));
+        (slice_space_tys, struct_info)
     };
 
     if let Some(space_tys) = slice_space_tys {
@@ -544,8 +562,8 @@ fn classify_argument_type(
                     .unwrap_or(true)
             })
             .count();
-        ReconstructKind::Slice { space_fields }
-    } else if let Some(fields) = struct_fields {
+        Ok(ReconstructKind::Slice { space_fields })
+    } else if let Some((fields, is_transparent_scalar)) = struct_info {
         // Count non-ZST fields the same way `convert_function_type` does
         // — empty structs and structs of all-ZSTs are themselves ZST and
         // get dropped from the LLVM signature on both ABIs.
@@ -559,17 +577,21 @@ fn classify_argument_type(
             .count();
 
         if non_zst_count == 0 {
-            ReconstructKind::Zst
+            Ok(ReconstructKind::Zst)
+        } else if is_kernel_entry && is_transparent_scalar {
+            // Validate the one-non-ZST-field invariant here as well as during
+            // signature conversion, so hand-written dialect input fails closed.
+            let _ = transparent_scalar_field(ctx, arg_ty)?;
+            Ok(ReconstructKind::TransparentScalar)
         } else if is_kernel_entry {
-            // Kernel boundary: struct arrived as a single byval value,
-            // so the MIR entry block can consume it directly without
-            // any insertvalue prologue.
-            ReconstructKind::None
+            // Ordinary kernel-boundary struct arrived as a single byval value,
+            // so the MIR entry block can consume it directly.
+            Ok(ReconstructKind::None)
         } else {
-            ReconstructKind::Struct(non_zst_count)
+            Ok(ReconstructKind::Struct(non_zst_count))
         }
     } else {
-        ReconstructKind::None
+        Ok(ReconstructKind::None)
     }
 }
 
@@ -622,6 +644,36 @@ fn reconstruct_slice(
     }
 
     Ok((current_val, last_op))
+}
+
+/// Reconstruct a nested `repr(transparent)` scalar wrapper from one LLVM scalar.
+///
+/// Each wrapper layer has exactly one non-ZST field. If that field is another
+/// transparent scalar struct, rebuild it first, then insert the resulting value
+/// into the outer layer. ZST marker fields remain omitted exactly as in ordinary
+/// struct reconstruction.
+fn reconstruct_transparent_scalar(
+    ctx: &mut Context,
+    llvm_block: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    mir_ty: TypeHandle,
+    scalar_val: Value,
+) -> std::result::Result<(Value, Ptr<Operation>), anyhow::Error> {
+    let field_ty = transparent_scalar_field(ctx, mir_ty)?;
+    let nested_transparent = {
+        let field_ref = field_ty.deref(ctx);
+        field_ref
+            .downcast_ref::<MirStructType>()
+            .is_some_and(MirStructType::is_transparent_scalar)
+    };
+
+    if nested_transparent {
+        let (field_val, nested_last) =
+            reconstruct_transparent_scalar(ctx, llvm_block, prev_op, field_ty, scalar_val)?;
+        reconstruct_struct(ctx, llvm_block, Some(nested_last), mir_ty, &[field_val])
+    } else {
+        reconstruct_struct(ctx, llvm_block, prev_op, mir_ty, &[scalar_val])
+    }
 }
 
 /// Reconstruct a struct value from flattened field values.
@@ -803,5 +855,138 @@ mod dynamic_shared_contract_tests {
         assert!(!propagated.contains_key("external"));
         assert!(!propagated.contains_key("uncontracted"));
         assert!(!propagated.contains_key("unreached_helper"));
+    }
+}
+
+#[cfg(test)]
+mod transparent_scalar_abi_tests {
+    use super::*;
+    use dialect_mir::types::StructAbiKind;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    fn make_ctx() -> Context {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        crate::register(&mut ctx);
+        ctx
+    }
+
+    fn u32_ty(ctx: &mut Context) -> TypeHandle {
+        IntegerType::get(ctx, 32, Signedness::Unsigned).into()
+    }
+
+    fn transparent_struct(
+        ctx: &mut Context,
+        name: &str,
+        fields: Vec<TypeHandle>,
+        offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+    ) -> TypeHandle {
+        let names = (0..fields.len()).map(|index| index.to_string()).collect();
+        let memory_order = (0..fields.len()).collect();
+        MirStructType::get_with_full_layout_and_abi(
+            ctx,
+            name.into(),
+            names,
+            fields,
+            memory_order,
+            offsets,
+            total_size,
+            abi_align,
+            StructAbiKind::TransparentScalar,
+        )
+        .into()
+    }
+
+    #[test]
+    fn kernel_transparent_scalar_reconstructs_from_one_field() {
+        let mut ctx = make_ctx();
+        let value = u32_ty(&mut ctx);
+        let wrapper = transparent_struct(&mut ctx, "Scalar", vec![value], vec![0], 4, 4);
+
+        assert!(matches!(
+            classify_argument_type(&mut ctx, wrapper, true).unwrap(),
+            ReconstructKind::TransparentScalar
+        ));
+    }
+
+    #[test]
+    fn kernel_transparent_scalar_ignores_zst_markers() {
+        let mut ctx = make_ctx();
+        let value = u32_ty(&mut ctx);
+        let marker: TypeHandle =
+            MirStructType::get(&mut ctx, "Marker".into(), vec![], vec![]).into();
+        let wrapper = transparent_struct(&mut ctx, "Marked", vec![value, marker], vec![0, 4], 4, 4);
+
+        assert!(matches!(
+            classify_argument_type(&mut ctx, wrapper, true).unwrap(),
+            ReconstructKind::TransparentScalar
+        ));
+    }
+
+    #[test]
+    fn ordinary_one_field_kernel_struct_stays_aggregate() {
+        let mut ctx = make_ctx();
+        let value = u32_ty(&mut ctx);
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Ordinary".into(),
+            vec!["0".into()],
+            vec![value],
+            vec![0],
+            vec![0],
+            4,
+            4,
+        )
+        .into();
+
+        assert!(matches!(
+            classify_argument_type(&mut ctx, wrapper, true).unwrap(),
+            ReconstructKind::None
+        ));
+    }
+
+    #[test]
+    fn nested_transparent_scalar_reaches_underlying_integer() {
+        let mut ctx = make_ctx();
+        let value = u32_ty(&mut ctx);
+        let inner = transparent_struct(&mut ctx, "Inner", vec![value], vec![0], 4, 4);
+        let outer = transparent_struct(&mut ctx, "Outer", vec![inner], vec![0], 4, 4);
+
+        let llvm_ty = crate::convert::types::transparent_scalar_llvm_type(&mut ctx, outer)
+            .expect("nested transparent scalar must lower");
+        let width = llvm_ty
+            .deref(&ctx)
+            .downcast_ref::<IntegerType>()
+            .expect("underlying type must be an integer")
+            .width();
+        assert_eq!(width, 32);
+    }
+
+    #[test]
+    fn transparent_pointer_reaches_underlying_pointer() {
+        let mut ctx = make_ctx();
+        let value = u32_ty(&mut ctx);
+        let pointer: TypeHandle =
+            dialect_mir::types::MirPtrType::get_generic(&mut ctx, value, false).into();
+        let wrapper = transparent_struct(&mut ctx, "Pointer", vec![pointer], vec![0], 8, 8);
+
+        let llvm_ty = crate::convert::types::transparent_scalar_llvm_type(&mut ctx, wrapper)
+            .expect("transparent pointer must lower");
+        assert!(llvm_ty.deref(&ctx).is::<llvm_export::types::PointerType>());
+    }
+
+    #[test]
+    fn malformed_transparent_scalar_fails_closed() {
+        let mut ctx = make_ctx();
+        let a = u32_ty(&mut ctx);
+        let b = u32_ty(&mut ctx);
+        let wrapper = transparent_struct(&mut ctx, "Bad", vec![a, b], vec![0, 4], 8, 4);
+
+        let error = classify_argument_type(&mut ctx, wrapper, true)
+            .err()
+            .expect("malformed transparent scalar must fail");
+        assert!(error.to_string().contains("more than one non-ZST field"));
     }
 }

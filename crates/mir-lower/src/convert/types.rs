@@ -219,6 +219,78 @@ pub fn convert_type(ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle, any
     ))
 }
 
+/// Return the single non-ZST field of a rustc-proven transparent scalar struct.
+///
+/// The importer marks the outer ABI from rustc rather than inferring it from
+/// source field count. We still validate the MIR shape here so malformed or
+/// hand-written dialect input cannot turn an arbitrary aggregate into a scalar
+/// kernel parameter.
+pub(crate) fn transparent_scalar_field(
+    ctx: &mut Context,
+    struct_ty: TypeHandle,
+) -> Result<TypeHandle, anyhow::Error> {
+    let (name, field_types, mem_to_decl, is_transparent_scalar) = {
+        let ty_ref = struct_ty.deref(ctx);
+        let s = ty_ref
+            .downcast_ref::<MirStructType>()
+            .ok_or_else(|| anyhow::anyhow!("transparent scalar ABI requires a MirStructType"))?;
+        (
+            s.name.clone(),
+            s.field_types.clone(),
+            s.memory_order(),
+            s.is_transparent_scalar(),
+        )
+    };
+
+    if !is_transparent_scalar {
+        return Err(anyhow::anyhow!(
+            "struct `{}` is not marked as a transparent scalar",
+            name
+        ));
+    }
+
+    let mut scalar_field = None;
+    for decl_idx in mem_to_decl {
+        let field_ty = field_types[decl_idx];
+        let converted = convert_type(ctx, field_ty)?;
+        if is_zero_sized_type(ctx, converted) {
+            continue;
+        }
+        if scalar_field.replace(field_ty).is_some() {
+            return Err(anyhow::anyhow!(
+                "transparent scalar struct `{}` has more than one non-ZST field",
+                name
+            ));
+        }
+    }
+
+    scalar_field
+        .ok_or_else(|| anyhow::anyhow!("transparent scalar struct `{}` has no non-ZST field", name))
+}
+
+/// LLVM parameter type for a rustc-proven transparent scalar struct.
+///
+/// Transparent wrappers can nest (`Outer(Inner(u32))`). rustc still reports
+/// the outer ADT as one scalar, so recurse through transparent scalar fields
+/// until reaching the actual scalar/pointer representation.
+pub(crate) fn transparent_scalar_llvm_type(
+    ctx: &mut Context,
+    struct_ty: TypeHandle,
+) -> Result<TypeHandle, anyhow::Error> {
+    let field_ty = transparent_scalar_field(ctx, struct_ty)?;
+    let nested_transparent = {
+        let field_ref = field_ty.deref(ctx);
+        field_ref
+            .downcast_ref::<MirStructType>()
+            .is_some_and(MirStructType::is_transparent_scalar)
+    };
+    if nested_transparent {
+        transparent_scalar_llvm_type(ctx, field_ty)
+    } else {
+        convert_type(ctx, field_ty)
+    }
+}
+
 /// Convert a MIR function type to an LLVM function type.
 ///
 /// This handles the ABI-level transformations required for GPU kernels.
@@ -241,6 +313,7 @@ pub fn convert_type(ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle, any
 /// | `&[T]`                  | `(ptr, i64)`            | `(ptr, i64)`           |
 /// | `DisjointSlice<T>`      | `(ptr, i64)`            | `(ptr, i64)`           |
 /// | `struct { a: A, b: B }` | `(a: A', b: B')`        | one byval `{A', B'}`   |
+/// | `repr(transparent)` scalar ADT | underlying scalar      | underlying scalar      |
 /// | closure with N captures | N separate field args   | one byval struct       |
 /// | Other                   | Converted type          | Converted type         |
 ///
@@ -248,9 +321,12 @@ pub fn convert_type(ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle, any
 /// host-side launch helpers push the pointer and length as two driver
 /// args. Structs and closures are unflattened only at kernel boundaries
 /// because the host pushes them as a single scalar — see
-/// `cuda_host::push_kernel_scalar`. Internal device-side call sites stay
-/// flattened: caller and callee are both inside this backend, so the ABI
-/// is private and there is no host to disagree with.
+/// `cuda_host::push_kernel_scalar`. The exception is a rustc-proven
+/// `#[repr(transparent)]` `ValueAbi::Scalar` struct: its single non-ZST
+/// field is the kernel parameter, matching the source type's transparent ABI.
+/// Internal device-side call sites stay flattened: caller and callee are both
+/// inside this backend, so the ABI is private and there is no host to disagree
+/// with.
 ///
 /// ## Return Type Handling
 ///
@@ -284,10 +360,10 @@ pub fn convert_type(ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle, any
 /// # Note
 ///
 /// At internal device-function boundaries the struct flattening must be
-/// reversed in the entry block. At kernel-entry boundaries the param
-/// arrives as a single byval struct, so the entry block can pass it
-/// through unchanged. See `lowering.rs::build_entry_prologue` for both
-/// reconstruction paths.
+/// reversed in the entry block. At kernel-entry boundaries ordinary structs
+/// arrive as one byval aggregate, while rustc-proven transparent scalar
+/// wrappers arrive as their single non-ZST scalar field and must be rebuilt.
+/// See `lowering.rs::build_entry_prologue` for the reconstruction paths.
 pub fn convert_function_type(
     ctx: &mut Context,
     func_type: pliron::r#type::TypedHandle<FunctionType>,
@@ -319,6 +395,7 @@ pub fn convert_function_type(
                 field_types: Vec<TypeHandle>,
                 mem_to_decl: Vec<usize>,
             },
+            TransparentScalar(TypeHandle),
             None,
         }
 
@@ -333,10 +410,15 @@ pub fn convert_function_type(
                     space_tys: slice_ty.space_tys.clone(),
                 }
             } else if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
-                if is_kernel_entry {
-                    // Kernel-boundary ABI: keep the struct intact so the
+                if is_kernel_entry && struct_ty.is_transparent_scalar() {
+                    // rustc proves that this `repr(transparent)` ADT has a
+                    // scalar ABI. Emit exactly its one non-ZST field as the
+                    // kernel parameter instead of an aggregate `.b8[]` param.
+                    FlattenKind::TransparentScalar(t)
+                } else if is_kernel_entry {
+                    // Ordinary kernel-boundary structs remain intact so the
                     // host's single `push_kernel_scalar(&closure)` push
-                    // matches a single .param entry on the device side.
+                    // matches a single aggregate .param entry.
                     FlattenKind::None
                 } else {
                     FlattenKind::Struct {
@@ -377,6 +459,9 @@ pub fn convert_function_type(
                         inputs.push(converted);
                     }
                 }
+            }
+            FlattenKind::TransparentScalar(struct_ty) => {
+                inputs.push(transparent_scalar_llvm_type(ctx, struct_ty)?);
             }
             FlattenKind::None => {
                 let converted = convert_type(ctx, t)?;

@@ -418,7 +418,7 @@ impl Verify for MirDisjointSliceType {
 /// A struct type with named fields.
 ///
 /// Represents a product type with named, typed fields.
-/// Syntax: `mir.struct <"Name", ["f0", "f1", ...], [type0, type1, ...]>`
+/// Syntax includes name, fields, rustc layout metadata, and [`StructAbiKind`].
 ///
 /// Unlike tuples, structs have:
 /// - A name (for debugging and identification)
@@ -440,9 +440,27 @@ impl Verify for MirDisjointSliceType {
 /// # Verification
 /// * Field names and types must have same length.
 /// * Field types must be valid.
+///
+/// Physical ABI classification relevant at a CUDA kernel boundary.
+///
+/// Most Rust structs cross the boundary as one by-value aggregate. A
+/// `#[repr(transparent)]` struct whose rustc layout is `ValueAbi::Scalar`
+/// instead uses the scalar representation of its single non-ZST field.
+/// Keeping that fact explicit prevents the lowering from guessing from field
+/// count alone, which would incorrectly scalarize ordinary one-field structs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[format]
+pub enum StructAbiKind {
+    /// Ordinary aggregate ABI, including closures and synthetic structs.
+    #[default]
+    Aggregate,
+    /// `#[repr(transparent)]` with rustc `ValueAbi::Scalar`.
+    TransparentScalar,
+}
+
 #[pliron_type(
     name = "mir.struct",
-    format = "`<` $name `,` `[` vec($field_names, CharSpace(`,`)) `]` `,` `[` vec($field_types, CharSpace(`,`)) `]` `,` `[` vec($mem_to_decl, CharSpace(`,`)) `]` `,` `[` vec($field_offsets, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `>`"
+    format = "`<` $name `,` `[` vec($field_names, CharSpace(`,`)) `]` `,` `[` vec($field_types, CharSpace(`,`)) `]` `,` `[` vec($mem_to_decl, CharSpace(`,`)) `]` `,` `[` vec($field_offsets, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `,` $abi_kind `>`"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirStructType {
@@ -467,6 +485,8 @@ pub struct MirStructType {
     /// property in LLVM, so this is carried here and stamped as `align N`
     /// on loads/stores/allocas during lowering.
     pub abi_align: u64,
+    /// Kernel-boundary ABI classification derived from rustc.
+    pub abi_kind: StructAbiKind,
 }
 
 impl MirStructType {
@@ -524,6 +544,37 @@ impl MirStructType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
+        Self::get_with_full_layout_and_abi(
+            ctx,
+            name,
+            field_names,
+            field_types,
+            mem_to_decl,
+            field_offsets,
+            total_size,
+            abi_align,
+            StructAbiKind::Aggregate,
+        )
+    }
+
+    /// Create a struct type with complete rustc layout and ABI classification.
+    ///
+    /// Importer-produced Rust structs should use this constructor when rustc
+    /// reports a kernel-boundary ABI that differs from ordinary aggregate
+    /// passing. Synthetic structs and closures should keep using
+    /// [`Self::get_with_full_layout`], which defaults to [`StructAbiKind::Aggregate`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_with_full_layout_and_abi(
+        ctx: &mut Context,
+        name: String,
+        field_names: Vec<String>,
+        field_types: Vec<TypeHandle>,
+        mem_to_decl: Vec<usize>,
+        field_offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+        abi_kind: StructAbiKind,
+    ) -> TypedHandle<Self> {
         Type::instantiate(
             MirStructType {
                 name,
@@ -533,6 +584,7 @@ impl MirStructType {
                 field_offsets,
                 total_size,
                 abi_align,
+                abi_kind,
             },
             ctx,
         )
@@ -588,6 +640,16 @@ impl MirStructType {
     /// Returns 0 if size is not known.
     pub fn total_size(&self) -> u64 {
         self.total_size
+    }
+
+    /// Kernel-boundary ABI classification recorded by the importer.
+    pub fn abi_kind(&self) -> StructAbiKind {
+        self.abi_kind
+    }
+
+    /// Whether this struct is a rustc-proven transparent scalar wrapper.
+    pub fn is_transparent_scalar(&self) -> bool {
+        self.abi_kind == StructAbiKind::TransparentScalar
     }
 
     /// Check if we have explicit layout information from rustc.

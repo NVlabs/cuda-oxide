@@ -45,7 +45,7 @@ use rustc_public_bridge::IndexedVal;
 // Re-export types from dialect_mir for convenience
 pub use dialect_mir::types::{
     EnumEncoding, EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType,
-    MirTupleType, MirUnionType,
+    MirTupleType, MirUnionType, StructAbiKind,
 };
 use rustc_public::mir::Mutability;
 
@@ -838,8 +838,12 @@ pub fn translate_type(
                         field_types.push(translated_ty);
                     }
 
-                    // Query rustc for complete memory layout info
-                    let (mem_to_decl, field_offsets, total_size, abi_align) =
+                    // Query rustc for complete memory layout info and the
+                    // kernel-boundary ABI classification. `repr(transparent)`
+                    // alone is not sufficient: only layouts rustc itself
+                    // classifies as one scalar may use the scalar parameter
+                    // path. Everything else stays aggregate.
+                    let (mem_to_decl, field_offsets, total_size, abi_align, abi_kind) =
                         if let Ok(layout) = rust_ty.layout() {
                             let shape = layout.shape();
 
@@ -856,23 +860,33 @@ pub fn translate_type(
 
                             // Total struct size (bytes)
                             let size: u64 = shape.size.bytes() as u64;
-                            (mem_order, offsets, size, shape.abi_align)
+                            let abi_kind = if adt_def.repr().flags.is_transparent
+                                && matches!(&shape.abi, rustc_public::abi::ValueAbi::Scalar(_))
+                            {
+                                StructAbiKind::TransparentScalar
+                            } else {
+                                StructAbiKind::Aggregate
+                            };
+                            (mem_order, offsets, size, shape.abi_align, abi_kind)
                         } else {
-                            (vec![], vec![], 0u64, 0u64)
+                            (vec![], vec![], 0u64, 0u64, StructAbiKind::Aggregate)
                         };
 
-                    // Create the struct type with full layout info
-                    Ok(dialect_mir::types::MirStructType::get_with_full_layout(
-                        ctx,
-                        trimmed_name.to_string(),
-                        field_names,
-                        field_types,
-                        mem_to_decl,
-                        field_offsets,
-                        total_size,
-                        abi_align,
+                    // Create the struct type with full layout and ABI info.
+                    Ok(
+                        dialect_mir::types::MirStructType::get_with_full_layout_and_abi(
+                            ctx,
+                            trimmed_name.to_string(),
+                            field_names,
+                            field_types,
+                            mem_to_decl,
+                            field_offsets,
+                            total_size,
+                            abi_align,
+                            abi_kind,
+                        )
+                        .into(),
                     )
-                    .into())
                 } else {
                     debug_assert!(matches!(adt_def.kind(), rustc_public::ty::AdtKind::Enum));
                     // Enums may have zero, one, or multiple source variants.
