@@ -45,14 +45,17 @@ in_smoketest=("${COLLECTED[@]+"${COLLECTED[@]}"}")
 
 # Parse self-test, the way this guard's eight siblings open.
 #
-# Every comparison below iterates one of the three lists, so a list that comes
-# back empty makes the loops over it do nothing and the guard exit 0 with its
-# success message -- reporting that everything is classified while having
-# classified nothing. Each extraction is one `find` pattern or one `sed`
-# expression away from that: rename the example prefix, reflow STATUS.md's
-# table, or wrap `ERROR_EXAMPLES=(` across lines, and the corresponding list
-# silently becomes empty. `set -e` does not help, because the failure is a
-# command substitution producing no output rather than a non-zero status.
+# An empty on-disk list makes loop 1 vacuous and lets loop 2 pass (the
+# directories it re-checks exist regardless of what the broken `find`
+# returned), so the guard exits 0 with its success message -- reporting that
+# everything is classified while having classified nothing. The same goes for
+# every list coming back empty at once, say after a tree restructure. An empty
+# STATUS.md or ERROR_EXAMPLES read alone did fail before this self-test, but
+# per-example and blaming the wrong side. Each extraction is one `find`
+# pattern or one `sed` expression away from empty: rename the example prefix,
+# reflow STATUS.md's table, or wrap `ERROR_EXAMPLES=(` across lines. `set -e`
+# does not help, because the failure is a command substitution producing no
+# output rather than a non-zero status.
 #
 # So require all three to be non-empty and fail loudly, naming the extraction to
 # fix, rather than trusting a clean result from an empty read.
