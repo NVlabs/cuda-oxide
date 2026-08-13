@@ -13,6 +13,7 @@
  *     addr_of! / addr_of_mut!                            // raw-pointer paths
  *     &mut local.field[k]                                // write-through
  *     struct Holder<'a>(&'a [f32; 2]); &h.0[k]           // deref in the tail
+ *     value.tail[1]                                      // DST slice tail + const index
  *
  * Each kernel writes the difference compute(1) - compute(0), with inputs
  * designed so the two slots differ: a dropped index reads slot 0 twice
@@ -81,6 +82,13 @@ fn node(p: &Pair, k: usize) -> &f32 {
 /// when `h` is itself behind a reference). Exercises the address walker's
 /// Deref arm.
 pub struct Holder<'a>(pub &'a [f32; 2]);
+
+/// Struct with an unsized slice tail used to pin issue #870.
+#[repr(C)]
+pub struct SliceTail<T: ?Sized> {
+    pub head: u32,
+    pub tail: T,
+}
 
 /// Out-of-line accessor pinning the `[Deref, Field(0), Deref, Index(k)]`
 /// projection chain in its own MIR body.
@@ -607,6 +615,32 @@ mod kernels {
             *slot = *r1 - *r0;
         }
     }
+
+    // ── Slice-value projection regression (issue #870) ─────────────────
+
+    /// ConstantIndex directly on the `MirSliceType` value produced by
+    /// projecting the unsized slice tail of a DST struct.
+    #[kernel]
+    pub fn test_slice_tail_constant_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let concrete = SliceTail {
+            head: 0,
+            tail: input[i],
+        };
+        let value: &SliceTail<[f32]> = &concrete;
+
+        let r0 = value.tail[0];
+        let r1 = value.tail[1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = r1 - r0;
+        }
+    }
 }
 
 const N: usize = 4;
@@ -775,6 +809,10 @@ fn main() {
     all_pass &= run_and_report("test_holder_deref_tail", &stream, |s, cfg, i, o| {
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
         unsafe { module.test_holder_deref_tail(s, cfg, i, o) }.expect("launch")
+    });
+    all_pass &= run_and_report("test_slice_tail_constant_index", &stream, |s, cfg, i, o| {
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_slice_tail_constant_index(s, cfg, i, o) }.expect("launch")
     });
 
     if all_pass {
