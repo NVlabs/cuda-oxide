@@ -234,10 +234,8 @@ fn main() {
         DeviceBuffer::<u32>::zeroed(&stream, 1).expect("packed(2) output allocation");
 
     // SAFETY: `PackedPacket2::value` begins at byte 2 and occupies bytes 2..=5.
-    unsafe {
-        module.read_packed_two_field(&stream, cfg, &packed_two_input, &mut packed_two_out)
-    }
-    .expect("read_packed_two_field launch");
+    unsafe { module.read_packed_two_field(&stream, cfg, &packed_two_input, &mut packed_two_out) }
+        .expect("read_packed_two_field launch");
 
     let packed_two_result = packed_two_out
         .to_host_vec(&stream)
