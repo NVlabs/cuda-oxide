@@ -6246,12 +6246,12 @@ pub(crate) fn emit_promoted_immutable_global(
 /// Whether an array's elements are cheap enough to be worth promoting the whole
 /// array to an immutable global and copying it in.
 ///
-/// This is the one element gate for both promoted-constant paths: the bare
-/// array value form ([`translate_array_constant_into_alloca`]) and the
-/// pointer-to-array form ([`translate_ptr_to_array_constant`], via
-/// [`validate_ptr_to_array_constant_type`]). `TABLE[i]` and `(&TABLE)[i]` must
-/// agree on what an admissible element is, so both paths ask here and cannot
-/// drift apart.
+/// This is the element gate for the immutable-global promotion optimization
+/// used by bare array values ([`translate_array_constant_into_alloca`]) and for
+/// the pointer-to-array form ([`translate_ptr_to_array_constant`], via
+/// [`validate_ptr_to_array_constant_type`]). It is deliberately narrower than
+/// bare-array value admission: an unpromotable bare value can fall back to
+/// element-wise materialization, while a pointer-to-array constant cannot.
 ///
 /// Admits primitive scalars, enums carrying no payload, tuples whose every field
 /// is itself admissible, and nested arrays of any of those. `ty` is the array
@@ -6268,11 +6268,12 @@ pub(crate) fn emit_promoted_immutable_global(
 /// read addressed in place, the promotion is what removes the depot — the two
 /// only pay off together.
 ///
-/// Structs stay out because the element-wise path does not build arrays of them
-/// either, so there would be nothing to fall back to. A payload-carrying enum
-/// stays out because reading one back still round-trips the payload through
-/// memory: the address walker resolves enum payload fields for writes, not for
-/// reads.
+/// Structs remain outside immutable-global promotion in this change. Bare
+/// struct arrays have an element-wise fallback, but widening this predicate
+/// would also widen the pointer-to-array form, which is a separate change. A
+/// payload-carrying enum stays out because reading one back still round-trips
+/// the payload through memory: the address walker resolves enum payload fields
+/// for writes, not for reads.
 fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
     use dialect_mir::types::{MirArrayType, MirEnumType, MirTupleType};
 
@@ -6530,11 +6531,10 @@ pub(crate) fn translate_array_constant_into_alloca(
 /// Enforce the pointer-to-array constant element boundary, as a hard error.
 ///
 /// The admission question is [`promotable_array_element`], the same predicate
-/// the bare array value path asks, so the two promoted-constant paths share one
-/// boundary and cannot drift: a table the value form promotes is also reachable
-/// through `&TABLE`. What differs is what rejection means. The value form falls
-/// back to element-wise materialization, while a pointer-to-array constant has
-/// no other lowering, so an inadmissible element type is an input error.
+/// used by the bare array value path's immutable-global optimization. A bare
+/// array that fails this gate can still fall back to element-wise materialization;
+/// a pointer-to-array constant has no such fallback, so failure here is an input
+/// error. Structs therefore remain outside this reference form in this change.
 fn validate_ptr_to_array_constant_type(
     ctx: &Context,
     ty: TypeHandle,
@@ -6588,10 +6588,10 @@ fn translate_array_value_constant(
         array_ty.element_type()
     };
 
-    // Bare array values support primitive scalars, enums, tuples with supported
-    // fields, or nested arrays of those. Struct elements remain outside this
-    // entry point; arrays nested inside struct constants have their own
-    // layout-aware aggregate path.
+    // Bare array values support primitive scalars, enums, tuples, structs, and
+    // nested arrays of those. Struct elements are decoded through the existing
+    // layout-aware aggregate path while pointer-to-array promotion remains
+    // intentionally unchanged.
     validate_array_value_element_type(ctx, element_ty, &loc)?;
 
     let rust_array_ty = constant.const_.ty();
@@ -6752,6 +6752,7 @@ fn build_array_op_from_bytes(
         Int { width: u32, signedness: Signedness },
         Array,
         Tuple,
+        Struct,
     }
     let elem_kind = {
         let elem_obj = element_ty_ptr.deref(ctx);
@@ -6770,13 +6771,15 @@ fn build_array_op_from_bytes(
             ElemKind::Array
         } else if elem_obj.is::<dialect_mir::types::MirTupleType>() {
             ElemKind::Tuple
+        } else if elem_obj.is::<dialect_mir::types::MirStructType>() {
+            ElemKind::Struct
         } else {
             return input_err!(
                 loc,
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported by byte lowering: {:?}. \
-                     Byte lowering handles primitive scalars, tuples with supported fields, \
-                     or nested arrays of those. Enum elements decode from a constant \
+                     Byte lowering handles primitive scalars, tuples, structs, or nested \
+                     arrays of those. Enum elements decode from a constant \
                      allocation instead, so an enum array that reaches byte lowering (e.g. \
                      one with a zero-sized element) cannot be materialized here.",
                     elem_obj
@@ -6923,7 +6926,7 @@ fn build_array_op_from_bytes(
                 last_op,
                 loc.clone(),
             )?,
-            ElemKind::Tuple => translate_constant_value_from_bytes(
+            ElemKind::Tuple | ElemKind::Struct => translate_constant_value_from_bytes(
                 ctx,
                 &rust_element_ty,
                 element_ty_ptr,
@@ -10730,11 +10733,10 @@ fn translate_struct_constant_from_alloc(
 /// Element kinds admitted by a bare array value constant
 /// (`translate_array_value_constant`).
 ///
-/// Primitive scalars, enums, tuples, and nested arrays are supported at this
-/// entry point. Arrays of structs are not materialized here. Nested arrays are
-/// walked recursively so an unsupported leaf cannot hide behind nesting.
-/// Arrays inside struct or tuple constants are dispatched through
-/// [`translate_constant_value_from_alloc`] and are not governed by this gate.
+/// Primitive scalars, enums, tuples, structs, and nested arrays are supported
+/// at this entry point. Nested arrays are walked recursively so an unsupported
+/// leaf cannot hide behind nesting. Struct elements reuse the same layout-aware
+/// aggregate decoders used when structs appear inside other constants.
 fn validate_array_value_element_type(
     ctx: &Context,
     element_ty: TypeHandle,
@@ -10747,6 +10749,7 @@ fn validate_array_value_element_type(
             || elem_obj.is::<FP32Type>()
             || elem_obj.is::<FP64Type>()
             || elem_obj.is::<dialect_mir::types::MirTupleType>()
+            || elem_obj.is::<dialect_mir::types::MirStructType>()
             || elem_obj.is::<dialect_mir::types::MirEnumType>()
         {
             return Ok(());
@@ -10756,8 +10759,8 @@ fn validate_array_value_element_type(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
                     "Array constant element type is not supported: {:?}. Supported array \
-                     constants are primitive scalars, enums, tuples with supported fields, \
-                     or nested arrays of those.",
+                     constants are primitive scalars, enums, tuples, structs, or nested \
+                     arrays of those.",
                     elem_obj
                 ))
             );
@@ -11712,7 +11715,7 @@ mod promotable_array_element_tests {
         let struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 4).into();
         assert!(
             !promotable_array_element(&ctx, struct_array),
-            "struct elements stay outside, as they are for the element-wise path"
+            "struct elements remain outside immutable-global promotion in this change"
         );
 
         // A tuple is only as promotable as its fields: a struct field keeps the
@@ -11965,14 +11968,14 @@ mod aggregate_relocation_tests {
         )
         .into();
         assert!(
-            validate_array_value_element_type(&ctx, struct_ty, &Location::Unknown).is_err(),
-            "bare arrays of structs are documented as not materialized and must stay rejected"
+            validate_array_value_element_type(&ctx, struct_ty, &Location::Unknown).is_ok(),
+            "bare struct arrays are materialized by the layout-aware aggregate decoder"
         );
 
         let struct_array_ty: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 2).into();
         assert!(
-            validate_array_value_element_type(&ctx, struct_array_ty, &Location::Unknown).is_err(),
-            "nesting must not hide an unsupported struct leaf"
+            validate_array_value_element_type(&ctx, struct_array_ty, &Location::Unknown).is_ok(),
+            "nesting preserves supported struct leaves"
         );
 
         let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
