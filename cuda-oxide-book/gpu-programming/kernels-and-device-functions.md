@@ -198,15 +198,30 @@ let total = {
 };
 ```
 
-Three things are worth knowing before reaching for it.
+Four things are worth knowing before reaching for it.
 
 **It is not limited to device code.** The flag travels as a rustflag, so every
 crate cargo compiles for that build sees the `cfg`, host code included.
 
-**It switches `build` and `test` into passthrough mode.** Passing it means the
-invocation no longer takes an example name, so
+**It switches `build` into passthrough mode.** Passing it means `build` no
+longer takes an example name, so
 `cargo oxide build my_example --device-cfg ampere_up` is rejected; run it from
-the crate's own directory instead.
+the crate's own directory instead. (`test` is passthrough already, flag or no
+flag.) If the gate can live in the crate's manifest, an ordinary Cargo feature
+(`#[cfg(feature = "ampere_up")]`) does the same job without giving up
+example-name invocations; `--device-cfg` earns its keep when you need a `cfg`
+injected without touching any Cargo.toml.
+
+**rustc warns about an undeclared `cfg` name.** The `unexpected_cfgs` lint
+checks every `#[cfg(...)]` against the declared set, and an injected
+`--cfg ampere_up` is not in it, so each use prints an
+`unexpected cfg condition name` warning. Declare it in the kernel crate's
+manifest to silence them:
+
+```toml
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ampere_up)"] }
+```
 
 **Nothing ties it to `--arch`.** If the `cfg` name stands for an architecture,
 you are the one keeping the two in step -- passing `--device-cfg ampere_up`
