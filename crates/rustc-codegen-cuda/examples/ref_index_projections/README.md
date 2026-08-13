@@ -44,11 +44,27 @@ raw-pointer shapes the unified `translate_place_address` walker must lower:
 | 19 | `test_inline_never_node_fn`          | Exact issue #120 `node()` MIR shape            |
 | 20 | `test_holder_deref_tail`             | `&hr.0[k]` with Deref inside the tail          |
 
+plus **2 slice-value regression kernels** that pin the two indexing forms on
+a projected unsized slice tail:
+
+| #  | Variant                              | Shape pinned                                   |
+|:---|:-------------------------------------|:-----------------------------------------------|
+| 21 | `test_slice_tail_constant_index`     | `Field(tail) -> MirSliceType -> ConstantIndex` |
+| 22 | `test_slice_tail_runtime_index`      | `Field(tail) -> MirSliceType -> Index`         |
+
 Each kernel writes a difference (`r1 - r0`, or original-local readback for
 the write-through variants) for inputs chosen so a correct implementation
 must produce `+5.0` for every element. The harness prints `PASS` per kernel,
 tracks failures, prints a final `SUCCESS` marker when every kernel passes,
 and exits non-zero if any kernel reports a wrong diff.
+
+The slice-value regressions construct a `SliceTail<[f32; 2]>` and unsize it to
+`&SliceTail<[f32]>`. Deref of the fat struct reference must preserve the
+runtime tail length long enough for `Field(tail)` to reconstruct a
+`MirSliceType` value. `test_slice_tail_constant_index` then exercises a literal
+`ConstantIndex`, while `test_slice_tail_runtime_index` uses a data-derived
+runtime `Index`. Both normalize the semantic slice value to its data pointer
+before reusing the existing pointer-offset + load lowering.
 
 ## Trigger conditions
 
@@ -98,8 +114,8 @@ the fix, the same MIR lowers to
 %v9 = load float, ptr %v8                                              ; correct
 ```
 
-and all 20 kernels report `PASS` (the harness prints a final `SUCCESS`
-marker and exits non-zero on any failure).
+and all 22 kernels report `PASS` (the harness prints a final `SUCCESS`
+marker and exits non-zero if any kernel reports a wrong diff).
 
 ## Build & run
 
