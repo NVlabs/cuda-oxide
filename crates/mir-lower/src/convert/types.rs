@@ -472,6 +472,18 @@ pub(crate) struct StructSlotMap {
     pub decl_to_llvm: Vec<Option<u32>>,
     /// Converted LLVM type of each declaration-order field (ZSTs included).
     pub field_llvm_types: Vec<TypeHandle>,
+    /// Natural (non-packed) LLVM byte offset of every slot of
+    /// `llvm_struct_ty`, padding slots included; `None` when some field type
+    /// cannot be sized ([`llvm_type_size_align`] declined).
+    pub natural_slot_offsets: Option<Vec<u64>>,
+    /// True when the natural LLVM struct layout cannot honor rustc's recorded
+    /// layout: some field's natural slot offset differs from rustc's byte
+    /// offset, or the natural struct size differs from rustc's total size.
+    /// `repr(packed)` is the canonical case. Address-path consumers fall back
+    /// to byte offsets from the aggregate pointer; value-path consumers
+    /// (construct, whole-value load/store) must fail closed, because an SSA
+    /// value of the natural struct type places fields at the wrong bytes.
+    pub layout_diverges: bool,
 }
 
 /// Lower a struct/tuple layout to its LLVM struct type and slot map.
@@ -579,10 +591,36 @@ pub(crate) fn build_struct_slot_map(
         llvm_fields.push(padding_ty);
     }
 
+    // The explicit `[N x i8]` gaps above can only ADD bytes; they cannot make
+    // LLVM place a slot earlier than its natural alignment allows. So when
+    // rustc's layout is tighter than natural (repr(packed)), the struct built
+    // here is a lie at the byte level, and every consumer needs to know.
+    // Unsizable field types leave no verdict: consumers that need the
+    // comparison (field_addr with a recorded rustc offset) fail closed at
+    // their own sites.
+    let walk = natural_layout_walk(ctx, &llvm_fields);
+    let natural_slot_offsets = walk.as_ref().map(|(offsets, _, _)| offsets.clone());
+    let mut layout_diverges = false;
+    if has_explicit_layout && let Some((offsets, end, align)) = &walk {
+        for (decl_idx, slot) in decl_to_llvm.iter().enumerate() {
+            if let Some(slot) = slot
+                && offsets[*slot as usize] != layout.field_offsets[decl_idx]
+            {
+                layout_diverges = true;
+            }
+        }
+        let natural_size = end.div_ceil(*align) * *align;
+        if natural_size != layout.total_size {
+            layout_diverges = true;
+        }
+    }
+
     Ok(StructSlotMap {
         llvm_struct_ty: llvm_types::StructType::get_unnamed(ctx, llvm_fields).into(),
         decl_to_llvm,
         field_llvm_types,
+        natural_slot_offsets,
+        layout_diverges,
     })
 }
 
@@ -1417,6 +1455,29 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64
     None
 }
 
+/// The one walk defining natural (non-packed) LLVM struct placement: each
+/// field starts at the running offset rounded up to its own alignment.
+///
+/// Returns `(offsets, end, align)`: the byte offset of every field, the
+/// unrounded offset just past the last field, and the widest field alignment.
+/// [`natural_struct_layout`] and [`StructSlotMap::natural_slot_offsets`] are
+/// both views of this walk, so a size question and an offset question can
+/// never disagree.
+fn natural_layout_walk(ctx: &Context, fields: &[TypeHandle]) -> Option<(Vec<u64>, u64, u64)> {
+    let mut offsets = Vec::with_capacity(fields.len());
+    let mut end = 0u64;
+    let mut align = 1u64;
+    for field in fields {
+        let (field_size, field_align) = llvm_type_size_align(ctx, *field)?;
+        let field_align = field_align.max(1);
+        end = end.div_ceil(field_align) * field_align;
+        offsets.push(end);
+        end = end.checked_add(field_size)?;
+        align = align.max(field_align);
+    }
+    Some((offsets, end, align))
+}
+
 /// Natural (non-packed) LLVM struct layout over `fields`.
 ///
 /// Returns `(end, size, align)` where `end` is the unrounded offset just past
@@ -1427,15 +1488,7 @@ pub(crate) fn natural_struct_layout(
     ctx: &Context,
     fields: &[TypeHandle],
 ) -> Option<(u64, u64, u64)> {
-    let mut end = 0u64;
-    let mut align = 1u64;
-    for field in fields {
-        let (field_size, field_align) = llvm_type_size_align(ctx, *field)?;
-        let field_align = field_align.max(1);
-        end = end.div_ceil(field_align) * field_align;
-        end += field_size;
-        align = align.max(field_align);
-    }
+    let (_offsets, end, align) = natural_layout_walk(ctx, fields)?;
     let size = end.div_ceil(align) * align;
     Some((end, size, align))
 }

@@ -50,10 +50,11 @@
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
-    convert_type, get_type_size, mir_type_abi_align, validate_initialized_global_layout,
+    StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size, mir_type_abi_align,
+    validate_initialized_global_layout,
 };
 use crate::helpers;
-use dialect_mir::types::MirPtrType;
+use dialect_mir::types::{MirPtrType, MirStructType};
 use llvm_export::attributes::IntegerOverflowFlagsAttr;
 use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
@@ -105,6 +106,13 @@ pub(crate) fn convert_store(
         }
     };
 
+    // A whole-value store of a layout-divergent (repr(packed)) struct would
+    // write the natural LLVM image: fields at natural offsets, natural total
+    // size. Both disagree with rustc's layout for the bytes behind `ptr`, so
+    // refuse rather than corrupt. Same rule as `convert_load` and
+    // `convert_construct_struct`.
+    fail_on_divergent_aggregate(ctx, value_mir_type(ctx, operands_info, val), "storing")?;
+
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
     if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
@@ -114,10 +122,17 @@ pub(crate) fn convert_store(
     // when it was computed -- for a field projection that is the aggregate's
     // `abi_align` narrowed to the field's offset, which is otherwise lost here
     // and costs the pair its vectorization. This mirrors `convert_load`, which
-    // consults the same record for the same reason.
-    if let Some(align) =
-        value_abi_align(ctx, operands_info, val).or_else(|| pointer_proved_alignment(ctx, ptr))
-    {
+    // consults the same record for the same reason. When both answer, the
+    // weaker wins: a field of a packed aggregate can place an abi-aligned type
+    // at a byte-aligned address, and the address's proved alignment is the
+    // ceiling of what the store may claim.
+    let abi = value_abi_align(ctx, operands_info, val);
+    let proved = pointer_proved_alignment(ctx, ptr);
+    let align = match (abi, proved) {
+        (Some(abi), Some(proved)) => Some(abi.min(proved)),
+        (abi, proved) => abi.or(proved),
+    };
+    if let Some(align) = align {
         llvm_export::ops::set_op_alignment(ctx, llvm_store.get_operation(), align as u32);
     }
     rewriter.insert_operation(ctx, llvm_store.get_operation());
@@ -142,6 +157,49 @@ fn value_abi_align(ctx: &Context, operands_info: &OperandsInfo, value: Value) ->
             .rev()
             .find_map(|ty| mir_type_abi_align(ctx, *ty))
     })
+}
+
+/// The MIR type of `value`: its current type when that is still a MIR type,
+/// else the newest MIR type in its conversion history (same walk as
+/// [`value_abi_align`], for the same reason).
+fn value_mir_type(ctx: &Context, operands_info: &OperandsInfo, value: Value) -> TypeHandle {
+    let current = value.get_type(ctx);
+    if current.deref(ctx).is::<MirStructType>() {
+        return current;
+    }
+    operands_info
+        .lookup_operand_history(value)
+        .iter()
+        .rev()
+        .copied()
+        .find(|ty| ty.deref(ctx).is::<MirStructType>())
+        .unwrap_or(current)
+}
+
+/// Refuse a whole-value move of a struct whose rustc layout the natural LLVM
+/// struct type cannot express (`StructSlotMap::layout_diverges`, i.e.
+/// repr(packed)). Field ADDRESSES for such structs use rustc's byte offsets,
+/// so a natural-layout value image would silently read or write the wrong
+/// bytes; `verb` names the operation for the diagnostic.
+fn fail_on_divergent_aggregate(ctx: &mut Context, ty: TypeHandle, verb: &str) -> Result<()> {
+    let layout = {
+        let ty_ref = ty.deref(ctx);
+        match ty_ref.downcast_ref::<MirStructType>() {
+            Some(s) => StructLayoutInfo::of_struct(s),
+            None => return Ok(()),
+        }
+    };
+    let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
+    if map.layout_diverges {
+        return pliron::input_err_noloc!(
+            "{} a struct whose rustc layout diverges from the natural LLVM layout \
+             (repr(packed)) by value is not supported; keep the value behind a \
+             pointer and access fields with addr_of! plus \
+             read_unaligned/write_unaligned",
+            verb
+        );
+    }
+    Ok(())
 }
 
 fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
@@ -385,6 +443,14 @@ pub(crate) fn convert_load(
 ) -> Result<()> {
     let ptr = op.deref(ctx).get_operand(0);
     let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+
+    // A whole-value load of a layout-divergent (repr(packed)) struct would
+    // read the natural LLVM image: fields at natural offsets, natural total
+    // size. Both disagree with rustc's layout of the bytes behind `ptr`, so
+    // refuse rather than fabricate. Same rule as `convert_store` and
+    // `convert_construct_struct`.
+    fail_on_divergent_aggregate(ctx, result_ty, "loading")?;
+
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
@@ -397,9 +463,16 @@ pub(crate) fn convert_load(
     // address itself proved when it was computed -- for a field projection
     // that is the aggregate's `abi_align` narrowed to the field's offset,
     // which is otherwise lost here and costs the pair its vectorization.
-    if let Some(align) =
-        mir_type_abi_align(ctx, result_ty).or_else(|| pointer_proved_alignment(ctx, ptr))
-    {
+    // When both answer, the weaker wins: a field of a packed aggregate can
+    // place an abi-aligned type at a byte-aligned address, and the address's
+    // proved alignment is the ceiling of what the load may claim.
+    let abi = mir_type_abi_align(ctx, result_ty);
+    let proved = pointer_proved_alignment(ctx, ptr);
+    let align = match (abi, proved) {
+        (Some(abi), Some(proved)) => Some(abi.min(proved)),
+        (abi, proved) => abi.or(proved),
+    };
+    if let Some(align) = align {
         llvm_export::ops::set_op_alignment(ctx, llvm_load.get_operation(), align as u32);
     }
     rewriter.insert_operation(ctx, llvm_load.get_operation());
@@ -1586,6 +1659,167 @@ mod tests {
         assert_eq!(
             lowered_field_load_alignment(vec![64, 32], vec![0, 8], 16, 16, 1),
             Some(8)
+        );
+    }
+
+    /// A `#[repr(C, packed)]`-style layout the natural LLVM struct cannot
+    /// express: field addresses use rustc's byte offsets, so a whole-value
+    /// load of the natural image would read different bytes. It must fail to
+    /// lower, not fabricate a value.
+    #[test]
+    fn packed_struct_whole_value_load_fails_closed() {
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, packed_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty.into()], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("whole-value load of a packed struct must fail to lower");
+        assert!(
+            format!("{err:?}").contains("diverges from the natural LLVM layout"),
+            "the refusal must name the layout divergence: {err:?}"
+        );
+    }
+
+    /// The store-side twin of the test above: a whole-value store would write
+    /// the natural image (wrong offsets, wrong size) over rustc-layout bytes.
+    #[test]
+    fn packed_struct_whole_value_store_fails_closed() {
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, packed_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty.into(), packed_ty], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+        let val = block.deref(&ctx).get_argument(1);
+
+        let store_op = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![ptr_val, val],
+            vec![],
+            0,
+        );
+        store_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("whole-value store of a packed struct must fail to lower");
+        assert!(
+            format!("{err:?}").contains("diverges from the natural LLVM layout"),
+            "the refusal must name the layout divergence: {err:?}"
+        );
+    }
+
+    /// A naturally aligned inner struct sitting at a packed byte offset: the
+    /// field address only proves align 1, and the load must claim that over
+    /// the inner type's recorded abi alignment. Claiming the abi would stamp
+    /// `align 4` on a 1-aligned address, which llc may honor with a wider
+    /// access than the bytes allow.
+    #[test]
+    fn convert_load_claims_address_alignment_over_abi_at_packed_offsets() {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let inner_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Inner".into(),
+            vec!["v".into()],
+            vec![u32_ty],
+            vec![0],
+            vec![0],
+            4,
+            4,
+        )
+        .into();
+        let outer_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedOuter".into(),
+            vec!["tag".into(), "inner".into()],
+            vec![u8_ty, inner_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let outer_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, outer_ty, false).into();
+        let inner_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, inner_ty, false).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![outer_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![inner_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        field_addr_op.insert_at_back(block, &ctx);
+        let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![inner_ty],
+            vec![field_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, load.get_operation()),
+            Some(1),
+            "the load must claim the address's proved alignment, not the inner abi"
         );
     }
 

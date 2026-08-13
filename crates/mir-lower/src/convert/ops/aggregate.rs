@@ -451,6 +451,21 @@ pub(crate) fn convert_construct_struct(
 
     let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
 
+    // An SSA value of the natural LLVM struct type places fields at natural
+    // offsets, but field addresses for this struct use rustc's tighter
+    // (repr(packed)) offsets. Mixing the two silently reads and writes the
+    // wrong bytes, so refuse the by-value form instead. By-value packed
+    // aggregates need packed LLVM struct types (a pliron-llvm addition)
+    // before this can be lowered faithfully.
+    if map.layout_diverges {
+        return pliron::input_err_noloc!(
+            "constructing a struct whose rustc layout diverges from the natural \
+             LLVM layout (repr(packed)) by value is not supported; keep the value \
+             behind a pointer and access fields with addr_of! plus \
+             read_unaligned/write_unaligned"
+        );
+    }
+
     let undef_op = llvm::UndefOp::new(ctx, map.llvm_struct_ty);
     rewriter.insert_operation(ctx, undef_op.get_operation());
     let mut current_struct = undef_op.get_operation().deref(ctx).get_result(0);
@@ -1594,42 +1609,6 @@ pub(crate) fn convert_enum_payload(
 // MirFieldAddrOp Conversion
 // ============================================================================
 
-/// Byte offset of `slot` in the natural LLVM layout of `struct_ty`.
-///
-/// `build_struct_slot_map` can place a typed field immediately after the
-/// previous MIR field because rustc says there is no source-level padding.
-/// LLVM may still insert padding before that typed slot according to its own
-/// natural alignment. Packed structs are the important case:
-///
-/// ```text
-/// rustc #[repr(C, packed)] { u8, u32 } -> offsets [0, 1]
-/// LLVM { i8, i32 }                         -> offsets [0, 4]
-/// ```
-///
-/// Field-address lowering compares this physical LLVM offset with rustc's
-/// recorded offset and falls back to byte addressing when they differ.
-fn llvm_struct_slot_offset(ctx: &Context, struct_ty: TypeHandle, slot: u32) -> Option<u64> {
-    let struct_ref = struct_ty.deref(ctx);
-    let struct_ty = struct_ref.downcast_ref::<llvm_types::StructType>()?;
-    let wanted = slot as usize;
-    if wanted >= struct_ty.num_fields() {
-        return None;
-    }
-
-    let mut offset = 0u64;
-    for (index, field_ty) in struct_ty.fields().enumerate() {
-        let (field_size, field_align) = llvm_type_size_align(ctx, field_ty)?;
-        let field_align = field_align.max(1);
-        offset = offset.div_ceil(field_align) * field_align;
-        if index == wanted {
-            return Some(offset);
-        }
-        offset = offset.checked_add(field_size)?;
-    }
-
-    None
-}
-
 /// Convert `mir.field_addr` to `llvm.getelementptr`.
 ///
 /// Computes the address of a struct field using GEP. This is needed when
@@ -1843,8 +1822,11 @@ pub(crate) fn convert_field_addr(
     // layouts are the canonical example. Address such fields from the original
     // aggregate pointer in byte units instead.
     if let Some(expected_offset) = rustc_offset {
-        let actual_offset =
-            llvm_struct_slot_offset(ctx, map.llvm_struct_ty, slot).ok_or_else(|| {
+        let actual_offset = map
+            .natural_slot_offsets
+            .as_ref()
+            .and_then(|offsets| offsets.get(slot as usize).copied())
+            .ok_or_else(|| {
                 pliron::input_error_noloc!(
                     "field_addr: cannot determine LLVM byte offset of slot {} for field {}",
                     slot,
@@ -1967,6 +1949,37 @@ pub(crate) fn convert_array_element_addr(
     };
 
     let llvm_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
+
+    // The typed GEP below strides by the natural size of the converted
+    // element type. rustc strides by the element's stored size, and the two
+    // differ for repr(packed) elements (a 5-byte packed struct converts to a
+    // natural 8-byte LLVM struct), so every element past index 0 would be
+    // addressed at the wrong byte. Refuse rather than miscompile; rustc-
+    // stride byte addressing is the follow-up, alongside by-value packed
+    // support.
+    {
+        let element_ty = {
+            let pointee_ref = pointee_ty.deref(ctx);
+            pointee_ref
+                .downcast_ref::<MirArrayType>()
+                .expect("checked to be an array above")
+                .element_type()
+        };
+        let rustc_stride = mir_element_stride(ctx, element_ty);
+        let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
+        let natural_size = llvm_type_size_align(ctx, llvm_element_ty).map(|(size, _)| size);
+        if let (Some(stride), Some(natural)) = (rustc_stride, natural_size)
+            && stride != natural
+        {
+            return pliron::input_err_noloc!(
+                "addressing elements of an array whose element layout diverges from \
+                 the natural LLVM layout (repr(packed)) is not supported: rustc \
+                 strides by {} bytes but the LLVM element type occupies {}",
+                stride,
+                natural
+            );
+        }
+    }
 
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Value(index)];
@@ -2807,6 +2820,106 @@ mod tests {
 
         crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
         assert_byte_addressed_field(&ctx, module, 5, 1);
+    }
+
+    /// A by-value packed struct cannot be an SSA value of the natural LLVM
+    /// struct type: construction would place `value` at natural byte 4 while
+    /// every field address for the same struct uses rustc's byte 1, and the
+    /// mix silently reads and writes the wrong bytes. Construction fails
+    /// closed instead.
+    #[test]
+    fn packed_struct_construction_by_value_fails_closed() {
+        use dialect_mir::ops::MirConstructStructOp;
+
+        let mut ctx = make_ctx();
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![u8_ty, u32_ty], vec![]);
+        let tag = block.deref(&ctx).get_argument(0);
+        let value = block.deref(&ctx).get_argument(1);
+
+        let construct = Operation::new(
+            &mut ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![tag, value],
+            vec![],
+            0,
+        );
+        construct.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("constructing a packed struct by value must fail to lower");
+        assert!(
+            format!("{err:?}").contains("diverges from the natural LLVM layout"),
+            "the refusal must name the layout divergence: {err:?}"
+        );
+    }
+
+    /// Element addressing strides by the natural size of the converted
+    /// element type (8 for this packed struct), while rustc strides by the
+    /// stored size (5), so every element past index 0 would land at the wrong
+    /// byte. Until rustc-stride byte addressing lands, `[Packed; N]` element
+    /// addressing fails closed.
+    #[test]
+    fn packed_array_element_addressing_fails_closed() {
+        use dialect_mir::ops::MirArrayElementAddrOp;
+
+        let mut ctx = make_ctx();
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let u64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let array_ty: TypeHandle = MirArrayType::get(&mut ctx, packed_ty, 4).into();
+        let base_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, array_ty, false).into();
+        let elem_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, packed_ty, false).into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![base_ptr_ty, u64_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let index = block.deref(&ctx).get_argument(1);
+
+        let elem_addr = Operation::new(
+            &mut ctx,
+            MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![elem_ptr_ty],
+            vec![base, index],
+            vec![],
+            0,
+        );
+        elem_addr.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("element addressing over packed elements must fail to lower");
+        assert!(
+            format!("{err:?}").contains("element layout diverges"),
+            "the refusal must name the stride divergence: {err:?}"
+        );
     }
 
     /// Enum construction must store the declared discriminant value, not the
