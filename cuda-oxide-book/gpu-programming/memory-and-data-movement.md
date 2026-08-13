@@ -411,9 +411,10 @@ mod kernels {
 }
 ```
 
-The macro generates a host setter per constant, named `set_` plus the static's
-name in snake case, so `SCALE` becomes `set_scale` and `TABLE_CONST` becomes
-`set_table_const`:
+The macro generates two host setters per constant, named `set_` plus the
+static's name lowercased, so `SCALE` becomes `set_scale` and `TABLE_CONST`
+becomes `set_table_const`. The plain form is stream-ordered; a
+`set_<name>_blocking` sibling does a synchronous one-shot copy instead:
 
 ```rust
 let module = kernels::load(&ctx)?;
@@ -439,7 +440,9 @@ the storage instead, so the index stays in constant space and the read is a
 single `ld.const`.
 
 The `constant_memory_table` example measures both against the third option, a
-plain `const T: [f32; N]` materialized as an immutable device global:
+plain `const T: [f32; N]` materialized as an immutable device global. Measured
+on an A10G (sm_86), 256-entry `f32` table, 64 dependent lookups per thread
+over 8388608 threads, all variants bit-identical:
 
 | index        | `get()` | `get_ref()` | `const [f32; N]` (global) |
 |:-------------|--------:|------------:|--------------------------:|
