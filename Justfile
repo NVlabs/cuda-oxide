@@ -34,9 +34,18 @@ clippy:
     # Its own [workspace], so `--workspace` above stops at that boundary.
     cd crates/rustc-codegen-cuda && cargo clippy --all-targets -- -D warnings
 
-# Run clippy and auto-fix warnings
+# Fix mode for the recipe above, and it has to cover the same ground: a warning
+# the gate reports in the codegen backend had no `--fix` pass to answer it,
+# because that crate's own [workspace] puts it outside every root invocation.
+#
+# The root line only changes spelling, to match `clippy` above: target flags are
+# additive and the virtual root workspace has no default-members, so
+# `--all-targets --lib --tests` already selected the same members and targets.
+# Run clippy and auto-fix warnings (root + codegen workspaces)
 clippy-fix:
-    cargo clippy --all-targets --lib --tests --fix --allow-dirty --allow-staged
+    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+    # Its own [workspace], so `--workspace` above stops at that boundary.
+    cd crates/rustc-codegen-cuda && cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 # Run unit tests for every package CI covers, so `just check` predicts CI.
 # Mirrors .github/workflows/unit-tests.yml; keep the two in step.
@@ -99,6 +108,27 @@ test-cuda:
         -p cuda-oxide-codegen -p cuda-macros -p cuda-host -p cuda-async
     cargo test -p cuda-core --lib
 
+# Mirror unit-tests.yml's third job, `generated-intrinsics`: the three gates a
+# change under crates/cuda-intrinsics-gen has to pass. Nothing else here ran
+# them, so a catalog edit could clear `just check` and still fail CI -- and the
+# catalog is the majority of the intrinsic surface (986 entries, 35 generated
+# files, against 7 hand-written op modules).
+#
+# Needs no CUDA toolkit: `--skip-terminal` is CI's own flag for runners without
+# the recorded CUDA 13.3 ptxas, leaving the pinned llc identity and the exact
+# emitted PTX as what gets checked, and llc comes from the pinned toolchain.
+# The whole recipe is ~13s.
+#
+# `base_ref` is what the append-only ABI ledger is compared against. CI uses the
+# pull request's base SHA and falls back to `HEAD^` for pushes; `HEAD^` is
+# therefore right for a single-commit branch, and anything longer wants its own
+# branch point -- `just check-intrinsics upstream/main`.
+# Run the generated-intrinsics CI job (catalog, PTX routes, ABI ledger)
+check-intrinsics base_ref="HEAD^":
+    cargo run -p cuda-intrinsics-gen -- check
+    cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal
+    cargo run -p cuda-intrinsics-gen -- check-abi-history --base-ref {{base_ref}}
+
 # Build docs warning-free + run doctests (mirrors the docs CI gate). The `test`
 # recipe uses `--all-targets`, which skips doctests, so this covers them.
 # cuda-bindings is excluded from doctests (its generated C doc comments are not
@@ -115,12 +145,14 @@ doc-check:
 # `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
 # CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
 # is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
-# `check-guards` covers the status-guard and cargo-deny workflows in full; see
-# its comment for prerequisites. Still CI-only: clippy's per-example pass (one
-# run per example workspace), examples-compile (needs the CUDA codegen
-# backend), the book build, and CodeQL.
+# `check-guards` covers the status-guard and cargo-deny workflows in full, and
+# `check-intrinsics` the generated-intrinsics job; see their comments for
+# prerequisites. Still CI-only: clippy's per-example pass (one run per example
+# workspace), examples-compile (needs the CUDA codegen backend), and CodeQL. The
+# book gate has a local mirror too, but `just book` stays out of `check` as the
+# one gate needing a Python virtualenv.
 # Run CI's gates minus examples-compile, book, CodeQL
-check: fmt-check clippy test test-cuda check-guards doc-check
+check: fmt-check clippy test test-cuda check-guards check-intrinsics doc-check
 
 # Clean project-local Cargo outputs and known cuda-oxide artifacts
 clean-artifacts:
@@ -196,6 +228,7 @@ check-guards:
     bash scripts/check-cli-doc-coverage.sh
     bash scripts/check-book-api-names.sh
     bash scripts/check-reserved-prefixes.sh
+    bash scripts/check-device-only-build.sh
     cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh

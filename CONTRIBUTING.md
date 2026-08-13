@@ -8,7 +8,7 @@ cuda-oxide is licensed under the [Apache License, Version 2.0](LICENSE).
 ## Community
 
 Join the project Discord for questions, design discussions, and announcements:
-**[discord.gg/Fua7DeKnm](https://discord.gg/Fua7DeKnm)**
+**[discord.gg/ZUEr4AhH5C](https://discord.gg/ZUEr4AhH5C)**
 
 If you are unsure whether something is worth a full issue or PR, the Discord
 `#contributors` channel is a good place to ask first.
