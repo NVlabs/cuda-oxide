@@ -3,12 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Regression coverage for `core::ptr::read_unaligned` and
-//! `core::ptr::write_unaligned`.
+//! Regression coverage for unaligned memory access.
 //!
-//! Both kernels deliberately access a `u32` at `base + 1` of a byte buffer.
-//! The resulting pointer is valid for four bytes but is not naturally aligned
-//! for `u32`, so ordinary `ptr::read` / `ptr::write` would not be valid.
+//! Covers both manually offset raw pointers and `#[repr(packed)]` field
+//! projections formed with `addr_of!` / `addr_of_mut!`.
 //!
 //! Usage:
 //!   cargo oxide run unaligned_memory
@@ -20,6 +18,18 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    #[repr(C, packed)]
+    struct PackedPacket {
+        tag: u8,
+        value: u32,
+    }
+
+    #[repr(C, packed(2))]
+    struct PackedPacket2 {
+        tag: u8,
+        value: u32,
+    }
 
     #[kernel]
     pub fn read_unaligned_u32(input: &[u8], mut out: DisjointSlice<u32>) {
@@ -50,6 +60,49 @@ mod kernels {
             core::ptr::write_unaligned(ptr, value);
         }
     }
+
+    #[kernel]
+    pub fn read_packed_field(input: &[u8], mut out: DisjointSlice<u32>) {
+        if thread::index_1d().get() != 0 {
+            return;
+        }
+
+        if let Some(slot) = out.get_mut(thread::index_1d()) {
+            unsafe {
+                let packet = input.as_ptr().cast::<PackedPacket>();
+                let value_ptr = core::ptr::addr_of!((*packet).value);
+                *slot = core::ptr::read_unaligned(value_ptr);
+            }
+        }
+    }
+
+    #[kernel]
+    pub fn write_packed_field(value: u32, mut out: DisjointSlice<u8>) {
+        if thread::index_1d().get() != 0 {
+            return;
+        }
+
+        unsafe {
+            let packet = out.as_mut_ptr().cast::<PackedPacket>();
+            let value_ptr = core::ptr::addr_of_mut!((*packet).value);
+            core::ptr::write_unaligned(value_ptr, value);
+        }
+    }
+
+    #[kernel]
+    pub fn read_packed_two_field(input: &[u8], mut out: DisjointSlice<u32>) {
+        if thread::index_1d().get() != 0 {
+            return;
+        }
+
+        if let Some(slot) = out.get_mut(thread::index_1d()) {
+            unsafe {
+                let packet = input.as_ptr().cast::<PackedPacket2>();
+                let value_ptr = core::ptr::addr_of!((*packet).value);
+                *slot = core::ptr::read_unaligned(value_ptr);
+            }
+        }
+    }
 }
 
 fn main() {
@@ -61,7 +114,7 @@ fn main() {
     let cfg = LaunchConfig::for_num_elems(1);
 
     // ---------------------------------------------------------------------
-    // read_unaligned
+    // Manual read_unaligned
     // ---------------------------------------------------------------------
 
     const READ_BYTES: [u8; 6] = [0xA5, 0x12, 0x34, 0x56, 0x78, 0x5A];
@@ -81,7 +134,7 @@ fn main() {
     println!("PASS: read_unaligned from base + 1");
 
     // ---------------------------------------------------------------------
-    // write_unaligned
+    // Manual write_unaligned
     // ---------------------------------------------------------------------
 
     const WRITE_VALUE: u32 = 0x7856_3412;
@@ -110,6 +163,91 @@ fn main() {
     assert_eq!(write_result[0], LEFT_GUARD, "left guard byte");
     assert_eq!(write_result[5], RIGHT_GUARD, "right guard byte");
     println!("PASS: guard bytes preserved");
+
+    // ---------------------------------------------------------------------
+    // #[repr(C, packed)] field read
+    // ---------------------------------------------------------------------
+
+    let mut packed_read_out =
+        DeviceBuffer::<u32>::zeroed(&stream, 1).expect("packed read output allocation");
+
+    // SAFETY: `READ_BYTES` contains at least the five bytes occupied by
+    // `PackedPacket`; the kernel only forms the raw field address and performs
+    // an unaligned four-byte read from bytes 1..=4.
+    unsafe { module.read_packed_field(&stream, cfg, &input, &mut packed_read_out) }
+        .expect("read_packed_field launch");
+
+    let packed_read_result = packed_read_out
+        .to_host_vec(&stream)
+        .expect("copy packed read result");
+    assert_eq!(
+        packed_read_result,
+        vec![expected_read],
+        "packed field read result"
+    );
+    println!("PASS: repr(packed) field read at rustc offset 1");
+
+    // ---------------------------------------------------------------------
+    // #[repr(C, packed)] field write
+    // ---------------------------------------------------------------------
+
+    let mut packed_write_out =
+        DeviceBuffer::from_host(&stream, &initial_write).expect("packed write output allocation");
+
+    // SAFETY: `packed_write_out` contains six writable bytes. `PackedPacket`
+    // occupies bytes 0..=4, and its `value` field occupies bytes 1..=4.
+    unsafe { module.write_packed_field(&stream, cfg, WRITE_VALUE, &mut packed_write_out) }
+        .expect("write_packed_field launch");
+
+    let packed_write_result = packed_write_out
+        .to_host_vec(&stream)
+        .expect("copy packed write result");
+    assert_eq!(
+        &packed_write_result[1..5],
+        &expected_bytes,
+        "packed field write payload bytes"
+    );
+    assert_eq!(
+        packed_write_result[0], LEFT_GUARD,
+        "packed write left guard byte"
+    );
+    assert_eq!(
+        packed_write_result[5], RIGHT_GUARD,
+        "packed write right guard byte"
+    );
+    println!("PASS: repr(packed) field write at rustc offset 1");
+
+    // ---------------------------------------------------------------------
+    // #[repr(C, packed(2))] field read
+    // ---------------------------------------------------------------------
+
+    const PACKED_TWO_BYTES: [u8; 7] = [0xA5, 0xCC, 0x12, 0x34, 0x56, 0x78, 0x5A];
+    let expected_packed_two = u32::from_ne_bytes([
+        PACKED_TWO_BYTES[2],
+        PACKED_TWO_BYTES[3],
+        PACKED_TWO_BYTES[4],
+        PACKED_TWO_BYTES[5],
+    ]);
+    let packed_two_input =
+        DeviceBuffer::from_host(&stream, &PACKED_TWO_BYTES).expect("packed(2) input allocation");
+    let mut packed_two_out =
+        DeviceBuffer::<u32>::zeroed(&stream, 1).expect("packed(2) output allocation");
+
+    // SAFETY: `PackedPacket2::value` begins at byte 2 and occupies bytes 2..=5.
+    unsafe {
+        module.read_packed_two_field(&stream, cfg, &packed_two_input, &mut packed_two_out)
+    }
+    .expect("read_packed_two_field launch");
+
+    let packed_two_result = packed_two_out
+        .to_host_vec(&stream)
+        .expect("copy packed(2) result");
+    assert_eq!(
+        packed_two_result,
+        vec![expected_packed_two],
+        "packed(2) field read result"
+    );
+    println!("PASS: repr(packed(2)) field read at rustc offset 2");
 
     println!("PASS: unaligned_memory");
 }
