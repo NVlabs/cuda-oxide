@@ -46,7 +46,9 @@ guessing an active field: initialized bytes are preserved, uninitialized
 inactive bytes remain `undef`, and the byte image is transmuted into the
 layout-exact union type. This includes direct unions, unions nested in tuple or
 struct constants, runtime-indexed `[U; N]`, and `MaybeUninit<T>` constants.
-Arrays whose elements are structs are still not materialized as constants.
+Bare arrays whose elements are structs are materialized element-wise
+through the same layout-aware struct decoders; promoting such tables to
+one immutable device global is a tracked follow-up.
 Thin pointer fields in array, tuple, and struct **const** values that relocate
 to device statics are materialized via `MirGlobalAllocOp` per field, including
 non-zero byte addends into a static (see `struct_constant_provenance`,

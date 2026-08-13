@@ -88,7 +88,7 @@ projects mature, and we expect to keep doing so.
 
 If you're building a Rust + GPU project — or evaluating which of the above
 fits your needs — we're happy to compare notes. Join the community on
-[Discord](https://discord.gg/Fua7DeKnm) for questions, design discussions,
+[Discord](https://discord.gg/ZUEr4AhH5C) for questions, design discussions,
 and announcements, or reach the team via
 [GitHub Discussions](https://github.com/NVlabs/cuda-oxide/discussions)
 or by opening an issue on the repository.

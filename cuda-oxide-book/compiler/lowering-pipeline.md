@@ -628,7 +628,7 @@ the kernel calls into libdevice. Both have their own override:
 
 | Variable | Selects | Discovery when unset |
 | :------- | :------ | :------------------- |
-| `CUDA_OXIDE_LLVM_LINK` | the `llvm-link` binary | the same four steps as `opt` -- beside the chosen `llc`, then the sysroot, then versioned names on `PATH`, filtered to `llc`'s major |
+| `CUDA_OXIDE_LLVM_LINK` | the `llvm-link` binary | the same four steps as `opt` -- beside the chosen `llc`, then the sysroot, then versioned names on `PATH`, filtered to `llc`'s major. When the variable *is* set it is respected as `CUDA_OXIDE_OPT` is, with a diagnostic naming both binaries if its major differs from `llc`'s |
 | `CUDA_OXIDE_LIBDEVICE` | the `libdevice.10.bc` bitcode file; a path that does not exist is skipped silently | `<root>/nvvm/libdevice/libdevice.10.bc` for each of `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda` |
 
 When either piece is missing, the two paths react differently. An ordinary

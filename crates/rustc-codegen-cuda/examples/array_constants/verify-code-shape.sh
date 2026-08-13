@@ -92,6 +92,25 @@ require_shape \
     "direct padded tuple value in LLVM slot 2" \
     'insertvalue \{ i8, \[3 x i8\], i32 \} .* i32 41, 2'
 
+# Bare struct arrays must use the same rustc-recorded field offsets as direct
+# struct constants. `PaddedStruct` is `#[repr(C)] { u8, u32 }`, so the lowered
+# element contains an explicit three-byte padding slot before the u32.
+padded_struct_symbol='array_constants__kernels__padded_struct_array_value'
+require_symbol_shape "${llvm_ir}" llvm "${padded_struct_symbol}" \
+    "padded bare-struct array storage" \
+    'alloca \[2 x \{ i8, \[3 x i8\], i32 \}\]'
+
+# Recursive aggregate decoding must preserve the inner struct's padding while
+# placing the following u64 at its `#[repr(C)]` offset.
+nested_struct_symbol='array_constants__kernels__nested_struct_array_value'
+require_symbol_shape "${llvm_ir}" llvm "${nested_struct_symbol}" \
+    "nested bare-struct array storage" \
+    'alloca \[2 x \{ \{ i8, \[3 x i8\], i32 \}, i64 \}\]'
+
+# The standalone over-aligned ZST struct array has no data bytes to pin in LLVM
+# IR. Runtime coverage in `array_constants` checks that indexing it still
+# materializes a correctly aligned value.
+
 # Nested tuple with a zero-sized field: the ZST is stripped, but padding and
 # the outer u32's physical slot remain layout-exact. The array form is now
 # materialized from rustc's evaluated allocation, so the values are pinned as the

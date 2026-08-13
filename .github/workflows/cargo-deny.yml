@@ -5,7 +5,7 @@ name: cargo-deny
 # push/pull_request, plus a standalone weekly security scan via schedule.
 # Concurrency for the CI path is governed by CI's own group.
 #
-# Three parts of the same concern. `check` enforces the license *policy* over
+# Four parts of the same concern. `check` enforces the license *policy* over
 # the whole resolved graph from deny.toml -- once for the root workspace and
 # once for crates/rustc-codegen-cuda, which has its own `[workspace]` and so is
 # a separate resolution the root run cannot reach. `license-manifest` enforces that
@@ -16,6 +16,9 @@ name: cargo-deny
 # `example-policy` extends the first over the example workspaces, which the
 # root `cargo deny check` cannot reach because each example sets its own
 # `[workspace]` -- 131 crates that no policy governed (#663).
+# `source-headers` covers the licensing of our own files rather than the
+# dependency graph: every NVIDIA-authored source file must carry the standard
+# SPDX header.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -82,3 +85,17 @@ jobs:
       # than per workspace: 26 runs instead of 187, covering the same crates.
       - name: Run cargo-deny over the example workspaces
         run: bash scripts/check-example-license-policy.sh
+
+  source-headers:
+    name: every source file carries the SPDX header
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Pure text check over tracked files: no toolchain, no network. The OSRB
+      # review fixed 32 missing headers in #812 and the next two scripts to
+      # land (#819, #835) drifted again; this makes the third time the last.
+      - name: Verify SPDX headers on NVIDIA-authored source files
+        run: bash scripts/check-spdx-headers.sh

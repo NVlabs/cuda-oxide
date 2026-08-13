@@ -43,6 +43,41 @@ collect < <(
 )
 in_smoketest=("${COLLECTED[@]+"${COLLECTED[@]}"}")
 
+# Parse self-test, the way this guard's eight siblings open.
+#
+# An empty on-disk list makes loop 1 vacuous and lets loop 2 pass (the
+# directories it re-checks exist regardless of what the broken `find`
+# returned), so the guard exits 0 with its success message -- reporting that
+# everything is classified while having classified nothing. The same goes for
+# every list coming back empty at once, say after a tree restructure. An empty
+# STATUS.md or ERROR_EXAMPLES read alone did fail before this self-test, but
+# per-example and blaming the wrong side. Each extraction is one `find`
+# pattern or one `sed` expression away from empty: rename the example prefix,
+# reflow STATUS.md's table, or wrap `ERROR_EXAMPLES=(` across lines. `set -e`
+# does not help, because the failure is a command substitution producing no
+# output rather than a non-zero status.
+#
+# So require all three to be non-empty and fail loudly, naming the extraction to
+# fix, rather than trusting a clean result from an empty read.
+self_test_failed=0
+check_nonempty() {
+    local count="$1" what="$2" how="$3"
+    if [[ "${count}" -eq 0 ]]; then
+        echo "error: parse self-test failed: found no ${what}" >&2
+        echo "       ${how}" >&2
+        self_test_failed=1
+    fi
+}
+check_nonempty "${#on_disk[@]}" "error* example directories" \
+    "fix the find in this script, or the examples really are all gone"
+check_nonempty "${#in_status[@]}" "names in STATUS.md" \
+    "its table layout changed; fix the sed that reads the first column"
+check_nonempty "${#in_smoketest[@]}" "names in smoketest.sh ERROR_EXAMPLES" \
+    "the array moved or wrapped across lines; that sed needs one line"
+if [[ ${self_test_failed} -ne 0 ]]; then
+    exit 1
+fi
+
 contains() {
     local needle="$1"; shift
     printf '%s\n' "$@" | grep -qx "$needle"
@@ -62,6 +97,12 @@ for ex in "${in_status[@]}"; do
         echo "error: STATUS.md lists '$ex' but no such directory exists" >&2; fail=1
     fi
 done
+
+# No reverse check for the smoketest array here on purpose:
+# check-example-smoketest-contract.sh already rejects a name in any
+# `*_EXAMPLES` array that is not a real example directory, across all thirteen
+# arrays rather than just this one. Repeating it here would give the same
+# condition two owners that can drift apart.
 
 [[ $fail -eq 0 ]] && echo "OK: all error* examples are documented and classified."
 exit $fail

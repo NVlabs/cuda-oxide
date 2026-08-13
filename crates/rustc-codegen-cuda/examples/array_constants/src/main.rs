@@ -14,6 +14,8 @@
 //! - non-empty all-ZST tuples whose fields have equal offsets,
 //! - tuple arrays whose fields rustc reorders in memory,
 //! - tuple arrays containing an over-aligned zero-sized field,
+//! - bare arrays of padded and nested struct constants,
+//! - bare arrays of over-aligned zero-sized struct constants,
 //! - direct padded tuple constants,
 //! - pointer-to-array constants (`&[T; N]`), which predate bare-array support,
 //! - tuple arrays containing pointers to device statics,
@@ -61,6 +63,54 @@ const REORDERED_TUPLE_TABLE: [(u8, u32, u64); 2] = [
     (0xa5, 0x1122_3344, 0x0102_0304_0506_0708),
     (0x5a, 0x99aa_bbcc, 0x8877_6655_4433_2211),
 ];
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct PaddedStruct {
+    tag: u8,
+    value: u32,
+}
+
+const PADDED_STRUCT_TABLE: [PaddedStruct; 2] = [
+    PaddedStruct {
+        tag: 0xa5,
+        value: 0x1122_3344,
+    },
+    PaddedStruct {
+        tag: 0x5a,
+        value: 0x99aa_bbcc,
+    },
+];
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NestedStruct {
+    inner: PaddedStruct,
+    wide: u64,
+}
+
+const NESTED_STRUCT_TABLE: [NestedStruct; 2] = [
+    NestedStruct {
+        inner: PaddedStruct {
+            tag: 0x33,
+            value: 0x0102_0304,
+        },
+        wide: 0x1112_1314_1516_1718,
+    },
+    NestedStruct {
+        inner: PaddedStruct {
+            tag: 0xcc,
+            value: 0xa1a2_a3a4,
+        },
+        wide: 0x8182_8384_8586_8788,
+    },
+];
+
+#[derive(Clone, Copy)]
+#[repr(align(32))]
+struct ZstStruct;
+
+const ZST_STRUCT_TABLE: [ZstStruct; 2] = [ZstStruct, ZstStruct];
 
 #[derive(Clone, Copy)]
 #[repr(align(32))]
@@ -194,6 +244,32 @@ mod kernels {
     }
 
     #[inline(never)]
+    fn padded_struct_array_value(i: usize) -> u32 {
+        let value = PADDED_STRUCT_TABLE[i & 1];
+        (value.tag as u32)
+            .wrapping_mul(257)
+            .wrapping_add(value.value)
+    }
+
+    #[inline(never)]
+    fn nested_struct_array_value(i: usize) -> u32 {
+        let value = NESTED_STRUCT_TABLE[i & 1];
+        (value.inner.tag as u32)
+            .wrapping_mul(257)
+            .wrapping_add(value.inner.value)
+            .wrapping_mul(257)
+            .wrapping_add(value.wide as u32)
+            .wrapping_mul(257)
+            .wrapping_add((value.wide >> 32) as u32)
+    }
+
+    #[inline(never)]
+    fn zst_struct_array_value(i: usize) -> u32 {
+        let value = ZST_STRUCT_TABLE[i & 1];
+        ((&value as *const ZstStruct as usize) & 31) as u32
+    }
+
+    #[inline(never)]
     fn direct_tuple_value() -> (u8, u32) {
         DIRECT_TUPLE
     }
@@ -297,6 +373,9 @@ mod kernels {
             let all_zst = all_zst_tuple_array_value(i);
             let reordered = reordered_tuple_array_value(i);
             let overaligned_zst = overaligned_zst_tuple_array_value(i);
+            let padded_struct = padded_struct_array_value(i);
+            let nested_struct = nested_struct_array_value(i);
+            let zst_struct = zst_struct_array_value(i);
 
             *slot = nested
                 .wrapping_mul(257)
@@ -314,7 +393,13 @@ mod kernels {
                 .wrapping_mul(257)
                 .wrapping_add(reordered)
                 .wrapping_mul(257)
-                .wrapping_add(overaligned_zst);
+                .wrapping_add(overaligned_zst)
+                .wrapping_mul(257)
+                .wrapping_add(padded_struct)
+                .wrapping_mul(257)
+                .wrapping_add(nested_struct)
+                .wrapping_mul(257)
+                .wrapping_add(zst_struct);
         }
 
         let tid_enum = thread::index_1d();
@@ -381,6 +466,23 @@ fn expected_u32(i: usize) -> u32 {
 
     let (_, overaligned_zst) = OVERALIGNED_ZST_TUPLE_TABLE[i & 1];
 
+    let padded_value = PADDED_STRUCT_TABLE[i & 1];
+    let padded_struct = (padded_value.tag as u32)
+        .wrapping_mul(257)
+        .wrapping_add(padded_value.value);
+
+    let nested_value = NESTED_STRUCT_TABLE[i & 1];
+    let nested_struct = (nested_value.inner.tag as u32)
+        .wrapping_mul(257)
+        .wrapping_add(nested_value.inner.value)
+        .wrapping_mul(257)
+        .wrapping_add(nested_value.wide as u32)
+        .wrapping_mul(257)
+        .wrapping_add((nested_value.wide >> 32) as u32);
+
+    let zst_value = ZST_STRUCT_TABLE[i & 1];
+    let zst_struct = ((&zst_value as *const ZstStruct as usize) & 31) as u32;
+
     nested
         .wrapping_mul(257)
         .wrapping_add(pointer)
@@ -398,6 +500,12 @@ fn expected_u32(i: usize) -> u32 {
         .wrapping_add(reordered)
         .wrapping_mul(257)
         .wrapping_add(overaligned_zst as u32)
+        .wrapping_mul(257)
+        .wrapping_add(padded_struct)
+        .wrapping_mul(257)
+        .wrapping_add(nested_struct)
+        .wrapping_mul(257)
+        .wrapping_add(zst_struct)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -472,7 +580,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, pointer-to-array, and tuple-array static-pointer constants)"
+            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/ZST struct, pointer-to-array, and tuple-array static-pointer constants)"
         );
         Ok(())
     } else {

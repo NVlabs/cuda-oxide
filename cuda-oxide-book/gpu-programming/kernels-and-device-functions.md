@@ -163,6 +163,71 @@ clear error: `"CUDA-OXIDE: FORBIDDEN CRATE IN DEVICE CODE"` with a list of
 allowed crates (`core`, `alloc`, `cuda_device`, and your local crate).
 :::
 
+## Conditional compilation
+
+`#[cfg(...)]` works in device code exactly as it does anywhere else in Rust.
+What is missing is anything to gate *on*: the compiler supplies no
+target-derived `cfg`, so a kernel has no way to ask which architecture it is
+being compiled for. Arch requirements live in doc comments and are enforced by
+the caller, which is why an example that needs `redux.sync` checks
+`ctx.compute_capability()` on the host and skips rather than specializing the
+kernel.
+
+`--device-cfg NAME` is how you supply one yourself. It is repeatable, and each
+occurrence becomes a `--cfg NAME` in the build's rustflags:
+
+```bash
+# From the crate directory, not with an example name -- see below.
+cargo oxide build --device-cfg ampere_up
+```
+
+```rust
+// One instruction where the target allows it, a shuffle tree everywhere else.
+#[cfg(ampere_up)]
+let total = warp::redux_sync_add(u32::MAX, value);
+
+#[cfg(not(ampere_up))]
+let total = {
+    let mut acc = value;
+    let mut offset = 16;
+    while offset > 0 {
+        acc = acc.wrapping_add(warp::shuffle_xor(acc, offset));
+        offset /= 2;
+    }
+    acc
+};
+```
+
+Four things are worth knowing before reaching for it.
+
+**It is not limited to device code.** The flag travels as a rustflag, so every
+crate cargo compiles for that build sees the `cfg`, host code included.
+
+**It switches `build` into passthrough mode.** Passing it means `build` no
+longer takes an example name, so
+`cargo oxide build my_example --device-cfg ampere_up` is rejected; run it from
+the crate's own directory instead. (`test` is passthrough already, flag or no
+flag.) If the gate can live in the crate's manifest, an ordinary Cargo feature
+(`#[cfg(feature = "ampere_up")]`) does the same job without giving up
+example-name invocations; `--device-cfg` earns its keep when you need a `cfg`
+injected without touching any Cargo.toml.
+
+**rustc warns about an undeclared `cfg` name.** The `unexpected_cfgs` lint
+checks every `#[cfg(...)]` against the declared set, and an injected
+`--cfg ampere_up` is not in it, so each use prints an
+`unexpected cfg condition name` warning. Declare it in the kernel crate's
+manifest to silence them:
+
+```toml
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ampere_up)"] }
+```
+
+**Nothing ties it to `--arch`.** If the `cfg` name stands for an architecture,
+you are the one keeping the two in step -- passing `--device-cfg ampere_up`
+without the matching `--arch` will happily build the specialized path for
+whatever target was selected, and PTX that the assembler then rejects.
+
 (loop-unrolling)=
 
 ## Loop unrolling
