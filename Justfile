@@ -200,3 +200,4 @@ check-guards:
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh
     bash scripts/check-example-license-policy.sh
+    bash scripts/check-spdx-headers.sh

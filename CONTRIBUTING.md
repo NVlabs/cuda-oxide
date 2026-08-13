@@ -184,6 +184,11 @@ the copyright holder or are authorized to name the holder. Vendored and other
 third-party files must keep their upstream license and copyright notices, and
 must be attributed in `THIRD_PARTY_NOTICES` at the repository root.
 
+CI enforces this: `scripts/check-spdx-headers.sh` fails on any tracked source
+file missing the header (the `cargo-deny / every source file carries the SPDX
+header` job). Third-party subtrees and OSRB-reviewed exceptions are listed in
+that script.
+
 ### Testing
 
 - Compiler pipeline changes should be validated against the existing examples
