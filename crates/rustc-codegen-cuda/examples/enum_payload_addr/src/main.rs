@@ -21,6 +21,8 @@
 //! - `shared_bytes_no_slot` mutates the variant WITHOUT a slot of its own
 //!   (`Bits` shares `Real`'s bytes), so the byte-offset addressing path runs
 //!   against the original storage.
+//! - `mutate_indexed_payload` mutates a runtime-indexed element inside an enum
+//!   array payload, covering the composed `Downcast -> Field -> Index` store path.
 //! - `shared_borrow_bool_payload` takes a SHARED borrow of a `bool` payload
 //!   and passes it to a `#[device]` helper. A bool payload's bytes use
 //!   canonical i8 storage, so no raw payload address can be handed out; the
@@ -69,6 +71,13 @@ mod kernels {
         Both(bool, f32),
         #[allow(dead_code)]
         Neither,
+    }
+
+    /// Array payload used to cover a nested `Downcast -> Field -> Index` store.
+    pub enum Bucket {
+        Data([u32; 4]),
+        #[allow(dead_code)]
+        Empty,
     }
 
     /// Scale a borrowed payload. Taking `&mut f32` across a call boundary
@@ -262,6 +271,35 @@ mod kernels {
         }
     }
 
+    /// Mutate a runtime-indexed element inside an enum's array payload.
+    ///
+    /// The indexed store exercises the composed `Downcast -> Field -> Index`
+    /// place path.
+    #[kernel]
+    pub fn mutate_indexed_payload(mut out: DisjointSlice<u32>, n: u32, column: u32, base: u32) {
+        let index = thread::index_1d();
+        let i = index.get();
+        if i >= n as usize {
+            return;
+        }
+
+        let c = (column as usize) & 3;
+        let mut bucket = Bucket::Data([0x10, 0x20, 0x30, 0x40]);
+
+        if let Bucket::Data(values) = &mut bucket {
+            values[c] = base.wrapping_add(i as u32);
+        }
+
+        let result = match bucket {
+            Bucket::Data(values) => values[c],
+            Bucket::Empty => u32::MAX,
+        };
+
+        if let Some(cell) = out.get_mut(index) {
+            *cell = result;
+        }
+    }
+
     /// The workaround this replaces: rebuild the enum from a matched copy.
     #[kernel]
     pub fn rebuild_payload(input: &[f32], mut out: DisjointSlice<f32>) {
@@ -344,6 +382,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     check("rebuild_payload", &|out| unsafe {
         module.rebuild_payload(&stream, config, &input, out)
     })?;
+
+    // Focused nested enum-payload probe. The source is intentionally separate
+    // from the f32 checks because its payload and oracle are u32.
+    {
+        const COLUMN: u32 = 3;
+        const BASE: u32 = 0x1234_0000;
+        let mut out = DeviceBuffer::from_host(&stream, &vec![u32::MAX; LEN as usize])?;
+        // SAFETY: the grid covers exactly `LEN` elements, the output buffer has
+        // that many entries, and the kernel masks COLUMN to the payload bounds.
+        unsafe { module.mutate_indexed_payload(&stream, config, &mut out, LEN, COLUMN, BASE)? };
+        stream.synchronize()?;
+        let got = out.to_host_vec(&stream)?;
+        for (i, value) in got.iter().enumerate() {
+            let expected = BASE.wrapping_add(i as u32);
+            if *value != expected {
+                return Err(format!(
+                    "mutate_indexed_payload: element {i} is {value}, expected {expected}"
+                )
+                .into());
+            }
+        }
+        println!(
+            "mutate_indexed_payload: {LEN} indexed enum payload elements mutated, exact match"
+        );
+    }
 
     // The bool-payload kernel maps each input to a variant-dependent output,
     // so it gets its own expectation instead of the uniform `* 2.0` check.

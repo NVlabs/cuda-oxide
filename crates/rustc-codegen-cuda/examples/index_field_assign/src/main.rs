@@ -24,6 +24,10 @@
 //! form (`arr[0].a`), then reduces the array so the host can verify the writes
 //! actually landed.
 //!
+//! `index_field_index` extends the regression coverage to a 3-level
+//! `Index -> Field -> Index` place and exercises store, load, reference, and
+//! raw-address construction against the same projected element.
+//!
 //! Usage:
 //!   cargo oxide run index_field_assign
 
@@ -38,6 +42,11 @@ mod kernels {
     struct Cell {
         a: u64,
         b: u64,
+    }
+
+    #[derive(Copy, Clone)]
+    struct NestedCell {
+        values: [u64; 4],
     }
 
     /// Each thread fills a local `[Cell; 4]` by assigning to `arr[i].a` /
@@ -83,6 +92,59 @@ mod kernels {
             *slot = s;
         }
     }
+
+    /// Exercise a genuine 3-level `Index -> Field -> Index` place.
+    ///
+    /// `row` and `column` are kernel arguments, so both projections remain
+    /// runtime indices. The same element is used as:
+    ///
+    /// - an assignment destination,
+    /// - a direct load,
+    /// - the referent of `&place`,
+    /// - the operand of `addr_of!(place)`.
+    ///
+    /// The host checks the sum of all three reads. This probe is deliberately
+    /// kept in the existing regression example so no Cargo metadata changes
+    /// are required.
+    #[kernel]
+    pub fn index_field_index(
+        mut out: DisjointSlice<u64>,
+        n: u32,
+        row: u32,
+        column: u32,
+        value: u64,
+    ) {
+        let index = thread::index_1d();
+        let tid = index.get();
+        if tid >= n as usize {
+            return;
+        }
+
+        let r = (row as usize) & 3;
+        let c = (column as usize) & 3;
+        let target = value.wrapping_add(tid as u64);
+        let mut cells = [NestedCell { values: [0; 4] }; 4];
+
+        // Store through `Index -> Field -> Index`.
+        cells[r].values[c] = target;
+
+        // Load through the same 3-level place.
+        let direct = cells[r].values[c];
+
+        // Build a reference to the same 3-level place.
+        let value_ref = &cells[r].values[c];
+        let by_ref = *value_ref;
+
+        // Build a raw address from the same 3-level place, then read it back.
+        // SAFETY: `raw` points into the live local `cells` array and remains
+        // valid for the duration of this kernel invocation.
+        let raw = core::ptr::addr_of!(cells[r].values[c]);
+        let by_raw = unsafe { *raw };
+
+        if let Some(slot) = out.get_mut(index) {
+            *slot = direct.wrapping_add(by_ref).wrapping_add(by_raw);
+        }
+    }
 }
 
 fn main() {
@@ -109,5 +171,26 @@ fn main() {
         assert_eq!(got[tid as usize], want, "thread {tid}");
     }
 
-    println!("PASS: index_field_assign (Index->Field + ConstantIndex->Field writes)");
+    // 3-level `Index -> Field -> Index` probe. Non-zero row/column values keep
+    // the intended nested projection visible while still staying in bounds.
+    const ROW: u32 = 2;
+    const COLUMN: u32 = 3;
+    const BASE: u64 = 0x1234_0000_0000_0000;
+    let mut nested_out = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
+    // SAFETY: launch shape/resources match the kernel; the output covers all
+    // writes and ROW/COLUMN are masked to the local array bounds in the kernel.
+    unsafe { module.index_field_index(&stream, cfg, &mut nested_out, N as u32, ROW, COLUMN, BASE) }
+        .expect("index_field_index launch");
+    let nested_got = nested_out.to_host_vec(&stream).unwrap();
+
+    for tid in 0..N as u64 {
+        let target = BASE.wrapping_add(tid);
+        let want = target.wrapping_mul(3);
+        assert_eq!(nested_got[tid as usize], want, "nested thread {tid}");
+    }
+
+    println!(
+        "PASS: index_field_assign \
+         (Index->Field + ConstantIndex->Field + Index->Field->Index)"
+    );
 }
