@@ -26,6 +26,12 @@
 //! recursively replace semantic shared-pointer leaves with target-stable
 //! generic pointers, then restore address space 3 when extracting the payload.
 //!
+//! The kernel also round-trips shared pointers through non-inlined device
+//! functions as struct, tuple, array, and enum arguments and return values,
+//! then dereferences each returned pointer as shared memory. This keeps the
+//! aggregate call/return ABI boundary observable instead of letting inlining
+//! erase it.
+//!
 //! Finally the kernel validates `SharedArray::as_raw_mut_ptr`: 32 threads
 //! derive pointers from one raw shared-array address, write disjoint elements,
 //! synchronize, and let thread 0 verify the complete allocation.
@@ -128,6 +134,34 @@ mod kernels {
         }
     }
 
+    #[inline(never)]
+    #[device]
+    fn bounce_struct(value: SharedPointerOuter) -> SharedPointerOuter {
+        value
+    }
+
+    #[inline(never)]
+    #[device]
+    fn bounce_tuple(
+        value: (*mut SharedArray<f32, 1>, usize),
+    ) -> (*mut SharedArray<f32, 1>, usize) {
+        value
+    }
+
+    #[inline(never)]
+    #[device]
+    fn bounce_array(
+        value: [*mut SharedArray<f32, 1>; 2],
+    ) -> [*mut SharedArray<f32, 1>; 2] {
+        value
+    }
+
+    #[inline(never)]
+    #[device]
+    fn bounce_enum(value: SharedPointerPayload) -> SharedPointerPayload {
+        value
+    }
+
     #[kernel]
     pub fn sharedarray_late_use(seed: f32, mut out: DisjointSlice<f32>) {
         static mut OUTPUT_NORM: SharedArray<f32, 1> = SharedArray::UNINIT;
@@ -187,6 +221,74 @@ mod kernels {
                 } else {
                     0.0
                 };
+
+                // Round-trip address-space-3 pointers through ordinary device-call
+                // ABI boundaries, then dereference the returned pointer as shared
+                // memory. #[inline(never)] on the helpers keeps the call/return
+                // boundary observable to lowering and code generation.
+                let struct_round_trip = bounce_struct(SharedPointerOuter {
+                    inner: SharedPointerInner {
+                        pointer: raw,
+                        cookie: ENUM_COOKIE,
+                    },
+                    guard: ENUM_GUARD,
+                });
+                (&mut (*struct_round_trip.inner.pointer))[0] = 31.0;
+                *out.get_unchecked_mut(6) = if core::ptr::eq(struct_round_trip.inner.pointer, raw)
+                    && struct_round_trip.inner.cookie == ENUM_COOKIE
+                    && struct_round_trip.guard == ENUM_GUARD
+                    && OUTPUT_NORM[0] == 31.0
+                {
+                    1.0
+                } else {
+                    0.0
+                };
+
+                let tuple_round_trip = bounce_tuple((raw, ENUM_COOKIE));
+                (&mut (*tuple_round_trip.0))[0] = 32.0;
+                *out.get_unchecked_mut(7) = if core::ptr::eq(tuple_round_trip.0, raw)
+                    && tuple_round_trip.1 == ENUM_COOKIE
+                    && OUTPUT_NORM[0] == 32.0
+                {
+                    1.0
+                } else {
+                    0.0
+                };
+
+                let array_round_trip = bounce_array([raw, raw]);
+                (&mut (*array_round_trip[1]))[0] = 33.0;
+                *out.get_unchecked_mut(8) = if core::ptr::eq(array_round_trip[0], raw)
+                    && core::ptr::eq(array_round_trip[1], raw)
+                    && OUTPUT_NORM[0] == 33.0
+                {
+                    1.0
+                } else {
+                    0.0
+                };
+
+                let enum_round_trip = bounce_enum(SharedPointerPayload::Pointer(
+                    SharedPointerOuter {
+                        inner: SharedPointerInner {
+                            pointer: raw,
+                            cookie: ENUM_COOKIE,
+                        },
+                        guard: ENUM_GUARD,
+                    },
+                ));
+                *out.get_unchecked_mut(9) = match enum_round_trip {
+                    SharedPointerPayload::Pointer(extracted)
+                        if extracted.inner.cookie == ENUM_COOKIE
+                            && extracted.guard == ENUM_GUARD =>
+                    {
+                        (&mut (*extracted.inner.pointer))[0] = 34.0;
+                        if core::ptr::eq(extracted.inner.pointer, raw) && OUTPUT_NORM[0] == 34.0 {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    _ => 0.0,
+                };
             }
         }
 
@@ -244,12 +346,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         block_dim: (32, 1, 1),
         shared_mem_bytes: 0,
     };
-    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 6)?;
+    let mut out = DeviceBuffer::<f32>::zeroed(&stream, 10)?;
     let seed: f32 = 7.0;
 
     // SAFETY: one 32-thread block writes 32 distinct shared elements, then
     // thread 0 reads them after a block-wide barrier. Only thread 0 writes the
-    // six output elements.
+    // ten output elements.
     unsafe { module.sharedarray_late_use(stream.as_ref(), cfg, seed, &mut out) }?;
 
     let result = out.to_host_vec(&stream)?;
@@ -282,8 +384,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         std::process::exit(1);
     }
+
+    if (result[6] - 1.0).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: shared pointer struct did not survive device call + return"
+        );
+        std::process::exit(1);
+    }
+    if (result[7] - 1.0).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: shared pointer tuple did not survive device call + return"
+        );
+        std::process::exit(1);
+    }
+    if (result[8] - 1.0).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: shared pointer array did not survive device call + return"
+        );
+        std::process::exit(1);
+    }
+    if (result[9] - 1.0).abs() >= f32::EPSILON {
+        eprintln!(
+            "FAIL addressof_sharedarray: shared pointer enum did not survive device call + return"
+        );
+        std::process::exit(1);
+    }
     println!(
-        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, nested and bounded-array shared pointer enums round-tripped, integer address cast back to the shared pointer",
+        "PASS addressof_sharedarray: seed={seed}, result={}, shared address is non-null, enum storage and struct/tuple/array/enum device-call round trips preserved shared pointers",
         result[0]
     );
 
