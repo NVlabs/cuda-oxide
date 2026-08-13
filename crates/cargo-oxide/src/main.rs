@@ -444,6 +444,9 @@ fn has_passthrough_separator(args: &[String]) -> bool {
     args.iter().skip(2).any(|arg| arg == "--")
 }
 
+/// Defined as "the mode has a nameable trigger" so the decision and the
+/// diagnostic in [`build_passthrough_trigger`] cannot disagree: a new signal
+/// that switches the mode on has to name itself to compile.
 fn use_build_passthrough(
     explicit_separator: bool,
     cargo_target_dir_is_set: bool,
@@ -451,11 +454,14 @@ fn use_build_passthrough(
     has_device_cfgs: bool,
     has_cargo_args: bool,
 ) -> bool {
-    explicit_separator
-        || cargo_target_dir_is_set
-        || owner_filter_is_set
-        || has_device_cfgs
-        || has_cargo_args
+    build_passthrough_trigger(
+        explicit_separator,
+        cargo_target_dir_is_set,
+        owner_filter_is_set,
+        has_device_cfgs,
+        has_cargo_args,
+    )
+    .is_some()
 }
 
 /// What put `cargo oxide build` into passthrough mode, phrased for a diagnostic.
@@ -1378,22 +1384,8 @@ mod tests {
             build_passthrough_trigger(true, true, true, true, true),
             Some("passthrough args after `--`")
         );
-        // Every signal that turns the mode on must produce a name for it, or the
-        // `unwrap_or` at the call site would paper over a new one.
-        for signals in [
-            (true, false, false, false, false),
-            (false, true, false, false, false),
-            (false, false, true, false, false),
-            (false, false, false, true, false),
-            (false, false, false, false, true),
-        ] {
-            let (a, b, c, d, e) = signals;
-            assert_eq!(
-                use_build_passthrough(a, b, c, d, e),
-                build_passthrough_trigger(a, b, c, d, e).is_some(),
-                "signal set {signals:?} disagrees between the mode and its name"
-            );
-        }
+        // No mode-vs-name agreement check: use_build_passthrough is defined as
+        // build_passthrough_trigger(...).is_some(), so they cannot disagree.
     }
 
     #[test]
