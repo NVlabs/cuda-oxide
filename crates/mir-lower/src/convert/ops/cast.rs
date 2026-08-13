@@ -278,6 +278,13 @@ fn convert_float_to_int(
                 "FloatToInt: result type is not an integer"
             )
         })?;
+    if int_width > 64 {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "FloatToInt: integer destinations wider than 64 bits are not yet supported on the device"
+        );
+    }
+
     let int_suffix = format!("i{}", int_width);
 
     let float_suffix = match float_bit_width(ctx, val_ty) {
@@ -1299,6 +1306,22 @@ mod tests {
             module_ptr,
             "llvm_fptoui_sat_i32_f32",
             "f32 -> u32 unsigned cast",
+        );
+    }
+
+    #[test]
+    fn float_to_int_rejects_integer_destination_wider_than_64_bits() {
+        let mut ctx = make_ctx();
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+        let i128_ty = int_ty(&mut ctx, 128, Signedness::Signed);
+
+        let module = build_single_cast(&mut ctx, f64_ty, i128_ty, MirCastKindAttr::FloatToInt);
+        let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+            "f64 -> i128 saturating cast must be rejected before an unsupported intrinsic is emitted",
+        );
+        assert!(
+            error.to_string().contains("wider than 64 bits"),
+            "unexpected diagnostic: {error}"
         );
     }
 
