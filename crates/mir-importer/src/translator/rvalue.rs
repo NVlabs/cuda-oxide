@@ -11502,11 +11502,14 @@ mod pointer_array_constant_type_tests {
         );
 
         // Widening the shared predicate to tuples deliberately widens this form
-        // too: the doc contract on `promotable_array_element` is that `TABLE[i]`
-        // and `(&TABLE)[i]` cannot drift apart. Nothing here enumerates fields --
-        // the initializer is rustc's evaluated byte image and the size-agreement
-        // check rejects any layout the dialect reproduces differently -- so a
-        // tuple element travels this path exactly as a scalar does.
+        // too: `promotable_array_element` still gates both the value form's
+        // promotion and this reference form, and only bare-value *admission*
+        // is wider now (a struct table falls back to element-wise
+        // materialization, which this form does not have). Nothing here
+        // enumerates fields -- the initializer is rustc's evaluated byte image
+        // and the size-agreement check rejects any layout the dialect
+        // reproduces differently -- so a tuple element travels this path
+        // the same way a scalar does.
         let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty]).into();
         let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
         assert!(
