@@ -8,12 +8,25 @@
 //! The slice case exercises runtime fat-pointer length metadata with a
 //! non-byte element type. The `str` case reinterprets a runtime UTF-8 byte
 //! slice as `str`, preserving the same `(data, byte_len)` fat-pointer layout.
+//! The slice-tailed struct case exercises Rust's aggregate DST layout rule:
+//! a sized prefix followed inline by a runtime-length `[T]` tail.
 //!
 //! Usage:
 //!   cargo oxide run dst_metadata
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+
+#[repr(C)]
+struct Header<T: ?Sized> {
+    head: u64,
+    tag: u8,
+    tail: T,
+}
+
+const HEADER_HEAD: u64 = 0x1122_3344_5566_7788;
+const HEADER_TAG: u8 = 0x5a;
+const HEADER_TAIL: [u16; 4] = [11, 22, 33, 44];
 
 #[cuda_module]
 mod kernels {
@@ -52,6 +65,33 @@ mod kernels {
             let out_ptr = out.as_mut_ptr();
             out_ptr.write(size);
             out_ptr.add(1).write(align);
+        }
+    }
+
+    /// Report layout and projection behavior for `Header<[u16]>`.
+    #[kernel]
+    pub fn struct_tail_metadata(mut out: DisjointSlice<usize>) {
+        if thread::index_1d().get() != 0 {
+            return;
+        }
+
+        let concrete = Header {
+            head: HEADER_HEAD,
+            tag: HEADER_TAG,
+            tail: HEADER_TAIL,
+        };
+        let value: &Header<[u16]> = &concrete;
+
+        let size = core::mem::size_of_val(value);
+        let align = core::mem::align_of_val(value);
+
+        unsafe {
+            let out_ptr = out.as_mut_ptr();
+            out_ptr.write(size);
+            out_ptr.add(1).write(align);
+            out_ptr.add(2).write(value.tail.len());
+            out_ptr.add(3).write(value.tag as usize);
+            out_ptr.add(4).write(value.head as usize);
         }
     }
 }
@@ -106,5 +146,35 @@ fn main() {
     );
     println!("PASS: size_of_val on str");
     println!("PASS: align_of_val on str");
+
+    let concrete = Header {
+        head: HEADER_HEAD,
+        tag: HEADER_TAG,
+        tail: HEADER_TAIL,
+    };
+    let value: &Header<[u16]> = &concrete;
+    let expected_size = core::mem::size_of_val(value);
+    let expected_align = core::mem::align_of_val(value);
+    let mut struct_out = DeviceBuffer::<usize>::zeroed(&stream, 5).unwrap();
+
+    // SAFETY: one thread writes five `usize` values to a five-element output.
+    unsafe { module.struct_tail_metadata(&stream, cfg, &mut struct_out) }
+        .expect("struct_tail_metadata launch");
+
+    let struct_result = struct_out.to_host_vec(&stream).unwrap();
+    assert_eq!(
+        struct_result[0], expected_size,
+        "size_of_val(&Header<[u16]>)"
+    );
+    assert_eq!(
+        struct_result[1], expected_align,
+        "align_of_val(&Header<[u16]>)"
+    );
+    assert_eq!(struct_result[2], HEADER_TAIL.len(), "tail metadata");
+    assert_eq!(struct_result[3], HEADER_TAG as usize, "tag projection");
+    assert_eq!(struct_result[4], HEADER_HEAD as usize, "head projection");
+    println!("PASS: size_of_val on &Header<[u16]>");
+    println!("PASS: align_of_val on &Header<[u16]>");
+    println!("PASS: unsized-tail metadata and prefix fields");
     println!("PASS: dst_metadata");
 }

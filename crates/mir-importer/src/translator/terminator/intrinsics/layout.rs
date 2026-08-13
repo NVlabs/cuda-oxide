@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Rust dynamic-layout intrinsics for slices and `str`.
+//! Rust dynamic-layout intrinsics for slices, `str`, and slice-tailed structs.
 //!
 //! `core::mem::size_of_val` and `core::mem::align_of_val` inline to the
 //! corresponding `core::intrinsics::*` calls when their argument is a DST.
@@ -14,6 +14,8 @@
 //!
 //! - `[T]`: size = `len * size_of::<T>()`, align = `align_of::<T>()`
 //! - `str`: size = byte length, align = 1
+//! - `struct S { prefix: ..., tail: [T] }`: size and alignment are computed
+//!   from rustc's field offset/layout plus the runtime tail length metadata
 //!
 //! Sized types are also accepted as a defensive fallback for low-MIR-opt
 //! builds, where the intrinsic may survive even though optimized MIR normally
@@ -24,7 +26,7 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use crate::translator::{rvalue, types};
 use dialect_mir::attributes::FieldIndexAttr;
-use dialect_mir::ops::{MirConstantOp, MirExtractFieldOp, MirMulOp};
+use dialect_mir::ops::{MirAddOp, MirConstantOp, MirDivOp, MirExtractFieldOp, MirMulOp};
 use dialect_mir::types::MirSliceType;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::IntegerAttr;
@@ -196,6 +198,244 @@ fn emit_usize_mul_constant(
     (mul.deref(ctx).get_result(0), mul)
 }
 
+/// Add a compile-time `usize` constant to a runtime `usize`.
+fn emit_usize_add_constant(
+    ctx: &mut Context,
+    lhs: Value,
+    rhs: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Ptr<Operation>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    if rhs == 0 {
+        return (lhs, prev_op);
+    }
+
+    let (rhs_value, rhs_op) = emit_usize_constant(ctx, rhs, block_ptr, Some(prev_op), loc.clone());
+    let usize_ty = types::get_usize_type(ctx);
+    let add = Operation::new(
+        ctx,
+        MirAddOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![lhs, rhs_value],
+        vec![],
+        0,
+    );
+    add.deref_mut(ctx).set_loc(loc);
+    add.insert_after(ctx, rhs_op);
+    (add.deref(ctx).get_result(0), add)
+}
+
+/// Round a runtime `usize` up to a compile-time power-of-two alignment.
+fn emit_usize_align_up(
+    ctx: &mut Context,
+    value: Value,
+    alignment: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Ptr<Operation>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    if alignment <= 1 {
+        return (value, prev_op);
+    }
+
+    debug_assert!(alignment.is_power_of_two());
+
+    let (biased, add_op) =
+        emit_usize_add_constant(ctx, value, alignment - 1, block_ptr, prev_op, loc.clone());
+    let (align_value, align_op) =
+        emit_usize_constant(ctx, alignment, block_ptr, Some(add_op), loc.clone());
+
+    let usize_ty = types::get_usize_type(ctx);
+    let div = Operation::new(
+        ctx,
+        MirDivOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![biased, align_value],
+        vec![],
+        0,
+    );
+    div.deref_mut(ctx).set_loc(loc.clone());
+    div.insert_after(ctx, align_op);
+    let quotient = div.deref(ctx).get_result(0);
+
+    let mul = Operation::new(
+        ctx,
+        MirMulOp::get_concrete_op_info(),
+        vec![usize_ty.to_handle()],
+        vec![quotient, align_value],
+        vec![],
+        0,
+    );
+    mul.deref_mut(ctx).set_loc(loc);
+    mul.insert_after(ctx, div);
+    (mul.deref(ctx).get_result(0), mul)
+}
+
+/// Return the trailing field of a slice-tailed struct.
+fn trailing_struct_field(ty: &Ty, loc: &Location) -> TranslationResult<(Ty, usize, Option<u64>)> {
+    let TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) = ty.kind() else {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "expected a struct DST while computing dynamic layout; got {:?}",
+                ty.kind()
+            ))
+        );
+    };
+
+    if !matches!(adt_def.kind(), rustc_public::ty::AdtKind::Struct) {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "dynamic slice-tail layout requires a struct; got {:?}",
+                adt_def.kind()
+            ))
+        );
+    }
+
+    let variants = adt_def.variants();
+    let variant = variants.first().ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported("slice-tailed struct has no field variant".to_string())
+        )
+    })?;
+    let fields = variant.fields();
+    let last_index = fields.len().checked_sub(1).ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported("slice-tailed struct has no fields".to_string())
+        )
+    })?;
+    let last_ty = fields[last_index].ty_with_args(&substs);
+
+    Ok((last_ty, last_index, adt_def.repr().pack))
+}
+
+/// Compute the ABI alignment of a slice-tailed struct DST.
+///
+/// The tail metadata is a length, so alignment is fully determined by the
+/// monomorphized prefix, the trailing element type, and any `repr(packed)` cap.
+fn slice_tail_alignment(value_ty: &Ty, loc: &Location) -> TranslationResult<u64> {
+    match value_ty.kind() {
+        TyKind::RigidTy(RigidTy::Slice(element_ty)) => {
+            Ok(rust_layout_shape(&element_ty, "slice-tail element", loc)?.abi_align)
+        }
+        TyKind::RigidTy(RigidTy::Str) => Ok(1),
+        TyKind::RigidTy(RigidTy::Adt(..)) => {
+            let (last_ty, _last_index, packed) = trailing_struct_field(value_ty, loc)?;
+            let shape = rust_layout_shape(value_ty, "slice-tailed struct", loc)?;
+            let mut tail_align = slice_tail_alignment(&last_ty, loc)?;
+
+            if let Some(packed) = packed {
+                tail_align = tail_align.min(packed);
+            }
+
+            Ok(shape.abi_align.max(tail_align))
+        }
+        _ => input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "unsupported unsized tail while computing alignment: {:?}",
+                value_ty.kind()
+            ))
+        ),
+    }
+}
+
+/// Compute runtime size and static ABI alignment for a slice-tailed DST.
+///
+/// This mirrors rustc's DST layout rule for aggregate tails:
+///
+/// `size = align_up(last_field_offset + dynamic_tail_size, full_alignment)`.
+///
+/// The same runtime metadata value is threaded recursively for nested
+/// slice-tailed structs because their metadata is the ultimate slice length.
+#[allow(clippy::too_many_arguments)]
+fn emit_slice_tail_size_and_align(
+    ctx: &mut Context,
+    value_ty: &Ty,
+    metadata_len: Value,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Ptr<Operation>,
+    loc: Location,
+) -> TranslationResult<(Value, u64, Ptr<Operation>)> {
+    match value_ty.kind() {
+        TyKind::RigidTy(RigidTy::Slice(element_ty)) => {
+            let element_layout = rust_layout_shape(&element_ty, "slice-tail element", &loc)?;
+            let element_size =
+                size_to_u64(element_layout.size.bytes(), "slice-tail element", &loc)?;
+            let (size, size_op) =
+                emit_usize_mul_constant(ctx, metadata_len, element_size, block_ptr, prev_op, loc);
+            Ok((size, element_layout.abi_align, size_op))
+        }
+        TyKind::RigidTy(RigidTy::Str) => Ok((metadata_len, 1, prev_op)),
+        TyKind::RigidTy(RigidTy::Adt(..)) => {
+            let (last_ty, last_index, packed) = trailing_struct_field(value_ty, &loc)?;
+            let shape = rust_layout_shape(value_ty, "slice-tailed struct", &loc)?;
+            let tail_offset = match &shape.fields {
+                rustc_public::abi::FieldsShape::Arbitrary { offsets } => offsets
+                    .get(last_index)
+                    .map(|offset| offset.bytes())
+                    .ok_or_else(|| {
+                        input_error!(
+                            loc.clone(),
+                            TranslationErr::unsupported(format!(
+                                "slice-tailed struct layout has {} offsets for field {}",
+                                offsets.len(),
+                                last_index
+                            ))
+                        )
+                    })?,
+                other => {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "slice-tailed struct has unsupported field layout: {other:?}"
+                        ))
+                    );
+                }
+            };
+            let tail_offset = size_to_u64(tail_offset, "slice-tailed struct tail offset", &loc)?;
+
+            let (tail_size, mut tail_align, tail_op) = emit_slice_tail_size_and_align(
+                ctx,
+                &last_ty,
+                metadata_len,
+                block_ptr,
+                prev_op,
+                loc.clone(),
+            )?;
+
+            if let Some(packed) = packed {
+                tail_align = tail_align.min(packed);
+            }
+
+            let full_align = shape.abi_align.max(tail_align);
+            let (unrounded_size, add_op) = emit_usize_add_constant(
+                ctx,
+                tail_size,
+                tail_offset,
+                block_ptr,
+                tail_op,
+                loc.clone(),
+            );
+            let (full_size, align_op) =
+                emit_usize_align_up(ctx, unrounded_size, full_align, block_ptr, add_op, loc);
+
+            Ok((full_size, full_align, align_op))
+        }
+        _ => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "unsupported unsized tail while computing size: {:?}",
+                value_ty.kind()
+            ))
+        ),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_size_of_val(
     ctx: &mut Context,
@@ -244,13 +484,29 @@ fn emit_size_of_val(
             )?;
             emit_slice_len(ctx, fat_value, block_ptr, after_operand, loc)
         }
+        TyKind::RigidTy(RigidTy::Adt(..)) if types::slice_tail_element_ty(value_ty).is_some() => {
+            let (fat_value, after_operand) = rvalue::translate_operand(
+                ctx,
+                body,
+                arg,
+                value_map,
+                block_ptr,
+                prev_op,
+                loc.clone(),
+            )?;
+            let (len, after_len) =
+                emit_slice_len(ctx, fat_value, block_ptr, after_operand, loc.clone())?;
+            let (size, _align, after_layout) =
+                emit_slice_tail_size_and_align(ctx, value_ty, len, block_ptr, after_len, loc)?;
+            Ok((size, after_layout))
+        }
         _ => {
             let shape = rust_layout_shape(value_ty, "size_of_val pointee", &loc)?;
             if !shape.is_sized() {
                 return input_err!(
                     loc,
                     TranslationErr::unsupported(format!(
-                        "size_of_val currently supports slices, str, and Sized pointees; got {:?}",
+                        "size_of_val currently supports slices, str, slice-tailed structs, and Sized pointees; got {:?}",
                         value_ty.kind()
                     ))
                 );
@@ -273,13 +529,16 @@ fn emit_align_of_val(
             rust_layout_shape(&element_ty, "slice element", &loc)?.abi_align
         }
         TyKind::RigidTy(RigidTy::Str) => 1,
+        TyKind::RigidTy(RigidTy::Adt(..)) if types::slice_tail_element_ty(value_ty).is_some() => {
+            slice_tail_alignment(value_ty, &loc)?
+        }
         _ => {
             let shape = rust_layout_shape(value_ty, "align_of_val pointee", &loc)?;
             if !shape.is_sized() {
                 return input_err!(
                     loc,
                     TranslationErr::unsupported(format!(
-                        "align_of_val currently supports slices, str, and Sized pointees; got {:?}",
+                        "align_of_val currently supports slices, str, slice-tailed structs, and Sized pointees; got {:?}",
                         value_ty.kind()
                     ))
                 );
@@ -291,7 +550,7 @@ fn emit_align_of_val(
     Ok(emit_usize_constant(ctx, alignment, block_ptr, prev_op, loc))
 }
 
-/// Lower `core::intrinsics::{size_of_val, align_of_val}` for slices and `str`.
+/// Lower `core::intrinsics::{size_of_val, align_of_val}` for supported DSTs.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_rust_layout_intrinsic(
     ctx: &mut Context,
