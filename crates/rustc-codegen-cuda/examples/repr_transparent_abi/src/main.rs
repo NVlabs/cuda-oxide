@@ -98,10 +98,9 @@ fn require_scalar_header(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let header = entry_header(ptx, name)?;
     if header.contains(".b8") {
-        return Err(format!(
-            "kernel `{name}` still exposes an aggregate PTX parameter:\n{header}"
-        )
-        .into());
+        return Err(
+            format!("kernel `{name}` still exposes an aggregate PTX parameter:\n{header}").into(),
+        );
     }
     if !header.contains(scalar_token) {
         return Err(format!(
