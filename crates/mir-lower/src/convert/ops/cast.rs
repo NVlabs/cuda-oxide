@@ -1459,6 +1459,22 @@ mod tests {
     }
 
     #[test]
+    fn float_to_int_rejects_unsigned_integer_destination_wider_than_64_bits() {
+        let mut ctx = make_ctx();
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+        let u128_ty = int_ty(&mut ctx, 128, Signedness::Unsigned);
+
+        let module = build_single_cast(&mut ctx, f64_ty, u128_ty, MirCastKindAttr::FloatToInt);
+        let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+            "f64 -> u128 saturating cast must be rejected before an unsupported intrinsic is emitted",
+        );
+        assert!(
+            error.to_string().contains("wider than 64 bits"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
     fn float_to_float_widen_lowers_to_fp_ext() {
         let mut ctx = make_ctx();
         let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
