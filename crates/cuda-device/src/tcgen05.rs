@@ -417,6 +417,21 @@ pub enum Tcgen05ElementType {
     TF32 = 2,
 }
 
+/// Eight-bit floating-point input formats for `.kind::f8f6f4` MMA.
+///
+/// These values occupy the same instruction-descriptor fields as
+/// [`Tcgen05ElementType`], but their meaning is selected by the MMA kind. A
+/// distinct type prevents an FP8 call site from spelling E4M3 as `F16` merely
+/// because both formats use encoding zero in their respective kind domains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tcgen05F8ElementType {
+    /// E4M3 floating point.
+    E4M3 = 0,
+    /// E5M2 floating point.
+    E5M2 = 1,
+}
+
 /// Accumulator (output D) data type for tcgen05 MMA operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -552,6 +567,27 @@ impl Tcgen05InstructionDescriptor {
             .element_type(Tcgen05ElementType::TF32)
             .accumulator_type(Tcgen05AccumulatorType::F32)
             .build()
+    }
+
+    /// Create a dense `.kind::f8f6f4` instruction descriptor.
+    ///
+    /// The caller must issue the descriptor through
+    /// `tcgen05_mma_shared::<2, ..>`; descriptor format values are interpreted
+    /// in the FP8 domain only when the instruction kind is `f8f6f4`.
+    #[inline(always)]
+    pub const fn new_f8(
+        shape: Tcgen05MmaShape,
+        a_type: Tcgen05F8ElementType,
+        b_type: Tcgen05F8ElementType,
+        accumulator_type: Tcgen05AccumulatorType,
+    ) -> Self {
+        let mut raw = 0u32;
+        raw |= (accumulator_type as u32) << 4;
+        raw |= (a_type as u32) << 7;
+        raw |= (b_type as u32) << 10;
+        raw |= ((shape.n >> 3) & 0x3f) << 17;
+        raw |= ((shape.m >> 4) & 0x1f) << 24;
+        Self { raw }
     }
 
     /// Create descriptor from raw 32-bit value.
@@ -1414,3 +1450,40 @@ pub fn f32_pair_to_packed_bf16(a: f32, b: f32) -> u32 {
 
 // Generated tcgen05 leaf intrinsics.
 include!("generated/tcgen05.rs");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn e4m3_m128_n128_f32_descriptor_matches_sm100_layout() {
+        let descriptor = Tcgen05InstructionDescriptor::new_f8(
+            Tcgen05MmaShape::M128_N128,
+            Tcgen05F8ElementType::E4M3,
+            Tcgen05F8ElementType::E4M3,
+            Tcgen05AccumulatorType::F32,
+        );
+        assert_eq!(descriptor.raw(), 0x0820_0010);
+    }
+
+    #[test]
+    fn fp8_a_and_b_formats_have_independent_fields() {
+        let e5m2_e4m3 = Tcgen05InstructionDescriptor::new_f8(
+            Tcgen05MmaShape::M64_N64,
+            Tcgen05F8ElementType::E5M2,
+            Tcgen05F8ElementType::E4M3,
+            Tcgen05AccumulatorType::F32,
+        );
+        assert_eq!((e5m2_e4m3.raw() >> 7) & 0x7, 1);
+        assert_eq!((e5m2_e4m3.raw() >> 10) & 0x7, 0);
+
+        let e4m3_e5m2 = Tcgen05InstructionDescriptor::new_f8(
+            Tcgen05MmaShape::M64_N64,
+            Tcgen05F8ElementType::E4M3,
+            Tcgen05F8ElementType::E5M2,
+            Tcgen05AccumulatorType::F32,
+        );
+        assert_eq!((e4m3_e5m2.raw() >> 7) & 0x7, 0);
+        assert_eq!((e4m3_e5m2.raw() >> 10) & 0x7, 1);
+    }
+}
