@@ -142,17 +142,13 @@ mod kernels {
 
     #[inline(never)]
     #[device]
-    fn bounce_tuple(
-        value: (*mut SharedArray<f32, 1>, usize),
-    ) -> (*mut SharedArray<f32, 1>, usize) {
+    fn bounce_tuple(value: (*mut SharedArray<f32, 1>, usize)) -> (*mut SharedArray<f32, 1>, usize) {
         value
     }
 
     #[inline(never)]
     #[device]
-    fn bounce_array(
-        value: [*mut SharedArray<f32, 1>; 2],
-    ) -> [*mut SharedArray<f32, 1>; 2] {
+    fn bounce_array(value: [*mut SharedArray<f32, 1>; 2]) -> [*mut SharedArray<f32, 1>; 2] {
         value
     }
 
@@ -266,15 +262,14 @@ mod kernels {
                     0.0
                 };
 
-                let enum_round_trip = bounce_enum(SharedPointerPayload::Pointer(
-                    SharedPointerOuter {
+                let enum_round_trip =
+                    bounce_enum(SharedPointerPayload::Pointer(SharedPointerOuter {
                         inner: SharedPointerInner {
                             pointer: raw,
                             cookie: ENUM_COOKIE,
                         },
                         guard: ENUM_GUARD,
-                    },
-                ));
+                    }));
                 *out.get_unchecked_mut(9) = match enum_round_trip {
                     SharedPointerPayload::Pointer(extracted)
                         if extracted.inner.cookie == ENUM_COOKIE
