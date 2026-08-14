@@ -528,8 +528,8 @@ mod kernels {
                             );
                             tcgen05_load_wait();
 
-                            let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                            let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                            let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                            let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
                             let out_row_lo =
                                 warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                             let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -539,8 +539,8 @@ mod kernels {
                             );
                             stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                            let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                            let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                            let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                            let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
                             let out_row_hi =
                                 warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
                             let smem_addr_hi = (&raw mut SMEM_OUT as *mut u8).add(
@@ -1199,8 +1199,8 @@ mod kernels {
                                     );
                                     tcgen05_load_wait();
 
-                                    let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                                    let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                                    let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                                    let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
                                     let scratch_row_lo = scratch_row_base + row_within_8;
                                     let smem_addr_lo = warp_scratch_u8.add(
                                         scratch_row_lo * SCRATCH_ROW_BYTES
@@ -1209,8 +1209,8 @@ mod kernels {
                                     );
                                     stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                                    let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                                    let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                                    let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                                    let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
                                     let scratch_row_hi =
                                         scratch_row_base + 8 + row_within_8;
                                     let smem_addr_hi = warp_scratch_u8.add(

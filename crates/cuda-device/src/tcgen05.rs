@@ -1272,8 +1272,8 @@ use crate::cusimd::CuSimd;
 /// let val1 = regs[1];
 ///
 /// // Convert and pack for stmatrix
-/// let p0 = cvt_f32x2_bf16x2(regs[0], regs[1]);
-/// let p1 = cvt_f32x2_bf16x2(regs[2], regs[3]);
+/// let p0 = cuda_device::convert::cvt_bf16x2_f32(regs[0], regs[1]);
+/// let p1 = cuda_device::convert::cvt_bf16x2_f32(regs[2], regs[3]);
 /// // ...
 /// stmatrix_m8n8_x4_trans(smem_ptr, p0, p1, p2, p3);
 /// ```
@@ -1309,20 +1309,14 @@ pub type TmemF32x32 = CuSimd<f32, 32>;
 /// tcgen05_load_wait();
 ///
 /// // Access via index or shorthand
-/// let p0 = cvt_f32x2_bf16x2(regs[0], regs[1]);
-/// let p1 = cvt_f32x2_bf16x2(regs[2], regs[3]);
-/// // Or: cvt_f32x2_bf16x2(regs.x(), regs.y())
+/// let p0 = cuda_device::convert::cvt_bf16x2_f32(regs[0], regs[1]);
+/// let p1 = cuda_device::convert::cvt_bf16x2_f32(regs[2], regs[3]);
+/// // Or: cuda_device::convert::cvt_bf16x2_f32(regs.x(), regs.y())
 ///
 /// // Store via stmatrix.x2 (non-trans)
 /// stmatrix_m8n8_x2(smem_ptr, p0, p1);
 /// ```
 pub type TmemF32x4 = CuSimd<f32, 4>;
-// =============================================================================
-// PTX Type Conversion Intrinsics
-// =============================================================================
-
-include!("generated/tcgen05_conversion.rs");
-
 // =============================================================================
 // TMEM Load/Store Synchronization
 // =============================================================================
@@ -1330,87 +1324,6 @@ include!("generated/tcgen05_conversion.rs");
 // Matrix Store Instructions
 // =============================================================================
 include!("generated/stmatrix.rs");
-
-// =============================================================================
-// Type Conversion Helpers (for epilog)
-// =============================================================================
-
-/// Convert f32 to bf16 using simple truncation.
-///
-/// BF16 format: 1 sign + 8 exponent + 7 mantissa = 16 bits
-/// This simply takes the upper 16 bits of the f32 representation.
-///
-/// Note: This is a simple truncation, not round-to-nearest-even.
-/// For most ML workloads, the difference is negligible.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let f32_val: f32 = 3.14159;
-/// let bf16_bits: u16 = f32_to_bf16(f32_val);
-/// ```
-#[inline(always)]
-pub fn f32_to_bf16(val: f32) -> u16 {
-    // BF16 is just the upper 16 bits of f32
-    // f32: 1 sign + 8 exp + 23 mantissa
-    // bf16: 1 sign + 8 exp + 7 mantissa (truncate lower 16 bits)
-    (val.to_bits() >> 16) as u16
-}
-
-/// Convert f32 to bf16 with round-to-nearest-even.
-///
-/// This provides slightly more accurate conversion than simple truncation
-/// by rounding the truncated mantissa bits.
-#[inline(always)]
-pub fn f32_to_bf16_rne(val: f32) -> u16 {
-    let bits = val.to_bits();
-    // Round to nearest even: add 0x7FFF + bit 16 (round up if bit 16 is 1)
-    let round_bit = (bits >> 16) & 1;
-    let rounded = bits.wrapping_add(0x7FFF + round_bit);
-    (rounded >> 16) as u16
-}
-
-/// Pack two bf16 values (as u16) into a single u32.
-///
-/// The first bf16 goes in the lower 16 bits, the second in the upper 16 bits.
-/// This is used to prepare data for `stmatrix` which expects packed 16-bit values.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let bf16_0 = f32_to_bf16(f32_vals[0]);
-/// let bf16_1 = f32_to_bf16(f32_vals[1]);
-/// let packed = pack_bf16_pair(bf16_0, bf16_1);
-/// // packed is now ready for stmatrix_m8n8_x4_trans
-/// ```
-#[inline(always)]
-pub fn pack_bf16_pair(lo: u16, hi: u16) -> u32 {
-    (lo as u32) | ((hi as u32) << 16)
-}
-
-/// Pack two f16 values (as u16) into a single u32.
-///
-/// The first f16 goes in the lower 16 bits, the second in the upper 16 bits.
-#[inline(always)]
-pub fn pack_f16_pair(lo: u16, hi: u16) -> u32 {
-    (lo as u32) | ((hi as u32) << 16)
-}
-
-/// Convert two consecutive f32 values to bf16 and pack into u32.
-///
-/// This is a convenience function that combines conversion and packing
-/// for the common epilog pattern.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let f32_pair: [f32; 2] = [a, b];
-/// let packed: u32 = f32_pair_to_packed_bf16(f32_pair[0], f32_pair[1]);
-/// ```
-#[inline(always)]
-pub fn f32_pair_to_packed_bf16(a: f32, b: f32) -> u32 {
-    pack_bf16_pair(f32_to_bf16(a), f32_to_bf16(b))
-}
 
 // Generated tcgen05 leaf intrinsics.
 include!("generated/tcgen05.rs");

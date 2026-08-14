@@ -173,16 +173,6 @@ pub fn all_outputs(
         render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::F16x2),
     );
     outputs.insert(
-        "crates/cuda-device/src/generated/tcgen05_conversion.rs".into(),
-        render_compat_packed_conversion(
-            catalog,
-            catalog_sha256,
-            "cuda_device::tcgen05::",
-            "tcgen05",
-            ("a", "b"),
-        ),
-    );
-    outputs.insert(
         "crates/cuda-device/src/generated/convert.rs".into(),
         render_compat_packed_conversion(
             catalog,
@@ -7016,7 +7006,7 @@ fn render_compat_packed_conversion(
     let mut output = rust_header(catalog, hash);
     writeln!(
         output,
-        "// Included inside `cuda_device::{containing_module}` to keep the existing path stable.\n"
+        "// Included inside `cuda_device::{containing_module}`.\n"
     )
     .unwrap();
     for record in packed_conversions(catalog).filter(|record| {
@@ -7053,7 +7043,10 @@ fn render_compat_packed_conversion(
         writeln!(
             output,
             "pub fn {}({parameters}) -> {} {{",
-            record.rust.name, record.rust.result,
+            path.rsplit("::")
+                .next()
+                .expect("packed-conversion compatibility function name"),
+            record.rust.result,
         )
         .unwrap();
         if parameter_names.len() == 1 {
@@ -20824,7 +20817,7 @@ mod tests {
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("cuda_device::bf16x2::fma_bf16x2"));
         assert!(importer.contains("cuda_device::f16x2::fma_f16x2"));
-        assert!(importer.contains("cuda_device::tcgen05::cvt_f32x2_bf16x2"));
+        assert!(importer.contains("cuda_device::convert::cvt_bf16x2_f32"));
         assert!(importer.contains("cuda_device::convert::cvt_f16x2_f32"));
         assert!(importer.contains("cuda_device::convert::cvt_rz_bf16x2_f32"));
         assert!(importer.contains("cuda_device::convert::cvt_rn_satfinite_e4m3x2_f32"));
@@ -20971,19 +20964,11 @@ mod tests {
         let compatibility = render_compat_packed_conversion(
             &catalog,
             "test-hash",
-            "cuda_device::tcgen05::",
-            "tcgen05",
-            ("a", "b"),
-        );
-        assert!(compatibility.contains("pub fn cvt_f32x2_bf16x2(a: f32, b: f32) -> u32"));
-        assert!(!compatibility.contains("cvt_f16x2_f32"));
-        let compatibility = render_compat_packed_conversion(
-            &catalog,
-            "test-hash",
             "cuda_device::convert::",
             "convert",
             ("lo", "hi"),
         );
+        assert!(compatibility.contains("pub fn cvt_bf16x2_f32(lo: f32, hi: f32) -> u32"));
         assert!(compatibility.contains("pub fn cvt_f16x2_f32(lo: f32, hi: f32) -> u32"));
         assert!(compatibility.contains("pub fn cvt_rz_bf16x2_f32(lo: f32, hi: f32) -> u32"));
         assert!(
@@ -20993,7 +20978,10 @@ mod tests {
             compatibility
                 .contains("pub fn cvt_rn_satfinite_relu_e5m2x2_f32(lo: f32, hi: f32) -> u16")
         );
-        assert!(!compatibility.contains("cvt_f32x2_bf16x2"));
+        assert!(!compatibility.contains("pub fn cvt_f32x2_bf16x2("));
+        assert!(!outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/tcgen05_conversion.rs"
+        )));
     }
 
     #[test]

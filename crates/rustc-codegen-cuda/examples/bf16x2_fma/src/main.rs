@@ -5,7 +5,7 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::bf16x2::fma_bf16x2;
-use cuda_device::tcgen05::cvt_f32x2_bf16x2;
+use cuda_device::convert::cvt_bf16x2_f32;
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -20,9 +20,9 @@ mod kernels {
             return;
         }
 
-        let a = cvt_f32x2_bf16x2(2.0, 4.0);
-        let b = cvt_f32x2_bf16x2(3.0, 5.0);
-        let c = cvt_f32x2_bf16x2(7.0, 11.0);
+        let a = cvt_bf16x2_f32(2.0, 4.0);
+        let b = cvt_bf16x2_f32(3.0, 5.0);
+        let c = cvt_bf16x2_f32(7.0, 11.0);
         let value = fma_bf16x2(a, b, c);
 
         if let Some(slot) = out.get_mut(idx) {
