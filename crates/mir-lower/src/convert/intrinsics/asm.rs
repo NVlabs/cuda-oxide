@@ -66,6 +66,7 @@ pub(crate) fn convert_inline_ptx(
                 convergent,
             );
             let asm_op = inline_asm.get_operation();
+            crate::convert::preserve_location(ctx, op, asm_op);
             llvm::set_inline_asm_sideeffect(ctx, asm_op, sideeffect);
             rewriter.insert_operation(ctx, asm_op);
             rewriter.erase_operation(ctx, op);
@@ -87,6 +88,7 @@ pub(crate) fn convert_inline_ptx(
                 convergent,
             );
             let asm_op = inline_asm.get_operation();
+            crate::convert::preserve_location(ctx, op, asm_op);
             llvm::set_inline_asm_sideeffect(ctx, asm_op, sideeffect);
             rewriter.insert_operation(ctx, asm_op);
             rewriter.replace_operation(ctx, op, asm_op);
@@ -116,6 +118,7 @@ pub(crate) fn convert_inline_ptx(
                 convergent,
             );
             let asm_op = inline_asm.get_operation();
+            crate::convert::preserve_location(ctx, op, asm_op);
             llvm::set_inline_asm_sideeffect(ctx, asm_op, sideeffect);
             rewriter.insert_operation(ctx, asm_op);
 
@@ -125,6 +128,7 @@ pub(crate) fn convert_inline_ptx(
             for i in 0..n {
                 let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![i as u32])
                     .map_err(|error| pliron::input_error!(loc.clone(), "{}", error))?;
+                crate::convert::preserve_location(ctx, op, extract.get_operation());
                 rewriter.insert_operation(ctx, extract.get_operation());
                 extracted_values.push(extract.get_operation().deref(ctx).get_result(0));
             }

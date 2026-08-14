@@ -140,6 +140,7 @@ pub fn call_intrinsic(
     let sym_name: pliron::identifier::Identifier = intrinsic_name.try_into().unwrap();
     let callee = CallOpCallable::Direct(sym_name);
     let llvm_call = llvm::CallOp::new(ctx, callee, func_ty, args);
+    crate::convert::preserve_location(ctx, current_op, llvm_call.get_operation());
     rewriter.insert_operation(ctx, llvm_call.get_operation());
 
     Ok(llvm_call.get_operation())

@@ -68,6 +68,7 @@ pub(crate) fn convert_return(
     };
 
     let llvm_ret = llvm::ReturnOp::new(ctx, ret_val);
+    crate::convert::preserve_location(ctx, op, llvm_ret.get_operation());
     rewriter.insert_operation(ctx, llvm_ret.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -81,6 +82,7 @@ pub(crate) fn convert_unreachable(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let unreachable_op = llvm::UnreachableOp::new(ctx);
+    crate::convert::preserve_location(ctx, op, unreachable_op.get_operation());
     rewriter.insert_operation(ctx, unreachable_op.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -130,6 +132,7 @@ pub(crate) fn convert_cond_branch(
     let false_args = operands[1 + num_true_args..].to_vec();
 
     let llvm_br = llvm::CondBrOp::new(ctx, cond, true_block, true_args, false_block, false_args);
+    crate::convert::preserve_location(ctx, op, llvm_br.get_operation());
     rewriter.insert_operation(ctx, llvm_br.get_operation());
     rewriter.erase_operation(ctx, op);
 
@@ -188,6 +191,7 @@ pub(crate) fn convert_assert(
         .insert_at_back(abort_block, ctx);
 
     let llvm_br = llvm::CondBrOp::new(ctx, cond, success_block, args.to_vec(), abort_block, vec![]);
+    crate::convert::preserve_location(ctx, op, llvm_br.get_operation());
     rewriter.insert_operation(ctx, llvm_br.get_operation());
     rewriter.erase_operation(ctx, op);
 
@@ -251,6 +255,7 @@ pub(crate) fn convert_goto(
     }
 
     let llvm_br = llvm::BrOp::new(ctx, dest, final_args);
+    crate::convert::preserve_location(ctx, op, llvm_br.get_operation());
     rewriter.insert_operation(ctx, llvm_br.get_operation());
     rewriter.erase_operation(ctx, op);
 
@@ -275,6 +280,7 @@ mod tests {
     };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::linked_list::ContainsLinkedList;
+    use pliron::location::{Located, Location};
     use pliron::op::Op;
     use pliron::operation::Operation;
     use pliron::r#type::TypeHandle;
@@ -295,6 +301,29 @@ mod tests {
             "void return must have no value operand"
         );
         assert_eq!(count_ops::<mir::MirReturnOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn control_flow_lowering_preserves_the_mir_location() {
+        let mut ctx = make_ctx();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![]);
+        append_mir_return(&mut ctx, entry, vec![]);
+        let expected = Location::Named {
+            name: "source-return".to_string(),
+            child_loc: Box::new(Location::Unknown),
+        };
+        entry
+            .deref(&ctx)
+            .get_terminator(&ctx)
+            .unwrap()
+            .deref_mut(&ctx)
+            .set_loc(expected.clone());
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        assert_eq!(ret.get_operation().deref(&ctx).loc(), expected);
     }
 
     #[test]

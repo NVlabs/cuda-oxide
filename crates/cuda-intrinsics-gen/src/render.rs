@@ -14957,7 +14957,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         );
     }
     let void_ty = llvm_types::VoidType::get(ctx);
-    inline_asm_convergent(
+    let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
         void_ty.into(),
@@ -14965,6 +14965,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         template,
         constraints,
     );
+    crate::convert::preserve_location(ctx, op, inline_asm);
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
