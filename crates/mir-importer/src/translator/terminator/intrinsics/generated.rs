@@ -43779,6 +43779,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -43865,6 +43866,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -43951,6 +43953,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44037,6 +44040,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44123,6 +44127,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44209,6 +44214,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44295,6 +44301,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44381,6 +44388,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44467,6 +44475,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44553,6 +44562,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44639,6 +44649,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44725,6 +44736,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44811,6 +44823,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44897,6 +44910,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -44983,6 +44997,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45069,6 +45084,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45155,6 +45171,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45241,6 +45258,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45327,6 +45345,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45413,6 +45432,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45499,6 +45519,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45585,6 +45606,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45671,6 +45693,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45757,6 +45780,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45843,6 +45867,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -45929,6 +45954,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46015,6 +46041,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46101,6 +46128,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46209,6 +46237,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46317,6 +46346,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46425,6 +46455,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46533,6 +46564,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46777,6 +46809,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46885,6 +46918,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -46993,6 +47027,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47101,6 +47136,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47209,6 +47245,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47317,6 +47354,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47425,6 +47463,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47533,6 +47572,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47641,6 +47681,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47749,6 +47790,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47835,6 +47877,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -47921,6 +47964,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48007,6 +48051,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48093,6 +48138,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48271,6 +48317,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48357,6 +48404,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48443,6 +48491,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48529,6 +48578,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48615,6 +48665,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48701,6 +48752,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48787,6 +48839,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48873,6 +48926,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -48959,6 +49013,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49045,6 +49100,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49131,6 +49187,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49217,6 +49274,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49303,6 +49361,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49389,6 +49448,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49567,6 +49627,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49653,6 +49714,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49739,6 +49801,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49825,6 +49888,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49911,6 +49975,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -49997,6 +50062,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -50083,6 +50149,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -50169,6 +50236,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -50255,6 +50323,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,
@@ -50341,6 +50410,7 @@ pub fn try_dispatch_generated_intrinsic(
                 value.insert_after(ctx, array);
                 (value.deref(ctx).get_result(0), value)
             };
+            helpers::set_compiler_result_bundle_marker(ctx, value);
             Ok(Some(helpers::emit_store_result_and_goto(
                 ctx,
                 destination,

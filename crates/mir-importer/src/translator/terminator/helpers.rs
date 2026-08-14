@@ -362,6 +362,19 @@ pub fn set_generated_intrinsic_marker(ctx: &mut Context, op: Ptr<Operation>, mar
     );
 }
 
+/// Mark an aggregate as the compiler-created Rust ABI bundle for one
+/// multi-result device operation.
+pub fn set_compiler_result_bundle_marker(ctx: &mut Context, op: Ptr<Operation>) {
+    use dialect_mir::attributes::{COMPILER_RESULT_BUNDLE_ATTR_KEY, CompilerResultBundleAttr};
+    use pliron::identifier::Identifier;
+
+    op.deref_mut(ctx).attributes.set(
+        Identifier::try_from(COMPILER_RESULT_BUNDLE_ATTR_KEY)
+            .expect("compiler result bundle attribute key must be a valid identifier"),
+        CompilerResultBundleAttr(true),
+    );
+}
+
 /// Bundle a generated operation's independent `u32` results into the Rust
 /// array value expected by its raw ABI.
 ///
