@@ -40,7 +40,7 @@ impl DebugPolicy {
     }
 }
 
-/// Typed options shared by the libNVVM and nvJitLink stages.
+/// Typed options shared by the libNVVM, nvJitLink, and nvPTXCompiler stages.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FinalizationOptions {
     target: CudaArch,
@@ -124,6 +124,29 @@ impl FinalizationOptions {
     pub(crate) fn nvjitlink_ptx_options(&self) -> Vec<String> {
         let mut options = vec![format!("-arch={}", self.target.sm())];
         self.append_nvjitlink_codegen_options(&mut options);
+        options
+    }
+
+    pub(crate) fn nvptxcompiler_options(&self, verbose: bool) -> Vec<String> {
+        let mut options = vec![
+            format!("--gpu-name={}", self.target.sm()),
+            format!(
+                "--fmad={}",
+                if self.allow_fma_contraction {
+                    "true"
+                } else {
+                    "false"
+                }
+            ),
+        ];
+        match self.debug {
+            DebugPolicy::None => {}
+            DebugPolicy::LineTables => options.push("--generate-line-info".to_owned()),
+            DebugPolicy::Full => options.push("--device-debug".to_owned()),
+        }
+        if verbose {
+            options.push("--verbose".to_owned());
+        }
         options
     }
 
@@ -330,5 +353,27 @@ mod tests {
                 [expected]
             );
         }
+    }
+
+    #[test]
+    fn standalone_ptx_options_preserve_codegen_policy() {
+        let base = FinalizationOptions::new("sm_103a".parse().unwrap())
+            .with_fma_contraction(false)
+            .with_debug_policy(DebugPolicy::LineTables);
+        assert_eq!(
+            base.nvptxcompiler_options(false),
+            ["--gpu-name=sm_103a", "--fmad=false", "--generate-line-info"]
+        );
+        assert_eq!(
+            base.clone()
+                .with_debug_policy(DebugPolicy::Full)
+                .nvptxcompiler_options(true),
+            [
+                "--gpu-name=sm_103a",
+                "--fmad=false",
+                "--device-debug",
+                "--verbose"
+            ]
+        );
     }
 }

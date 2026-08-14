@@ -5,7 +5,8 @@
 
 //! Driver-independent CUDA artifact finalization.
 //!
-//! This crate is the single owner of cuda-oxide's libNVVM and nvJitLink
+//! This crate is the single owner of cuda-oxide's libNVVM, nvJitLink, and
+//! nvPTXCompiler
 //! compilation policy. It deliberately does not link the CUDA Driver. Both
 //! build-time materialization and runtime fallback use the same typed target,
 //! FMA, debug, input-order, validation, and provenance rules.
@@ -15,15 +16,18 @@ mod link;
 mod nvvm;
 mod options;
 mod provenance;
+mod ptx;
 mod validation;
 
 pub use diagnostics::KernelResourceUsage;
 pub use libnvvm_sys::{CudaArch, CudaArchParseError, LibdeviceNotFound, NvvmError, find_libdevice};
 pub use link::{LinkReport, LtoLinker};
 pub use nvjitlink_sys::NvJitLinkError;
+pub use nvptxcompiler_sys::NvPtxCompilerError;
 pub use nvvm::NvvmCompiler;
 pub use options::{DebugPolicy, FinalizationOptions, FinalizerOutput, NamedInput};
 pub use provenance::{ToolProvenance, recipe_digest};
+pub use ptx::PtxAssembler;
 pub use validation::is_valid_cubin;
 
 use provenance::common_provenance_digest;
@@ -40,6 +44,10 @@ pub enum FinalizerError {
     /// nvJitLink failed to load or link.
     #[error("nvJitLink: {0}")]
     NvJitLink(#[from] nvjitlink_sys::NvJitLinkError),
+
+    /// The standalone PTX compiler could not be loaded or invoked.
+    #[error("nvPTXCompiler: {0}")]
+    NvPtxCompiler(#[from] NvPtxCompilerError),
 
     /// `libdevice.10.bc` could not be found.
     #[error(

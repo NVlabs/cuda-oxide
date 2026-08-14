@@ -353,6 +353,7 @@ version = "0.2.1"
 dependencies = [
  "libnvvm-sys",
  "nvjitlink-sys",
+ "nvptxcompiler-sys",
  "sha2",
  "thiserror",
 ]
@@ -934,6 +935,14 @@ dependencies = [
 
 [[package]]
 name = "nvjitlink-sys"
+version = "0.2.1"
+dependencies = [
+ "libloading",
+ "thiserror",
+]
+
+[[package]]
+name = "nvptxcompiler-sys"
 version = "0.2.1"
 dependencies = [
  "libloading",
