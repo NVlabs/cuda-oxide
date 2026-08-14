@@ -44,8 +44,13 @@ mod kernels {
 
     const THREADS: usize = 32;
 
+    // Clippy would rewrite these transmutes as `as` casts, but the `as`
+    // form lowers through a different compiler path (PtrToAddress /
+    // pointer casts); `Transmute` lowering is the path under test here.
+
     /// Shared pointer -> `usize` as a literal transmute (the sysroot
     /// implements `ptr::addr()` the same way). Must genericize first.
+    #[allow(clippy::transmutes_expressible_as_ptr_casts)]
     #[inline(never)]
     #[device]
     fn pointer_to_bits(pointer: *mut SharedArray<u32, THREADS>) -> usize {
@@ -54,6 +59,7 @@ mod kernels {
 
     /// `usize` -> shared pointer: must re-enter the shared space through
     /// the generic space (inttoptr to generic, then addrspacecast).
+    #[allow(clippy::transmutes_expressible_as_ptr_casts)]
     #[inline(never)]
     #[device]
     fn bits_to_pointer(bits: usize) -> *mut SharedArray<u32, THREADS> {
@@ -61,6 +67,7 @@ mod kernels {
     }
 
     /// Shared pointer -> generic pointer: a direct addrspacecast.
+    #[allow(clippy::transmutes_expressible_as_ptr_casts)]
     #[inline(never)]
     #[device]
     fn pointer_to_alias(pointer: *mut SharedArray<u32, THREADS>) -> *mut u32 {
@@ -68,6 +75,7 @@ mod kernels {
     }
 
     /// Generic pointer -> shared pointer: the reverse addrspacecast.
+    #[allow(clippy::transmutes_expressible_as_ptr_casts)]
     #[inline(never)]
     #[device]
     fn alias_to_pointer(alias: *mut u32) -> *mut SharedArray<u32, THREADS> {
