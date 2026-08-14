@@ -538,20 +538,24 @@ fn emit_transmute(
         return Ok(emit_ptr_to_int(ctx, rewriter, val, val_ty, llvm_ty));
     }
 
-    // Lowering runs before the exporter chooses its target data layout.
-    // Shared pointers are 64-bit in PTX/legacy mode but 32-bit in modern
-    // NVVM (`p3:32`). A transmute observes the physical pointer bytes, so the
-    // target-agnostic 8-byte approximation used by general type conversion
-    // cannot be sound here. Reject scalar and nested aggregate forms until
-    // target mode is available at this stage.
+    // A scalar transmute involving a shared-memory pointer bridges through
+    // the generic address space, so the value Rust observes is the 64-bit
+    // generic address, never a raw space-local offset (a valid static shared
+    // allocation can have shared offset zero without being null). The scalar
+    // arms below implement the bridge: integer → shared enters through
+    // `emit_int_to_ptr` (inttoptr to generic, then addrspacecast), and
+    // pointer ↔ pointer across spaces is a direct `addrspacecast`. Rust
+    // layout sizes these (every pointer is 8 bytes on nvptx64), identically
+    // under every backend and dialect mode.
+    //
+    // An aggregate transmute has no such bridge: its memory round-trip would
+    // store the pointer's PHYSICAL bytes, whose width is target-mode
+    // dependent (64-bit PTX/legacy, 32-bit modern NVVM `p3:32`) and not yet
+    // chosen when this lowering runs. Those forms are rejected below, at the
+    // points that would otherwise dispatch to the memory round-trip.
     let shared = llvm_export::types::address_space::SHARED;
-    if llvm_type_contains_pointer_in_address_space(ctx, val_ty, shared)
-        || llvm_type_contains_pointer_in_address_space(ctx, llvm_ty, shared)
-    {
-        return pliron::input_err_noloc!(
-            "Transmute involving a shared-memory pointer is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM) and is not yet supported"
-        );
-    }
+    let involves_shared_pointer = llvm_type_contains_pointer_in_address_space(ctx, val_ty, shared)
+        || llvm_type_contains_pointer_in_address_space(ctx, llvm_ty, shared);
 
     let (src_bytes, _) = llvm_type_size_align(ctx, val_ty).ok_or_else(|| {
         pliron::input_error_noloc!(
@@ -580,6 +584,9 @@ fn emit_transmute(
         ty.is::<llvm_export::types::StructType>() || ty.is::<llvm_export::types::ArrayType>()
     };
     if is_aggregate(val_ty, ctx) || is_aggregate(llvm_ty, ctx) {
+        if involves_shared_pointer {
+            return reject_shared_pointer_memory_transmute(ctx, val_ty, llvm_ty);
+        }
         return emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty);
     }
 
@@ -611,6 +618,9 @@ fn emit_transmute(
         if src_integer_width == Some(8) && dst_integer_width == Some(1) {
             return Ok(llvm::TruncOp::new(ctx, val, llvm_ty).get_operation());
         }
+        if involves_shared_pointer {
+            return reject_shared_pointer_memory_transmute(ctx, val_ty, llvm_ty);
+        }
         return emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty);
     }
 
@@ -619,16 +629,16 @@ fn emit_transmute(
             Ok(llvm::AddrSpaceCastOp::new(ctx, val, llvm_ty).get_operation())
         }
         (Some(_), Some(_)) => Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation()),
-        (Some(_), None) if dst_is_int => {
-            Ok(llvm::PtrToIntOp::new(ctx, val, llvm_ty).get_operation())
-        }
+        (Some(_), None) if dst_is_int => Ok(emit_ptr_to_int(ctx, rewriter, val, val_ty, llvm_ty)),
         (None, Some(_)) if src_is_int => Ok(emit_int_to_ptr(ctx, rewriter, val, llvm_ty)),
         (Some(_), None) => {
             let integer_ty: pliron::r#type::TypeHandle =
                 IntegerType::get(ctx, src_bits, Signedness::Signless).into();
-            let ptr_to_int = llvm::PtrToIntOp::new(ctx, val, integer_ty);
-            rewriter.insert_operation(ctx, ptr_to_int.get_operation());
-            let integer = ptr_to_int.get_operation().deref(ctx).get_result(0);
+            // Bridge through [`emit_ptr_to_int`] so a named-space pointer's
+            // integer form is its generic address, not a raw local offset.
+            let ptr_to_int = emit_ptr_to_int(ctx, rewriter, val, val_ty, integer_ty);
+            rewriter.insert_operation(ctx, ptr_to_int);
+            let integer = ptr_to_int.deref(ctx).get_result(0);
             Ok(llvm::BitcastOp::new(ctx, integer, llvm_ty).get_operation())
         }
         (None, Some(_)) => {
@@ -641,6 +651,33 @@ fn emit_transmute(
         }
         (None, None) => Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation()),
     }
+}
+
+/// Reject a Transmute whose lowering would round-trip shared-pointer bytes
+/// through memory.
+///
+/// A scalar shared pointer transmutes soundly because it bridges through the
+/// generic address space, where its Rust-visible form is the 64-bit generic
+/// address. A memory round-trip has no such bridge: it would store the
+/// pointer's physical representation, whose width is target-mode dependent
+/// (64-bit PTX/legacy, 32-bit modern NVVM `p3:32`) and not yet chosen when
+/// this lowering runs, and the stored bytes would expose raw shared-local
+/// offsets to Rust. Fail loudly rather than miscompile.
+fn reject_shared_pointer_memory_transmute(
+    ctx: &Context,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
+) -> Result<Ptr<Operation>> {
+    pliron::input_err_noloc!(
+        "Transmute from {} to {} would round-trip shared-memory (addrspace(3)) pointer bytes \
+         through memory. Aggregate transmutes containing shared-memory pointers are \
+         intentionally unsupported: the pointer's physical width is target-mode dependent \
+         (64-bit PTX/legacy, 32-bit modern NVVM), and raw shared-local offsets must never \
+         become Rust-visible bytes. Transmute the pointer as a scalar instead; it converts \
+         through its 64-bit generic address.",
+        val_ty.disp(ctx),
+        llvm_ty.disp(ctx)
+    )
 }
 
 fn scalar_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u32> {
@@ -1223,12 +1260,86 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_shared_pointer_transmutes_reject_target_dependent_width() {
-        for (wrap_pointer, pointer_is_source) in [(false, false), (true, false), (true, true)] {
+    fn integer_to_shared_pointer_transmute_enters_through_generic_space() {
+        let mut ctx = make_ctx();
+        let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+        let shared_pointer: TypeHandle = MirPtrType::get(&mut ctx, pointee, false, 3).into();
+        let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
+
+        let module = lower_single_cast(
+            &mut ctx,
+            usize_ty,
+            shared_pointer,
+            MirCastKindAttr::Transmute,
+        );
+
+        // The exposed integer is a generic address, so re-entering the shared
+        // space must go inttoptr → generic, then addrspacecast → shared. A
+        // bare inttoptr into addrspace(3) would reinterpret the generic
+        // address as a space-local offset.
+        assert_cast_lowered_to::<llvm::AddrSpaceCastOp>(&ctx, module, "llvm.addrspacecast");
+        let body = kernel_blocks(&ctx, module);
+        let int_to_ptrs = find_all::<llvm::IntToPtrOp>(&ctx, &body);
+        let [int_to_ptr] = int_to_ptrs.as_slice() else {
+            panic!("integer-to-shared transmute must lower to exactly one llvm.inttoptr");
+        };
+        let generic = int_to_ptr.get_operation().deref(&ctx).get_result(0);
+        assert_eq!(
+            pointer_addrspace(&ctx, generic.get_type(&ctx)),
+            0,
+            "inttoptr must land in the generic address space"
+        );
+        let casts = find_all::<llvm::AddrSpaceCastOp>(&ctx, &body);
+        let recovered = casts[0].get_operation().deref(&ctx).get_result(0);
+        assert_eq!(
+            pointer_addrspace(&ctx, recovered.get_type(&ctx)),
+            3,
+            "addrspacecast must restore the shared address space"
+        );
+    }
+
+    #[test]
+    fn shared_pointer_transmutes_between_address_spaces_use_addrspacecast() {
+        for shared_is_source in [true, false] {
             let mut ctx = make_ctx();
             let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
             let shared_pointer: TypeHandle = MirPtrType::get(&mut ctx, pointee, false, 3).into();
-            let pointer_shape = if wrap_pointer {
+            let generic_pointer: TypeHandle =
+                MirPtrType::get_generic(&mut ctx, pointee, false).into();
+            let (source, destination) = if shared_is_source {
+                (shared_pointer, generic_pointer)
+            } else {
+                (generic_pointer, shared_pointer)
+            };
+
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
+
+            assert_cast_lowered_to::<llvm::AddrSpaceCastOp>(&ctx, module, "llvm.addrspacecast");
+            let body = kernel_blocks(&ctx, module);
+            assert_eq!(
+                count_ops::<llvm::AllocaOp>(&ctx, &body),
+                0,
+                "pointer-to-pointer transmute must not round-trip through memory"
+            );
+            let casts = find_all::<llvm::AddrSpaceCastOp>(&ctx, &body);
+            let result = casts[0].get_operation().deref(&ctx).get_result(0);
+            let expected_space = if shared_is_source { 0 } else { 3 };
+            assert_eq!(
+                pointer_addrspace(&ctx, result.get_type(&ctx)),
+                expected_space,
+                "addrspacecast must produce the destination address space"
+            );
+        }
+    }
+
+    #[test]
+    fn aggregate_transmutes_containing_shared_pointers_are_rejected() {
+        for (wrap_pointer, pointer_is_source) in [(true, false), (true, true), (false, true)] {
+            let mut ctx = make_ctx();
+            let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+            let shared_pointer: TypeHandle = MirPtrType::get(&mut ctx, pointee, false, 3).into();
+            let pointer_shape: TypeHandle = if wrap_pointer {
                 MirStructType::get_with_full_layout(
                     &mut ctx,
                     "SharedPointerWrapper".into(),
@@ -1243,19 +1354,29 @@ mod tests {
             } else {
                 shared_pointer
             };
-            let bits = int_ty(&mut ctx, 64, Signedness::Unsigned);
-            let (source, destination) = if pointer_is_source {
-                (pointer_shape, bits)
+            let byte = int_ty(&mut ctx, 8, Signedness::Unsigned);
+            let other_side: TypeHandle = if wrap_pointer {
+                // Wrapped pointer against a plain integer: the wrapper is the
+                // aggregate that forces the memory round-trip.
+                int_ty(&mut ctx, 64, Signedness::Unsigned)
             } else {
-                (bits, pointer_shape)
+                // Bare shared pointer against a byte array: the array is the
+                // aggregate that forces the memory round-trip.
+                dialect_mir::types::MirArrayType::get(&mut ctx, byte, 8).into()
+            };
+            let (source, destination) = if pointer_is_source {
+                (pointer_shape, other_side)
+            } else {
+                (other_side, pointer_shape)
             };
             let module =
                 build_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
 
-            let error = crate::lower_mir_to_llvm(&mut ctx, module)
-                .expect_err("shared-pointer transmute must fail before target mode is known");
+            let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+                "a transmute that would memory-round-trip shared-pointer bytes must fail",
+            );
             assert!(
-                error.to_string().contains("target-mode dependent"),
+                error.to_string().contains("intentionally unsupported"),
                 "unexpected diagnostic: {error}"
             );
         }
